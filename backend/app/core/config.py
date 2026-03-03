@@ -50,8 +50,9 @@ class Settings(BaseSettings):
     OCR_TIMEOUT: float = 120.0  # OCR推理超时
     
     # HaS 本地模型配置（主力文本NER引擎）
-    HAS_BASE_URL: str = "http://127.0.0.1:8080/v1"  # llama.cpp 服务地址
-    HAS_MODEL_PATH: str = "./models/has/has_4.0_0.6B.gguf"  # 模型文件路径
+    HAS_BASE_URL: str = "http://127.0.0.1:11434/v1"  # Ollama 的 OpenAI 兼容接口，注意这里通常不需要再拼接 chat/completions 时的多余 v1，或者根据代理环境变化
+    HAS_MODEL_NAME: str = "qwen3:8b"            # 用户指定的 Ollama 模型
+    HAS_MODEL_PATH: str = "./models/has/has_4.0_0.6B.gguf"  
     HAS_TIMEOUT: float = 120.0  # 超时时间
     
     # 脱敏配置

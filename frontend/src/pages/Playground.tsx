@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import ImageBBoxEditor from '../components/ImageBBoxEditor';
-import { 
-  getEntityRiskConfig, 
+import {
+  getEntityRiskConfig,
   getEntityTypeName,
   getEntityGroup,
   ENTITY_GROUPS,
@@ -79,7 +79,7 @@ async function runVisionDetection(
   glmVisionTypes: string[]
 ): Promise<{ boxes: BoundingBox[]; resultImage?: string }> {
   console.log('[Vision] 发送识别请求:', { ocrHasTypes, glmVisionTypes });
-  
+
   const res = await fetch(`/api/v1/redaction/${fileId}/vision?page=1`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -88,11 +88,11 @@ async function runVisionDetection(
       selected_glm_vision_types: glmVisionTypes,
     }),
   });
-  
+
   if (!res.ok) {
     throw new Error('图像识别失败');
   }
-  
+
   const data = await res.json();
   const boxes = (data.bounding_boxes || []).map((b: any, idx: number) => ({
     ...b,
@@ -112,49 +112,49 @@ export const Playground: React.FC = () => {
   const [redactedContent, setRedactedContent] = useState('');
   const [redactedCount, setRedactedCount] = useState(0);
   const [entityMap, setEntityMap] = useState<Record<string, string>>({});
-  
+
   // 实体类型配置
   const [entityTypes, setEntityTypes] = useState<EntityTypeConfig[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
   const [visionTypes, setVisionTypes] = useState<VisionTypeConfig[]>([]);
-  
+
   // 两个 Pipeline 独立选择 - 使用 ref 确保最新值可用
   const [selectedOcrHasTypes, setSelectedOcrHasTypes] = useState<string[]>([]);
   const [selectedGlmVisionTypes, setSelectedGlmVisionTypes] = useState<string[]>([]);
   const selectedOcrHasTypesRef = useRef(selectedOcrHasTypes);
   const selectedGlmVisionTypesRef = useRef(selectedGlmVisionTypes);
-  
+
   // 同步更新 ref（立即同步，不等待 useEffect）
   const updateOcrHasTypes = useCallback((types: string[]) => {
     selectedOcrHasTypesRef.current = types;
     setSelectedOcrHasTypes(types);
     localStorage.setItem('ocrHasTypes', JSON.stringify(types));
   }, []);
-  
+
   const updateGlmVisionTypes = useCallback((types: string[]) => {
     selectedGlmVisionTypesRef.current = types;
     setSelectedGlmVisionTypes(types);
     // 同步保存到 localStorage，解决闭包问题
     localStorage.setItem('glmVisionTypes', JSON.stringify(types));
   }, []);
-  
+
   const [pipelines, setPipelines] = useState<PipelineConfig[]>([]);
   const [typeTab, setTypeTab] = useState<'text' | 'vision'>('text');
   const [hasMode, setHasMode] = useState<'auto' | 'ner' | 'hide'>('auto');
   const [replacementMode, setReplacementMode] = useState<'structured' | 'smart' | 'mask'>('structured');
-  
+
   // 划词相关
   const [selectedText, setSelectedText] = useState<{ text: string; start: number; end: number } | null>(null);
   const [selectionPos, setSelectionPos] = useState<{ x: number; y: number } | null>(null);
   const [selectedTypeId, setSelectedTypeId] = useState<string>('');
   const [selectedOverlapIds, setSelectedOverlapIds] = useState<string[]>([]);
   const contentRef = useRef<HTMLDivElement>(null);
-  
+
   // 点击实体弹出确认框
   const [clickedEntity, setClickedEntity] = useState<Entity | null>(null);
   const [entityPopupPos, setEntityPopupPos] = useState<{ x: number; y: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  
+
   const [boundingBoxes, setBoundingBoxes] = useState<BoundingBox[]>([]);
   const [undoStack, setUndoStack] = useState<Entity[][]>([]);
   const [redoStack, setRedoStack] = useState<Entity[][]>([]);
@@ -216,17 +216,17 @@ export const Playground: React.FC = () => {
       const normalizedPipelines = data.map(p =>
         p.mode === 'glm_vision'
           ? {
-              ...p,
-              name: 'GLM Vision',
-              description: '使用视觉语言模型识别签名、印章、手写等视觉信息。',
-            }
+            ...p,
+            name: 'GLM Vision',
+            description: '使用视觉语言模型识别签名、印章、手写等视觉信息。',
+          }
           : p
       );
       setPipelines(normalizedPipelines);
-      
+
       const allTypes: VisionTypeConfig[] = [];
       const ocrHasTypeIds: string[] = [];
-      
+
       normalizedPipelines.forEach(pipeline => {
         if (pipeline.enabled) {
           pipeline.types.forEach(t => {
@@ -240,7 +240,7 @@ export const Playground: React.FC = () => {
           });
         }
       });
-      
+
       setVisionTypes(allTypes);
       const savedOcrHasTypes = localStorage.getItem('ocrHasTypes');
       if (savedOcrHasTypes) {
@@ -302,8 +302,8 @@ export const Playground: React.FC = () => {
   const toggleVisionType = (typeId: string, pipelineMode: 'ocr_has' | 'glm_vision') => {
     if (pipelineMode === 'ocr_has') {
       const isActive = selectedOcrHasTypes.includes(typeId);
-      const next = isActive 
-        ? selectedOcrHasTypes.filter(t => t !== typeId) 
+      const next = isActive
+        ? selectedOcrHasTypes.filter(t => t !== typeId)
         : [...selectedOcrHasTypes, typeId];
       updateOcrHasTypes(next);
       setBoundingBoxes(boxes =>
@@ -311,8 +311,8 @@ export const Playground: React.FC = () => {
       );
     } else {
       const isActive = selectedGlmVisionTypes.includes(typeId);
-      const next = isActive 
-        ? selectedGlmVisionTypes.filter(t => t !== typeId) 
+      const next = isActive
+        ? selectedGlmVisionTypes.filter(t => t !== typeId)
         : [...selectedGlmVisionTypes, typeId];
       updateGlmVisionTypes(next);
       setBoundingBoxes(boxes =>
@@ -396,7 +396,7 @@ export const Playground: React.FC = () => {
   // ============================================================
   // 文件上传处理 - 只负责上传和解析，不触发识别
   // ============================================================
-  
+
   // 待处理的文件信息（上传解析完成后设置，触发 useEffect 进行识别）
   const [pendingFile, setPendingFile] = useState<{
     fileId: string;
@@ -404,45 +404,45 @@ export const Playground: React.FC = () => {
     isScanned: boolean;
     content: string;
   } | null>(null);
-  
+
   const handleFileDrop = async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
     const file = acceptedFiles[0];
     setIsLoading(true);
-    
+
     try {
       // 1. 上传文件
       setLoadingMessage('正在上传文件...');
       const formData = new FormData();
       formData.append('file', file);
-      
+
       const uploadRes = await fetch('/api/v1/files/upload', { method: 'POST', body: formData });
       if (!uploadRes.ok) throw new Error('文件上传失败');
       const uploadData = await uploadRes.json();
-      
+
       const newFileInfo = {
         file_id: uploadData.file_id,
         filename: uploadData.filename,
         file_size: uploadData.file_size,
         file_type: uploadData.file_type,
       };
-      
+
       // 2. 解析文件
       setLoadingMessage('正在解析文件...');
       const parseRes = await fetch(`/api/v1/files/${uploadData.file_id}/parse`);
       if (!parseRes.ok) throw new Error('文件解析失败');
       const parseData = await parseRes.json();
-      
+
       const isScanned = parseData.is_scanned || false;
       const parsedContent = parseData.content || '';
-      
+
       // 更新状态
       setFileInfo({ ...newFileInfo, is_scanned: isScanned });
       setContent(parsedContent);
       setBoundingBoxes([]);
       resetImageHistory();
       setEntities([]);
-      
+
       // 3. 设置待处理文件，触发 useEffect 进行识别
       // useEffect 中可以直接读取最新的 state
       setPendingFile({
@@ -451,7 +451,7 @@ export const Playground: React.FC = () => {
         isScanned,
         content: parsedContent,
       });
-      
+
     } catch (err) {
       showToast(err instanceof Error ? err.message : '处理失败', 'error');
       setIsLoading(false);
@@ -459,39 +459,39 @@ export const Playground: React.FC = () => {
     }
     // 注意：isLoading 和 loadingMessage 在 useEffect 中清理
   };
-  
+
   // ============================================================
   // 文件上传后自动识别 - 使用 useEffect 确保读取最新的 state
   // 关键：只依赖 pendingFile，但使用 ref 读取最新的类型选择
   // ============================================================
-  
+
   // 使用 ref 存储最新的类型选择，避免 useEffect 依赖问题
   const latestOcrHasTypesRef = useRef(selectedOcrHasTypes);
   const latestGlmVisionTypesRef = useRef(selectedGlmVisionTypes);
   const latestSelectedTypesRef = useRef(selectedTypes);
   const latestHasModeRef = useRef(hasMode);
-  
+
   // 每次 state 变化时同步更新 ref
   latestOcrHasTypesRef.current = selectedOcrHasTypes;
   latestGlmVisionTypesRef.current = selectedGlmVisionTypes;
   latestSelectedTypesRef.current = selectedTypes;
   latestHasModeRef.current = hasMode;
-  
+
   useEffect(() => {
     if (!pendingFile) return;
-    
+
     const { fileId, fileType, isScanned, content } = pendingFile;
-    
+
     // 立即清除 pendingFile，防止重复触发
     setPendingFile(null);
-    
+
     const doRecognition = async () => {
       try {
         const isImage = fileType === 'image' || isScanned;
-        
+
         if (isImage) {
           setLoadingMessage('正在进行图像识别（OCR+HaS & GLM Vision 双路并行）...');
-          
+
           // 从 localStorage 读取 GLM 类型（最可靠的方式，绕过 React 闭包问题）
           const ocrTypes = latestOcrHasTypesRef.current;
           let glmTypes: string[] = [];
@@ -503,13 +503,13 @@ export const Playground: React.FC = () => {
           } catch {
             glmTypes = [];
           }
-          
+
           console.log('[Recognition] 图像模式，开始识别');
           console.log('[Recognition] OCR+HaS 类型:', ocrTypes);
           console.log('[Recognition] GLM Vision 类型 (from localStorage):', glmTypes);
-          
+
           const result = await runVisionDetection(fileId, ocrTypes, glmTypes);
-          
+
           setBoundingBoxes(result.boxes);
           resetImageHistory();
           if (result.resultImage) {
@@ -521,12 +521,12 @@ export const Playground: React.FC = () => {
           const nerRes = await fetch(`/api/v1/files/${fileId}/ner/hybrid`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              entity_type_ids: latestSelectedTypesRef.current, 
-              has_mode: latestHasModeRef.current 
+            body: JSON.stringify({
+              entity_type_ids: latestSelectedTypesRef.current,
+              has_mode: latestHasModeRef.current
             }),
           });
-          
+
           if (nerRes.ok) {
             const nerData = await nerRes.json();
             const entitiesWithSource = (nerData.entities || []).map((e: any, idx: number) => ({
@@ -541,7 +541,7 @@ export const Playground: React.FC = () => {
             showToast(`识别到 ${entitiesWithSource.length} 处敏感信息`, 'success');
           }
         }
-        
+
         setStage('preview');
       } catch (err) {
         showToast(err instanceof Error ? err.message : '识别失败', 'error');
@@ -550,7 +550,7 @@ export const Playground: React.FC = () => {
         setLoadingMessage('');
       }
     };
-    
+
     doRecognition();
   }, [pendingFile]); // 只依赖 pendingFile，类型选择通过 ref 获取
 
@@ -569,10 +569,10 @@ export const Playground: React.FC = () => {
   // 处理文本选择
   const handleTextSelect = () => {
     if (isImageMode) return;
-    
+
     // 如果有实体弹窗打开，不处理文本选择
     if (clickedEntity) return;
-    
+
     const selection = window.getSelection();
     if (!selection || !contentRef.current) {
       setSelectedText(null);
@@ -589,7 +589,7 @@ export const Playground: React.FC = () => {
       setSelectedOverlapIds([]);
       return;
     }
-    
+
     const text = selection.toString().trim();
     if (!text || text.length < 2) {
       setSelectedText(null);
@@ -605,7 +605,7 @@ export const Playground: React.FC = () => {
       setSelectedOverlapIds([]);
       return;
     }
-    
+
     const offsets = getSelectionOffsets(range, contentRef.current);
     const start = offsets?.start ?? content.indexOf(text);
     const end = offsets?.end ?? (start + text.length);
@@ -615,19 +615,19 @@ export const Playground: React.FC = () => {
       setSelectedOverlapIds([]);
       return;
     }
-    
+
     // 查找重叠的实体
     const overlaps = entities.filter(e =>
       (e.start <= start && e.end > start) || (e.start < end && e.end >= end)
     );
-    
+
     const rect = range.getBoundingClientRect();
     setSelectionPos({
       x: rect.left + rect.width / 2,
       y: rect.top - 8,
     });
     setSelectedOverlapIds(overlaps.map(e => e.id));
-    
+
     // 默认类型：如果有重叠实体，使用第一个重叠实体的类型；否则使用上次选择的类型或第一个可用类型
     if (overlaps.length > 0) {
       setSelectedTypeId(overlaps[0].type);
@@ -635,7 +635,7 @@ export const Playground: React.FC = () => {
       const firstType = entityTypes.find(t => selectedTypes.includes(t.id))?.id || entityTypes[0]?.id;
       if (firstType) setSelectedTypeId(firstType);
     }
-    
+
     setSelectedText({ text, start, end });
   };
 
@@ -687,7 +687,7 @@ export const Playground: React.FC = () => {
       const config = getTypeConfig(typeId);
       showToast(`已添加: ${config.name}`, 'success');
     }
-    
+
     setSelectedText(null);
     setSelectionPos(null);
     setSelectedOverlapIds([]);
@@ -709,18 +709,18 @@ export const Playground: React.FC = () => {
     if (!fileInfo) return;
     setIsLoading(true);
     setLoadingMessage(isImageMode ? '重新识别中（OCR+HaS & GLM Vision 双路并行）...' : '重新识别中（正则+AI语义识别）...');
-    
+
     try {
       if (isImageMode) {
         console.log('[Rerun] OCR+HaS 类型:', selectedOcrHasTypes);
         console.log('[Rerun] GLM Vision 类型:', selectedGlmVisionTypes);
-        
+
         const result = await runVisionDetection(
           fileInfo.file_id,
           selectedOcrHasTypes,
           selectedGlmVisionTypes
         );
-        
+
         setBoundingBoxes(result.boxes);
         resetImageHistory();
         if (result.resultImage) {
@@ -765,11 +765,11 @@ export const Playground: React.FC = () => {
     if (!fileInfo) return;
     setIsLoading(true);
     setLoadingMessage('正在执行脱敏...');
-    
+
     try {
       const selectedEntities = entities.filter(e => e.selected);
       const selectedBoxes = boundingBoxes.filter(b => b.selected);
-      
+
       const res = await fetch('/api/v1/redaction/execute', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -780,19 +780,19 @@ export const Playground: React.FC = () => {
           config: { replacement_mode: replacementMode, entity_types: [], custom_replacements: {} },
         }),
       });
-      
+
       if (!res.ok) throw new Error('脱敏处理失败');
-      
+
       const result = await res.json();
       setEntityMap(result.entity_map || {});
       setRedactedCount(result.redacted_count || 0);
-      
+
       const compareRes = await fetch(`/api/v1/redaction/${fileInfo.file_id}/compare`);
       if (compareRes.ok) {
         const compareData = await compareRes.json();
         setRedactedContent(compareData.redacted_content || '');
       }
-      
+
       setStage('result');
       showToast(`完成，共处理 ${result.redacted_count} 处`, 'success');
     } catch (err) {
@@ -918,7 +918,7 @@ export const Playground: React.FC = () => {
     // 设置当前类型为该实体的类型（方便修改时默认选中）
     setSelectedTypeId(entity.type);
   };
-  
+
   // 确认移除实体标注
   const confirmRemoveEntity = () => {
     if (clickedEntity) {
@@ -928,7 +928,7 @@ export const Playground: React.FC = () => {
     setClickedEntity(null);
     setEntityPopupPos(null);
   };
-  
+
   // 关闭实体弹窗
   const closeEntityPopup = () => {
     setClickedEntity(null);
@@ -938,7 +938,7 @@ export const Playground: React.FC = () => {
   // 渲染带下划线标记的内容 - 优化版
   const renderMarkedContent = () => {
     if (!content) return <p className="text-gray-400">暂无内容</p>;
-    
+
     const sorted = [...entities].sort((a, b) => a.start - b.start);
     const segments: React.ReactNode[] = [];
     let lastEnd = 0;
@@ -952,12 +952,12 @@ export const Playground: React.FC = () => {
           <span key={`t-${lastEnd}`}>{content.slice(lastEnd, entity.start)}</span>
         );
       }
-      
+
       // 使用风险等级配色
       const riskConfig = getEntityRiskConfig(entity.type);
       const typeName = getEntityTypeName(entity.type);
       const sourceLabel = entity.source === 'regex' ? '正则' : entity.source === 'manual' ? '手动' : 'AI';
-      
+
       // 所有实体都显示为高亮状态（点击弹出操作菜单）
       segments.push(
         <span
@@ -1006,14 +1006,13 @@ export const Playground: React.FC = () => {
             <div className="w-full max-w-lg">
               <div
                 {...getRootProps()}
-                className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all bg-white ${
-                  isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400'
-                }`}
+                className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all bg-white ${isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400'
+                  }`}
               >
                 <input {...getInputProps()} />
                 <div className="w-14 h-14 mx-auto mb-4 rounded-xl bg-blue-100 flex items-center justify-center">
                   <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                 </div>
                 <p className="text-base font-medium text-gray-700 mb-1">拖拽文件到此处上传</p>
@@ -1021,7 +1020,7 @@ export const Playground: React.FC = () => {
               </div>
             </div>
           </div>
-          
+
           {/* 类型配置面板 */}
           <div className="w-[300px] bg-white/80 backdrop-blur-xl rounded-2xl border border-gray-200/60 flex flex-col shadow-sm">
             {/* 头部 */}
@@ -1054,16 +1053,16 @@ export const Playground: React.FC = () => {
                       const types = pipeline.types.filter(t => t.enabled);
                       const selectedSet = isGlm ? selectedGlmVisionTypes : selectedOcrHasTypes;
                       const allSelected = types.length > 0 && types.every(t => selectedSet.includes(t.id));
-                      
+
                       const presetGroups = isGlm ? [
-                        { label: '视觉元素', ids: ['SIGNATURE','FINGERPRINT','PHOTO','QR_CODE','HANDWRITING','WATERMARK','CHAT_BUBBLE','SENSITIVE_TABLE'] },
+                        { label: '视觉元素', ids: ['SIGNATURE', 'FINGERPRINT', 'PHOTO', 'QR_CODE', 'HANDWRITING', 'WATERMARK', 'CHAT_BUBBLE', 'SENSITIVE_TABLE'] },
                       ] : [
-                        { label: '个人身份', ids: ['PERSON','ID_CARD','PASSPORT','SOCIAL_SECURITY','QQ_WECHAT_ID'] },
-                        { label: '联系方式', ids: ['PHONE','EMAIL'] },
-                        { label: '金融信息', ids: ['BANK_CARD','BANK_ACCOUNT','BANK_NAME','AMOUNT','PROPERTY'] },
-                        { label: '机构与地址', ids: ['COMPANY','ORG','ADDRESS'] },
-                        { label: '时间与编号', ids: ['BIRTH_DATE','DATE','LICENSE_PLATE','CASE_NUMBER','CONTRACT_NO','COMPANY_CODE'] },
-                        { label: '诉讼参与人', ids: ['LEGAL_PARTY','LAWYER','JUDGE','WITNESS'] },
+                        { label: '个人身份', ids: ['PERSON', 'ID_CARD', 'PASSPORT', 'SOCIAL_SECURITY', 'QQ_WECHAT_ID'] },
+                        { label: '联系方式', ids: ['PHONE', 'EMAIL'] },
+                        { label: '金融信息', ids: ['BANK_CARD', 'BANK_ACCOUNT', 'BANK_NAME', 'AMOUNT', 'PROPERTY'] },
+                        { label: '机构与地址', ids: ['COMPANY', 'ORG', 'ADDRESS'] },
+                        { label: '时间与编号', ids: ['BIRTH_DATE', 'DATE', 'LICENSE_PLATE', 'CASE_NUMBER', 'CONTRACT_NO', 'COMPANY_CODE'] },
+                        { label: '诉讼参与人', ids: ['LEGAL_PARTY', 'LAWYER', 'JUDGE', 'WITNESS'] },
                         { label: '其他', ids: ['SEAL'] },
                       ];
                       const allPresetIds = new Set(presetGroups.flatMap(g => g.ids));
@@ -1071,7 +1070,7 @@ export const Playground: React.FC = () => {
                       const visionGroups = customTypes.length > 0
                         ? [...presetGroups, { label: '自定义', ids: customTypes.map(t => t.id) }]
                         : presetGroups;
-                      
+
                       return (
                         <div key={pipeline.mode}>
                           <div className={`flex items-center justify-between mb-2.5 pb-1.5 border-b ${isGlm ? 'border-orange-200/60' : 'border-blue-200/60'}`}>
@@ -1098,11 +1097,10 @@ export const Playground: React.FC = () => {
                                       const active = selectedSet.includes(type.id);
                                       return (
                                         <button key={type.id} onClick={() => toggleVisionType(type.id, pipeline.mode as 'ocr_has' | 'glm_vision')}
-                                          className={`flex items-center justify-center gap-1 px-1.5 py-[5px] rounded-lg text-[11px] font-medium transition-all truncate ${
-                                            active
+                                          className={`flex items-center justify-center gap-1 px-1.5 py-[5px] rounded-lg text-[11px] font-medium transition-all truncate ${active
                                               ? isGlm ? 'bg-orange-50 text-orange-800' : 'bg-blue-50 text-blue-800'
                                               : 'text-[#86868b] hover:bg-[#e8e8ed]/50'
-                                          }`} title={type.description || type.name}>
+                                            }`} title={type.description || type.name}>
                                           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? (isGlm ? 'bg-orange-500' : 'bg-blue-500') : 'bg-[#c7c7cc]'}`} />
                                           <span className="truncate">{type.name}</span>
                                         </button>
@@ -1123,14 +1121,14 @@ export const Playground: React.FC = () => {
               ) : (() => {
                 // 文本模式分组
                 const presetTextGroups = [
-                  { label: '个人身份', ids: ['PERSON','ID_CARD','PASSPORT','SOCIAL_SECURITY','DRIVER_LICENSE','MILITARY_ID','BIOMETRIC','USERNAME_PASSWORD'] },
-                  { label: '联系通信', ids: ['PHONE','EMAIL','QQ_WECHAT_ID','IP_ADDRESS','MAC_ADDRESS','DEVICE_ID','URL_WEBSITE'] },
-                  { label: '金融财务', ids: ['BANK_CARD','BANK_ACCOUNT','BANK_NAME','PAYMENT_ACCOUNT','TAX_ID','AMOUNT','PROPERTY'] },
-                  { label: '机构与地址', ids: ['ORG','COMPANY_CODE','ADDRESS','POSTAL_CODE','GPS_LOCATION','WORK_UNIT'] },
-                  { label: '时间与编号', ids: ['BIRTH_DATE','DATE','TIME','LICENSE_PLATE','VIN','CASE_NUMBER','CONTRACT_NO','LEGAL_DOC_NO'] },
-                  { label: '人口统计', ids: ['AGE','GENDER','NATIONALITY','MARITAL_STATUS','OCCUPATION','EDUCATION'] },
-                  { label: '诉讼参与人', ids: ['LEGAL_PARTY','LAWYER','JUDGE','WITNESS'] },
-                  { label: '敏感信息', ids: ['HEALTH_INFO','MEDICAL_RECORD','CRIMINAL_RECORD','POLITICAL','RELIGION','SEXUAL_ORIENTATION'] },
+                  { label: '个人身份', ids: ['PERSON', 'ID_CARD', 'PASSPORT', 'SOCIAL_SECURITY', 'DRIVER_LICENSE', 'MILITARY_ID', 'BIOMETRIC', 'USERNAME_PASSWORD'] },
+                  { label: '联系通信', ids: ['PHONE', 'EMAIL', 'QQ_WECHAT_ID', 'IP_ADDRESS', 'MAC_ADDRESS', 'DEVICE_ID', 'URL_WEBSITE'] },
+                  { label: '金融财务', ids: ['BANK_CARD', 'BANK_ACCOUNT', 'BANK_NAME', 'PAYMENT_ACCOUNT', 'TAX_ID', 'AMOUNT', 'PROPERTY'] },
+                  { label: '机构与地址', ids: ['ORG', 'COMPANY_CODE', 'ADDRESS', 'POSTAL_CODE', 'GPS_LOCATION', 'WORK_UNIT'] },
+                  { label: '时间与编号', ids: ['BIRTH_DATE', 'DATE', 'TIME', 'LICENSE_PLATE', 'VIN', 'CASE_NUMBER', 'CONTRACT_NO', 'LEGAL_DOC_NO'] },
+                  { label: '人口统计', ids: ['AGE', 'GENDER', 'NATIONALITY', 'MARITAL_STATUS', 'OCCUPATION', 'EDUCATION'] },
+                  { label: '诉讼参与人', ids: ['LEGAL_PARTY', 'LAWYER', 'JUDGE', 'WITNESS'] },
+                  { label: '敏感信息', ids: ['HEALTH_INFO', 'MEDICAL_RECORD', 'CRIMINAL_RECORD', 'POLITICAL', 'RELIGION', 'SEXUAL_ORIENTATION'] },
                 ];
                 const allPresetTextIds = new Set(presetTextGroups.flatMap(g => g.ids));
                 const customTextTypes = sortedEntityTypes.filter(t => !allPresetTextIds.has(t.id));
@@ -1174,9 +1172,8 @@ export const Playground: React.FC = () => {
                                 : isRegex ? 'bg-[#007AFF]' : 'bg-[#34C759]';
                               return (
                                 <button key={type.id} onClick={() => setSelectedTypes(prev => active ? prev.filter(t => t !== type.id) : [...prev, type.id])}
-                                  className={`flex items-center justify-center gap-1 px-1.5 py-[5px] rounded-lg text-[11px] font-medium transition-all truncate ${
-                                    active ? activeClass : 'text-[#86868b] hover:bg-[#f0f0f3]'
-                                  }`} title={type.description || type.name}>
+                                  className={`flex items-center justify-center gap-1 px-1.5 py-[5px] rounded-lg text-[11px] font-medium transition-all truncate ${active ? activeClass : 'text-[#86868b] hover:bg-[#f0f0f3]'
+                                    }`} title={type.description || type.name}>
                                   <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${active ? dotClass : 'bg-[#c7c7cc]'}`} />
                                   <span className="truncate">{type.name}</span>
                                 </button>
@@ -1212,8 +1209,8 @@ export const Playground: React.FC = () => {
               <div className="min-w-0 flex-1">
                 <h3 className="font-semibold text-gray-900 text-sm truncate">{fileInfo?.filename}</h3>
                 <p className="text-xs text-gray-500">
-                  {isImageMode 
-                    ? '拖拽框选添加区域 | 点击区域切换脱敏状态' 
+                  {isImageMode
+                    ? '拖拽框选添加区域 | 点击区域切换脱敏状态'
                     : '点击高亮文字切换脱敏状态 | 划选文字添加新标记'}
                 </p>
               </div>
@@ -1312,28 +1309,28 @@ export const Playground: React.FC = () => {
                       {selectedText.text}
                     </div>
                   </div>
-                  
+
                   {/* 二级标签选择器 */}
                   <div className="mb-3">
                     <div className="text-[11px] text-gray-500 mb-2 font-medium">选择类型</div>
                     <div className="max-h-[240px] overflow-auto space-y-2 pr-1">
-                      {ENTITY_GROUPS.filter(group => 
+                      {ENTITY_GROUPS.filter(group =>
                         group.types.some(t => entityTypes.some(et => et.id === t.id))
                       ).map(group => {
-                        const availableTypes = group.types.filter(t => 
+                        const availableTypes = group.types.filter(t =>
                           entityTypes.some(et => et.id === t.id)
                         );
                         if (availableTypes.length === 0) return null;
-                        
+
                         return (
                           <div key={group.id} className="rounded-lg border border-gray-100 overflow-hidden">
                             {/* 一级分组标题 */}
-                            <div 
+                            <div
                               className="px-2.5 py-1.5 text-[11px] font-semibold flex items-center gap-1.5"
                               style={{ backgroundColor: group.bgColor, color: group.textColor }}
                             >
-                              <span 
-                                className="w-2 h-2 rounded-full" 
+                              <span
+                                className="w-2 h-2 rounded-full"
                                 style={{ backgroundColor: group.color }}
                               />
                               {group.label}
@@ -1346,11 +1343,10 @@ export const Playground: React.FC = () => {
                                   <button
                                     key={type.id}
                                     onClick={() => setSelectedTypeId(type.id)}
-                                    className={`text-[12px] px-2 py-1.5 rounded-md text-left transition-all truncate ${
-                                      isSelected
+                                    className={`text-[12px] px-2 py-1.5 rounded-md text-left transition-all truncate ${isSelected
                                         ? 'font-semibold ring-2 ring-offset-1'
                                         : 'hover:bg-gray-50'
-                                    }`}
+                                      }`}
                                     style={isSelected ? {
                                       backgroundColor: group.bgColor,
                                       color: group.textColor,
@@ -1370,7 +1366,7 @@ export const Playground: React.FC = () => {
                       })}
                     </div>
                   </div>
-                  
+
                   {/* 操作按钮 */}
                   <div className="flex gap-2 pt-2 border-t border-gray-100">
                     <button
@@ -1397,7 +1393,7 @@ export const Playground: React.FC = () => {
                   </div>
                 </div>
               )}
-              
+
               {/* 点击实体弹出的操作菜单 */}
               {!isImageMode && clickedEntity && entityPopupPos && (
                 <div
@@ -1419,21 +1415,21 @@ export const Playground: React.FC = () => {
                         {/* 实体信息 */}
                         <div className="mb-3">
                           <div className="flex items-center gap-2 mb-1.5">
-                            <span 
+                            <span
                               className="text-[11px] font-semibold px-2 py-0.5 rounded"
                               style={{ backgroundColor: riskConfig.bgColor, color: riskConfig.textColor }}
                             >
                               {group?.label} · {typeName}
                             </span>
                           </div>
-                          <div 
+                          <div
                             className="text-sm font-medium px-2 py-1.5 rounded-lg break-all"
                             style={{ backgroundColor: riskConfig.bgColor, color: riskConfig.textColor }}
                           >
                             {clickedEntity.text}
                           </div>
                         </div>
-                        
+
                         {/* 操作按钮 */}
                         <div className="space-y-1.5">
                           <button
@@ -1461,7 +1457,7 @@ export const Playground: React.FC = () => {
           </div>
 
           {/* 右侧面板 - 收窄 */}
-          <div className="w-[240px] flex-shrink-0 flex flex-col gap-2 overflow-hidden">
+          <div className="w-[240px] flex-shrink-0 flex flex-col gap-2 overflow-y-auto overflow-x-hidden pb-4 pr-1 snap-y">
             {/* 类型配置 */}
             <div className="bg-white rounded-xl border border-[#e5e5e5] p-4">
               <div className="flex items-center justify-between mb-3">
@@ -1471,21 +1467,19 @@ export const Playground: React.FC = () => {
               <div className="flex gap-2 mb-3">
                 <button
                   onClick={() => setTypeTab('text')}
-                  className={`text-[12px] font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-                    typeTab === 'text'
+                  className={`text-[12px] font-medium px-3 py-1.5 rounded-lg border transition-colors ${typeTab === 'text'
                       ? 'border-[#0a0a0a] bg-[#0a0a0a] text-white'
                       : 'border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5]'
-                  }`}
+                    }`}
                 >
                   文本
                 </button>
                 <button
                   onClick={() => setTypeTab('vision')}
-                  className={`text-[12px] font-medium px-3 py-1.5 rounded-lg border transition-colors ${
-                    typeTab === 'vision'
+                  className={`text-[12px] font-medium px-3 py-1.5 rounded-lg border transition-colors ${typeTab === 'vision'
                       ? 'border-[#0a0a0a] bg-[#0a0a0a] text-white'
                       : 'border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5]'
-                  }`}
+                    }`}
                   title="仅图片/扫描件生效"
                 >
                   图像
@@ -1495,22 +1489,20 @@ export const Playground: React.FC = () => {
                 <button
                   onClick={handleUndo}
                   disabled={!canUndo}
-                  className={`text-[12px] px-2.5 py-1 rounded-lg border transition-colors ${
-                    !canUndo
+                  className={`text-[12px] px-2.5 py-1 rounded-lg border transition-colors ${!canUndo
                       ? 'border-[#f0f0f0] text-[#d4d4d4] cursor-not-allowed'
                       : 'border-[#e5e5e5] text-[#737373] hover:border-[#d4d4d4] hover:bg-[#fafafa]'
-                  }`}
+                    }`}
                 >
                   撤销
                 </button>
                 <button
                   onClick={handleRedo}
                   disabled={!canRedo}
-                  className={`text-[12px] px-2.5 py-1 rounded-lg border transition-colors ${
-                    !canRedo
+                  className={`text-[12px] px-2.5 py-1 rounded-lg border transition-colors ${!canRedo
                       ? 'border-[#f0f0f0] text-[#d4d4d4] cursor-not-allowed'
                       : 'border-[#e5e5e5] text-[#737373] hover:border-[#d4d4d4] hover:bg-[#fafafa]'
-                  }`}
+                    }`}
                 >
                   重做
                 </button>
@@ -1534,41 +1526,38 @@ export const Playground: React.FC = () => {
                       const displayName = isGlmVision ? '🔍 GLM Vision' : '📝 OCR+HaS';
                       return (
                         <div key={pipeline.mode}>
-                          <div className={`text-[10px] font-medium mb-1 ${
-                            pipeline.mode === 'ocr_has' ? 'text-blue-600' : 'text-purple-600'
-                          }`}>
+                          <div className={`text-[10px] font-medium mb-1 ${pipeline.mode === 'ocr_has' ? 'text-blue-600' : 'text-purple-600'
+                            }`}>
                             {displayName}
                           </div>
                           <div className="grid grid-cols-1 gap-1">
-                          {pipeline.types.filter(t => t.enabled).map(type => {
-                            const active = pipeline.mode === 'ocr_has' 
-                              ? selectedOcrHasTypes.includes(type.id)
-                              : selectedGlmVisionTypes.includes(type.id);
-                            return (
-                              <button
-                                key={type.id}
-                                onClick={() => toggleVisionType(type.id, pipeline.mode as 'ocr_has' | 'glm_vision')}
-                                className={`flex items-center gap-1.5 text-xs rounded-lg border px-2 py-1 text-left ${
-                                  active
-                                    ? pipeline.mode === 'ocr_has'
-                                      ? 'border-blue-500 bg-blue-50'
-                                      : 'border-purple-500 bg-purple-50'
-                                    : 'border-gray-200 bg-gray-50 opacity-50'
-                                }`}
-                              >
-                                <input 
-                                  type="checkbox" 
-                                  checked={active} 
-                                  onChange={() => {}}
-                                  className={`w-3 h-3 rounded ${
-                                    pipeline.mode === 'ocr_has' ? 'accent-blue-500' : 'accent-purple-500'
-                                  }`}
-                                />
-                                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: type.color }} />
-                                <span className={`flex-1 ${active ? 'text-gray-600' : 'text-gray-400'}`}>{type.name}</span>
-                              </button>
-                            );
-                          })}
+                            {pipeline.types.filter(t => t.enabled).map(type => {
+                              const active = pipeline.mode === 'ocr_has'
+                                ? selectedOcrHasTypes.includes(type.id)
+                                : selectedGlmVisionTypes.includes(type.id);
+                              return (
+                                <button
+                                  key={type.id}
+                                  onClick={() => toggleVisionType(type.id, pipeline.mode as 'ocr_has' | 'glm_vision')}
+                                  className={`flex items-center gap-1.5 text-xs rounded-lg border px-2 py-1 text-left ${active
+                                      ? pipeline.mode === 'ocr_has'
+                                        ? 'border-blue-500 bg-blue-50'
+                                        : 'border-purple-500 bg-purple-50'
+                                      : 'border-gray-200 bg-gray-50 opacity-50'
+                                    }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={active}
+                                    onChange={() => { }}
+                                    className={`w-3 h-3 rounded ${pipeline.mode === 'ocr_has' ? 'accent-blue-500' : 'accent-purple-500'
+                                      }`}
+                                  />
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: type.color }} />
+                                  <span className={`flex-1 ${active ? 'text-gray-600' : 'text-gray-400'}`}>{type.name}</span>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -1585,11 +1574,10 @@ export const Playground: React.FC = () => {
                             active ? prev.filter(t => t !== type.id) : [...prev, type.id]
                           );
                         }}
-                        className={`flex items-center gap-2 text-[12px] rounded-lg border px-2.5 py-2 text-left transition-colors ${
-                          active
+                        className={`flex items-center gap-2 text-[12px] rounded-lg border px-2.5 py-2 text-left transition-colors ${active
                             ? 'border-[#0a0a0a] bg-[#fafafa]'
                             : 'border-[#e5e5e5] hover:border-[#d4d4d4] hover:bg-[#fafafa]'
-                        }`}
+                          }`}
                       >
                         <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: type.color }} />
                         <span className={`flex-1 ${active ? 'text-[#0a0a0a]' : 'text-[#737373]'}`}>{type.name}</span>
@@ -1679,24 +1667,24 @@ export const Playground: React.FC = () => {
                         const groupStats = Object.entries(stats).filter(([typeId]) => {
                           return group.types.some(t => t.id === typeId);
                         });
-                        
+
                         if (groupStats.length === 0) return null;
-                        
+
                         const totalInGroup = groupStats.reduce((sum, [, c]) => sum + c.total, 0);
                         const selectedInGroup = groupStats.reduce((sum, [, c]) => sum + c.selected, 0);
-                        
+
                         return (
                           <div key={group.id} className="rounded-lg overflow-hidden border border-gray-100">
-                            <div 
+                            <div
                               className="flex items-center justify-between px-2.5 py-1.5"
                               style={{ backgroundColor: group.bgColor }}
                             >
                               <div className="flex items-center gap-1.5">
-                                <span 
-                                  className="w-2 h-2 rounded-full" 
+                                <span
+                                  className="w-2 h-2 rounded-full"
                                   style={{ backgroundColor: group.color }}
                                 />
-                                <span 
+                                <span
                                   className="text-[11px] font-semibold"
                                   style={{ color: group.textColor }}
                                 >
@@ -1751,25 +1739,24 @@ export const Playground: React.FC = () => {
                           <input
                             type="checkbox"
                             checked={box.selected}
-                            onChange={() => {}}
+                            onChange={() => { }}
                             className="w-4 h-4 rounded"
                             style={{ accentColor: riskConfig.color }}
                           />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-1">
-                              <span 
+                              <span
                                 className="text-[11px] font-medium px-1.5 py-0.5 rounded"
-                                style={{ 
-                                  backgroundColor: riskConfig.bgColor, 
-                                  color: riskConfig.textColor 
+                                style={{
+                                  backgroundColor: riskConfig.bgColor,
+                                  color: riskConfig.textColor
                                 }}
                               >
                                 {group?.label} · {getEntityTypeName(box.type)}
                               </span>
-                              <span className={`px-1 py-0.5 rounded text-[9px] font-bold text-white ${
-                                box.source === 'ocr_has' ? 'bg-blue-500' : 
-                                box.source === 'glm_vision' ? 'bg-purple-500' : 'bg-gray-400'
-                              }`}>
+                              <span className={`px-1 py-0.5 rounded text-[9px] font-bold text-white ${box.source === 'ocr_has' ? 'bg-blue-500' :
+                                  box.source === 'glm_vision' ? 'bg-purple-500' : 'bg-gray-400'
+                                }`}>
                                 {box.source === 'ocr_has' ? 'OCR' : box.source === 'glm_vision' ? 'VLM' : '手动'}
                               </span>
                             </div>
@@ -1787,25 +1774,25 @@ export const Playground: React.FC = () => {
                   ) : (
                     // 按分组显示
                     ENTITY_GROUPS.map(group => {
-                      const groupEntities = entities.filter(e => 
+                      const groupEntities = entities.filter(e =>
                         group.types.some(t => t.id === e.type)
                       );
-                      
+
                       if (groupEntities.length === 0) return null;
-                      
+
                       return (
                         <div key={group.id}>
                           {/* 分组标题 */}
-                          <div 
+                          <div
                             className="px-3 py-2 flex items-center justify-between sticky top-0 z-10"
                             style={{ backgroundColor: group.bgColor }}
                           >
                             <div className="flex items-center gap-1.5">
-                              <span 
-                                className="w-2.5 h-2.5 rounded-full" 
+                              <span
+                                className="w-2.5 h-2.5 rounded-full"
                                 style={{ backgroundColor: group.color }}
                               />
-                              <span 
+                              <span
                                 className="text-[12px] font-semibold"
                                 style={{ color: group.textColor }}
                               >
@@ -1827,11 +1814,11 @@ export const Playground: React.FC = () => {
                               >
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-1.5 mb-1">
-                                    <span 
+                                    <span
                                       className="text-[11px] font-medium px-1.5 py-0.5 rounded"
-                                      style={{ 
-                                        backgroundColor: riskConfig.bgColor, 
-                                        color: riskConfig.textColor 
+                                      style={{
+                                        backgroundColor: riskConfig.bgColor,
+                                        color: riskConfig.textColor
                                       }}
                                     >
                                       {getEntityTypeName(entity.type)}
@@ -1867,11 +1854,10 @@ export const Playground: React.FC = () => {
             <button
               onClick={handleRedact}
               disabled={selectedCount === 0}
-              className={`py-3 rounded-xl text-[14px] font-semibold flex items-center justify-center gap-2 transition-all ${
-                selectedCount > 0
+              className={`py-3 rounded-xl text-[14px] font-semibold flex items-center justify-center gap-2 transition-all ${selectedCount > 0
                   ? 'bg-[#0a0a0a] text-white hover:bg-[#262626]'
                   : 'bg-[#f0f0f0] text-[#a3a3a3] cursor-not-allowed'
-              }`}
+                }`}
             >
               开始脱敏 ({selectedCount})
             </button>
@@ -1901,25 +1887,25 @@ export const Playground: React.FC = () => {
         };
         const highlightRedacted = (text: string, map: Record<string, string>) => {
           if (!text || Object.keys(map).length === 0) return <span>{text}</span>;
-          
+
           // 建立 replacement → origKey[] 反向映射（一个replacement可对应多个原文）
           const replToOrigKeys: Record<string, string[]> = {};
           Object.entries(map).forEach(([origKey, repl]) => {
             if (!replToOrigKeys[repl]) replToOrigKeys[repl] = [];
             replToOrigKeys[repl].push(origKey);
           });
-          
+
           // 收集所有唯一的replacement，按长度降序（优先匹配长的）
           const sortedRepls = Object.keys(replToOrigKeys).sort((a, b) => b.length - a.length);
-          
+
           // 如果没有替换文本，直接返回原文
           if (sortedRepls.length === 0) return <span>{text}</span>;
-          
+
           // 使用正则匹配（更可靠）
           const escapedRepls = sortedRepls.map(r => r.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
           const regex = new RegExp(`(${escapedRepls.join('|')})`, 'g');
           const parts = text.split(regex);
-          
+
           const counters: Record<string, number> = {};
           return <>{parts.map((part, i) => {
             const origKeys = replToOrigKeys[part];
@@ -1970,152 +1956,152 @@ export const Playground: React.FC = () => {
             });
           }, 2500);
         };
-        
-        return (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* 顶部状态栏 */}
-          <div className="flex-shrink-0 mx-4 mt-4 mb-3">
-            <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-2xl px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                </div>
-                <div>
-                  <p className="text-white text-sm font-semibold">脱敏完成</p>
-                  <p className="text-gray-400 text-xs">{redactedCount} 处敏感信息已处理</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => setStage('preview')} className="px-3 py-1.5 text-xs text-gray-300 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg transition-all">返回编辑</button>
-                <button onClick={handleReset} className="px-3 py-1.5 text-xs text-gray-300 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg transition-all">新文件</button>
-                {fileInfo && (
-                  <a href={`/api/v1/files/${fileInfo.file_id}/download?redacted=true`} download className="px-4 py-1.5 text-xs font-medium text-gray-900 bg-white hover:bg-gray-100 rounded-lg transition-all">下载文件</a>
-                )}
-              </div>
-            </div>
-          </div>
 
-          {/* 三列主体 */}
-          {isImageMode ? (
-            <div className="flex-1 flex gap-3 px-4 pb-4 min-h-0">
-              {/* 左：原始图片 */}
-              <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span className="text-xs font-semibold text-gray-700 tracking-tight">原始图片</span>
+        return (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            {/* 顶部状态栏 */}
+            <div className="flex-shrink-0 mx-4 mt-4 mb-3">
+              <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-2xl px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="text-white text-sm font-semibold">脱敏完成</p>
+                    <p className="text-gray-400 text-xs">{redactedCount} 处敏感信息已处理</p>
+                  </div>
                 </div>
-                <div className="flex-1 overflow-auto p-3">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setStage('preview')} className="px-3 py-1.5 text-xs text-gray-300 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg transition-all">返回编辑</button>
+                  <button onClick={handleReset} className="px-3 py-1.5 text-xs text-gray-300 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg transition-all">新文件</button>
                   {fileInfo && (
-                    <ImageBBoxEditor
-                      imageSrc={`/api/v1/files/${fileInfo.file_id}/download`}
-                      boxes={visibleBoxes}
-                      onBoxesChange={(newBoxes) => setBoundingBoxes(mergeVisibleBoxes(newBoxes))}
-                      onBoxesCommit={(prevBoxes, nextBoxes) => {
-                        setImageUndoStack(prev => [...prev, mergeVisibleBoxes(prevBoxes, nextBoxes)]);
-                        setImageRedoStack([]);
-                        setBoundingBoxes(mergeVisibleBoxes(nextBoxes, prevBoxes));
-                      }}
-                      getTypeConfig={getVisionTypeConfig}
-                      availableTypes={visionTypes.map(t => ({ id: t.id, name: t.name, color: t.color }))}
-                      defaultType={visionTypes[0]?.id || 'CUSTOM'}
-                    />
+                    <a href={`/api/v1/files/${fileInfo.file_id}/download?redacted=true`} download className="px-4 py-1.5 text-xs font-medium text-gray-900 bg-white hover:bg-gray-100 rounded-lg transition-all">下载文件</a>
                   )}
                 </div>
               </div>
-              {/* 中：脱敏后图片 */}
-              <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-400" />
-                  <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏结果</span>
-                </div>
-                <div className="flex-1 overflow-auto p-3">
-                  {fileInfo && <img src={`/api/v1/files/${fileInfo.file_id}/download?redacted=true`} alt="redacted" className="max-w-full h-auto object-contain" />}
-                </div>
-              </div>
-              {/* 右：映射表 */}
-              <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-violet-400" />
-                    <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏记录</span>
-                  </div>
-                  <span className="text-[10px] text-gray-400 tabular-nums">{Object.keys(entityMap).length}</span>
-                </div>
-                <div className="flex-1 overflow-auto">
-                  {Object.entries(entityMap).map(([orig, repl], i) => (
-                    <button key={i} onClick={() => scrollToMatch(orig, repl)}
-                      className="w-full text-left px-3 py-2 border-b border-gray-50 hover:bg-blue-50/50 transition-all group">
-                      <div className="text-[11px] text-amber-700 font-medium truncate group-hover:text-amber-800">{orig}</div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <svg className="w-2.5 h-2.5 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
-                        <span className="text-[11px] text-blue-600 truncate group-hover:text-blue-700">{repl}</span>
-                      </div>
-                    </button>
-                  ))}
-                  {Object.keys(entityMap).length === 0 && <p className="text-xs text-gray-400 text-center py-6">暂无记录</p>}
-                </div>
-              </div>
             </div>
-          ) : (
-            <div className="flex-1 flex gap-3 px-4 pb-4 min-h-0">
-              {/* 左：原始文档 */}
-              <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
-                  <span className="text-xs font-semibold text-gray-700 tracking-tight">原始文档</span>
-                </div>
-                <div className="flex-1 overflow-auto p-4" id="original-scroll">
-                  <div className="text-[13px] leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]">
-                    {highlightText(content, entityMap, 'orig')}
+
+            {/* 三列主体 */}
+            {isImageMode ? (
+              <div className="flex-1 flex gap-3 px-4 pb-4 min-h-0">
+                {/* 左：原始图片 */}
+                <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span className="text-xs font-semibold text-gray-700 tracking-tight">原始图片</span>
+                  </div>
+                  <div className="flex-1 overflow-auto p-3">
+                    {fileInfo && (
+                      <ImageBBoxEditor
+                        imageSrc={`/api/v1/files/${fileInfo.file_id}/download`}
+                        boxes={visibleBoxes}
+                        onBoxesChange={(newBoxes) => setBoundingBoxes(mergeVisibleBoxes(newBoxes))}
+                        onBoxesCommit={(prevBoxes, nextBoxes) => {
+                          setImageUndoStack(prev => [...prev, mergeVisibleBoxes(prevBoxes, nextBoxes)]);
+                          setImageRedoStack([]);
+                          setBoundingBoxes(mergeVisibleBoxes(nextBoxes, prevBoxes));
+                        }}
+                        getTypeConfig={getVisionTypeConfig}
+                        availableTypes={visionTypes.map(t => ({ id: t.id, name: t.name, color: t.color }))}
+                        defaultType={visionTypes[0]?.id || 'CUSTOM'}
+                      />
+                    )}
                   </div>
                 </div>
-              </div>
-              {/* 中：脱敏后文档 */}
-              <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-400" />
-                  <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏结果</span>
-                </div>
-                <div className="flex-1 overflow-auto p-4" id="redacted-scroll">
-                  <div className="text-[13px] leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]">
-                    {highlightRedacted(redactedContent || content, entityMap)}
+                {/* 中：脱敏后图片 */}
+                <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-400" />
+                    <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏结果</span>
+                  </div>
+                  <div className="flex-1 overflow-auto p-3">
+                    {fileInfo && <img src={`/api/v1/files/${fileInfo.file_id}/download?redacted=true`} alt="redacted" className="max-w-full h-auto object-contain" />}
                   </div>
                 </div>
-              </div>
-              {/* 右：映射列表 */}
-              <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-violet-400" />
-                    <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏记录</span>
+                {/* 右：映射表 */}
+                <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-violet-400" />
+                      <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏记录</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 tabular-nums">{Object.keys(entityMap).length}</span>
                   </div>
-                  <span className="text-[10px] text-gray-400 tabular-nums">{Object.keys(entityMap).length}</span>
-                </div>
-                <div className="flex-1 overflow-auto">
-                  {Object.entries(entityMap).map(([orig, repl], i) => {
-                    const count = (content || '').split(orig).length - 1;
-                    return (
+                  <div className="flex-1 overflow-auto">
+                    {Object.entries(entityMap).map(([orig, repl], i) => (
                       <button key={i} onClick={() => scrollToMatch(orig, repl)}
                         className="w-full text-left px-3 py-2 border-b border-gray-50 hover:bg-blue-50/50 transition-all group">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] text-amber-700 font-medium truncate flex-1 group-hover:text-amber-800">{orig}</span>
-                          {count > 1 && <span className="text-[9px] text-gray-400 bg-gray-100 rounded px-1 flex-shrink-0">{count}处</span>}
-                        </div>
+                        <div className="text-[11px] text-amber-700 font-medium truncate group-hover:text-amber-800">{orig}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <svg className="w-2.5 h-2.5 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
                           <span className="text-[11px] text-blue-600 truncate group-hover:text-blue-700">{repl}</span>
                         </div>
                       </button>
-                    );
-                  })}
-                  {Object.keys(entityMap).length === 0 && <p className="text-xs text-gray-400 text-center py-8">暂无记录</p>}
+                    ))}
+                    {Object.keys(entityMap).length === 0 && <p className="text-xs text-gray-400 text-center py-6">暂无记录</p>}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="flex-1 flex gap-3 px-4 pb-4 min-h-0">
+                {/* 左：原始文档 */}
+                <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span className="text-xs font-semibold text-gray-700 tracking-tight">原始文档</span>
+                  </div>
+                  <div className="flex-1 overflow-auto p-4" id="original-scroll">
+                    <div className="text-[13px] leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]">
+                      {highlightText(content, entityMap, 'orig')}
+                    </div>
+                  </div>
+                </div>
+                {/* 中：脱敏后文档 */}
+                <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-400" />
+                    <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏结果</span>
+                  </div>
+                  <div className="flex-1 overflow-auto p-4" id="redacted-scroll">
+                    <div className="text-[13px] leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]">
+                      {highlightRedacted(redactedContent || content, entityMap)}
+                    </div>
+                  </div>
+                </div>
+                {/* 右：映射列表 */}
+                <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-violet-400" />
+                      <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏记录</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 tabular-nums">{Object.keys(entityMap).length}</span>
+                  </div>
+                  <div className="flex-1 overflow-auto">
+                    {Object.entries(entityMap).map(([orig, repl], i) => {
+                      const count = (content || '').split(orig).length - 1;
+                      return (
+                        <button key={i} onClick={() => scrollToMatch(orig, repl)}
+                          className="w-full text-left px-3 py-2 border-b border-gray-50 hover:bg-blue-50/50 transition-all group">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-amber-700 font-medium truncate flex-1 group-hover:text-amber-800">{orig}</span>
+                            {count > 1 && <span className="text-[9px] text-gray-400 bg-gray-100 rounded px-1 flex-shrink-0">{count}处</span>}
+                          </div>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            <svg className="w-2.5 h-2.5 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" /></svg>
+                            <span className="text-[11px] text-blue-600 truncate group-hover:text-blue-700">{repl}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {Object.keys(entityMap).length === 0 && <p className="text-xs text-gray-400 text-center py-8">暂无记录</p>}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         );
       })()}
 

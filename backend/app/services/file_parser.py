@@ -79,14 +79,16 @@ class FileParser:
         将 .doc 文件转换为 .docx
         """
         abs_path = os.path.abspath(doc_path)
-        
         # Windows: 尝试使用 pywin32 调用 Word
         if sys.platform == 'win32':
-            result = await self._convert_with_word_com(abs_path)
-            if result:
-                return result
-        
-        # 尝试使用 LibreOffice
+            try:
+                import win32com.client
+                import pythoncom
+                result = await self._convert_with_word_com(abs_path)
+                if result:
+                    return result
+            except ImportError:
+                print("未安装 pywin32，跳过 Word COM 转换")
         result = await self._convert_with_libreoffice(abs_path)
         if result:
             return result

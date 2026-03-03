@@ -52,15 +52,21 @@ class HaSClient:
     ):
         from app.core.config import settings
         self.base_url = (base_url or settings.HAS_BASE_URL).rstrip('/')
+        self.model_name = getattr(settings, 'HAS_MODEL_NAME', 'glm') # 默认占位符，如果没设则不影响 llama.cpp
         self.timeout = httpx.Timeout(timeout or settings.HAS_TIMEOUT)
         self._history_mapping: Dict[str, List[str]] = {}  # 历史映射记录
     
     def _call_model(self, messages: List[Dict]) -> str:
-        """调用HaS模型"""
-        with httpx.Client(timeout=self.timeout) as client:
+        # 配置 httpx 客户端强行忽略各类代理 (避免 mac 下 localhost 被拦截导致 502)
+        with httpx.Client(timeout=self.timeout, trust_env=False) as client:
+            payload = {
+                "model": self.model_name,
+                "messages": messages,
+                "temperature": 0.1, # 强制低温度以保留实体原本的稳定输出
+            }
             response = client.post(
                 f"{self.base_url}/chat/completions",
-                json={"messages": messages}
+                json=payload
             )
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"]

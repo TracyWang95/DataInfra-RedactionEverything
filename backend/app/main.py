@@ -87,7 +87,7 @@ async def services_health():
     def check_sync(url: str, default_name: str) -> tuple:
         """同步检查HTTP服务（在线程池中运行）"""
         try:
-            with httpx.Client(timeout=3.0) as client:
+            with httpx.Client(timeout=3.0, trust_env=False) as client:
                 resp = client.get(url)
                 if resp.status_code == 200:
                     data = resp.json()
