@@ -399,6 +399,74 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
     height: Math.abs(drawCurrent.y - drawStart.y),
   } : null;
 
+  /** 只读对比：与 Playground 右侧「纯 img + object-contain」同一套缩放，框用百分比叠在图上，避免 fitScale 像素取整与视口测量导致裁切、显大 */
+  const renderBoxes = (percentCoords: boolean) =>
+    boxes.map(box => {
+      const config = getTypeConfig(box.type);
+      const isSelected = box.id === selectedBoxId;
+      const stroke = isSelected ? BOX_STROKE_SELECTED : BOX_STROKE;
+      const sourceCls =
+        box.source === 'ocr_has'
+          ? 'bg-blue-100/95 text-blue-800 border-blue-200/80'
+          : box.source === 'has_image'
+            ? 'bg-violet-100/95 text-violet-800 border-violet-200/80'
+            : 'bg-emerald-100/95 text-emerald-800 border-emerald-200/80';
+
+      const posStyle: React.CSSProperties = percentCoords
+        ? {
+            left: `${box.x * 100}%`,
+            top: `${box.y * 100}%`,
+            width: `${box.width * 100}%`,
+            height: `${box.height * 100}%`,
+          }
+        : {
+            left: toPixel(box.x, 'x'),
+            top: toPixel(box.y, 'y'),
+            width: toPixel(box.width, 'x'),
+            height: toPixel(box.height, 'y'),
+          };
+
+      return (
+        <div
+          key={box.id}
+          className={`absolute transition-[box-shadow,border-color] duration-150 ${isSelected ? 'z-10' : 'z-0'}`}
+          style={{
+            ...posStyle,
+            border: `1px solid ${stroke}`,
+            backgroundColor: box.selected ? 'rgba(148, 163, 184, 0.06)' : 'transparent',
+            boxShadow: isSelected ? `0 0 0 1px ${BOX_STROKE_SELECTED}` : 'none',
+            cursor: readOnly ? 'default' : 'move',
+          }}
+          onMouseDown={(e) => {
+            if (readOnly) return;
+            e.stopPropagation();
+            handleBoxMouseDown(e, box.id);
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            className={`absolute -top-[1.125rem] left-0 max-w-[min(100%,14rem)] px-1 py-px rounded shadow-sm border whitespace-nowrap flex items-center gap-0.5 pointer-events-none ${sourceCls}`}
+          >
+            <span className="text-[8px] leading-none font-medium tabular-nums shrink-0">
+              {box.source === 'ocr_has' ? 'OCR' : box.source === 'has_image' ? '图像' : '手动'}
+            </span>
+            <span className="text-[9px] leading-tight font-normal truncate opacity-90">
+              {config.name}
+              {box.text ? ` · ${box.text.slice(0, 14)}${box.text.length > 14 ? '…' : ''}` : ''}
+            </span>
+          </div>
+
+          {isSelected && !drawMode && !readOnly && renderResizeHandles(box)}
+
+          {!box.selected && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+              <span className="text-white text-[10px] font-medium drop-shadow-sm">已取消</span>
+            </div>
+          )}
+        </div>
+      );
+    });
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* 工具栏（脱敏结果对比 / 只读模式不展示） */}
@@ -499,98 +567,50 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
             <div className="pointer-events-auto">{viewportBottomSlot}</div>
           </div>
         )}
-        <div
-          ref={containerRef}
-          className={`relative inline-block shrink-0 ${readOnly ? 'cursor-default' : drawMode ? 'cursor-crosshair' : 'cursor-default'}`}
-          style={{
-            width: displayW > 0 ? displayW : undefined,
-            height: displayH > 0 ? displayH : undefined,
-          }}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={() => {
-            if (!isDragging && !isResizing && !isDrawing) handleMouseUp();
-          }}
-        >
-          <img
-            ref={imageRef}
-            src={imageSrc}
-            alt="edit"
-            className="select-none block max-w-none"
-            width={displayW > 0 ? Math.round(displayW) : undefined}
-            height={displayH > 0 ? Math.round(displayH) : undefined}
+        {readOnly ? (
+          <div className="relative inline-block max-w-full max-h-full shrink-0 leading-none">
+            <img
+              ref={imageRef}
+              src={imageSrc}
+              alt=""
+              className="block max-w-full max-h-full w-auto h-auto object-contain select-none"
+              onLoad={handleImageLoad}
+              draggable={false}
+            />
+            <div className="pointer-events-none absolute inset-0 z-[1]">{renderBoxes(true)}</div>
+          </div>
+        ) : (
+          <div
+            ref={containerRef}
+            className={`relative inline-block shrink-0 ${drawMode ? 'cursor-crosshair' : 'cursor-default'}`}
             style={{
               width: displayW > 0 ? displayW : undefined,
               height: displayH > 0 ? displayH : undefined,
             }}
-            onLoad={handleImageLoad}
-            draggable={false}
-          />
-
-        {/* 渲染所有 bounding boxes */}
-        {boxes.map(box => {
-          const config = getTypeConfig(box.type);
-          const isSelected = box.id === selectedBoxId;
-          const stroke = isSelected ? BOX_STROKE_SELECTED : BOX_STROKE;
-          const sourceCls =
-            box.source === 'ocr_has'
-              ? 'bg-blue-100/95 text-blue-800 border-blue-200/80'
-              : box.source === 'has_image'
-                ? 'bg-violet-100/95 text-violet-800 border-violet-200/80'
-                : 'bg-emerald-100/95 text-emerald-800 border-emerald-200/80';
-
-          return (
-            <div
-              key={box.id}
-              className={`absolute transition-[box-shadow,border-color] duration-150 ${isSelected ? 'z-10' : 'z-0'}`}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={() => {
+              if (!isDragging && !isResizing && !isDrawing) handleMouseUp();
+            }}
+          >
+            <img
+              ref={imageRef}
+              src={imageSrc}
+              alt="edit"
+              className="select-none block max-w-none"
+              width={displayW > 0 ? Math.round(displayW) : undefined}
+              height={displayH > 0 ? Math.round(displayH) : undefined}
               style={{
-                left: toPixel(box.x, 'x'),
-                top: toPixel(box.y, 'y'),
-                width: toPixel(box.width, 'x'),
-                height: toPixel(box.height, 'y'),
-                border: `1px solid ${stroke}`,
-                backgroundColor: box.selected ? 'rgba(148, 163, 184, 0.06)' : 'transparent',
-                boxShadow: isSelected ? `0 0 0 1px ${BOX_STROKE_SELECTED}` : 'none',
-                cursor: readOnly ? 'default' : 'move',
+                width: displayW > 0 ? displayW : undefined,
+                height: displayH > 0 ? displayH : undefined,
               }}
-              onMouseDown={(e) => {
-                if (readOnly) return;
-                // 绘制模式下也要能拖拽/选中已有框，并阻止冒泡到容器触发「拉新框」
-                e.stopPropagation();
-                handleBoxMouseDown(e, box.id);
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* 标签：浅色小字，浮在框外上方，降低对画面的遮挡感 */}
-              <div
-                className={`absolute -top-[1.125rem] left-0 max-w-[min(100%,14rem)] px-1 py-px rounded shadow-sm border whitespace-nowrap flex items-center gap-0.5 pointer-events-none ${sourceCls}`}
-              >
-                <span className="text-[8px] leading-none font-medium tabular-nums shrink-0">
-                  {box.source === 'ocr_has' ? 'OCR' : box.source === 'has_image' ? '图像' : '手动'}
-                </span>
-                <span className="text-[9px] leading-tight font-normal truncate opacity-90">
-                  {config.name}
-                  {box.text
-                    ? ` · ${box.text.slice(0, 14)}${box.text.length > 14 ? '…' : ''}`
-                    : ''}
-                </span>
-              </div>
+              onLoad={handleImageLoad}
+              draggable={false}
+            />
 
-              {/* 选中状态的调整手柄 */}
-              {isSelected && !drawMode && !readOnly && renderResizeHandles(box)}
+            {renderBoxes(false)}
 
-              {/* 未选中指示器 */}
-              {!box.selected && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                  <span className="text-white text-[10px] font-medium drop-shadow-sm">已取消</span>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-            {/* 绘制中的预览框 */}
             {drawingBox && drawingBox.width > 5 && drawingBox.height > 5 && (
               <div
                 className="absolute border border-dashed border-slate-400 bg-slate-400/8 pointer-events-none"
@@ -603,6 +623,7 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
               />
             )}
           </div>
+        )}
       </div>
     </div>
   );
