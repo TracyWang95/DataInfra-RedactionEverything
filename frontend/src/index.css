@@ -1,0 +1,507 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   简约白底科技风主题
+   融合苹果极简风 + form-filling 科技感
+   ============================================ */
+
+:root {
+  /* 核心色板 - 黑白灰为主 */
+  --background: #ffffff;
+  --background-secondary: #fafafa;
+  --background-tertiary: #f5f5f7;
+  --foreground: #1d1d1f;
+  --foreground-secondary: #424245;
+  --foreground-muted: #6e6e73;
+  --foreground-subtle: #a1a1a6;
+  --border: #d2d2d7;
+  --border-light: #e8e8ed;
+  --accent: #1d1d1f;
+  --accent-light: rgba(0, 0, 0, 0.04);
+
+  /* 勾选语义（与 selectionClasses 一致，供原生控件 fallback） */
+  --select-regex: #007aff;
+  --select-ner: #34c759;
+  --select-yolo: #af52de;
+
+  /* 语义色 */
+  --success: #34c759;
+  --warning: #ff9500;
+  --error: #ff3b30;
+  --info: #007aff;
+}
+
+/* 字体渲染优化 */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  font-size: 15px; /* 基准字号调大 */
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+               'Helvetica Neue', 'Segoe UI', system-ui, sans-serif;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+#root {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ============================================
+   滚动条 - 极简风格
+   ============================================ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a3a3a3;
+}
+
+/* 选中文本（与系统蓝协调） */
+::selection {
+  background: rgba(0, 122, 255, 0.18);
+}
+
+/* ============================================
+   动画
+   ============================================ */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.animate-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.25s ease-out;
+}
+
+/* ============================================
+   玻璃态效果
+   ============================================ */
+
+.glass {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ============================================
+   卡片组件
+   ============================================ */
+
+.card {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.card-elevated {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+/* ============================================
+   按钮组件
+   ============================================ */
+
+/* 主按钮 - 黑色实心 */
+.btn-primary {
+  background: var(--foreground);
+  color: var(--background);
+  font-weight: 500;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: var(--foreground-secondary);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* 次要按钮 */
+.btn-secondary {
+  background: var(--background);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-weight: 500;
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: var(--background-secondary);
+  border-color: #d4d4d4;
+}
+
+.btn-secondary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Ghost 按钮 */
+.btn-ghost {
+  background: transparent;
+  color: var(--foreground-muted);
+  font-weight: 500;
+  font-size: 13px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: none;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-ghost:hover {
+  background: var(--accent-light);
+  color: var(--foreground);
+}
+
+/* 小按钮 */
+.btn-sm {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 6px;
+}
+
+/* ============================================
+   输入框组件
+   ============================================ */
+
+.input {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  width: 100%;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--foreground);
+  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.05);
+}
+
+.input::placeholder {
+  color: var(--foreground-subtle);
+}
+
+.input-sm {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* Select */
+.select {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--foreground);
+}
+
+/* ============================================
+   标签/徽章
+   ============================================ */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.tag-default {
+  background: var(--background-tertiary);
+  color: var(--foreground-muted);
+}
+
+.tag-success {
+  background: rgba(34, 197, 94, 0.1);
+  color: var(--success);
+}
+
+.tag-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--warning);
+}
+
+.tag-error {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+}
+
+.tag-info {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--info);
+}
+
+.tag-accent {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+/* ============================================
+   状态指示器
+   ============================================ */
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.online {
+  background: var(--success);
+}
+
+.status-dot.offline {
+  background: #a3a3a3;
+}
+
+.status-dot.processing {
+  background: var(--warning);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ============================================
+   拖放区域
+   ============================================ */
+
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: 16px;
+  transition: all 0.2s ease;
+  background: var(--background-secondary);
+}
+
+.drop-zone:hover {
+  border-color: #a3a3a3;
+}
+
+.drop-zone.drag-over {
+  border-color: var(--foreground);
+  background: var(--accent-light);
+}
+
+/* ============================================
+   加载动画
+   ============================================ */
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--foreground);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner-lg {
+  width: 28px;
+  height: 28px;
+  border-width: 2.5px;
+}
+
+/* ============================================
+   代码/数据显示
+   ============================================ */
+
+.font-mono {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', 
+               Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+code {
+  background: var(--background-tertiary);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+/* ============================================
+   文字大小（全站唯一字阶；组件请只用这些类，勿写 text-[Npx]）
+   2xs 10 · caption 11 · xs 12 · sm 13 · md 14 · base 15 · lg 17 · xl 20（单位 px）
+   ============================================ */
+
+.text-2xs { font-size: 10px; line-height: 1.4; }
+.text-caption { font-size: 11px; line-height: 1.4; }
+.text-xs { font-size: 12px; line-height: 1.4; }
+.text-sm { font-size: 13px; line-height: 1.5; }
+.text-md { font-size: 14px; line-height: 1.5; }
+.text-base { font-size: 15px; line-height: 1.5; }
+.text-lg { font-size: 17px; line-height: 1.4; }
+.text-xl { font-size: 20px; line-height: 1.3; }
+
+/* ============================================
+   辅助类
+   ============================================ */
+
+.text-muted {
+  color: var(--foreground-muted);
+}
+
+.text-secondary {
+  color: var(--foreground-secondary);
+}
+
+.text-subtle {
+  color: var(--foreground-subtle);
+}
+
+.bg-secondary {
+  background: var(--background-secondary);
+}
+
+.bg-tertiary {
+  background: var(--background-tertiary);
+}
+
+.border-default {
+  border-color: var(--border);
+}
+
+.border-light {
+  border-color: var(--border-light);
+}
+
+/* ============================================
+   Focus Ring
+   ============================================ */
+
+.focus-ring:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--foreground);
+}
+
+/* ============================================
+   Checkbox：不强制填充色，由组件 accent / Tailwind 决定语义色
+   ============================================ */
+
+input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--foreground-muted);
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: none;
+}
+
+/* ============================================
+   列表项交互
+   ============================================ */
+
+.list-item {
+  padding: 10px 14px;
+  border-radius: 8px;
+  transition: background 0.1s ease;
+  cursor: pointer;
+}
+
+.list-item:hover {
+  background: var(--background-secondary);
+}
+
+.list-item.active {
+  background: var(--accent-light);
+}
+
+/* ============================================
+   分割线
+   ============================================ */
+
+.divider {
+  height: 1px;
+  background: var(--border-light);
+}
+
+.divider-strong {
+  background: var(--border);
+}

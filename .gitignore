@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Build & cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+
+# Local data & outputs（运行时生成，不提交）
+backend/uploads/
+backend/outputs/
+backend/models/
+backend/data/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# 本地模型文件（用户自行下载）
+*.gguf
+*.bin
+*.safetensors
+
+# 调试日志
+debug.log
+logs/
