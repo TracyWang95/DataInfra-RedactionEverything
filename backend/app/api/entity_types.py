@@ -23,6 +23,8 @@ from pydantic import BaseModel, Field
 from enum import Enum
 import uuid
 
+from app.models.schemas import ToggleResponse, MessageResponse
+
 
 router = APIRouter()
 
@@ -63,6 +65,8 @@ class EntityTypesResponse(BaseModel):
     """实体类型列表响应"""
     custom_types: List[EntityTypeConfig]
     total: int
+    page: int = 1
+    page_size: int = 50
 
 
 class CreateEntityTypeRequest(BaseModel):
@@ -834,22 +838,63 @@ PRESET_ENTITY_TYPES: Dict[str, EntityTypeConfig] = {
 entity_types_db: Dict[str, EntityTypeConfig] = PRESET_ENTITY_TYPES.copy()
 
 
+class RegexTestRequest(BaseModel):
+    pattern: str = Field(..., description="正则表达式")
+    test_text: str = Field(..., description="测试文本")
+
+
+class RegexTestResult(BaseModel):
+    valid: bool = Field(..., description="正则表达式是否有效")
+    matches: list[dict] = Field(default_factory=list, description="匹配结果列表")
+    error: str = Field(default="", description="错误信息")
+
+
+@router.post("/custom-types/regex-test", response_model=RegexTestResult)
+async def test_regex(request: RegexTestRequest):
+    """测试正则表达式匹配效果"""
+    import re
+    try:
+        pattern = re.compile(request.pattern)
+    except re.error as e:
+        return RegexTestResult(valid=False, matches=[], error=f"正则语法错误: {str(e)}")
+
+    matches = []
+    for m in pattern.finditer(request.test_text):
+        matches.append({
+            "text": m.group(),
+            "start": m.start(),
+            "end": m.end(),
+            "groups": list(m.groups()),
+        })
+    return RegexTestResult(valid=True, matches=matches)
+
+
 @router.get("/custom-types", response_model=EntityTypesResponse)
-async def get_entity_types(enabled_only: bool = Query(False, description="是否只返回启用的类型")):
+async def get_entity_types(
+    enabled_only: bool = Query(False, description="是否只返回启用的类型"),
+    page: int = Query(1, ge=1, description="页码，从 1 开始"),
+    page_size: int = Query(50, ge=1, le=100, description="每页条数"),
+):
     """
     获取所有实体类型配置
     """
     types = list(entity_types_db.values())
-    
+
     if enabled_only:
         types = [t for t in types if t.enabled]
-    
+
     # 按order排序
     types.sort(key=lambda x: x.order)
-    
+
+    total = len(types)
+    start = (page - 1) * page_size
+    page_items = types[start : start + page_size]
+
     return EntityTypesResponse(
-        custom_types=types,
-        total=len(types)
+        custom_types=page_items,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 
@@ -900,31 +945,31 @@ async def update_entity_type(type_id: str, request: UpdateEntityTypeRequest):
     return existing
 
 
-@router.delete("/custom-types/{type_id}")
+@router.delete("/custom-types/{type_id}", response_model=MessageResponse)
 async def delete_entity_type(type_id: str):
     """删除实体类型（预置类型只能禁用，不能删除）"""
     if type_id not in entity_types_db:
         raise HTTPException(status_code=404, detail="实体类型不存在")
-    
+
     # 预置类型不允许删除
     if type_id in PRESET_ENTITY_TYPES:
         raise HTTPException(status_code=400, detail="预置类型不能删除，只能禁用")
-    
+
     del entity_types_db[type_id]
     return {"message": "删除成功"}
 
 
-@router.post("/custom-types/{type_id}/toggle")
+@router.post("/custom-types/{type_id}/toggle", response_model=ToggleResponse)
 async def toggle_entity_type(type_id: str):
     """切换实体类型的启用状态"""
     if type_id not in entity_types_db:
         raise HTTPException(status_code=404, detail="实体类型不存在")
-    
+
     entity_types_db[type_id].enabled = not entity_types_db[type_id].enabled
     return {"enabled": entity_types_db[type_id].enabled}
 
 
-@router.post("/custom-types/reset")
+@router.post("/custom-types/reset", response_model=MessageResponse)
 async def reset_entity_types():
     """重置为预置配置"""
     global entity_types_db

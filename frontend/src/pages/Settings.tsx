@@ -58,6 +58,91 @@ const settingsFieldClass =
   'w-full px-3 py-2 border border-[#e5e5e5] rounded-lg text-sm text-[#1d1d1f] placeholder:text-[#a3a3a3] bg-white focus:outline-none focus:border-[#1d1d1f]';
 const settingsLabelClass = 'block text-sm font-medium text-[#1d1d1f] mb-1';
 
+/** 正则测试组件：调用后端 Python re 引擎，展示匹配详情 */
+function RegexTester({ pattern }: { pattern: string }) {
+  const [testText, setTestText] = useState('张三的身份证号是110101199001011234，电话13800138000');
+  const [result, setResult] = useState<{ valid: boolean; matches: { text: string; start: number; end: number; groups: string[] }[]; error: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const handleTest = async () => {
+    if (!pattern.trim()) return;
+    setTesting(true);
+    try {
+      const res = await fetch('/api/v1/custom-types/regex-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pattern, test_text: testText }),
+      });
+      setResult(await res.json());
+    } catch {
+      setResult({ valid: false, matches: [], error: '请求失败' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="mt-1 space-y-2">
+      <label className={settingsLabelClass}>测试文本（服务端 Python 正则引擎）</label>
+      <textarea
+        value={testText}
+        onChange={(e) => setTestText(e.target.value)}
+        className={`${settingsFieldClass} resize-y leading-relaxed min-h-[3.5rem]`}
+        rows={2}
+        placeholder="输入测试文本..."
+      />
+      <button
+        type="button"
+        onClick={() => void handleTest()}
+        disabled={!pattern.trim() || testing}
+        className="px-3 py-1.5 text-xs font-medium bg-[#007AFF] text-white rounded-lg hover:bg-[#0066DD] disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {testing ? '测试中...' : '测试正则'}
+      </button>
+      {result && (
+        <div className="rounded-lg border px-3 py-2.5 text-sm">
+          {result.valid ? (
+            <div>
+              <span className="font-medium text-emerald-700">
+                匹配到 {result.matches.length} 处
+              </span>
+              {result.matches.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {result.matches.map((m, i) => (
+                    <span
+                      key={i}
+                      className="inline-block bg-yellow-100 text-yellow-900 border border-yellow-200 px-1.5 py-0.5 rounded text-xs font-mono"
+                    >
+                      {m.text}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {result.matches.length === 0 && (
+                <p className="text-xs text-[#a3a3a3] mt-1">正则有效但测试文本中无匹配</p>
+              )}
+            </div>
+          ) : (
+            <span className="font-medium text-red-600">{result.error}</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function buildPipelineTypeId(name: string, mode: 'ocr_has' | 'has_image') {
+  const normalized = name
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+  if (normalized) {
+    return normalized;
+  }
+  return `custom_${mode}_${Date.now()}`;
+}
+
 export const Settings: React.FC = () => {
   const [entityTypes, setEntityTypes] = useState<EntityTypeConfig[]>([]);
   const [pipelines, setPipelines] = useState<PipelineConfig[]>([]);
@@ -78,7 +163,6 @@ export const Settings: React.FC = () => {
     id: '',
     name: '',
     description: '',
-    color: '#6B7280',
   });
   const [newType, setNewType] = useState({
     name: '',
@@ -144,13 +228,13 @@ export const Settings: React.FC = () => {
   const createPipelineType = async () => {
     if (!showAddPipelineTypeModal || !newPipelineType.name.trim()) return;
     try {
-      const typeId = newPipelineType.id || `custom_${Date.now()}`;
+      const typeId = buildPipelineTypeId(newPipelineType.name, showAddPipelineTypeModal);
       const res = await fetch(`/api/v1/vision-pipelines/${showAddPipelineTypeModal}/types`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: typeId,
-          name: newPipelineType.name,
+          name: newPipelineType.name.trim(),
           description: newPipelineType.description?.trim() || null,
           examples: [],
           color: '#6B7280',
@@ -160,7 +244,7 @@ export const Settings: React.FC = () => {
       });
       if (res.ok) {
         setShowAddPipelineTypeModal(null);
-        setNewPipelineType({ id: '', name: '', description: '', color: '#6B7280' });
+        setNewPipelineType({ id: '', name: '', description: '' });
         fetchPipelines();
       } else {
         const data = await res.json();
@@ -192,7 +276,6 @@ export const Settings: React.FC = () => {
       id: type.id,
       name: type.name,
       description: type.description || '',
-      color: type.color || '#6B7280',
     });
     setShowAddPipelineTypeModal(mode as 'ocr_has' | 'has_image');
   };
@@ -205,7 +288,7 @@ export const Settings: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id: editingPipelineType.type.id,
-          name: newPipelineType.name,
+          name: newPipelineType.name.trim(),
           description: newPipelineType.description?.trim() || null,
           examples: editingPipelineType.type.examples || [],
           color: editingPipelineType.type.color || '#6B7280',
@@ -216,7 +299,7 @@ export const Settings: React.FC = () => {
       if (res.ok) {
         setShowAddPipelineTypeModal(null);
         setEditingPipelineType(null);
-        setNewPipelineType({ id: '', name: '', description: '', color: '#6B7280' });
+        setNewPipelineType({ id: '', name: '', description: '' });
         fetchPipelines();
       } else {
         const data = await res.json();
@@ -310,6 +393,49 @@ export const Settings: React.FC = () => {
     }
   };
 
+  const importFileRef = React.useRef<HTMLInputElement>(null);
+
+  const handleExportPresets = async () => {
+    try {
+      const res = await fetchWithTimeout('/api/v1/presets/export', { timeoutMs: 15000 });
+      if (!res.ok) throw new Error('导出失败');
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `presets-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('导出预设失败', err);
+      alert('导出预设失败');
+    }
+  };
+
+  const handleImportPresets = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const presets = data.presets || data;
+      const res = await fetch('/api/v1/presets/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presets, merge: false }),
+      });
+      if (!res.ok) throw new Error('导入失败');
+      alert('预设导入成功');
+    } catch (err) {
+      console.error('导入预设失败', err);
+      alert('导入预设失败，请检查文件格式');
+    } finally {
+      // reset file input so re-selecting the same file triggers onChange
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  };
+
   // 分类：正则类型和AI类型
   const regexTypes = entityTypes.filter(t => t.regex_pattern);
   const llmTypes = entityTypes.filter(t => t.use_llm);
@@ -329,7 +455,7 @@ export const Settings: React.FC = () => {
   );
 
   return (
-    <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#fafafa]">
+    <div className="settings-root flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#fafafa]">
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-3 py-2 sm:px-4 sm:py-3 w-full max-w-[min(100%,1920px)] mx-auto">
         {loading ? (
           <div className="flex items-center justify-center py-24">
@@ -337,29 +463,54 @@ export const Settings: React.FC = () => {
           </div>
         ) : (
           <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
-            <div className="shrink-0 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setActiveTab('text')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
-                  activeTab === 'text'
-                    ? 'border-black bg-black text-white'
-                    : 'border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5]'
-                }`}
-              >
-                文本识别规则
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab('vision')}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
-                  activeTab === 'vision'
-                    ? 'border-black bg-black text-white'
-                    : 'border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5]'
-                }`}
-              >
-                图像识别规则
-              </button>
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('text')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                    activeTab === 'text'
+                      ? 'border-black bg-black text-white'
+                      : 'border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5]'
+                  }`}
+                >
+                  文本识别规则
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('vision')}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                    activeTab === 'vision'
+                      ? 'border-black bg-black text-white'
+                      : 'border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5]'
+                  }`}
+                >
+                  图像识别规则
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportPresets}
+                  className="px-3 py-1.5 text-xs font-medium rounded-md border border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5] transition-colors"
+                >
+                  导出预设
+                </button>
+                <button
+                  type="button"
+                  onClick={() => importFileRef.current?.click()}
+                  className="px-3 py-1.5 text-xs font-medium rounded-md border border-[#e5e5e5] text-[#737373] hover:bg-[#f5f5f5] transition-colors"
+                >
+                  导入预设
+                </button>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportPresets}
+                  className="hidden"
+                />
+              </div>
             </div>
 
             {activeTab === 'text' && (
@@ -667,7 +818,7 @@ export const Settings: React.FC = () => {
                             type="button"
                             onClick={() => {
                               setEditingPipelineType(null);
-                              setNewPipelineType({ id: '', name: '', description: '', color: '#6B7280' });
+                              setNewPipelineType({ id: '', name: '', description: '' });
                               setShowAddPipelineTypeModal(pipeline.mode);
                             }}
                             className="px-2 py-1 text-caption rounded-md text-white shrink-0 bg-black hover:bg-zinc-900"
@@ -822,7 +973,7 @@ export const Settings: React.FC = () => {
                   />
                 </div>
                 <div className="rounded-lg border border-[#007AFF]/22 bg-[#007AFF]/[0.06] px-3 py-2.5 flex flex-wrap items-center gap-2">
-                  <span className="text-2xs font-medium text-[#007AFF]/90">正则验证</span>
+                  <span className="text-2xs font-medium text-[#007AFF]/90">正则验证（JS）</span>
                   {regexModalCheck === 'empty_pattern' && (
                     <span className="text-sm text-[#a3a3a3]">请先填写正则表达式</span>
                   )}
@@ -839,6 +990,7 @@ export const Settings: React.FC = () => {
                     <span className="text-sm font-medium text-red-600">不通过 · 样例中未匹配</span>
                   )}
                 </div>
+                <RegexTester pattern={newType.regex_pattern} />
               </div>
             ) : (
               <div className="space-y-4">
@@ -918,7 +1070,7 @@ export const Settings: React.FC = () => {
               </div>
             </div>
             <div className="space-y-4">
-              {!editingPipelineType && (
+              {false && (
                 <div>
                   <label className={settingsLabelClass}>类型 ID（选填）</label>
                   <input
@@ -935,17 +1087,17 @@ export const Settings: React.FC = () => {
                   />
                 </div>
               )}
-              {editingPipelineType && (
+              {false && (
                 <div>
                   <label className={settingsLabelClass}>类型 ID</label>
                   <div className="px-3 py-2 bg-[#fafafa] border border-[#e5e5e5] rounded-lg font-mono text-sm text-[#737373]">
-                    {editingPipelineType.type.id}
+                    {editingPipelineType?.type.id}
                   </div>
                 </div>
               )}
               <div>
                 <label className={settingsLabelClass}>
-                  显示名称 <span className="text-red-500">*</span>
+                  名称 <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -979,7 +1131,7 @@ export const Settings: React.FC = () => {
                 onClick={() => {
                   setShowAddPipelineTypeModal(null);
                   setEditingPipelineType(null);
-                  setNewPipelineType({ id: '', name: '', description: '', color: '#6B7280' });
+                  setNewPipelineType({ id: '', name: '', description: '' });
                 }}
                 className="px-4 py-2 text-sm text-[#737373] hover:text-[#1d1d1f]"
               >

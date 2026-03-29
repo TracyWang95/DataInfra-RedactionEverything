@@ -187,21 +187,25 @@ const REPLACEMENT_MODES = [
     value: ReplacementMode.SMART,
     label: '智能替换',
     description: '替换为语义化标识，如"当事人甲"、"公司A"',
+    preview: '张三 → [当事人一]',
   },
   {
     value: ReplacementMode.STRUCTURED,
     label: '结构化语义标签',
     description: '替换为结构化标签，保留层级语义与指代关系',
+    preview: '张三 → <人物[001].个人.姓名>',
   },
   {
     value: ReplacementMode.MASK,
     label: '掩码替换',
     description: '用 *** 或部分隐藏，如"张**"、"138****1234"',
+    preview: '张三 → 张** · 13800138000 → 138****8000',
   },
   {
     value: ReplacementMode.CUSTOM,
     label: '自定义替换',
     description: '手动指定每个敏感信息的替换文本',
+    preview: '用户指定每项的替换文本',
   },
 ];
 
@@ -241,6 +245,7 @@ export const ConfigPanel: React.FC = () => {
               <div>
                 <p className="font-medium text-ink">{mode.label}</p>
                 <p className="text-sm text-ink-muted">{mode.description}</p>
+                <p className="text-xs text-gray-400 mt-0.5 font-mono">{mode.preview}</p>
               </div>
             </label>
           ))}

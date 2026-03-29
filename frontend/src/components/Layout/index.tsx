@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { ToastContainer } from '../Toast';
+import { OfflineBanner } from '../OfflineBanner';
+import { useDarkMode } from '../../hooks/useDarkMode';
+import { OnboardingGuide } from '../OnboardingGuide';
+import { useI18n, useT } from '../../i18n';
 
 interface ServiceInfo {
   name: string;
@@ -23,7 +28,10 @@ interface ServicesHealth {
 
 export const Layout: React.FC = () => {
   const location = useLocation();
-  
+  const { dark, toggle: toggleDark } = useDarkMode();
+  const { locale, setLocale } = useI18n();
+  const t = useT();
+
   // 服务状态 - 真实轮询
   const [health, setHealth] = useState<ServicesHealth | null>(null);
   const [checking, setChecking] = useState(true);
@@ -73,41 +81,42 @@ export const Layout: React.FC = () => {
     /** 为 true 时仅路径完全匹配才算激活（用于 /settings 与 /settings/redaction 区分） */
     end?: boolean;
   }[] = [
-    { path: '/', label: 'Playground', icon: PlayIcon },
+    { path: '/', label: t('nav.playground'), icon: PlayIcon },
     {
-      path: '/batch/text',
-      label: '批量处理',
-      sublabel: '纯文本 / 可选中文字的 PDF',
+      path: '/batch',
+      label: t('nav.batch'),
+      sublabel: t('nav.batch.sub'),
       icon: BatchIcon,
     },
-    {
-      path: '/batch/image',
-      label: '批量处理',
-      sublabel: '图片类文本',
-      icon: BatchIcon,
-    },
-    { path: '/history', label: '处理历史', icon: HistoryIcon },
+    { path: '/history', label: t('nav.history'), icon: HistoryIcon },
+    { path: '/jobs', label: t('nav.jobs'), sublabel: t('nav.jobs.sub'), icon: JobsCenterIcon },
     {
       path: '/settings/redaction',
-      label: '脱敏清单',
-      sublabel: '命名预设与选用',
+      label: t('nav.redactionList'),
+      sublabel: t('nav.redactionList.sub'),
       icon: ListIcon,
       end: true,
     },
-    { path: '/settings', label: '识别项配置', sublabel: '文本 / 图像识别规则', icon: RulesIcon, end: true },
+    { path: '/settings', label: t('nav.recognitionSettings'), sublabel: t('nav.recognitionSettings.sub'), icon: RulesIcon, end: true },
   ];
 
   const modelNavItems = [
-    { path: '/model-settings/text', label: '文本模型配置', icon: TextModelNavIcon },
-    { path: '/model-settings/vision', label: '视觉服务配置', icon: ModelIcon },
+    { path: '/model-settings/text', label: t('nav.textModel'), icon: TextModelNavIcon },
+    { path: '/model-settings/vision', label: t('nav.visionModel'), icon: ModelIcon },
   ];
 
   const getBatchHeader = (): { title: string; sub?: string } | null => {
+    if (location.pathname === '/batch') {
+      return { title: t('page.batch.title'), sub: t('page.batch.sub') };
+    }
     if (location.pathname.startsWith('/batch/text')) {
-      return { title: '批量处理', sub: '纯文本 / 可选中文字的 PDF' };
+      return { title: t('page.batchText.title'), sub: t('page.batchText.sub') };
     }
     if (location.pathname.startsWith('/batch/image')) {
-      return { title: '批量处理', sub: '图片类文本' };
+      return { title: t('page.batchImage.title'), sub: t('page.batchImage.sub') };
+    }
+    if (location.pathname.startsWith('/batch/smart')) {
+      return { title: t('page.batchSmart.title'), sub: t('page.batchSmart.sub') };
     }
     return null;
   };
@@ -117,26 +126,33 @@ export const Layout: React.FC = () => {
     const batchH = getBatchHeader();
     if (batchH) return batchH;
     if (location.pathname.startsWith('/settings/redaction')) {
-      return { title: '脱敏清单配置', sub: '命名预设与选用，同步 Playground / 批量向导' };
+      return { title: t('page.redactionList.title'), sub: t('page.redactionList.sub') };
     }
     if (location.pathname === '/settings') {
-      return { title: '识别项配置', sub: '敏感信息类型、正则与语义规则' };
+      return { title: t('page.recognitionSettings.title'), sub: t('page.recognitionSettings.sub') };
+    }
+    if (location.pathname.startsWith('/jobs/')) {
+      return { title: t('page.jobDetail.title'), sub: t('page.jobDetail.sub') };
+    }
+    if (location.pathname === '/jobs') {
+      return { title: t('page.jobs.title'), sub: t('page.jobs.sub') };
     }
     const map: Record<string, { title: string; sub?: string }> = {
-      '/': { title: 'Playground' },
-      '/history': { title: '处理历史', sub: '已上传文件 · 分页 · 批量 ZIP' },
-      '/model-settings/text': { title: '文本模型配置', sub: '文本 NER · HaS（llama-server）' },
-      '/model-settings/vision': { title: '视觉服务配置', sub: 'HaS Image · PaddleOCR-VL 登记与检测' },
+      '/': { title: t('nav.playground') },
+      '/history': { title: t('page.history.title'), sub: t('page.history.sub') },
+      '/model-settings/text': { title: t('page.textModel.title'), sub: t('page.textModel.sub') },
+      '/model-settings/vision': { title: t('page.visionModel.title'), sub: t('page.visionModel.sub') },
     };
-    return map[location.pathname] || { title: 'Playground' };
+    return map[location.pathname] || { title: t('nav.playground') };
   };
 
   return (
-    <div className="flex h-dvh min-h-0 min-w-0 overflow-hidden bg-[#f5f5f7]">
+    <div className="app-shell flex h-dvh min-h-0 min-w-0 overflow-hidden bg-[#f5f5f7] dark:bg-gray-900">
+      <OfflineBanner />
       {/* Sidebar */}
-      <aside className="w-[220px] min-[1280px]:w-[252px] shrink-0 bg-[#fbfbfc] border-r border-black/[0.06] flex flex-col min-h-0 min-w-0">
+      <aside className="app-sidebar w-[220px] min-[1280px]:w-[252px] shrink-0 bg-[#fbfbfc] dark:bg-gray-800 border-r border-black/[0.06] dark:border-gray-700 flex flex-col min-h-0 min-w-0">
         {/* Logo */}
-        <div className="h-[52px] flex items-center px-4 border-b border-black/[0.06]">
+        <div className="app-sidebar-brand h-[52px] flex items-center px-4 border-b border-black/[0.06] dark:border-gray-700">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-[#1d1d1f] flex items-center justify-center shadow-sm">
               <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -144,10 +160,10 @@ export const Layout: React.FC = () => {
               </svg>
             </div>
             <div>
-              <span className="font-semibold text-sm text-[#1d1d1f] tracking-[-0.02em] leading-tight block">
+              <span className="font-semibold text-sm text-[#1d1d1f] dark:text-gray-100 tracking-[-0.02em] leading-tight block">
                 DataInfra-RedactionEverything
               </span>
-              <p className="text-caption text-[#737373]">匿名化数据基础设施</p>
+              <p className="text-caption text-[#737373] dark:text-gray-400">{t('sidebar.subtitle')}</p>
             </div>
           </div>
         </div>
@@ -162,7 +178,7 @@ export const Layout: React.FC = () => {
               >
                 <item.icon className="w-[18px] h-[18px]" />
                 <span>{item.label}</span>
-                <span className="ml-auto text-2xs bg-[#f5f5f5] px-1.5 py-0.5 rounded text-[#737373]">开发中</span>
+                <span className="ml-auto text-2xs bg-[#f5f5f5] px-1.5 py-0.5 rounded text-[#737373]">{t('sidebar.devInProgress')}</span>
               </div>
             ) : (
               <NavLink
@@ -170,10 +186,10 @@ export const Layout: React.FC = () => {
                 to={item.path}
                 end={item.end ?? item.path === '/'}
                 className={({ isActive }) =>
-                  `flex items-start gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+                  `app-nav-link flex items-start gap-2.5 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
                     isActive
-                      ? 'bg-[#1d1d1f] text-white shadow-sm'
-                      : 'text-[#6e6e73] hover:bg-white/70 hover:text-[#1d1d1f]'
+                      ? 'app-nav-link-active bg-[#1d1d1f] text-white shadow-sm'
+                      : 'app-nav-link-idle text-[#6e6e73] hover:bg-white/70 hover:text-[#1d1d1f]'
                   }`
                 }
               >
@@ -201,17 +217,17 @@ export const Layout: React.FC = () => {
           ))}
 
           {/* 模型配置：文本 / 视觉 */}
-          <div className="mt-2 pt-2 border-t border-black/[0.06]">
-            <div className="px-3 py-1.5 text-caption font-semibold text-[#a3a3a3] tracking-wide">模型配置</div>
+          <div className="app-model-section mt-2 pt-2 border-t border-black/[0.06]">
+            <div className="px-3 py-1.5 text-caption font-semibold text-[#a3a3a3] tracking-wide">{t('nav.modelConfig')}</div>
             {modelNavItems.map(item => (
               <NavLink
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) =>
-                  `flex items-center gap-2.5 pl-5 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+                  `app-nav-link flex items-center gap-2.5 pl-5 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
                     isActive
-                      ? 'bg-[#1d1d1f] text-white shadow-sm'
-                      : 'text-[#6e6e73] hover:bg-white/70 hover:text-[#1d1d1f]'
+                      ? 'app-nav-link-active bg-[#1d1d1f] text-white shadow-sm'
+                      : 'app-nav-link-idle text-[#6e6e73] hover:bg-white/70 hover:text-[#1d1d1f]'
                   }`
                 }
               >
@@ -223,21 +239,22 @@ export const Layout: React.FC = () => {
         </nav>
         
         {/* Footer - 服务状态（真实轮询） */}
-        <div className="p-3 border-t border-black/[0.06]">
-          <div className="px-3 py-2.5 rounded-xl bg-white/80 border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+        <div className="app-sidebar-footer p-3 border-t border-black/[0.06]">
+          <div className="app-health-card px-3 py-2.5 rounded-xl bg-white/80 border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
                 <span className={`w-[6px] h-[6px] rounded-full ${
                   checking ? 'bg-gray-300 animate-pulse' :
                   health?.all_online ? 'bg-[#22c55e]' : 'bg-amber-400'
                 }`}></span>
-                <span className="text-caption font-semibold text-[#1d1d1f] tracking-wide">服务状态</span>
+                <span className="text-caption font-semibold text-[#1d1d1f] tracking-wide">{t('health.title')}</span>
               </div>
               <button
                 type="button"
                 onClick={() => fetchHealth(true)}
                 className="text-2xs text-gray-400 hover:text-gray-600"
-                title="立即刷新服务状态"
+                title={t('health.refreshTitle')}
+                aria-label={t('health.refreshTitle')}
               >
                 <svg className={`w-3 h-3 ${checking ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -252,7 +269,7 @@ export const Layout: React.FC = () => {
                     {health.services.paddle_ocr.name}
                   </span>
                   <span className={`font-medium flex-shrink-0 ${health.services.paddle_ocr.status === 'online' ? 'text-[#22c55e]' : 'text-red-500'}`}>
-                    {health.services.paddle_ocr.status === 'online' ? '在线' : '离线'}
+                    {health.services.paddle_ocr.status === 'online' ? t('health.online') : t('health.offline')}
                   </span>
                 </div>
                 {/* HaS NER */}
@@ -261,7 +278,7 @@ export const Layout: React.FC = () => {
                     {health.services.has_ner.name}
                   </span>
                   <span className={`font-medium flex-shrink-0 ${health.services.has_ner.status === 'online' ? 'text-[#22c55e]' : 'text-red-500'}`}>
-                    {health.services.has_ner.status === 'online' ? '在线' : '离线'}
+                    {health.services.has_ner.status === 'online' ? t('health.online') : t('health.offline')}
                   </span>
                 </div>
                 {/* HaS Image (YOLO) */}
@@ -270,43 +287,43 @@ export const Layout: React.FC = () => {
                     {health.services.has_image.name}
                   </span>
                   <span className={`font-medium flex-shrink-0 ${health.services.has_image.status === 'online' ? 'text-[#22c55e]' : 'text-red-500'}`}>
-                    {health.services.has_image.status === 'online' ? '在线' : '离线'}
+                    {health.services.has_image.status === 'online' ? t('health.online') : t('health.offline')}
                   </span>
                 </div>
                 <div className="text-2xs text-[#a3a3a3] pt-1.5 mt-0.5 border-t border-[#f0f0f0] space-y-0.5 leading-snug pl-0.5">
                   {typeof health.probe_ms === 'number' && (
-                    <p className="truncate" title="后端并行探测 OCR / HaS NER / HaS Image 的耗时">
-                      后端探测 {health.probe_ms} ms
+                    <p className="truncate" title={t('health.backendProbe')}>
+                      {t('health.backendProbe')} {health.probe_ms} ms
                     </p>
                   )}
                   {roundTripMs != null && (
-                    <p className="truncate" title="从浏览器到 /health/services 的往返时间（含网络）">
-                      前端往返 {roundTripMs} ms
+                    <p className="truncate" title={t('health.frontendRoundTrip')}>
+                      {t('health.frontendRoundTrip')} {roundTripMs} ms
                     </p>
                   )}
                   <p
                     className="truncate"
-                    title="本机 GPU 显存（首块卡；NVML 或 nvidia-smi）。仍失败时可在后端环境设置 LEGAL_REDACTION_NVSMI_PATH 为 NVIDIA Corporation\NVSMI 目录，并 pip install nvidia-ml-py"
+                    title={t('health.gpuMemory')}
                   >
-                    GPU 显存{' '}
+                    {t('health.gpuMemory')}{' '}
                     {health.gpu_memory != null ? (
                       <>
                         {health.gpu_memory.used_mb} / {health.gpu_memory.total_mb} MiB
                       </>
                     ) : (
-                      <span className="text-[#c4c4c4]">未检测</span>
+                      <span className="text-[#c4c4c4]">{t('health.gpuNotDetected')}</span>
                     )}
                   </p>
                   {health.checked_at && (
                     <p className="text-[#b0b0b0] break-all" title={health.checked_at}>
-                      探测时间 {new Date(health.checked_at).toLocaleString()}
+                      {t('health.probeTime')} {new Date(health.checked_at).toLocaleString()}
                     </p>
                   )}
                 </div>
               </div>
             ) : (
               <div className="text-caption text-red-500">
-                {checking ? '检测中...' : '后端未连接'}
+                {checking ? t('health.detecting') : t('health.backendDown')}
               </div>
             )}
           </div>
@@ -314,46 +331,71 @@ export const Layout: React.FC = () => {
       </aside>
       
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden bg-[#f5f5f7]">
+      <main className="app-main flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden bg-[#f5f5f7] dark:bg-gray-900">
         {/* Header */}
-        <header className="h-[52px] shrink-0 bg-white/80 backdrop-blur-xl border-b border-black/[0.06] flex items-center justify-between px-4 sm:px-6 min-w-0">
+        <header className="app-header h-[52px] shrink-0 bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border-b border-black/[0.06] dark:border-gray-700 flex items-center justify-between px-4 sm:px-6 min-w-0">
           <div className="min-h-[36px] flex flex-col justify-center">
             {(() => {
               const h = getPageHeader();
               if (h.sub) {
                 return (
                   <>
-                    <h1 className="text-base font-semibold text-[#1d1d1f] tracking-[-0.02em] leading-tight">
+                    <h1 className="text-base font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-[-0.02em] leading-tight">
                       {h.title}
                     </h1>
-                    <p className="text-caption text-[#737373] font-normal mt-0.5 leading-snug">{h.sub}</p>
+                    <p className="text-caption text-[#737373] dark:text-gray-400 font-normal mt-0.5 leading-snug">{h.sub}</p>
                   </>
                 );
               }
-              return <h1 className="text-base font-semibold text-[#1d1d1f] tracking-[-0.02em]">{h.title}</h1>;
+              return <h1 className="text-base font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-[-0.02em]">{h.title}</h1>;
             })()}
           </div>
           <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
+              className="app-header-control px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300"
+              aria-label="Switch language"
+            >
+              {locale === 'zh' ? 'EN' : '中'}
+            </button>
+            <button
+              type="button"
+              onClick={toggleDark}
+              className="app-icon-button p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
+              aria-label={dark ? '切换到亮色模式' : '切换到深色模式'}
+              title={dark ? '切换到亮色模式' : '切换到深色模式'}
+            >
+              {dark ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+              )}
+            </button>
             <div className="flex items-center gap-1.5 text-caption">
               {checking ? (
                 <>
                   <span className="w-[6px] h-[6px] rounded-full bg-gray-300 animate-pulse"></span>
-                  <span className="text-gray-400">检测服务中...</span>
+                  <span className="text-gray-400">{t('health.checking')}</span>
                 </>
               ) : health?.all_online ? (
                 <>
                   <span className="w-[6px] h-[6px] rounded-full bg-[#22c55e]"></span>
-                  <span className="text-[#737373]">全部服务正常</span>
+                  <span className="text-[#737373]">{t('health.allOnline')}</span>
                 </>
               ) : health ? (
                 <>
                   <span className="w-[6px] h-[6px] rounded-full bg-amber-400"></span>
-                  <span className="text-amber-600">部分服务异常</span>
+                  <span className="text-amber-600">{t('health.someOffline')}</span>
                 </>
               ) : (
                 <>
                   <span className="w-[6px] h-[6px] rounded-full bg-red-500"></span>
-                  <span className="text-red-500">后端未连接</span>
+                  <span className="text-red-500">{t('health.backendDown')}</span>
                 </>
               )}
             </div>
@@ -367,7 +409,8 @@ export const Layout: React.FC = () => {
       </main>
 
       {/* Toast Container */}
-      <div id="toast-container" className="fixed bottom-5 right-5 z-50 space-y-2"></div>
+      <ToastContainer />
+      <OnboardingGuide />
     </div>
   );
 };
@@ -389,6 +432,17 @@ const BatchIcon: React.FC<{ className?: string }> = ({ className }) => (
 const HistoryIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+  </svg>
+);
+
+const JobsCenterIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={1.5}
+      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+    />
   </svg>
 );
 

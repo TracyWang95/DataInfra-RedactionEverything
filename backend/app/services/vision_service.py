@@ -6,9 +6,12 @@
 import asyncio
 import base64
 import io
+import logging
 import os
 import time
 import uuid
+
+logger = logging.getLogger(__name__)
 from typing import Optional
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
@@ -44,7 +47,7 @@ class VisionService:
         else:
             raise ValueError(f"Unsupported file type for vision: {file_type}")
 
-        print(f"[PIPE] Using pipeline: {pipeline_mode}")
+        logger.info("Using pipeline: %s", pipeline_mode)
 
         if pipeline_mode == "has_image":
             bounding_boxes, result_image_base64 = await self._detect_with_has_image(
@@ -55,7 +58,7 @@ class VisionService:
                 image_data, page, pipeline_types
             )
 
-        print(f"[OK] Vision detect done ({pipeline_mode}): {len(bounding_boxes)} regions")
+        logger.info("Vision detect done (%s): %d regions", pipeline_mode, len(bounding_boxes))
         return bounding_boxes, result_image_base64
 
     async def detect_with_dual_pipeline(
@@ -82,26 +85,26 @@ class VisionService:
                 return await coro
             finally:
                 elapsed = time.perf_counter() - start
-                print(f"[PERF] {label} finished in {elapsed:.2f}s")
+                logger.info("%s finished in %.2fs", label, elapsed)
 
         ocr_task = None
         hi_task = None
 
         if ocr_has_types:
-            print(f"[PIPE] Running OCR+HaS with {len(ocr_has_types)} types...")
+            logger.info("Running OCR+HaS with %d types...", len(ocr_has_types))
             ocr_task = asyncio.create_task(
                 timed("ocr_has", self._detect_with_ocr_has(image_data, page, ocr_has_types))
             )
         else:
-            print("[PIPE] OCR+HaS skipped (no types enabled)")
+            logger.info("OCR+HaS skipped (no types enabled)")
 
         if has_image_types:
-            print(f"[PIPE] Running HaS Image with {len(has_image_types)} types...")
+            logger.info("Running HaS Image with %d types...", len(has_image_types))
             hi_task = asyncio.create_task(
                 timed("has_image", self._detect_with_has_image(image_data, page, has_image_types))
             )
         else:
-            print("[PIPE] HaS Image skipped (no types enabled)")
+            logger.info("HaS Image skipped (no types enabled)")
 
         tasks = []
         labels = []
@@ -115,16 +118,16 @@ class VisionService:
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
         else:
-            print("[PIPE] 两路均未运行，将返回空结果")
+            logger.info("两路均未运行，将返回空结果")
             results = []
 
         for label, result in zip(labels, results):
             if isinstance(result, Exception):
-                print(f"[PIPE] {label} failed: {result}")
+                logger.error("%s failed: %s", label, result)
                 continue
             boxes, _ = result
             all_boxes.extend(boxes)
-            print(f"[PIPE] {label} found {len(boxes)} regions")
+            logger.info("%s found %d regions", label, len(boxes))
 
         all_boxes = self._deduplicate_boxes(all_boxes)
 
@@ -133,7 +136,7 @@ class VisionService:
         result_image_base64 = self._draw_boxes_on_image(img, all_boxes)
 
         total_elapsed = time.perf_counter() - total_start
-        print(f"[OK] Dual pipeline total: {len(all_boxes)} regions, {total_elapsed:.2f}s")
+        logger.info("Dual pipeline total: %d regions, %.2fs", len(all_boxes), total_elapsed)
         return all_boxes, result_image_base64
 
     def _calculate_iou(self, box1: BoundingBox, box2: BoundingBox) -> float:
@@ -174,9 +177,9 @@ class VisionService:
             for ocr_box in ocr_boxes:
                 iou = self._calculate_iou(hi_box, ocr_box)
                 if iou > iou_threshold:
-                    print(
-                        f"[DEDUP] HaS-Image '{hi_box.type}' overlaps OCR '{ocr_box.type}' "
-                        f"(IoU={iou:.2f}), skipping HaS-Image"
+                    logger.debug(
+                        "DEDUP HaS-Image '%s' overlaps OCR '%s' (IoU=%.2f), skipping HaS-Image",
+                        hi_box.type, ocr_box.type, iou,
                     )
                     is_duplicate = True
                     break
@@ -195,7 +198,7 @@ class VisionService:
 
         removed_count = len(boxes) - len(result)
         if removed_count > 0:
-            print(f"[DEDUP] Removed {removed_count} duplicate boxes")
+            logger.info("DEDUP removed %d duplicate boxes", removed_count)
 
         return result
 
@@ -475,6 +478,9 @@ class VisionService:
         file_type: FileType,
         bounding_boxes: list[BoundingBox],
         page: int = 1,
+        image_method: str = "fill",
+        strength: int = 25,
+        fill_color: str = "#000000",
     ) -> bytes:
         if file_type == FileType.IMAGE:
             image_data = await self.file_parser.read_image(file_path)
@@ -483,7 +489,6 @@ class VisionService:
 
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
         width, height = image.size
-        draw = ImageDraw.Draw(image)
 
         page_boxes = [b for b in bounding_boxes if b.page == page and b.selected]
 
@@ -492,7 +497,16 @@ class VisionService:
             y1 = int(bbox.y * height)
             x2 = int((bbox.x + bbox.width) * width)
             y2 = int((bbox.y + bbox.height) * height)
-            draw.rectangle([x1, y1, x2, y2], fill="black")
+            self._apply_region_effect(
+                image,
+                x1,
+                y1,
+                x2,
+                y2,
+                image_method,
+                max(1, min(100, strength)),
+                fill_color,
+            )
 
         output = io.BytesIO()
         image.save(output, format="PNG")

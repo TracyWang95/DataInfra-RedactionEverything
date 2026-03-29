@@ -1,8 +1,11 @@
 """
 推理模型配置 API（视觉：HaS Image 8081 微服务；与文本 NER 分离）
 """
+import logging
 import os
 import json
+
+logger = logging.getLogger(__name__)
 from typing import Optional, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -133,10 +136,10 @@ def load_configs() -> ModelConfigList:
             lst, changed = _sanitize_model_config_list(lst)
             if changed:
                 save_configs(lst)
-                print("[ModelConfig] 已迁移：移除旧版 GLM 视觉配置，保留 HaS Image 等条目")
+                logger.info("ModelConfig 已迁移：移除旧版 GLM 视觉配置，保留 HaS Image 等条目")
             return lst
         except Exception as e:
-            print(f"[ModelConfig] 加载配置失败: {e}")
+            logger.error("ModelConfig 加载配置失败: %s", e)
     return DEFAULT_CONFIGS.model_copy(deep=True)
 
 

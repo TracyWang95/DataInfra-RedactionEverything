@@ -255,7 +255,7 @@ def deduplicate_boxes(boxes, iou_threshold=0.3):
 | **OCR** | PaddleOCR-VL-1.5 | 文字检测与识别 | 8082 |
 | **NER** | [HaS Text 0209](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B_Q4) Q4_K_M（Qwen3-0.6B） | 命名实体识别 | 8080 |
 | **HaS Image** | YOLO11（`sensitive_seg_best.pt`） | **21 类**隐私区域实例分割（slug 见 §3） | 8081 |
-| **Frontend** | React + Vite | 前端界面 | 3000 |
+| **Frontend** | React + Vite | 前端开发 / `preview` | **3000**（dev 与 preview 同口配置，勿同时占用） |
 
 ---
 
@@ -305,13 +305,15 @@ python -c "import paddle; print(paddle.is_compiled_with_cuda(), paddle.get_devic
     └── ...
 ```
 
+常见本机集中目录：**`D:\has_models`**（`start_has.ps1` / `start_has_image.ps1` / `has_image_server.py` 会优先探测）；也可设置环境变量 **`HAS_MODELS_DIR`** 指向你的模型根目录。
+
 > **提示**：以下命令中的路径请根据你的实际目录结构调整。
 
 ---
 
 ### 1️⃣ 启动 HaS Image（YOLO，端口 8081）
 
-Windows：执行 `scripts\start_has_image.bat`（默认读取 `HAS_IMAGE_WEIGHTS`；未设置时依次尝试**工作区**下的 `has_models\sensitive_seg_best.pt` 与 `backend\models\has_image\sensitive_seg_best.pt`）。
+Windows：执行 `scripts\start_has_image.bat`（默认读取 `HAS_IMAGE_WEIGHTS`；未设置时依次尝试 **`D:\has_models`**、**工作区**下 `has_models\sensitive_seg_best.pt`、`backend\models\has_image\sensitive_seg_best.pt`，或环境变量 **`HAS_MODELS_DIR`**）。
 
 ```bash
 cd backend
@@ -358,10 +360,12 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```bash
 cd frontend
 npm install
-npm run dev -- --port 3000
+npm run dev
 ```
 
-访问：**http://localhost:3000**
+访问（热更新）：**http://localhost:3000/**
+
+生产包自检（无热更新）：`npm run build && npm run preview` → **http://localhost:3000/**（需先停 dev）
 
 ---
 
@@ -402,7 +406,7 @@ Start-Process powershell -ArgumentList "-Command cd $RepoRoot\backend; conda act
 # 4. 后端 API (端口 8000)
 Start-Process powershell -ArgumentList "-Command cd $RepoRoot\backend; conda activate legal-redaction; python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
-# 5. 前端 (端口 3000)
+# 5. 前端开发 (端口 3000，热更新)
 Start-Process powershell -ArgumentList "-Command cd $RepoRoot\frontend; npm run dev"
 ```
 
@@ -497,6 +501,7 @@ Windows PowerShell：
 
 - **Swagger UI**：http://localhost:8000/docs
 - **ReDoc**：http://localhost:8000/redoc
+- **批量任务（Job）**：`POST/GET /api/v1/jobs`，SQLite 持久化（`JOB_DB_PATH`，默认 `data/jobs.sqlite3`）；`text_batch` / `image_batch` 分轨；Worker 在进程内轮询，识别完成后进入 `awaiting_review`，`POST .../review/approve` 后执行脱敏。前端侧栏「任务中心」与批量向导上传表单项 `job_id` 绑定。
 
 ---
 

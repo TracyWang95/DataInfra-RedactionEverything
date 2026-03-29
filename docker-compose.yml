@@ -9,10 +9,24 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DEBUG=true
+      - DEBUG=${DEBUG:-false}
+      - DATA_DIR=/app/data
+      - UPLOAD_DIR=/app/uploads
+      - OUTPUT_DIR=/app/outputs
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - OCR_BASE_URL=http://ocr:8082
+      - HAS_LLAMACPP_BASE_URL=http://ner:8080/v1
+      - HAS_IMAGE_BASE_URL=http://vision:8081
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/outputs:/app/outputs
+      - backend-data:/app/data
+      - backend-uploads:/app/uploads
+      - backend-outputs:/app/outputs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   # React 前端服务
@@ -23,9 +37,90 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # PaddleOCR-VL 微服务（端口 8082）— 需要 GPU
+  ocr:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ocr
+    ports:
+      - "8082:8082"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8082/health').raise_for_status()"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    profiles:
+      - gpu
+    restart: unless-stopped
+
+  # HaS Text NER 微服务（llama-server，端口 8080）— 需要 GPU
+  ner:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/models:/models
+    command: >
+      --host 0.0.0.0
+      --port 8080
+      -m /models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf
+      -ngl 99
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - gpu
+    restart: unless-stopped
+
+  # HaS Image YOLO 微服务（端口 8081）— 需要 GPU
+  vision:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.vision
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./backend/models:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8081/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - gpu
     restart: unless-stopped
 
 volumes:
-  uploads:
-  outputs:
+  backend-data:
+  backend-uploads:
+  backend-outputs:

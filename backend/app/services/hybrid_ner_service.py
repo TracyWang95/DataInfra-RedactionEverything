@@ -9,7 +9,10 @@
 4. 交叉验证：去重合并，提高准确率
 """
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 
@@ -79,28 +82,28 @@ class HybridNERService:
         all_entities: List[Entity] = []
         
         # Stage 1: HaS 本地模型 NER
-        print("[Stage 1] HaS 本地模型 NER...")
+        logger.info("Stage 1: HaS 本地模型 NER...")
         if self.has_service.is_available():
             try:
                 has_entities = await self.has_service.extract_entities(text, entity_types)
                 all_entities.extend(has_entities)
-                print(f"  HaS NER 识别到 {len(has_entities)} 个实体")
+                logger.info("  HaS NER 识别到 %d 个实体", len(has_entities))
             except Exception as e:
-                print(f"  HaS 识别失败: {e}")
+                logger.error("  HaS 识别失败: %s", e)
         else:
-            print("  HaS 服务不可用，跳过")
-        
+            logger.warning("  HaS 服务不可用，跳过")
+
         # Stage 2: 正则识别（补充高置信度模式）
-        print("[Stage 2] 正则识别...")
+        logger.info("Stage 2: 正则识别...")
         enabled_type_ids = {et.id for et in entity_types}
         regex_entities = self._regex_extract(text, enabled_type_ids)
         all_entities.extend(regex_entities)
-        print(f"  正则识别到 {len(regex_entities)} 个新实体")
-        
+        logger.info("  正则识别到 %d 个新实体", len(regex_entities))
+
         # Stage 3: 交叉验证 + 指代消解
-        print("[Stage 3] 交叉验证与指代消解...")
+        logger.info("Stage 3: 交叉验证与指代消解...")
         validated_entities = self._cross_validate(all_entities, text)
-        print(f"  验证后保留 {len(validated_entities)} 个实体")
+        logger.info("  验证后保留 %d 个实体", len(validated_entities))
         
         return validated_entities
     
@@ -134,7 +137,7 @@ class HybridNERService:
                         ))
                         entity_counter += 1
                 except re.error as e:
-                    print(f"正则错误 ({entity_type}): {e}")
+                    logger.error("正则错误 (%s): %s", entity_type, e)
         
         return entities
     

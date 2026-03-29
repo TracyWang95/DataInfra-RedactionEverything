@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PaddlePaddle GPU and PaddleOCR
+RUN pip install --no-cache-dir \
+    paddlepaddle-gpu \
+    paddleocr \
+    fastapi \
+    uvicorn \
+    httpx
+
+COPY ocr_server.py .
+
+RUN adduser --disabled-password --gecos '' appuser
+USER appuser
+
+EXPOSE 8082
+
+CMD ["uvicorn", "ocr_server:app", "--host", "0.0.0.0", "--port", "8082"]

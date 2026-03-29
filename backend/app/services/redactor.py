@@ -2,10 +2,13 @@
 脱敏执行服务
 处理文本和图片的脱敏逻辑
 """
+import logging
 import os
 import uuid
 import re
 import json
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from typing import Optional, Any, Dict
 from collections import Counter
@@ -209,7 +212,7 @@ class RedactionContext:
             cfg = entity_types_db.get(type_key)
             if cfg and getattr(cfg, "tag_template", None):
                 return cfg.tag_template
-        except Exception:
+        except (ImportError, KeyError, AttributeError):
             return None
         return None
 
@@ -285,11 +288,16 @@ class Redactor:
             if converted_path != file_path:
                 try:
                     os.remove(converted_path)
-                except:
+                except OSError:
                     pass
         elif file_type == FileType.DOCX:
             # Word 文档脱敏
             redacted_count = await self._redact_docx(
+                file_path, output_path, selected_entities, context
+            )
+        elif file_type == FileType.TXT:
+            # 纯文本脱敏（.txt, .md, .html, .rtf）
+            redacted_count = await self._redact_txt(
                 file_path, output_path, selected_entities, context
             )
         elif file_type == FileType.PDF:
@@ -326,8 +334,8 @@ class Redactor:
             from app.services.file_parser import FileParser
             parser = FileParser()
             return await parser._convert_doc_to_docx(file_path)
-        except Exception as e:
-            print(f"DOC 转换失败: {e}")
+        except (OSError, ValueError, KeyError) as e:
+            logger.error("DOC 转换失败: %s", e)
             return None
     
     async def _redact_docx(
@@ -541,16 +549,16 @@ class Redactor:
             }
             with open(trace_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(session_header, ensure_ascii=False) + "\n")
-        except Exception as e:
-            print(f"[DOCX_TRACE] 初始化失败: {e}")
+        except (OSError, ValueError, TypeError) as e:
+            logger.error("DOCX_TRACE 初始化失败: %s", e)
 
     def _append_docx_font_trace(self, trace_path: str, record: dict[str, Any]) -> None:
         """追加一条调试记录到 JSONL"""
         try:
             with open(trace_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception as e:
-            print(f"[DOCX_TRACE] 写入失败: {e}")
+        except (OSError, ValueError, TypeError) as e:
+            logger.error("DOCX_TRACE 写入失败: %s", e)
 
     def _collect_runs_font_snapshot(self, runs) -> list[dict[str, Any]]:
         """采集 run 的字体链快照（rPr/rFonts/字号/样式）"""
@@ -603,7 +611,7 @@ class Redactor:
         try:
             if source_run.style is not None:
                 target_run.style = source_run.style
-        except Exception:
+        except (AttributeError, ValueError, KeyError):
             pass
 
         # 移除目标 run 默认生成的 rPr，避免与源格式叠加冲突
@@ -616,6 +624,47 @@ class Redactor:
         if source_rPr is not None:
             target_r.insert(0, deepcopy(source_rPr))
     
+    async def _redact_txt(
+        self,
+        input_path: str,
+        output_path: str,
+        entities: list[Entity],
+        context: RedactionContext,
+    ) -> int:
+        """纯文本文件脱敏（.txt, .md, .html, .rtf）— 简单字符串替换"""
+        # 读取原文（兼容多种编码）
+        content = None
+        for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
+            try:
+                with open(input_path, "r", encoding=enc) as f:
+                    content = f.read()
+                break
+            except (UnicodeDecodeError, ValueError):
+                continue
+        if content is None:
+            with open(input_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+
+        # 构建替换映射
+        replacements = {}
+        for entity in entities:
+            if entity.text not in replacements:
+                replacements[entity.text] = context.get_replacement(entity)
+
+        # 按长度降序替换，避免短匹配吞长文本
+        redacted_count = 0
+        for old_text in sorted(replacements.keys(), key=len, reverse=True):
+            new_text = replacements[old_text]
+            count = content.count(old_text)
+            if count > 0:
+                content = content.replace(old_text, new_text)
+                redacted_count += count
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        return redacted_count
+
     async def _redact_pdf_text(
         self,
         input_path: str,
@@ -681,9 +730,10 @@ class Redactor:
         # 统一转为字符串比较（兼容枚举和字符串）
         ft = str(file_type.value) if hasattr(file_type, 'value') else str(file_type)
         is_docx = ft in ("docx", "doc")
+        is_txt = ft == "txt"
         is_pdf = ft in ("pdf", "pdf_scanned")
         
-        print(f"[Compare] file_type={file_type}, ft={ft}, is_docx={is_docx}, is_pdf={is_pdf}, redacted_path={redacted_path}")
+        logger.debug("Compare file_type=%s, ft=%s, is_docx=%s, is_pdf=%s, redacted_path=%s", file_type, ft, is_docx, is_pdf, redacted_path)
         
         original_content = ""
         redacted_content = ""
@@ -692,25 +742,25 @@ class Redactor:
         original_content_cached = file_info.get("content", "")
         
         if redacted_text:
-            # 使用结构化脱敏文本（更符合展示）
             redacted_content = redacted_text
             if is_docx:
                 original_content = original_content_cached or self._safe_extract_text(original_path, ft)
+            elif is_txt:
+                original_content = original_content_cached or self._read_txt(original_path)
             elif is_pdf:
                 original_content = original_content_cached or self._extract_pdf_text(original_path)
             else:
                 original_content = "[图片文件，请查看预览]"
         elif is_docx:
-            # Word 文档（.doc 和 .docx）
             original_content = original_content_cached or self._safe_extract_text(original_path, ft)
-            # 脱敏后的文件一定是 .docx 格式
             redacted_content = self._extract_docx_text(redacted_path)
+        elif is_txt:
+            original_content = original_content_cached or self._read_txt(original_path)
+            redacted_content = self._read_txt(redacted_path)
         elif is_pdf:
-            # PDF 文档
             original_content = original_content_cached or self._extract_pdf_text(original_path)
             redacted_content = self._extract_pdf_text(redacted_path)
         else:
-            # 图片类：返回提示信息
             original_content = "[图片文件，请查看预览]"
             redacted_content = "[已脱敏图片，请查看预览]"
         
@@ -774,6 +824,17 @@ class Redactor:
         doc.close()
         return text
     
+    def _read_txt(self, file_path: str) -> str:
+        """读取纯文本文件（兼容多编码）"""
+        for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    return f.read()
+            except (UnicodeDecodeError, ValueError):
+                continue
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
     def _compute_changes(
         self,
         original: str,

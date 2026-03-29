@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, List, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -86,10 +86,57 @@ def _to_out(p: dict[str, Any]) -> PresetOut:
     )
 
 
-@router.get("/presets", response_model=List[PresetOut])
-async def list_presets():
+class PresetsListResponse(BaseModel):
+    presets: List[PresetOut]
+    total: int
+    page: int = 1
+    page_size: int = 50
+
+
+class PresetImportRequest(BaseModel):
+    presets: list
+    merge: bool = False  # True=merge with existing, False=replace all
+
+
+@router.get("/presets/export")
+async def export_presets():
+    """导出所有预设配置为 JSON"""
+    data = _load_store()
+    return {"presets": data, "exported_at": datetime.now(timezone.utc).isoformat(), "version": "1.0"}
+
+
+@router.post("/presets/import")
+async def import_presets(request: PresetImportRequest):
+    """导入预设配置"""
+    if request.merge:
+        existing = _load_store()
+        existing_ids = {p.get("id") for p in existing if isinstance(p, dict)}
+        for p in request.presets:
+            if isinstance(p, dict) and p.get("id") not in existing_ids:
+                existing.append(p)
+        _save_store(existing)
+    else:
+        _save_store(request.presets)
+
+    return {"message": "导入成功", "count": len(request.presets)}
+
+
+@router.get("/presets", response_model=PresetsListResponse)
+async def list_presets(
+    page: int = Query(1, ge=1, description="页码，从 1 开始"),
+    page_size: int = Query(50, ge=1, le=100, description="每页条数"),
+):
     presets = _load_store()
-    return [_to_out(p) for p in presets]
+    all_out = [_to_out(p) for p in presets]
+    total = len(all_out)
+    start = (page - 1) * page_size
+    page_items = all_out[start : start + page_size]
+    return PresetsListResponse(
+        presets=page_items,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/presets", response_model=PresetOut, status_code=201)

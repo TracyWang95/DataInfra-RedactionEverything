@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fileApi, redactionApi } from '../services/api';
+import { showToast } from '../components/Toast';
 import type { CompareData, FileListItem } from '../types';
 import { formCheckboxClass } from '../ui/selectionClasses';
 
@@ -80,6 +81,10 @@ export const History: React.FC = () => {
   /** 折叠的批量节点（batch_group_id） */
   const [collapsedBatchIds, setCollapsedBatchIds] = useState<Set<string>>(() => new Set());
   const [msg, setMsg] = useState<{ text: string; tone: 'ok' | 'warn' | 'err' } | null>(null);
+
+  const [dateFilter, setDateFilter] = useState<'all' | '7d' | '30d'>('all');
+  const [fileTypeFilter, setFileTypeFilter] = useState<'all' | 'word' | 'pdf' | 'image'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'redacted' | 'unredacted'>('all');
 
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareTarget, setCompareTarget] = useState<FileListItem | null>(null);
@@ -206,9 +211,52 @@ export const History: React.FC = () => {
     });
   };
 
-  const selectedIds = rows.filter(r => selected.has(r.file_id)).map(r => r.file_id);
+  const filteredRows = useMemo(() => {
+    let result = rows;
+    if (dateFilter !== 'all') {
+      const now = Date.now();
+      const days = dateFilter === '7d' ? 7 : 30;
+      const cutoff = now - days * 24 * 60 * 60 * 1000;
+      result = result.filter(r => r.created_at && new Date(r.created_at).getTime() >= cutoff);
+    }
+    if (fileTypeFilter !== 'all') {
+      result = result.filter(r => {
+        const ft = String(r.file_type).toLowerCase();
+        if (fileTypeFilter === 'word') return ft === 'docx' || ft === 'doc';
+        if (fileTypeFilter === 'pdf') return ft === 'pdf' || ft === 'pdf_scanned';
+        if (fileTypeFilter === 'image') return ft === 'image';
+        return true;
+      });
+    }
+    if (statusFilter !== 'all') {
+      result = result.filter(r => statusFilter === 'redacted' ? r.has_output : !r.has_output);
+    }
+    return result;
+  }, [rows, dateFilter, fileTypeFilter, statusFilter]);
 
-  const historyGroups = useMemo(() => buildHistoryGroups(rows), [rows]);
+  const selectedIds = filteredRows.filter(r => selected.has(r.file_id)).map(r => r.file_id);
+
+  const historyGroups = useMemo(() => buildHistoryGroups(filteredRows), [filteredRows]);
+
+  const statsData = useMemo(() => {
+    const totalFiles = filteredRows.length;
+    const redactedFiles = filteredRows.filter(r => r.has_output).length;
+    const entitySum = filteredRows.reduce((s, r) => s + (r.entity_count || 0), 0);
+    const sizeSum = filteredRows.reduce((s, r) => s + (r.file_size || 0), 0);
+    let sizeLabel: string;
+    if (sizeSum < 1024) sizeLabel = sizeSum + ' B';
+    else if (sizeSum < 1024 * 1024) sizeLabel = (sizeSum / 1024).toFixed(1) + ' KB';
+    else sizeLabel = (sizeSum / 1024 / 1024).toFixed(1) + ' MB';
+    return { totalFiles, redactedFiles, entitySum, sizeLabel };
+  }, [filteredRows]);
+
+  const hasActiveFilter = dateFilter !== 'all' || fileTypeFilter !== 'all' || statusFilter !== 'all';
+
+  const clearFilters = () => {
+    setDateFilter('all');
+    setFileTypeFilter('all');
+    setStatusFilter('all');
+  };
 
   const downloadZipByIds = async (ids: string[], redacted: boolean, filename: string) => {
     if (!ids.length) {
@@ -226,6 +274,7 @@ export const History: React.FC = () => {
     try {
       const blob = await fileApi.batchDownloadZip(ids, redacted);
       triggerDownload(blob, filename);
+      showToast('已开始下载 ZIP', 'success');
       setMsg({ text: '已开始下载 ZIP', tone: 'ok' });
     } catch (e) {
       setMsg({ text: e instanceof Error ? e.message : '下载失败', tone: 'err' });
@@ -291,7 +340,7 @@ export const History: React.FC = () => {
         ? 'bg-amber-50 text-amber-900 border border-amber-100'
         : 'bg-red-50 text-red-800 border border-red-100';
 
-  const allSelected = rows.length > 0 && selectedIds.length === rows.length;
+  const allSelected = filteredRows.length > 0 && selectedIds.length === filteredRows.length;
 
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col bg-[#f5f5f7] overflow-hidden">
@@ -326,17 +375,29 @@ export const History: React.FC = () => {
             type="button"
             onClick={() => downloadZip(false)}
             disabled={zipLoading || !selectedIds.length || initialLoading || tableLoading}
-            className="px-4 py-2 text-sm font-medium rounded-lg bg-[#0a0a0a] text-white hover:bg-[#262626] disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg bg-[#0a0a0a] text-white hover:bg-[#262626] disabled:opacity-40 transition-colors"
           >
-            {zipLoading ? '处理中…' : '下载原始 ZIP'}
+            {zipLoading && (
+              <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
+            {zipLoading ? '正在打包下载...' : '下载原始 ZIP'}
           </button>
           <button
             type="button"
             onClick={() => downloadZip(true)}
             disabled={zipLoading || !selectedIds.length || initialLoading || tableLoading}
-            className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 bg-white text-[#0a0a0a] hover:bg-gray-50 disabled:opacity-40 transition-colors"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 bg-white text-[#0a0a0a] hover:bg-gray-50 disabled:opacity-40 transition-colors"
           >
-            下载脱敏 ZIP
+            {zipLoading && (
+              <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
+            {zipLoading ? '正在打包下载...' : '下载脱敏 ZIP'}
           </button>
           <div className="ml-auto flex items-center gap-2 text-xs text-[#737373]">
             <span>每页</span>
@@ -358,6 +419,72 @@ export const History: React.FC = () => {
           <div className={`text-sm rounded-lg px-4 py-3 mb-4 flex-shrink-0 ${msgClass}`}>{msg.text}</div>
         )}
 
+        {/* Statistics cards */}
+        <div className="grid grid-cols-4 gap-3 mb-3 flex-shrink-0">
+          <div className="bg-white rounded-lg border border-gray-200 px-3 py-2.5 shadow-sm">
+            <p className="text-xs text-gray-500">总文件数</p>
+            <p className="text-lg font-semibold text-gray-900 mt-0.5">{statsData.totalFiles}</p>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 px-3 py-2.5 shadow-sm">
+            <p className="text-xs text-gray-500">已脱敏</p>
+            <p className="text-lg font-semibold text-emerald-700 mt-0.5">{statsData.redactedFiles}</p>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 px-3 py-2.5 shadow-sm">
+            <p className="text-xs text-gray-500">识别实体</p>
+            <p className="text-lg font-semibold text-gray-900 mt-0.5">{statsData.entitySum}</p>
+          </div>
+          <div className="bg-white rounded-lg border border-gray-200 px-3 py-2.5 shadow-sm">
+            <p className="text-xs text-gray-500">存储占用</p>
+            <p className="text-lg font-semibold text-gray-900 mt-0.5">{statsData.sizeLabel}</p>
+          </div>
+        </div>
+
+        {/* Filter bar */}
+        <div className="flex flex-wrap items-center gap-2 mb-3 flex-shrink-0">
+          <div className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-0.5">
+            {([['all', '全部'], ['7d', '最近7天'], ['30d', '最近30天']] as const).map(([val, label]) => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setDateFilter(val)}
+                className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                  dateFilter === val ? 'bg-[#0a0a0a] text-white' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <select
+            value={fileTypeFilter}
+            onChange={e => setFileTypeFilter(e.target.value as typeof fileTypeFilter)}
+            className="border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-xs text-gray-700"
+          >
+            <option value="all">全部类型</option>
+            <option value="word">Word</option>
+            <option value="pdf">PDF</option>
+            <option value="image">图片</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value as typeof statusFilter)}
+            className="border border-gray-200 rounded-lg px-2.5 py-1.5 bg-white text-xs text-gray-700"
+          >
+            <option value="all">全部状态</option>
+            <option value="redacted">已脱敏</option>
+            <option value="unredacted">未脱敏</option>
+          </select>
+          {hasActiveFilter && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              清除筛选
+            </button>
+          )}
+        </div>
+
         <div className="w-full flex flex-col flex-1 min-h-0 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="px-4 py-2.5 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
             <div>
@@ -366,14 +493,14 @@ export const History: React.FC = () => {
                 共 {total} 条 · 第 {page} / {totalPages} 页
               </p>
             </div>
-            {rows.length > 0 && (
+            {filteredRows.length > 0 && (
               <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   className={formCheckboxClass('md')}
                   checked={allSelected}
                   onChange={e => {
-                    if (e.target.checked) setSelected(new Set(rows.map(r => r.file_id)));
+                    if (e.target.checked) setSelected(new Set(filteredRows.map(r => r.file_id)));
                     else setSelected(new Set());
                   }}
                 />
@@ -505,17 +632,29 @@ export const History: React.FC = () => {
                             type="button"
                             disabled={zipLoading || initialLoading || tableLoading}
                             onClick={() => void downloadBatchGroupZip(g, false)}
-                            className="text-2xs font-medium px-2 py-1 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 text-2xs font-medium px-2 py-1 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40"
                           >
-                            整批原文件 ZIP
+                            {zipLoading && (
+                              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            )}
+                            {zipLoading ? '正在打包下载...' : '整批原文件 ZIP'}
                           </button>
                           <button
                             type="button"
                             disabled={zipLoading || initialLoading || tableLoading}
                             onClick={() => void downloadBatchGroupZip(g, true)}
-                            className="text-2xs font-medium px-2 py-1 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40"
+                            className="inline-flex items-center gap-1 text-2xs font-medium px-2 py-1 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40"
                           >
-                            整批脱敏 ZIP
+                            {zipLoading && (
+                              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            )}
+                            {zipLoading ? '正在打包下载...' : '整批脱敏 ZIP'}
                           </button>
                         </div>
                       </div>

@@ -72,7 +72,9 @@ export enum EntityType {
 
 // 文件类型枚举
 export enum FileType {
+  DOC = 'doc',
   DOCX = 'docx',
+  TXT = 'txt',
   PDF = 'pdf',
   PDF_SCANNED = 'pdf_scanned',
   IMAGE = 'image',
@@ -128,6 +130,38 @@ export interface FileInfo {
   created_at?: string;
 }
 
+/** GET /files?embed_job=1 时注入，与任务详情主 CTA 一致 */
+export interface JobItemMini {
+  id: string;
+  status: string;
+}
+
+export interface JobEmbedSummary {
+  status: string;
+  job_type: 'text_batch' | 'image_batch';
+  items: JobItemMini[];
+  /** 与任务列表 nav_hints 一致，去审核深链优先用 */
+  first_awaiting_review_item_id?: string | null;
+  /** GET /files?embed_job=1 时来自任务 config，与任务中心主 CTA 一致 */
+  wizard_furthest_step?: number | null;
+  /** 与 nav_hints.batch_step1_configured 一致 */
+  batch_step1_configured?: boolean;
+  progress?: {
+    total_items: number;
+    pending: number;
+    queued: number;
+    parsing: number;
+    ner: number;
+    vision: number;
+    awaiting_review: number;
+    review_approved: number;
+    redacting: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+  };
+}
+
 /** 处理历史列表项 */
 export interface FileListItem {
   file_id: string;
@@ -137,10 +171,16 @@ export interface FileListItem {
   created_at?: string | null;
   has_output: boolean;
   entity_count: number;
+  /** playground=Playground；batch=批量向导或任务工单 */
+  upload_source?: 'playground' | 'batch';
+  /** 绑定任务中心 Job 时存在，可与 /jobs/:id 关联 */
+  job_id?: string | null;
   /** 批量向导同一会话；单文件上传为 undefined/null */
   batch_group_id?: string | null;
   /** 该批次全局文件数（跨页时仍准确） */
   batch_group_count?: number | null;
+  /** 列表 embed_job=1 时由后端填充 */
+  job_embed?: JobEmbedSummary | null;
 }
 
 export interface FileListResponse {

@@ -64,6 +64,18 @@ function presetKindLabel(k?: PresetKind): string {
 const previewChipClass =
   'inline-flex min-h-[1.625rem] items-center justify-center rounded-lg border px-2.5 py-1 text-center text-2xs font-medium leading-snug shadow-sm';
 
+const redactionOutlineButtonClass =
+  'redaction-btn-outline inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 text-caption font-medium';
+
+const redactionPrimaryButtonClass =
+  'redaction-btn-primary inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50';
+
+const redactionDangerButtonClass =
+  'redaction-btn-danger inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 text-xs font-medium';
+
+const redactionFieldClass =
+  'redaction-field w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-800';
+
 function PresetPreviewExpandBody({
   p,
   entityTypes,
@@ -115,7 +127,7 @@ function PresetPreviewExpandBody({
                       {regexIds.map(id => (
                         <span
                           key={`rx-${id}`}
-                          className={`${previewChipClass} border-slate-200/90 bg-gradient-to-b from-white to-slate-50 text-gray-800`}
+                          className={`${previewChipClass} border-slate-200/90 bg-white text-gray-800`}
                         >
                           {entityTypes.find(t => t.id === id)?.name ?? id}
                         </span>
@@ -135,7 +147,7 @@ function PresetPreviewExpandBody({
                       {semIds.map(id => (
                         <span
                           key={`sem-${id}`}
-                          className={`${previewChipClass} border-slate-200/90 bg-gradient-to-b from-white to-slate-50 text-gray-800`}
+                          className={`${previewChipClass} border-slate-200/90 bg-white text-gray-800`}
                         >
                           {entityTypes.find(t => t.id === id)?.name ?? id}
                         </span>
@@ -163,7 +175,7 @@ function PresetPreviewExpandBody({
                 {p.ocrHasTypes.map(id => (
                   <span
                     key={`ocr-${id}`}
-                    className={`${previewChipClass} border-emerald-200/85 bg-gradient-to-b from-emerald-50/95 to-white text-emerald-950/90`}
+                    className={`${previewChipClass} border-gray-200 bg-white text-gray-800`}
                   >
                     {ocrPipe?.types.find(t => t.id === id)?.name ?? id}
                   </span>
@@ -183,7 +195,7 @@ function PresetPreviewExpandBody({
                 {p.hasImageTypes.map(id => (
                   <span
                     key={`hi-${id}`}
-                    className={`${previewChipClass} border-violet-200/85 bg-gradient-to-b from-violet-50/95 to-white text-violet-950/90`}
+                    className={`${previewChipClass} border-gray-200 bg-white text-gray-800`}
                   >
                     {imgPipe?.types.find(t => t.id === id)?.name ?? id}
                   </span>
@@ -432,7 +444,7 @@ export const RedactionListSettings: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#fafafa]">
+    <div className="redaction-root flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#fafafa]">
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-3 py-2 sm:px-4 sm:py-3 w-full max-w-[min(100%,1920px)] mx-auto">
       {loading ? (
         <div className="flex items-center justify-center py-24">
@@ -440,7 +452,7 @@ export const RedactionListSettings: React.FC = () => {
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
-          <div className="shrink-0 bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+          <div className="redaction-surface shrink-0 bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
               <div className="min-w-0 flex-1">
                 <h3 className="font-semibold text-gray-900 text-sm">脱敏清单配置</h3>
@@ -450,7 +462,7 @@ export const RedactionListSettings: React.FC = () => {
                 </p>
               </div>
               <div className="flex flex-wrap flex-col sm:flex-row items-stretch sm:items-end gap-2 shrink-0 max-w-full">
-                <div className="text-2xs rounded-lg border border-gray-200/80 bg-[#f8f9fb] px-2.5 py-2 min-w-[min(100%,15rem)]">
+                <div className="redaction-summary text-2xs rounded-lg border border-gray-200/80 bg-white px-2.5 py-2 min-w-[min(100%,15rem)]">
                   <p className="text-[0.65rem] font-semibold text-gray-500 uppercase tracking-wide mb-1">当前选用</p>
                   <p className="text-gray-800 leading-snug">
                     <span className="text-gray-500">文本链：</span>
@@ -468,14 +480,14 @@ export const RedactionListSettings: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => openNewPresetModal('text')}
-                    className="px-2.5 py-1 text-caption font-medium rounded-md border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
+                    className={redactionOutlineButtonClass}
                   >
                     + 文本清单
                   </button>
                   <button
                     type="button"
                     onClick={() => openNewPresetModal('vision')}
-                    className="px-2.5 py-1 text-caption font-medium rounded-md border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
+                    className={redactionOutlineButtonClass}
                   >
                     + 图像预设
                   </button>
@@ -486,7 +498,7 @@ export const RedactionListSettings: React.FC = () => {
               <div className="flex flex-col gap-0.5">
                 <span className="text-2xs font-medium text-gray-600">选用 · 文本链</span>
                 <select
-                  className="text-xs border border-gray-200 rounded-md px-2 py-1.5 bg-white w-full"
+                  className={redactionFieldClass}
                   value={bridgeText}
                   onChange={e => {
                     const v = e.target.value;
@@ -506,7 +518,7 @@ export const RedactionListSettings: React.FC = () => {
               <div className="flex flex-col gap-0.5">
                 <span className="text-2xs font-medium text-gray-600">选用 · 图像链</span>
                 <select
-                  className="text-xs border border-gray-200 rounded-md px-2 py-1.5 bg-white w-full"
+                  className={redactionFieldClass}
                   value={bridgeVision}
                   onChange={e => {
                     const v = e.target.value;
@@ -557,21 +569,21 @@ export const RedactionListSettings: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setExpandedPresetKey(cur => (cur === rowKey ? null : rowKey))}
-                              className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-800 hover:bg-gray-50"
+                              className={redactionOutlineButtonClass}
                             >
                               {expandedPresetKey === rowKey ? '收起' : '预览'}
                             </button>
                             <button
                               type="button"
                               onClick={() => openEditPreset(p)}
-                              className="rounded border border-gray-200 px-2 py-1 text-xs hover:bg-white"
+                              className={redactionOutlineButtonClass}
                             >
                               编辑
                             </button>
                             <button
                               type="button"
                               onClick={() => removePreset(p.id)}
-                              className="rounded border border-red-100 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                              className={redactionDangerButtonClass}
                             >
                               删除
                             </button>
@@ -579,7 +591,7 @@ export const RedactionListSettings: React.FC = () => {
                         </div>
                         {expandedPresetKey === rowKey && (
                           <div className="border-t border-gray-100/80 bg-white px-2 pb-3 pt-2">
-                            <div className="rounded-lg border border-gray-200/90 bg-gradient-to-b from-white to-gray-50/40 px-3 py-3 shadow-sm">
+                            <div className="rounded-lg border border-gray-200/90 bg-white px-3 py-3 shadow-sm">
                               <PresetPreviewExpandBody p={p} entityTypes={entityTypes} pipelines={pipelines} />
                             </div>
                           </div>
@@ -612,21 +624,21 @@ export const RedactionListSettings: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setExpandedPresetKey(cur => (cur === rowKey ? null : rowKey))}
-                              className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-800 hover:bg-gray-50"
+                              className={redactionOutlineButtonClass}
                             >
                               {expandedPresetKey === rowKey ? '收起' : '预览'}
                             </button>
                             <button
                               type="button"
                               onClick={() => openEditPreset(p)}
-                              className="rounded border border-gray-200 px-2 py-1 text-xs hover:bg-white"
+                              className={redactionOutlineButtonClass}
                             >
                               编辑
                             </button>
                             <button
                               type="button"
                               onClick={() => removePreset(p.id)}
-                              className="rounded border border-red-100 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                              className={redactionDangerButtonClass}
                             >
                               删除
                             </button>
@@ -634,7 +646,7 @@ export const RedactionListSettings: React.FC = () => {
                         </div>
                         {expandedPresetKey === rowKey && (
                           <div className="border-t border-gray-100/80 bg-white px-2 pb-3 pt-2">
-                            <div className="rounded-lg border border-gray-200/90 bg-gradient-to-b from-white to-gray-50/40 px-3 py-3 shadow-sm">
+                            <div className="rounded-lg border border-gray-200/90 bg-white px-3 py-3 shadow-sm">
                               <PresetPreviewExpandBody p={p} entityTypes={entityTypes} pipelines={pipelines} />
                             </div>
                           </div>
@@ -653,7 +665,7 @@ export const RedactionListSettings: React.FC = () => {
 
             {presetModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6">
-          <div className="bg-white rounded-xl w-full max-w-[min(100%,56rem)] min-w-0 max-h-[92vh] overflow-hidden flex flex-col shadow-xl border border-gray-200/80">
+          <div className="redaction-modal bg-white rounded-xl w-full max-w-[min(100%,56rem)] min-w-0 max-h-[92vh] overflow-hidden flex flex-col shadow-xl border border-gray-200/80">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">
                 {editingPresetId
@@ -849,7 +861,7 @@ export const RedactionListSettings: React.FC = () => {
                 type="button"
                 onClick={() => void savePresetModal()}
                 disabled={presetSaving}
-                className="px-4 py-2 text-sm font-medium text-white rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 shadow-sm"
+                className={redactionPrimaryButtonClass}
               >
                 {presetSaving ? '保存中…' : '保存'}
               </button>

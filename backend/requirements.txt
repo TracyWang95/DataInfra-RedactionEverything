@@ -1,25 +1,25 @@
 # FastAPI 框架
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.18
 
 # 数据验证
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic>=2.10.0
+pydantic-settings>=2.7.0
 
 # 文件处理
 python-docx==1.1.0
 PyMuPDF==1.23.8
-Pillow==10.2.0
+Pillow>=11.0.0
 pdf2image==1.17.0
 pywin32==306  # Windows: 用于处理 .doc 文件
 
 # HTTP 客户端
-httpx==0.26.0
+httpx>=0.28.0
 
 # GPU 显存（侧栏 /health/services；NVML，不依赖 PATH 中的 nvidia-smi）
 nvidia-ml-py>=12.535.133
-aiofiles==23.2.1
+aiofiles>=24.1.0
 
 # 智谱AI SDK
 zhipuai>=2.0.0
@@ -35,9 +35,9 @@ ultralytics>=8.3.0
 paddleocr[doc-parser]>=2.7.0
 
 # 工具库
-python-jose[cryptography]==3.3.0
+PyJWT>=2.8.0
 passlib[bcrypt]==1.7.4
 
 # 开发工具
-python-dotenv==1.0.0
+python-dotenv>=1.0.1
 pytest>=8.0.0

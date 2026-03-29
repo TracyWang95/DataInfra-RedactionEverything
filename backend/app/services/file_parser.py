@@ -2,9 +2,12 @@
 文件解析服务
 支持 Word/PDF/图片 文件的内容提取
 """
+import logging
 import os
 import sys
 import tempfile
+
+logger = logging.getLogger(__name__)
 import fitz  # PyMuPDF
 from docx import Document
 from PIL import Image
@@ -35,6 +38,8 @@ class FileParser:
             return await self._parse_doc(file_path)
         elif file_type == FileType.DOCX:
             return await self._parse_docx(file_path)
+        elif file_type == FileType.TXT:
+            return await self._parse_txt(file_path)
         elif file_type == FileType.PDF:
             return await self._parse_pdf(file_path)
         elif file_type == FileType.IMAGE:
@@ -55,7 +60,7 @@ class FileParser:
                 result.file_type = FileType.DOC
                 return result
             except Exception as e:
-                print(f"解析转换后的 docx 失败: {e}")
+                logger.error("解析转换后的 docx 失败: %s", e)
             finally:
                 # 清理临时文件
                 if docx_path != file_path:
@@ -124,11 +129,11 @@ class FileParser:
                 # 保存为 docx (FileFormat=16 是 docx 格式)
                 doc.SaveAs2(output_path, FileFormat=16)
                 
-                print(f"Word COM 转换成功: {output_path}")
+                logger.info("Word COM 转换成功: %s", output_path)
                 return output_path
                 
             except Exception as e:
-                print(f"Word COM 转换错误: {e}")
+                logger.error("Word COM 转换错误: %s", e)
                 return None
             finally:
                 # 关闭文档和 Word
@@ -145,10 +150,10 @@ class FileParser:
                 pythoncom.CoUninitialize()
                 
         except ImportError:
-            print("pywin32 未安装，无法使用 Word COM")
+            logger.warning("pywin32 未安装，无法使用 Word COM")
             return None
         except Exception as e:
-            print(f"Word COM 初始化失败: {e}")
+            logger.error("Word COM 初始化失败: %s", e)
             return None
     
     async def _convert_with_libreoffice(self, doc_path: str) -> Optional[str]:
@@ -171,7 +176,7 @@ class FileParser:
                 break
         
         if not soffice:
-            print("未找到 LibreOffice")
+            logger.warning("未找到 LibreOffice")
             return None
         
         try:
@@ -187,16 +192,68 @@ class FileParser:
             if result.returncode == 0:
                 output_path = os.path.splitext(doc_path)[0] + '.docx'
                 if os.path.exists(output_path):
-                    print(f"LibreOffice 转换成功: {output_path}")
+                    logger.info("LibreOffice 转换成功: %s", output_path)
                     return output_path
             
-            print(f"LibreOffice 转换失败: {result.stderr}")
+            logger.error("LibreOffice 转换失败: %s", result.stderr)
             return None
             
         except Exception as e:
-            print(f"LibreOffice 转换错误: {e}")
+            logger.error("LibreOffice 转换错误: %s", e)
             return None
     
+    async def _parse_txt(self, file_path: str) -> ParseResult:
+        """解析纯文本文件 (.txt, .md, .html, .htm, .rtf)"""
+        ext = os.path.splitext(file_path)[1].lower()
+        try:
+            # 尝试多种编码
+            content = None
+            for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
+                try:
+                    with open(file_path, "r", encoding=enc) as f:
+                        content = f.read()
+                    break
+                except (UnicodeDecodeError, ValueError):
+                    continue
+            if content is None:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+
+            # HTML: 用简单正则去标签提取文本
+            if ext in (".html", ".htm"):
+                import re
+                content = re.sub(r"<style[^>]*>.*?</style>", "", content, flags=re.DOTALL | re.IGNORECASE)
+                content = re.sub(r"<script[^>]*>.*?</script>", "", content, flags=re.DOTALL | re.IGNORECASE)
+                content = re.sub(r"<[^>]+>", " ", content)
+                content = re.sub(r"\s+", " ", content).strip()
+
+            # RTF: 去除 RTF 控制码提取文本
+            if ext == ".rtf":
+                import re
+                content = re.sub(r"\\[a-z]+\d*\s?", "", content)
+                content = re.sub(r"[{}]", "", content)
+                content = re.sub(r"\s+", " ", content).strip()
+
+            pages = [content] if content else []
+            return ParseResult(
+                file_id="",
+                file_type=FileType.TXT,
+                content=content or "",
+                page_count=1,
+                pages=pages,
+                is_scanned=False,
+            )
+        except Exception as e:
+            logger.error("解析文本文件失败: %s", e)
+            return ParseResult(
+                file_id="",
+                file_type=FileType.TXT,
+                content=f"[无法解析文件: {os.path.basename(file_path)}]",
+                page_count=1,
+                pages=[],
+                is_scanned=False,
+            )
+
     async def _parse_docx(self, file_path: str) -> ParseResult:
         """解析 Word 文档 (.docx)"""
         doc = Document(file_path)

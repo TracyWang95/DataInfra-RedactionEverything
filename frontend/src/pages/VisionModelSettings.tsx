@@ -84,7 +84,9 @@ export const VisionModelSettings: React.FC = () => {
       const data = await res.json();
       setModelConfigs(data);
     } catch (err) {
-      console.error('获取模型配置失败', err);
+      if (import.meta.env.DEV) {
+        console.error('获取模型配置失败', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -129,7 +131,9 @@ export const VisionModelSettings: React.FC = () => {
         alert(data.detail || '保存失败');
       }
     } catch (err) {
-      console.error('保存模型配置失败', err);
+      if (import.meta.env.DEV) {
+        console.error('保存模型配置失败', err);
+      }
     }
   };
 
@@ -144,7 +148,9 @@ export const VisionModelSettings: React.FC = () => {
         alert(data.detail || '删除失败');
       }
     } catch (err) {
-      console.error('删除模型配置失败', err);
+      if (import.meta.env.DEV) {
+        console.error('删除模型配置失败', err);
+      }
     }
   };
 
@@ -180,7 +186,9 @@ export const VisionModelSettings: React.FC = () => {
         fetchModelConfigs();
       }
     } catch (err) {
-      console.error('重置模型配置失败', err);
+      if (import.meta.env.DEV) {
+        console.error('重置模型配置失败', err);
+      }
     }
   };
 

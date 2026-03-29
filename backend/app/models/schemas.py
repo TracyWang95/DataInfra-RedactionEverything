@@ -1,7 +1,7 @@
 """
 Pydantic 数据模型定义
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Literal
 from enum import Enum
 from datetime import datetime
@@ -83,6 +83,7 @@ class FileType(str, Enum):
     """文件类型枚举"""
     DOC = "doc"              # 旧版 Word (.doc)
     DOCX = "docx"            # 新版 Word (.docx)
+    TXT = "txt"              # 纯文本 (.txt, .md, .rtf, .html)
     PDF = "pdf"
     PDF_SCANNED = "pdf_scanned"  # 扫描版 PDF
     IMAGE = "image"
@@ -210,6 +211,17 @@ class PreviewEntityMapResponse(BaseModel):
     entity_map: dict[str, str] = Field(default_factory=dict, description="与 execute 一致的原文→替换表")
 
 
+class PreviewImageRequest(BaseModel):
+    bounding_boxes: list[BoundingBox] = Field(default_factory=list)
+    config: RedactionConfig = Field(default_factory=RedactionConfig)
+
+
+class PreviewImageResponse(BaseModel):
+    file_id: str
+    page: int
+    image_base64: str
+
+
 class NERRequest(BaseModel):
     """NER识别请求"""
     entity_types: list[str] = Field(
@@ -235,6 +247,55 @@ class FileUploadResponse(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class JobItemMini(BaseModel):
+    """列表嵌套用：与任务详情 CTA 解析一致的最小 item 字段"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    status: str
+
+
+class JobProgress(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    total_items: int = 0
+    pending: int = 0
+    queued: int = 0
+    parsing: int = 0
+    ner: int = 0
+    vision: int = 0
+    awaiting_review: int = 0
+    review_approved: int = 0
+    redacting: int = 0
+    completed: int = 0
+    failed: int = 0
+    cancelled: int = 0
+
+
+class JobEmbedSummary(BaseModel):
+    """GET /files?embed_job=1 时按 job_id 去重注入，减少前端逐条 getJob"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    status: str
+    job_type: Literal["text_batch", "image_batch", "smart_batch"]
+    items: list[JobItemMini] = Field(default_factory=list)
+    progress: JobProgress = Field(default_factory=JobProgress)
+    wizard_furthest_step: Optional[int] = Field(
+        default=None,
+        description="来自任务 config，供历史页主 CTA 与任务中心「继续上传」一致",
+    )
+    first_awaiting_review_item_id: Optional[str] = Field(
+        default=None,
+        description="与 /jobs 列表 nav_hints 一致，待审 deep-link 用",
+    )
+    batch_step1_configured: bool = Field(
+        default=False,
+        description="config 已含识别项选择，与 nav_hints.batch_step1_configured 一致",
+    )
+
+
 class FileListItem(BaseModel):
     """文件列表项（处理历史）"""
     file_id: str
@@ -244,6 +305,14 @@ class FileListItem(BaseModel):
     created_at: Optional[str] = None
     has_output: bool = False
     entity_count: int = 0
+    upload_source: Literal["playground", "batch"] = Field(
+        default="playground",
+        description="playground=Playground 单文件；batch=批量向导或任务工单上传",
+    )
+    job_id: Optional[str] = Field(
+        default=None,
+        description="若上传时绑定任务中心 Job，则为该 Job UUID，可与 /api/v1/jobs/{id} 关联",
+    )
     batch_group_id: Optional[str] = Field(
         default=None,
         description="批量向导同一会话上传的文件共享此 ID；Playground 单文件上传为 null",
@@ -251,6 +320,10 @@ class FileListItem(BaseModel):
     batch_group_count: Optional[int] = Field(
         default=None,
         description="该批次在系统中的文件总数（仅 batch_group_id 非空时有意义）",
+    )
+    job_embed: Optional[JobEmbedSummary] = Field(
+        default=None,
+        description="embed_job=1 且存在 job_id 时返回，供历史页主 CTA 与任务中心一致",
     )
 
 
@@ -320,3 +393,150 @@ class HealthResponse(BaseModel):
     status: str = "healthy"
     version: str
     timestamp: datetime = Field(default_factory=datetime.now)
+
+
+# ============ 任务中心响应模型 ============
+
+class NavHints(BaseModel):
+    """任务导航提示"""
+    model_config = ConfigDict(extra="allow")
+
+    item_count: int = 0
+    first_awaiting_review_item_id: Optional[str] = None
+    batch_step1_configured: bool = False
+    wizard_furthest_step: Optional[int] = None
+
+
+class JobResponse(BaseModel):
+    """任务摘要响应（_job_to_summary 返回值）"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    job_type: str
+    title: str
+    status: str
+    priority: int = 0
+    skip_item_review: bool = False
+    config: dict = Field(default_factory=dict)
+    config_json: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: str
+    updated_at: str
+    progress: JobProgress = Field(default_factory=JobProgress)
+    nav_hints: Optional[NavHints] = None
+
+
+class JobItemResponse(BaseModel):
+    """任务项响应"""
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    job_id: str
+    file_id: str
+    sort_order: int = 0
+    status: str
+    error_message: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    reviewer: Optional[str] = None
+    review_draft_json: Optional[str] = None
+    created_at: str
+    updated_at: str
+    filename: Optional[str] = None
+    file_type: Optional[str] = None
+    has_output: bool = False
+    entity_count: int = 0
+    has_review_draft: bool = False
+    review_draft_updated_at: Optional[str] = None
+
+
+class JobListResponse(BaseModel):
+    """任务列表响应"""
+    jobs: list[JobResponse]
+    total: int
+    page: int = 1
+    page_size: int = 20
+
+
+class JobProgressResponse(BaseModel):
+    """任务进度响应（含 status 字段）"""
+    model_config = ConfigDict(extra="ignore")
+
+    status: str
+    total_items: int = 0
+    pending: int = 0
+    queued: int = 0
+    parsing: int = 0
+    ner: int = 0
+    vision: int = 0
+    awaiting_review: int = 0
+    review_approved: int = 0
+    redacting: int = 0
+    completed: int = 0
+    failed: int = 0
+    cancelled: int = 0
+
+
+class JobDetailResponse(JobResponse):
+    """任务详情+项列表响应（继承 JobResponse，追加 items）"""
+    items: list[JobItemResponse] = Field(default_factory=list)
+
+
+class JobDeleteResponse(BaseModel):
+    """任务删除响应"""
+    id: str
+    deleted: bool = True
+    deleted_item_count: int = 0
+    detached_file_count: int = 0
+
+
+class ReviewDraftResponse(BaseModel):
+    """审核草稿响应"""
+    model_config = ConfigDict(extra="ignore")
+
+    exists: bool
+    entities: list = Field(default_factory=list)
+    bounding_boxes: list = Field(default_factory=list)
+    updated_at: Optional[str] = None
+
+
+# ============ 实体类型 / 脱敏端点响应 ============
+
+class EntityTypeItem(BaseModel):
+    """单个实体类型展示项"""
+    value: str
+    label: str
+    color: str
+
+
+class EntityTypeListResponse(BaseModel):
+    """实体类型列表响应"""
+    entity_types: list[EntityTypeItem]
+
+
+class ReplacementModeItem(BaseModel):
+    """单个替换模式展示项"""
+    value: str
+    label: str
+    description: str
+
+
+class ReplacementModeListResponse(BaseModel):
+    """替换模式列表响应"""
+    replacement_modes: list[ReplacementModeItem]
+
+
+class ToggleResponse(BaseModel):
+    """启用/禁用切换响应"""
+    enabled: bool
+
+
+class MessageResponse(BaseModel):
+    """简单消息响应"""
+    message: str
+
+
+class RedactionVersionsResponse(BaseModel):
+    """脱敏版本历史响应"""
+    file_id: str
+    versions: list[dict] = Field(default_factory=list)
+    total: int = 0

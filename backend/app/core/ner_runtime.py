@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Optional, Literal
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class NerBackendRuntime(BaseModel):
@@ -31,7 +34,7 @@ def load_ner_runtime() -> Optional[NerBackendRuntime]:
         with open(p, "r", encoding="utf-8") as f:
             return NerBackendRuntime(**json.load(f))
     except Exception as e:
-        print(f"[NER] 读取 ner_backend.json 失败: {e}")
+        logger.warning("读取 ner_backend.json 失败: %s", e)
         return None
 
 

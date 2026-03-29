@@ -2,42 +2,72 @@
 应用配置管理
 支持从环境变量和 .env 文件加载配置
 """
+import json
 import os
-from pydantic_settings import BaseSettings
+import uuid
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Literal
 from functools import lru_cache
 
 
+def _load_or_create_jwt_secret(data_dir: str) -> str:
+    """首次启动时生成 JWT 密钥并持久化到 data 目录，后续重启复用。"""
+    secret_path = os.path.join(data_dir, "jwt_secret.json")
+    if os.path.exists(secret_path):
+        try:
+            with open(secret_path, "r") as f:
+                return json.load(f).get("secret", "")
+        except Exception:
+            pass
+    secret = str(uuid.uuid4()) + "-" + str(uuid.uuid4())
+    os.makedirs(data_dir, exist_ok=True)
+    try:
+        with open(secret_path, "w") as f:
+            json.dump({"secret": secret}, f)
+    except Exception:
+        pass
+    return secret
+
+
 class Settings(BaseSettings):
     """应用配置"""
-    
+
     # 应用基础配置
     APP_NAME: str = "DataShield 智能数据脱敏平台"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = True
-    
+
     # API 配置
     API_PREFIX: str = "/api/v1"
-    
+
     # CORS 配置
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
-    
+    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
     # 文件上传配置
     UPLOAD_DIR: str = "./uploads"
     OUTPUT_DIR: str = "./outputs"
     DATA_DIR: str = "./data"
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB
-    ALLOWED_EXTENSIONS: list[str] = [".doc", ".docx", ".pdf", ".jpg", ".jpeg", ".png"]
-    
+    ALLOWED_EXTENSIONS: list[str] = [
+        # 文本类
+        ".doc", ".docx", ".txt", ".rtf", ".md", ".html", ".htm",
+        # PDF
+        ".pdf",
+        # 图像类
+        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff",
+    ]
+
     # HaS Image YOLO 微服务（独立进程，端口 8081，与 PaddleOCR 8082 同级）
     HAS_IMAGE_BASE_URL: str = "http://127.0.0.1:8081"
     HAS_IMAGE_TIMEOUT: float = 120.0
     HAS_IMAGE_CONF: float = 0.25
 
-    # 本地持久化
-    FILE_STORE_PATH: str = os.path.join(DATA_DIR, "file_store.json")
-    PIPELINE_STORE_PATH: str = os.path.join(DATA_DIR, "pipelines.json")
-    PRESET_STORE_PATH: str = os.path.join(DATA_DIR, "presets.json")
+    # 本地持久化（空串 = 跟随 DATA_DIR 自动派生，见 model_validator）
+    FILE_STORE_PATH: str = ""
+    JOB_DB_PATH: str = ""
+    PIPELINE_STORE_PATH: str = ""
+    PRESET_STORE_PATH: str = ""
 
     # PaddleOCR-VL 微服务配置（独立进程，端口8082）
     OCR_BASE_URL: str = "http://127.0.0.1:8082"
@@ -45,7 +75,7 @@ class Settings(BaseSettings):
     OCR_TIMEOUT: float = 360.0
     # 主后端探测 OCR /health 的超时（秒）；首启加载模型较慢，过短会误显示「离线」
     OCR_HEALTH_PROBE_TIMEOUT: float = 45.0
-    
+
     # 文本 NER：二选一
     # - llamacpp: HaS Text 0209 Q4_K_M（llama-server，默认 8080/v1，OpenAI 兼容，可不传 model）
     # - ollama:    本地 Ollama（默认 11434/v1），必须在 HAS_OLLAMA_MODEL 指定模型名，如 qwen3:8b
@@ -58,14 +88,46 @@ class Settings(BaseSettings):
 
     # 兼容旧环境变量 HAS_BASE_URL：若设置则覆盖当前 backend 对应 URL（见 get_has_chat_base_url）
     HAS_BASE_URL: Optional[str] = None
-    
+
+    # 认证配置（JWT_SECRET_KEY 若未通过环境变量指定，则自动持久化到 data 目录）
+    JWT_SECRET_KEY: str = ""
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
+    LOCAL_PASSWORD_HASH: str = ""  # bcrypt hash, set via setup endpoint
+    AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "false").lower() == "true"
+
+    # 批量任务并发配置
+    JOB_CONCURRENCY: int = 1  # Number of concurrent job items to process
+
     # 脱敏配置
     DEFAULT_REPLACEMENT_MODE: Literal["smart", "mask", "custom"] = "smart"
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+
+    @model_validator(mode="after")
+    def _derive_paths_and_secrets(self) -> "Settings":
+        """在所有字段（含环境变量覆盖）解析完毕后，派生依赖 DATA_DIR 的路径。"""
+        d = self.DATA_DIR
+        if not self.FILE_STORE_PATH:
+            self.FILE_STORE_PATH = os.path.join(d, "file_store.json")
+        if not self.JOB_DB_PATH:
+            self.JOB_DB_PATH = os.path.join(d, "jobs.sqlite3")
+        if not self.PIPELINE_STORE_PATH:
+            self.PIPELINE_STORE_PATH = os.path.join(d, "pipelines.json")
+        if not self.PRESET_STORE_PATH:
+            self.PRESET_STORE_PATH = os.path.join(d, "presets.json")
+        # JWT 密钥：优先环境变量，否则从 data 目录加载或首次生成并持久化
+        if not self.JWT_SECRET_KEY:
+            env_key = os.environ.get("JWT_SECRET_KEY", "")
+            if env_key:
+                self.JWT_SECRET_KEY = env_key
+            else:
+                self.JWT_SECRET_KEY = _load_or_create_jwt_secret(d)
+        return self
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+    )
 
 
 @lru_cache

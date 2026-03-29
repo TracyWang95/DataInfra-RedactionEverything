@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import logging
 import time
 import io
 import os
@@ -15,6 +16,8 @@ import inspect
 from difflib import SequenceMatcher
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from app.core.config import settings
@@ -85,9 +88,9 @@ class HybridVisionService:
         try:
             from app.services.ocr_service import ocr_service
             self._ocr_service = ocr_service
-            print("[OK] OCR client initialized (will check availability at runtime)")
+            logger.info("OCR client initialized (will check availability at runtime)")
         except Exception as e:
-            print(f"[WARN] OCR client init failed: {e}")
+            logger.warning("OCR client init failed: %s", e)
             self._ocr_service = None
         
         # 初始化 HaS Client（本地模型）
@@ -97,12 +100,12 @@ class HybridVisionService:
             if self._has_client.is_available():
                 self._has_ready = True
                 self._has_service = True
-                print("[OK] HaS Client init success (local model)")
+                logger.info("HaS Client init success (local model)")
             else:
-                print("[WARN] HaS service not available (is llama.cpp server running?)")
+                logger.warning("HaS service not available (is llama.cpp server running?)")
                 self._has_ready = False
         except Exception as e:
-            print(f"[WARN] HaS Client init failed: {e}")
+            logger.warning("HaS Client init failed: %s", e)
             self._has_client = None
             self._has_ready = False
     
@@ -121,18 +124,18 @@ class HybridVisionService:
         返回：(文本块列表, 视觉敏感区域如公章)
         """
         if not self._ocr_service:
-            print("[OCR] OCR client not initialized")
+            logger.warning("OCR client not initialized")
             return [], []
 
         if not self._ocr_service.is_available():
-            print("[OCR] OCR microservice offline (8082)")
+            logger.warning("OCR microservice offline (8082)")
             return [], []
 
         blocks, visual_regions = self._run_ocr_service(image)
         if blocks or visual_regions:
-            print(f"[OCR] Got {len(blocks)} text blocks, {len(visual_regions)} visual regions")
+            logger.info("OCR got %d text blocks, %d visual regions", len(blocks), len(visual_regions))
         else:
-            print("[OCR] No results from OCR service")
+            logger.info("No results from OCR service")
         return blocks, visual_regions
 
     def _run_ocr_service(self, image: Image.Image) -> Tuple[List[OCRTextBlock], List[SensitiveRegion]]:
@@ -185,7 +188,7 @@ class HybridVisionService:
                     source="paddleocr_vl",
                     color=(255, 0, 0),  # 红色
                 ))
-                print(f"[VL] Found SEAL @ ({left}, {top}, {right-left}, {bottom-top})")
+                logger.info("Found SEAL @ (%d, %d, %d, %d)", left, top, right-left, bottom-top)
                 continue  # 公章不需要走 HaS 文字分析
 
             polygon = [
@@ -227,11 +230,11 @@ class HybridVisionService:
                 from app.services.has_client import HaSClient
                 self._has_client = HaSClient()
             except Exception as e:
-                print(f"[ERR] HaS Client init failed: {e}")
+                logger.error("HaS Client init failed: %s", e)
                 return []
-        
+
         if not self._has_client.is_available():
-            print("[WARN] HaS service not available, skipping NER")
+            logger.warning("HaS service not available, skipping NER")
             return []
         
         try:
@@ -242,7 +245,7 @@ class HybridVisionService:
             if not text_content.strip():
                 return []
             
-            print(f"[HaS] Analyzing {len(all_texts)} text blocks...")
+            logger.info("HaS analyzing %d text blocks...", len(all_texts))
             
             # =====================================================================
             # 类型 ID -> 中文名 映射
@@ -311,7 +314,7 @@ class HybridVisionService:
                         chinese_types.append(vt.name)
                 # 去重
                 chinese_types = list(dict.fromkeys(chinese_types))
-                print(f"[HaS] Using types for NER: {chinese_types}")
+                logger.info("HaS using types for NER: %s", chinese_types)
             else:
                 # 默认类型 - 基于国标覆盖主要标识符
                 chinese_types = [
@@ -319,7 +322,7 @@ class HybridVisionService:
                     "银行卡号", "银行账号", "机构名称", "详细地址",
                     "日期", "金额", "案件编号", "当事人", "律师",
                 ]
-                print(f"[HaS] Using default types: {chinese_types}")
+                logger.info("HaS using default types: %s", chinese_types)
             
             # HaS 的 httpx 同步调用会阻塞事件循环，放到线程池中
             ner_result = await asyncio.to_thread(
@@ -328,10 +331,10 @@ class HybridVisionService:
             
             # HaS ner() 返回格式：{类型: [实体列表]}，如 {"人名": ["张三"], "组织": ["腾讯"]}
             if not ner_result or not isinstance(ner_result, dict):
-                print("[HaS] No entities found by NER")
+                logger.info("HaS: no entities found by NER")
                 return []
-            
-            print(f"[HaS] NER result: {ner_result}")
+
+            logger.info("HaS NER result: %s", ner_result)
             
             # =====================================================================
             # 中文 -> 类型 ID 反向映射（HaS 返回中文，需转回 ID）
@@ -433,22 +436,20 @@ class HybridVisionService:
                     text = entity_text.strip() if entity_text else ""
                     # 过滤太短的实体
                     if len(text) < min_len:
-                        print(f"[HaS] Skipped too short: '{text}' ({normalized_type})")
+                        logger.debug("HaS skipped too short: '%s' (%s)", text, normalized_type)
                         continue
                     
                     entities.append({
                         "type": normalized_type,
                         "text": text,
                     })
-                    print(f"[HaS] Found entity: {text} ({normalized_type})")
-            
-            print(f"[HaS] Total {len(entities)} sensitive entities found")
+                    logger.debug("HaS found entity: %s (%s)", text, normalized_type)
+
+            logger.info("HaS total %d sensitive entities found", len(entities))
             return entities
             
         except Exception as e:
-            print(f"[ERR] HaS text analysis failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("HaS text analysis failed: %s", e)
             return []
     
     def _extract_table_cells(self, table_html: str, block: OCRTextBlock) -> List[OCRTextBlock]:
@@ -505,7 +506,7 @@ class HybridVisionService:
             if getattr(parser, "current_row", None):
                 rows.append(parser.current_row)
         except Exception as e:
-            print(f"[WARN] Failed to parse table HTML: {e}")
+            logger.warning("Failed to parse table HTML: %s", e)
             return []
         
         if not rows:
@@ -595,7 +596,7 @@ class HybridVisionService:
                 cell_blocks = self._extract_table_cells(block.text, block)
                 if cell_blocks:
                     expanded_blocks.extend(cell_blocks)
-                    print(f"[TABLE] Expanded table into {len(cell_blocks)} cells")
+                    logger.debug("Expanded table into %d cells", len(cell_blocks))
                 else:
                     # 解析失败，保留原块
                     expanded_blocks.append(block)
@@ -676,7 +677,7 @@ class HybridVisionService:
                         confidence=1.0,
                         source="text_match",
                     ))
-                    print(f"  [MATCH] '{entity_text}' in '{block_text[:20]}...' @ ({sub_left}, {block.top}, {sub_width}, {block.height})")
+                    logger.debug("MATCH '%s' in '%s...' @ (%d, %d, %d, %d)", entity_text, block_text[:20], sub_left, block.top, sub_width, block.height)
                     matched = True
                     break
                     
@@ -692,7 +693,7 @@ class HybridVisionService:
                         confidence=0.9,
                         source="fuzzy_match",
                     ))
-                    print(f"  [MATCH] '{entity_text}' ~ '{block_text[:20]}...' (fuzzy)")
+                    logger.debug("MATCH '%s' ~ '%s...' (fuzzy)", entity_text, block_text[:20])
                     matched = True
                     break
             
@@ -711,10 +712,10 @@ class HybridVisionService:
                             confidence=0.8,
                             source="table_fallback",
                         ))
-                        print(f"  [MATCH] '{entity_text}' in table @ ({block.left}, {block.top}, {block.width}, {block.height}) [fallback]")
+                        logger.debug("MATCH '%s' in table @ (%d, %d, %d, %d) [fallback]", entity_text, block.left, block.top, block.width, block.height)
                     break
         
-        print(f"[MATCH] Matched {len(regions)} entities to OCR blocks")
+        logger.info("Matched %d entities to OCR blocks", len(regions))
         return regions
     
     def _match_ocr_to_vlm(
@@ -984,12 +985,12 @@ class HybridVisionService:
         
         # 准备图像
         image, width, height = self._prepare_image(image_bytes)
-        print(f"[IMG] Image size: {width}x{height}")
+        logger.info("Image size: %dx%d", width, height)
         
         # 把用户配置转换为类型 ID 列表（用于正则规则和过滤）
         if vision_types:
             entity_type_ids = [t.id for t in vision_types]
-            print(f"[CFG] User enabled types: {[t.name for t in vision_types]}")
+            logger.info("User enabled types: %s", [t.name for t in vision_types])
         else:
             # 默认检测所有类型
             entity_type_ids = ["PERSON", "ORG", "COMPANY", "PHONE", "EMAIL",
@@ -1000,7 +1001,7 @@ class HybridVisionService:
         # OCR 推理较慢，放到线程池，避免阻塞后续流水线
         ocr_start = time.perf_counter()
         ocr_blocks, visual_regions = await asyncio.to_thread(self._run_paddle_ocr, image)
-        print(f"[PERF] OCR finished in {time.perf_counter() - ocr_start:.2f}s, blocks={len(ocr_blocks)}")
+        logger.info("OCR finished in %.2fs, blocks=%d", time.perf_counter() - ocr_start, len(ocr_blocks))
         
         all_regions: List[SensitiveRegion] = []
         
@@ -1008,13 +1009,13 @@ class HybridVisionService:
         for vr in visual_regions:
             if vr.entity_type in entity_type_ids:
                 all_regions.append(vr)
-                print(f"[VL] Added {vr.entity_type}: {vr.text}")
+                logger.debug("VL added %s: %s", vr.entity_type, vr.text)
             else:
-                print(f"[VL] Skipped {vr.entity_type} (not in enabled types)")
+                logger.debug("VL skipped %s (not in enabled types)", vr.entity_type)
         
         if ocr_blocks:
             # 打印 OCR 识别到的所有文字（调试用）
-            print(f"[OCR] All texts: {[b.text for b in ocr_blocks]}")
+            logger.debug("OCR all texts: %s", [b.text for b in ocr_blocks])
             
             # 表格类 HTML 文本会严重拖慢 NER，先展开/清洗
             ocr_blocks_for_ner = self._expand_table_blocks(ocr_blocks)
@@ -1022,36 +1023,36 @@ class HybridVisionService:
             # 2. 用 HaS 本地模型分析 OCR 文字，识别敏感实体（完全离线！）
             ner_start = time.perf_counter()
             entities = await self._run_has_text_analysis(ocr_blocks_for_ner, vision_types)
-            print(f"[PERF] HaS NER finished in {time.perf_counter() - ner_start:.2f}s, entities={len(entities)}")
+            logger.info("HaS NER finished in %.2fs, entities=%d", time.perf_counter() - ner_start, len(entities))
             
             # 3. 用文字匹配把敏感实体映射回 OCR 的精确坐标
             if entities:
                 match_start = time.perf_counter()
                 matched_regions = self._match_entities_to_ocr(ocr_blocks, entities)
                 all_regions.extend(matched_regions)
-                print(f"[PERF] OCR match finished in {time.perf_counter() - match_start:.2f}s, matches={len(matched_regions)}")
+                logger.info("OCR match finished in %.2fs, matches=%d", time.perf_counter() - match_start, len(matched_regions))
             
             # 4. 对 OCR 结果应用正则规则（补充检测）
             regex_start = time.perf_counter()
             regex_regions = self._apply_regex_rules(ocr_blocks_for_ner, entity_type_ids)
             all_regions = self._merge_regions(all_regions, regex_regions)
-            print(f"[PERF] Regex finished in {time.perf_counter() - regex_start:.2f}s, matches={len(regex_regions)}")
+            logger.info("Regex finished in %.2fs, matches=%d", time.perf_counter() - regex_start, len(regex_regions))
         else:
-            print("[WARN] PaddleOCR returned no text blocks")
-        
-        print(f"[OK] Final detected {len(all_regions)} sensitive regions")
+            logger.warning("PaddleOCR returned no text blocks")
+
+        logger.info("Final detected %d sensitive regions", len(all_regions))
         
         # 5. 在图像上绘制
         draw_start = time.perf_counter()
         result_image = self._draw_regions_on_image(image, all_regions)
-        print(f"[PERF] Draw finished in {time.perf_counter() - draw_start:.2f}s")
+        logger.info("Draw finished in %.2fs", time.perf_counter() - draw_start)
         
         # 6. 转换为 base64
         buffer = io.BytesIO()
         result_image.save(buffer, format="PNG")
         result_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
         
-        print(f"[PERF] Hybrid total finished in {time.perf_counter() - perf_start:.2f}s")
+        logger.info("Hybrid total finished in %.2fs", time.perf_counter() - perf_start)
         
         return all_regions, result_base64
     

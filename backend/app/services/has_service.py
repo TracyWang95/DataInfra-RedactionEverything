@@ -10,7 +10,10 @@ HaS (Hide And Seek) 本地脱敏模型服务
 4. 支持信息还原
 """
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 from typing import Optional, Dict, List
 from app.models.schemas import Entity
 from app.services.has_client import has_client, HaSClient
@@ -154,9 +157,7 @@ class HaSService:
             return entities
             
         except Exception as e:
-            print(f"HaS NER 失败: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("HaS NER 失败: %s", e)
             return []
     
     async def hide_text(
@@ -180,7 +181,7 @@ class HaSService:
             masked_text, mapping = self.client.hide(content, chinese_types)
             return masked_text, mapping
         except Exception as e:
-            print(f"HaS Hide 失败: {e}")
+            logger.error("HaS Hide 失败: %s", e)
             return content, {}
     
     async def extract_entities_with_hide(
@@ -203,7 +204,7 @@ class HaSService:
                 content, chinese_types, use_history=True
             )
         except Exception as e:
-            print(f"HaS Hide 模式失败: {e}")
+            logger.error("HaS Hide 模式失败: %s", e)
             return []
 
         if not mapping:
@@ -293,7 +294,7 @@ class HaSService:
             restored = self.client.seek(masked_text, mapping)
             return restored
         except Exception as e:
-            print(f"HaS Seek 失败: {e}")
+            logger.error("HaS Seek 失败: %s", e)
             return masked_text
 
 

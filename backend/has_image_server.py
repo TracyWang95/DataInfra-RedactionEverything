@@ -44,6 +44,14 @@ def _default_weights() -> str:
     w = os.environ.get("HAS_IMAGE_WEIGHTS", "").strip()
     if w:
         return w
+    models_dir = os.environ.get("HAS_MODELS_DIR", "").strip()
+    if models_dir:
+        optional_pt = os.path.join(models_dir, "sensitive_seg_best.pt")
+        if os.path.isfile(optional_pt):
+            return optional_pt
+    fixed = r"D:\has_models\sensitive_seg_best.pt"
+    if os.path.isfile(fixed):
+        return fixed
     # 可选：与 README 建议目录树一致——仓库与 has_models 同处「工作区」下
     repo_root = os.path.dirname(ROOT)
     workspace = os.path.dirname(repo_root)

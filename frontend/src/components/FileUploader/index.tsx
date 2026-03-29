@@ -101,7 +101,11 @@ export const FileUploader: React.FC = () => {
     <div className="w-full max-w-2xl mx-auto">
       {/* 上传区域 */}
       <div
-        {...getRootProps()}
+        {...getRootProps({
+          role: 'button',
+          tabIndex: 0,
+          'aria-label': '点击或拖拽上传文件',
+        })}
         className={clsx(
           'dropzone cursor-pointer',
           isDragActive && 'active border-primary-500 bg-primary-50',
@@ -165,6 +169,7 @@ export const FileUploader: React.FC = () => {
               clearFile();
             }}
             className="p-1 hover:bg-surface-tertiary rounded transition-colors"
+            aria-label="移除已选文件"
           >
             <XMarkIcon className="w-5 h-5 text-ink-subtle" />
           </button>

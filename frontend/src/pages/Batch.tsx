@@ -1,18 +1,19 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Link, Navigate, useParams, useBlocker } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams, useBlocker, useSearchParams } from 'react-router-dom';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { useDropzone } from 'react-dropzone';
 import ImageBBoxEditor, { type BoundingBox as EditorBox } from '../components/ImageBBoxEditor';
+import { EntityTypeGroupPicker } from '../components/EntityTypeGroupPicker';
 import { getEntityRiskConfig, getEntityTypeName } from '../config/entityTypes';
-import { fileApi } from '../services/api';
+import { fileApi, authenticatedBlobUrl } from '../services/api';
 import type { FileListItem } from '../types';
-import { ReplacementMode } from '../types';
+import { FileType, ReplacementMode } from '../types';
 import {
-  batchExecute,
   batchGetFileRaw,
   batchHybridNer,
   batchParse,
   batchPreviewEntityMap,
+  batchPreviewImage,
   batchVision,
   flattenBoundingBoxesFromStore,
   loadBatchWizardConfig,
@@ -43,6 +44,16 @@ import {
   buildTextSegments,
   mergePreviewMapWithDocumentSlices,
 } from '../utils/textRedactionSegments';
+import {
+  createJob,
+  getJob,
+  submitJob as apiSubmitJob,
+  updateJobDraft,
+  commitItemReview,
+  getItemReviewDraft,
+  putItemReviewDraft,
+} from '../services/jobsApi';
+import { effectiveWizardFurthestStep, parseWizardFurthestFromUnknown } from '../utils/jobPrimaryNavigation';
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -51,6 +62,30 @@ function triggerDownload(blob: Blob, filename: string) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function clampPopoverInCanvas(
+  anchorRect: DOMRect,
+  canvasRect: DOMRect,
+  popoverWidth: number,
+  popoverHeight: number
+): { left: number; top: number } {
+  const margin = 8;
+  const maxW = Math.max(120, Math.min(popoverWidth, canvasRect.width - 2 * margin));
+  const maxH = Math.max(80, Math.min(popoverHeight, canvasRect.height - 2 * margin));
+  const cx = anchorRect.left + anchorRect.width / 2;
+  let left = cx - maxW / 2;
+  left = Math.max(canvasRect.left + margin, Math.min(left, canvasRect.right - margin - maxW));
+
+  let top = anchorRect.top - margin - maxH;
+  if (top < canvasRect.top + margin) {
+    top = anchorRect.bottom + margin;
+  }
+  if (top + maxH > canvasRect.bottom - margin) {
+    top = Math.max(canvasRect.top + margin, canvasRect.bottom - margin - maxH);
+  }
+
+  return { left, top };
 }
 
 type Step = 1 | 2 | 3 | 4 | 5;
@@ -75,6 +110,7 @@ interface BatchRow extends FileListItem {
   analyzeStatus: 'pending' | 'parsing' | 'analyzing' | 'done' | 'failed';
   analyzeError?: string;
   isImageMode?: boolean;
+  reviewConfirmed?: boolean;
 }
 
 type ReviewEntity = {
@@ -88,15 +124,102 @@ type ReviewEntity = {
   confidence?: number;
   source?: string;
   coref_id?: string | null;
+  replacement?: string;
 };
 
 const STEPS: { n: Step; label: string }[] = [
-  { n: 1, label: '配置' },
+  { n: 1, label: '任务与配置' },
   { n: 2, label: '上传' },
   { n: 3, label: '批量识别' },
   { n: 4, label: '审阅确认' },
   { n: 5, label: '导出' },
 ];
+
+/** 同步到 Job 草稿 config，供后台 Worker 识别 / 脱敏使用；wizard_furthest_step 仅前端恢复用，Worker 可忽略 */
+function buildJobConfigForWorker(
+  c: BatchWizardPersistedConfig,
+  wizardMode: BatchWizardMode,
+  wizardFurthestStep: Step
+): Record<string, unknown> {
+  return {
+    entity_type_ids: c.selectedEntityTypeIds,
+    ocr_has_types: c.ocrHasTypes,
+    has_image_types: c.hasImageTypes,
+    replacement_mode: c.replacementMode,
+    image_redaction_method: c.imageRedactionMethod,
+    image_redaction_strength: c.imageRedactionStrength,
+    image_fill_color: c.imageFillColor,
+    batch_wizard_mode: wizardMode,
+    preferred_execution: c.executionDefault === 'local' ? 'local' : 'queue',
+    wizard_furthest_step: wizardFurthestStep,
+  };
+}
+
+function mergeJobConfigIntoWizardCfg(
+  c: BatchWizardPersistedConfig,
+  jc: Record<string, unknown>
+): BatchWizardPersistedConfig {
+  return {
+    ...c,
+    selectedEntityTypeIds:
+      Array.isArray(jc.entity_type_ids) && (jc.entity_type_ids as string[]).length
+        ? (jc.entity_type_ids as string[])
+        : c.selectedEntityTypeIds,
+    ocrHasTypes:
+      Array.isArray(jc.ocr_has_types) && (jc.ocr_has_types as string[]).length
+        ? (jc.ocr_has_types as string[])
+        : c.ocrHasTypes,
+    hasImageTypes:
+      Array.isArray(jc.has_image_types) && (jc.has_image_types as string[]).length
+        ? (jc.has_image_types as string[])
+        : c.hasImageTypes,
+    replacementMode:
+      jc.replacement_mode === 'smart' || jc.replacement_mode === 'mask' || jc.replacement_mode === 'structured'
+        ? (jc.replacement_mode as BatchWizardPersistedConfig['replacementMode'])
+        : c.replacementMode,
+    imageRedactionMethod:
+      jc.image_redaction_method === 'mosaic' ||
+      jc.image_redaction_method === 'blur' ||
+      jc.image_redaction_method === 'fill'
+        ? jc.image_redaction_method
+        : c.imageRedactionMethod,
+    imageRedactionStrength:
+      typeof jc.image_redaction_strength === 'number'
+        ? jc.image_redaction_strength
+        : c.imageRedactionStrength,
+    imageFillColor: typeof jc.image_fill_color === 'string' ? jc.image_fill_color : c.imageFillColor,
+  };
+}
+
+/** localStorage：跨标签页共享；sessionStorage 只在单标签内有效，易导致「批量页一标签、任务中心另一标签」丢进度 */
+const BATCH_WIZ_FURTHEST_LS_PREFIX = 'lr_batch_wiz_furthest_';
+
+function readLocalWizardMaxStep(jobId: string): Step | null {
+  try {
+    const v = localStorage.getItem(BATCH_WIZ_FURTHEST_LS_PREFIX + jobId);
+    return parseWizardFurthestFromUnknown(v);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalWizardMaxStep(jobId: string, step: Step) {
+  try {
+    const prev = readLocalWizardMaxStep(jobId);
+    const merged = Math.max(step, prev ?? 1) as Step;
+    if (merged >= 2) localStorage.setItem(BATCH_WIZ_FURTHEST_LS_PREFIX + jobId, String(merged));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearLocalWizardMaxStep(jobId: string) {
+  try {
+    localStorage.removeItem(BATCH_WIZ_FURTHEST_LS_PREFIX + jobId);
+  } catch {
+    /* ignore */
+  }
+}
 
 function defaultConfig(): BatchWizardPersistedConfig {
   return {
@@ -110,6 +233,7 @@ function defaultConfig(): BatchWizardPersistedConfig {
     presetTextId: null,
     presetVisionId: null,
     presetId: null,
+    executionDefault: 'queue',
   };
 }
 
@@ -151,7 +275,8 @@ async function fetchBatchPreviewMap(
   entities: ReviewEntity[],
   replacementMode: BatchWizardPersistedConfig['replacementMode']
 ): Promise<Record<string, string>> {
-  const payload = buildPreviewPayload(entities).map(p => ({ ...p, selected: true }));
+  const visible = entities.filter(e => e.selected !== false);
+  const payload = buildPreviewPayload(visible);
   if (payload.length === 0) return {};
   const replacement_mode =
     replacementMode === 'smart'
@@ -237,6 +362,68 @@ function applyVisionPresetFields(
     hasImageTypes: p.hasImageTypes.filter(id => hiIds.includes(id)),
     presetVisionId: p.id,
   };
+}
+
+/** Smart 模式右侧：Tab 切换文本/图像详情（只读展示） */
+function SmartDetailTabs({
+  cfg,
+  textTypes,
+  pipelines,
+  presets,
+  setCfg,
+}: {
+  cfg: BatchWizardPersistedConfig;
+  textTypes: TextEntityType[];
+  pipelines: PipelineCfg[];
+  presets: RecognitionPreset[];
+  setCfg: React.Dispatch<React.SetStateAction<BatchWizardPersistedConfig>>;
+}) {
+  const [tab, setTab] = React.useState<'text' | 'image'>('text');
+  return (
+    <>
+      <div className="flex border-b border-gray-200 shrink-0">
+        <button
+          type="button"
+          onClick={() => setTab('text')}
+          className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors ${
+            tab === 'text'
+              ? 'text-[#1d1d1f] border-b-2 border-[#1d1d1f] bg-white'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 align-middle" />
+          文本识别详情
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('image')}
+          className={`flex-1 px-4 py-2.5 text-xs font-medium transition-colors ${
+            tab === 'image'
+              ? 'text-[#1d1d1f] border-b-2 border-[#1d1d1f] bg-white'
+              : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 mr-1.5 align-middle" />
+          图像识别详情
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto p-2">
+        <PresetDetailBlock
+          cfg={cfg}
+          textTypes={textTypes}
+          pipelines={pipelines}
+          allPresets={presets}
+          scope={tab}
+          onReplacementModeChange={m =>
+            setCfg(c => ({ ...c, presetTextId: null, replacementMode: m }))
+          }
+          onVisionImagePatch={patch =>
+            setCfg(c => ({ ...c, presetVisionId: null, ...patch }))
+          }
+        />
+      </div>
+    </>
+  );
 }
 
 function PresetDetailBlock({
@@ -333,12 +520,15 @@ function PresetDetailBlock({
           <div className="text-2xs text-gray-500 space-y-0.5 leading-snug">
             <p>
               <span className="text-gray-600 font-medium">structured</span>：语义占位
+              <span className="text-[#a3a3a3] font-mono ml-1">张三 → &lt;人物[001].个人.姓名&gt;</span>
             </p>
             <p>
               <span className="text-gray-600 font-medium">smart</span>：中文类别编号
+              <span className="text-[#a3a3a3] font-mono ml-1">张三 → [当事人一]</span>
             </p>
             <p>
-              <span className="text-gray-600 font-medium">mask</span>：部分打星（核对确认脱敏时生效）
+              <span className="text-gray-600 font-medium">mask</span>：部分打星
+              <span className="text-[#a3a3a3] font-mono ml-1">张三 → 张**</span>
             </p>
           </div>
         </div>
@@ -497,8 +687,54 @@ function PresetDetailBlock({
 
 export const Batch: React.FC = () => {
   const { batchMode } = useParams<{ batchMode: string }>();
-  const modeValid = batchMode === 'text' || batchMode === 'image';
-  const mode: BatchWizardMode = batchMode === 'image' ? 'image' : 'text';
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const modeValid = batchMode === 'text' || batchMode === 'image' || batchMode === 'smart';
+  const mode: BatchWizardMode = batchMode === 'image' ? 'image' : batchMode === 'smart' ? 'smart' : 'text';
+  const sessionJobKey = `lr_batch_job_id_${mode}`;
+
+  const [activeJobId, setActiveJobId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(sessionJobKey);
+    } catch {
+      return null;
+    }
+  });
+  const itemIdByFileIdRef = useRef<Record<string, string>>({});
+  const hydratedFromUrlRef = useRef(false);
+  /** effect 重跑或 StrictMode 卸载时递增，丢弃上一轮 getJob/Promise.all，避免依赖 step 导致「乐观 setStep → cleanup cancel → 永远完不成 hydrate」 */
+  const batchHydrateGenRef = useRef(0);
+  const urlHydrateKeyRef = useRef('');
+  /** 仅 jobId|itemId 变化不够：同任务从 step=1 链到 step=2 时须重新 hydrate，否则 hydrated 仍为 true 直接跳过 */
+  const prevHydrateUrlStepRef = useRef<string | null>(null);
+  /** 避免步骤 1 反复 PUT 相同 config */
+  const lastSavedJobConfigJson = useRef<string>('');
+  /** 与 furthestStep 同步：仅在「前进」时立即 PUT，配置变更仍靠下方防抖 */
+  const prevFurthestForImmediateSaveRef = useRef<Step>(1);
+
+  useEffect(() => {
+    try {
+      if (activeJobId) sessionStorage.setItem(sessionJobKey, activeJobId);
+      else sessionStorage.removeItem(sessionJobKey);
+    } catch {
+      /* ignore */
+    }
+  }, [activeJobId, sessionJobKey]);
+
+  /** URL 中的 jobId 优先于 session，避免深链与本地缓存双主源不一致 */
+  useEffect(() => {
+    const jid = searchParams.get('jobId');
+    if (!jid) return;
+    setActiveJobId(prev => (prev === jid ? prev : jid));
+  }, [searchParams]);
+
+  useEffect(() => {
+    lastSavedJobConfigJson.current = '';
+  }, [activeJobId]);
+
+  useEffect(() => {
+    prevFurthestForImmediateSaveRef.current = 1;
+  }, [activeJobId]);
 
   const [step, setStep] = useState<Step>(1);
   /** 已到达过的最前步骤，用于禁止跳过 2→3→4 直接点「导出」 */
@@ -526,14 +762,88 @@ export const Batch: React.FC = () => {
   const [reviewBoxes, setReviewBoxes] = useState<EditorBox[]>([]);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewExecuteLoading, setReviewExecuteLoading] = useState(false);
+  const [reviewDraftSaving, setReviewDraftSaving] = useState(false);
+  const [reviewDraftError, setReviewDraftError] = useState<string | null>(null);
+  const [reviewImagePreview, setReviewImagePreview] = useState('');
+  const [reviewImagePreviewLoading, setReviewImagePreviewLoading] = useState(false);
+  const [reviewOrigImageBlobUrl, setReviewOrigImageBlobUrl] = useState('');
+  const [reviewTextUndoStack, setReviewTextUndoStack] = useState<ReviewEntity[][]>([]);
+  const [reviewTextRedoStack, setReviewTextRedoStack] = useState<ReviewEntity[][]>([]);
+  const [reviewImageUndoStack, setReviewImageUndoStack] = useState<EditorBox[][]>([]);
+  const [reviewImageRedoStack, setReviewImageRedoStack] = useState<EditorBox[][]>([]);
+  const [reviewSelectedText, setReviewSelectedText] = useState<{ text: string; start: number; end: number } | null>(null);
+  const [reviewSelectedOverlapIds, setReviewSelectedOverlapIds] = useState<string[]>([]);
+  const [reviewSelectionPos, setReviewSelectionPos] = useState<{ left: number; top: number } | null>(null);
+  const [reviewSelectedTypeId, setReviewSelectedTypeId] = useState('');
+  const [reviewClickedEntity, setReviewClickedEntity] = useState<ReviewEntity | null>(null);
+  const [reviewEntityPopupPos, setReviewEntityPopupPos] = useState<{ left: number; top: number } | null>(null);
   /** 文本类第 4 步：与 Playground 一致的原文展示 */
   const [reviewTextContent, setReviewTextContent] = useState('');
   /** 后端 preview-map，与「确认脱敏」执行时 entity_map 一致 */
   const [previewEntityMap, setPreviewEntityMap] = useState<Record<string, string>>({});
   /** 识别项点击跳转：与 Playground 一致，同 key 多处分次循环定位 */
+  const reviewTextContentRef = useRef<HTMLDivElement | null>(null);
+  const reviewTextScrollRef = useRef<HTMLDivElement | null>(null);
+  const reviewSelectionRangeRef = useRef<Range | null>(null);
+  const reviewAutosaveTimerRef = useRef<number | null>(null);
+  const reviewLastSavedJsonRef = useRef('');
+  const reviewDraftInitializedRef = useRef(false);
+  const reviewDraftDirtyRef = useRef(false);
   const batchScrollCountersRef = useRef<Record<string, number>>({});
   /** 步骤 1 显式确认（避免默认全选时未阅读即可进入上传） */
   const [confirmStep1, setConfirmStep1] = useState(false);
+  /** 任务优先级 */
+  const [jobPriority, setJobPriority] = useState<number>(0);
+
+  /** 已绑定工单且仍为草稿时，将配置与 wizard_furthest_step 防抖同步（PUT）；非 draft 时接口 400，忽略即可 */
+  useEffect(() => {
+    if (!configLoaded || !activeJobId) return;
+    const payload = buildJobConfigForWorker(cfg, mode, furthestStep);
+    const j = JSON.stringify(payload);
+    const timer = window.setTimeout(() => {
+      if (j === lastSavedJobConfigJson.current) return;
+      void (async () => {
+        try {
+          await updateJobDraft(activeJobId, { config: payload });
+          lastSavedJobConfigJson.current = j;
+        } catch {
+          /* 仅 draft 可写；下一步或提交时仍会重试 */
+        }
+      })();
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, [cfg, mode, activeJobId, configLoaded, furthestStep]);
+
+  /** furthestStep 变大时立即持久化 wizard_furthest_step（不等待 900ms），避免离开页面前未写入任务 config */
+  useEffect(() => {
+    if (!configLoaded || !activeJobId) return;
+    const prev = prevFurthestForImmediateSaveRef.current;
+    if (furthestStep < 2) {
+      prevFurthestForImmediateSaveRef.current = furthestStep;
+      return;
+    }
+    if (furthestStep <= prev) {
+      prevFurthestForImmediateSaveRef.current = furthestStep;
+      return;
+    }
+    prevFurthestForImmediateSaveRef.current = furthestStep;
+    const payload = buildJobConfigForWorker(cfg, mode, furthestStep);
+    const j = JSON.stringify(payload);
+    if (j === lastSavedJobConfigJson.current) return;
+    void (async () => {
+      try {
+        await updateJobDraft(activeJobId, { config: payload });
+        lastSavedJobConfigJson.current = j;
+      } catch {
+        /* 仅 draft 可写 */
+      }
+    })();
+  }, [furthestStep, cfg, mode, activeJobId, configLoaded]);
+
+  useEffect(() => {
+    if (!activeJobId || furthestStep < 2) return;
+    writeLocalWizardMaxStep(activeJobId, furthestStep);
+  }, [activeJobId, furthestStep]);
 
   /** 第 4 步离开：切换步骤或跳转应用内其它路由时 */
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
@@ -608,6 +918,7 @@ export const Batch: React.FC = () => {
           presetTextId: null,
           presetVisionId: null,
           presetId: null,
+          executionDefault: persisted?.executionDefault === 'local' ? 'local' : 'queue',
         };
 
         const tid = persisted?.presetTextId ?? persisted?.presetId ?? null;
@@ -664,6 +975,228 @@ export const Batch: React.FC = () => {
       cancelled = true;
     };
   }, [mode]);
+
+  /** 任务详情深链：?jobId=&itemId=&step= 恢复单文件审阅 */
+  useEffect(() => {
+    const jobId = searchParams.get('jobId');
+    const itemId = searchParams.get('itemId');
+    const stepRaw = searchParams.get('step');
+    /** jobId|itemId 与 URL 的 step 分离：step 变化时清 hydrated，避免「继续上传」深链仍当已恢复而跳过 */
+    const jobItemKey = `${jobId ?? ''}|${itemId ?? ''}`;
+    if (urlHydrateKeyRef.current !== jobItemKey) {
+      urlHydrateKeyRef.current = jobItemKey;
+      hydratedFromUrlRef.current = false;
+      prevHydrateUrlStepRef.current = null;
+    }
+    const stepKey = stepRaw ?? '';
+    if (prevHydrateUrlStepRef.current !== null && prevHydrateUrlStepRef.current !== stepKey) {
+      hydratedFromUrlRef.current = false;
+    }
+    prevHydrateUrlStepRef.current = stepKey;
+
+    const snUrl = stepRaw ? Number.parseInt(stepRaw, 10) : NaN;
+    const urlStepParsed = Number.isFinite(snUrl) ? (Math.min(5, Math.max(1, snUrl)) as Step) : null;
+    /** 仅处理「深链要求更靠前但 UI 仍落后」（含 hydrated 误 true）；勿在 step>URL 时清（用户已前进、URL 同步稍晚） */
+    if (hydratedFromUrlRef.current && urlStepParsed !== null && step < urlStepParsed) {
+      hydratedFromUrlRef.current = false;
+    }
+
+    if (!configLoaded || !jobId || hydratedFromUrlRef.current) return;
+    const hydrateGen = ++batchHydrateGenRef.current;
+    (async () => {
+      try {
+        const detail = await getJob(jobId);
+        if (hydrateGen !== batchHydrateGenRef.current) return;
+        const expectType = mode === 'image' ? 'image_batch' : mode === 'smart' ? 'smart_batch' : 'text_batch';
+        if (detail.job_type !== expectType) {
+          setMsg({ text: '该任务类型与当前批量向导不匹配，请从任务中心打开对应入口', tone: 'warn' });
+          return;
+        }
+        setActiveJobId(jobId);
+        const jc = detail.config as Record<string, unknown>;
+        /** 不可在 setCfg 回调里再给 mergedCfg 赋值后同步读取：函数式 updater 晚于本段执行，会导致永远 !mergedCfg 提前 return */
+        const mergedCfg = mergeJobConfigIntoWizardCfg(cfg, jc);
+        setCfg(mergedCfg);
+
+        const jobTypeNav = mode === 'image' ? 'image_batch' : mode === 'smart' ? 'smart_batch' : 'text_batch';
+        const restoredFurthest: Step | null = effectiveWizardFurthestStep({
+          jobConfig: jc,
+          navHints: detail.nav_hints,
+          jobType: jobTypeNav,
+        });
+
+        const persistDraftFingerprint = (furthest: Step) => {
+          lastSavedJobConfigJson.current = JSON.stringify(buildJobConfigForWorker(mergedCfg!, mode, furthest));
+        };
+
+        /** 无文件项时仍须恢复步骤（如已取消/深链 step=3），避免停在默认 Step1 */
+        if (detail.items.length === 0) {
+          const sn = stepRaw ? Number.parseInt(stepRaw, 10) : NaN;
+          const urlStep = Number.isFinite(sn) ? (Math.min(5, Math.max(1, sn)) as Step) : null;
+          const sessionMax = readLocalWizardMaxStep(jobId);
+          /** URL 已写明 step≥2 时，不再用 localStorage 把「继续上传」深链抬成更高步（避免旧 lr_batch_wiz_* 卡住 Step1） */
+          const baseEmpty =
+            urlStep !== null && urlStep >= 2
+              ? Math.max(restoredFurthest ?? 1, urlStep)
+              : Math.max(restoredFurthest ?? 1, sessionMax ?? 1);
+          const rawNext = Math.max(urlStep ?? 1, baseEmpty) as Step;
+          const beforeClamp = rawNext;
+          const nextStep: Step = rawNext > 3 ? 3 : rawNext;
+          if (beforeClamp > 3) {
+            setMsg({
+              text: '当前任务暂无文件，无法进入审阅或导出，已切换到「批量识别」步骤',
+              tone: 'warn',
+            });
+          } else {
+            setMsg({ text: '已从任务恢复', tone: 'neutral' });
+          }
+          itemIdByFileIdRef.current = {};
+          setRows([]);
+          setSelected(new Set());
+          setReviewIndex(0);
+          batchGroupIdRef.current = jobId;
+          if (nextStep >= 2) setConfirmStep1(true);
+          setStep(nextStep);
+          const mergedFurthest = Math.max(restoredFurthest ?? 1, nextStep, sessionMax ?? 1) as Step;
+          setFurthestStep(prev => Math.max(prev, mergedFurthest) as Step);
+          persistDraftFingerprint(mergedFurthest);
+          if (detail.status === 'draft') {
+            const payload = buildJobConfigForWorker(mergedCfg!, mode, mergedFurthest);
+            try {
+              await updateJobDraft(jobId, { config: payload });
+              if (hydrateGen !== batchHydrateGenRef.current) return;
+              lastSavedJobConfigJson.current = JSON.stringify(payload);
+            } catch {
+              /* 非草稿等 */
+            }
+          }
+          if (hydrateGen !== batchHydrateGenRef.current) return;
+          hydratedFromUrlRef.current = true;
+          return;
+        }
+
+        const badItemIdInUrl = Boolean(itemId && !detail.items.some(i => i.id === itemId));
+        const item =
+          itemId && !badItemIdInUrl
+            ? detail.items.find(i => i.id === itemId)
+            : detail.items[0];
+        if (!item) {
+          setMsg({ text: '任务中未找到对应文件项', tone: 'warn' });
+          return;
+        }
+
+        const sn0 = stepRaw ? Number.parseInt(stepRaw, 10) : NaN;
+        const urlStepNum0 = Number.isFinite(sn0) ? (Math.min(5, Math.max(1, sn0)) as Step) : null;
+        const sessionMaxItems0 = readLocalWizardMaxStep(jobId);
+        const basePersist0 =
+          urlStepNum0 !== null && urlStepNum0 >= 2
+            ? Math.max(restoredFurthest ?? 1, urlStepNum0)
+            : Math.max(restoredFurthest ?? 1, sessionMaxItems0 ?? 1);
+        let resolvedNextStep: Step;
+        if (urlStepNum0 !== null) {
+          resolvedNextStep = Math.max(urlStepNum0, basePersist0) as Step;
+        } else if (detail.status === 'draft') {
+          resolvedNextStep = Math.min(5, Math.max(2, basePersist0)) as Step;
+        } else if (detail.status === 'awaiting_review') {
+          resolvedNextStep = 4;
+        } else {
+          resolvedNextStep = Math.min(5, Math.max(3, basePersist0)) as Step;
+        }
+        /**
+         * 有文件项时原逻辑在「拉齐所有 batchGetFileRaw」后才 setStep，慢请求期间界面一直停在默认 Step1。
+         * Step2/3 不依赖文件元数据拉取完成即可展示；Step4+ 需审阅数据，仍在拉齐后再切。
+         */
+        if (resolvedNextStep >= 2 && resolvedNextStep <= 3) {
+          setConfirmStep1(true);
+          setStep(resolvedNextStep);
+          setFurthestStep(prev => Math.max(prev, restoredFurthest ?? 1, resolvedNextStep) as Step);
+          persistDraftFingerprint(Math.max(restoredFurthest ?? 1, resolvedNextStep) as Step);
+        }
+
+        const hydratedItems = await Promise.all(
+          detail.items.map(async entry => {
+            const info = await batchGetFileRaw(entry.file_id);
+            return { item: entry, info };
+          })
+        );
+        if (hydrateGen !== batchHydrateGenRef.current) return;
+        const currentIndex = Math.max(0, hydratedItems.findIndex(entry => entry.item.id === item.id));
+        const fileIdToItemId = Object.fromEntries(hydratedItems.map(entry => [entry.item.file_id, entry.item.id]));
+        const rowsFromJob: BatchRow[] = hydratedItems.map(entry => {
+          const rowInfo = entry.info;
+          const rowFileTypeRaw = String(rowInfo.file_type ?? entry.item.file_type ?? 'docx').toLowerCase();
+          const rowFileType: FileType =
+            rowFileTypeRaw === 'image' || rowFileTypeRaw === 'jpg' || rowFileTypeRaw === 'jpeg' || rowFileTypeRaw === 'png'
+              ? FileType.IMAGE
+              : rowFileTypeRaw === 'pdf' || rowFileTypeRaw === 'pdf_scanned'
+                ? rowFileTypeRaw === 'pdf_scanned'
+                  ? FileType.PDF_SCANNED
+                  : FileType.PDF
+                : FileType.DOCX;
+          return {
+            file_id: entry.item.file_id,
+            original_filename: String(rowInfo.original_filename ?? entry.item.filename ?? entry.item.file_id),
+            file_size: Number(rowInfo.file_size ?? 0),
+            file_type: rowFileType,
+            created_at: String(rowInfo.created_at ?? entry.item.created_at ?? ''),
+            has_output: Boolean(rowInfo.output_path ?? entry.item.has_output),
+            reviewConfirmed: Boolean(
+              entry.item.reviewed_at ||
+              entry.item.status === 'completed' ||
+              entry.item.status === 'review_approved' ||
+              entry.item.status === 'redacting'
+            ),
+            entity_count:
+              typeof entry.item.entity_count === 'number'
+                ? entry.item.entity_count
+                : Array.isArray(rowInfo.entities)
+                  ? rowInfo.entities.length
+                  : 0,
+            analyzeStatus: 'done',
+            isImageMode: rowFileType === FileType.IMAGE || rowFileType === FileType.PDF_SCANNED,
+          };
+        });
+        const allRowsReviewConfirmed = rowsFromJob.length > 0 && rowsFromJob.every(row => row.reviewConfirmed === true);
+        const resolvedStepWithReviewGate =
+          resolvedNextStep === 5 && !allRowsReviewConfirmed ? 4 : resolvedNextStep;
+        itemIdByFileIdRef.current = fileIdToItemId;
+        setRows(rowsFromJob);
+        setSelected(new Set(rowsFromJob.map(row => row.file_id)));
+        setReviewIndex(currentIndex);
+        batchGroupIdRef.current = jobId;
+        if (resolvedStepWithReviewGate >= 2) setConfirmStep1(true);
+        setStep(resolvedStepWithReviewGate);
+        setFurthestStep(prev => Math.max(prev, restoredFurthest ?? 1, resolvedStepWithReviewGate) as Step);
+        persistDraftFingerprint(Math.max(restoredFurthest ?? 1, resolvedStepWithReviewGate) as Step);
+        hydratedFromUrlRef.current = true;
+        setMsg({
+          text: badItemIdInUrl
+            ? '链接中的文件项已失效，已切换到列表中的第一个文件，可继续审阅或脱敏'
+            : '已从任务恢复，可继续审阅或脱敏',
+          tone: badItemIdInUrl ? 'warn' : 'neutral',
+        });
+      } catch (e) {
+        if (hydrateGen === batchHydrateGenRef.current) {
+          setMsg({ text: e instanceof Error ? e.message : '加载任务失败', tone: 'err' });
+        }
+      }
+    })();
+    return () => {
+      batchHydrateGenRef.current += 1;
+    };
+  }, [configLoaded, location.search, mode]);
+
+  /** 有 jobId 且已完成深链恢复后，把当前 step 写回 URL，避免任务中心返回时仅靠 step=1 深链 */
+  useEffect(() => {
+    const jid = searchParams.get('jobId');
+    if (!jid || !activeJobId || jid !== activeJobId) return;
+    if (!hydratedFromUrlRef.current) return;
+    const cur = searchParams.get('step');
+    if (cur === String(step)) return;
+    const sp = new URLSearchParams(searchParams);
+    sp.set('step', String(step));
+    setSearchParams(sp, { replace: true });
+  }, [step, activeJobId, searchParams, setSearchParams]);
 
   const textPresets = useMemo(() => presets.filter(presetAppliesText), [presets]);
   const visionPresets = useMemo(() => presets.filter(presetAppliesVision), [presets]);
@@ -737,13 +1270,18 @@ export const Batch: React.FC = () => {
     [batchDefaultOcrHasTypeIds, batchDefaultHasImageTypeIds, presets, pipelines]
   );
 
-  /** 步骤 1 完成：已勾选确认 + 配置已加载；文本链至少选一类；图像链至少启用一路识别（可仅 OCR+HaS 或仅 HaS Image） */
+  /** 步骤 1 完成：已勾选确认 + 配置已加载；文本链至少选一类；图像链至少启用一路识别（可仅 OCR+HaS 或仅 HaS Image）；smart 需至少一个文本类型或一个图像类型 */
   const isStep1Complete = useMemo(() => {
     if (!confirmStep1) return false;
     if (!configLoaded) return false;
     if (mode === 'text') {
       if (textTypes.length === 0) return true;
       return cfg.selectedEntityTypeIds.length > 0;
+    }
+    if (mode === 'smart') {
+      const anyTextSelected = cfg.selectedEntityTypeIds.length > 0;
+      const anyVisionSelected = cfg.ocrHasTypes.length > 0 || cfg.hasImageTypes.length > 0;
+      return anyTextSelected || anyVisionSelected;
     }
     const ocrAvail = batchDefaultOcrHasTypeIds.length > 0;
     const hiAvail = batchDefaultHasImageTypeIds.length > 0;
@@ -765,10 +1303,141 @@ export const Batch: React.FC = () => {
 
   const doneRows = useMemo(() => rows.filter(r => r.analyzeStatus === 'done'), [rows]);
   const reviewFile = doneRows[reviewIndex] ?? null;
+  const reviewedOutputCount = useMemo(() => rows.filter(r => r.reviewConfirmed === true).length, [rows]);
+  const pendingReviewCount = Math.max(0, rows.length - reviewedOutputCount);
+  const allReviewConfirmed = rows.length > 0 && pendingReviewCount === 0;
+  const reviewItemId = reviewFile ? itemIdByFileIdRef.current[reviewFile.file_id] : undefined;
+
+  const buildCurrentReviewDraftPayload = useCallback(() => {
+    const entities = reviewEntities.map(e => ({
+      id: e.id,
+      text: e.text,
+      type: e.type,
+      start: e.start,
+      end: e.end,
+      page: e.page ?? 1,
+      confidence: e.confidence ?? 1,
+      selected: e.selected,
+      source: e.source,
+      coref_id: e.coref_id,
+      replacement: e.replacement,
+    }));
+    const bounding_boxes = reviewBoxes.map(b => ({
+      id: b.id,
+      x: b.x,
+      y: b.y,
+      width: b.width,
+      height: b.height,
+      page: 1,
+      type: b.type,
+      text: b.text,
+      selected: b.selected,
+      source: b.source,
+      confidence: b.confidence,
+    }));
+    return { entities, bounding_boxes };
+  }, [reviewEntities, reviewBoxes]);
+
+  const flushCurrentReviewDraft = useCallback(async () => {
+    const jid = activeJobId;
+    const itemId = reviewFile ? itemIdByFileIdRef.current[reviewFile.file_id] : undefined;
+    if (!jid || !itemId || !reviewDraftInitializedRef.current) return true;
+    const payload = buildCurrentReviewDraftPayload();
+    const json = JSON.stringify(payload);
+    if (json === reviewLastSavedJsonRef.current) return true;
+    setReviewDraftSaving(true);
+    setReviewDraftError(null);
+    try {
+      const res = await putItemReviewDraft(jid, itemId, payload);
+      reviewLastSavedJsonRef.current = JSON.stringify(payload);
+      reviewDraftDirtyRef.current = false;
+      if (res?.updated_at) {
+        const nextItemId = itemId;
+        setRows(prev =>
+          prev.map(r =>
+            itemIdByFileIdRef.current[r.file_id] === nextItemId ? { ...r } : r
+          )
+        );
+      }
+      return true;
+    } catch (e) {
+      setReviewDraftError(e instanceof Error ? e.message : '自动保存失败');
+      return false;
+    } finally {
+      setReviewDraftSaving(false);
+    }
+  }, [activeJobId, buildCurrentReviewDraftPayload, reviewFile]);
+
+  const pushReviewTextHistory = useCallback((prev: ReviewEntity[]) => {
+    setReviewTextUndoStack(stack => [...stack, prev.map(e => ({ ...e }))]);
+    setReviewTextRedoStack([]);
+  }, []);
+
+  const applyReviewEntities = useCallback((updater: ReviewEntity[] | ((prev: ReviewEntity[]) => ReviewEntity[])) => {
+    setReviewEntities(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      pushReviewTextHistory(prev);
+      reviewDraftDirtyRef.current = true;
+      return next;
+    });
+  }, [pushReviewTextHistory]);
+
+  const undoReviewText = useCallback(() => {
+    setReviewTextUndoStack(stack => {
+      if (!stack.length) return stack;
+      const prev = stack[stack.length - 1];
+      setReviewTextRedoStack(redo => [...redo, reviewEntities.map(e => ({ ...e }))]);
+      setReviewEntities(prev.map(e => ({ ...e })));
+      reviewDraftDirtyRef.current = true;
+      return stack.slice(0, -1);
+    });
+  }, [reviewEntities]);
+
+  const redoReviewText = useCallback(() => {
+    setReviewTextRedoStack(stack => {
+      if (!stack.length) return stack;
+      const next = stack[stack.length - 1];
+      setReviewTextUndoStack(undo => [...undo, reviewEntities.map(e => ({ ...e }))]);
+      setReviewEntities(next.map(e => ({ ...e })));
+      reviewDraftDirtyRef.current = true;
+      return stack.slice(0, -1);
+    });
+  }, [reviewEntities]);
+
+  const undoReviewImage = useCallback(() => {
+    setReviewImageUndoStack(stack => {
+      if (!stack.length) return stack;
+      const prev = stack[stack.length - 1];
+      setReviewImageRedoStack(redo => [...redo, reviewBoxes.map(b => ({ ...b }))]);
+      setReviewBoxes(prev.map(b => ({ ...b })));
+      reviewDraftDirtyRef.current = true;
+      return stack.slice(0, -1);
+    });
+  }, [reviewBoxes]);
+
+  const redoReviewImage = useCallback(() => {
+    setReviewImageRedoStack(stack => {
+      if (!stack.length) return stack;
+      const next = stack[stack.length - 1];
+      setReviewImageUndoStack(undo => [...undo, reviewBoxes.map(b => ({ ...b }))]);
+      setReviewBoxes(next.map(b => ({ ...b })));
+      reviewDraftDirtyRef.current = true;
+      return stack.slice(0, -1);
+    });
+  }, [reviewBoxes]);
 
   useEffect(() => {
     batchScrollCountersRef.current = {};
   }, [reviewFile?.file_id]);
+
+  // Resolve authenticated blob URL for original image in review
+  useEffect(() => {
+    let cancelled = false;
+    if (!reviewFile || !reviewFile.isImageMode) { setReviewOrigImageBlobUrl(''); return; }
+    const raw = fileApi.getDownloadUrl(reviewFile.file_id, false);
+    authenticatedBlobUrl(raw).then(u => { if (!cancelled) setReviewOrigImageBlobUrl(u); }).catch(() => { if (!cancelled) setReviewOrigImageBlobUrl(raw); });
+    return () => { cancelled = true; };
+  }, [reviewFile?.file_id, reviewFile?.isImageMode]);
 
   /** 与 loadReviewData 同帧：先置 loading，避免预览 effect 在实体加载前用空列表清空映射 */
   useLayoutEffect(() => {
@@ -780,11 +1449,45 @@ export const Batch: React.FC = () => {
     async (fileId: string, isImage: boolean) => {
       setReviewLoading(true);
       setPreviewEntityMap({});
+      setReviewImagePreview('');
+      setReviewDraftError(null);
+      reviewDraftInitializedRef.current = false;
+      reviewDraftDirtyRef.current = false;
+      if (reviewAutosaveTimerRef.current !== null) {
+        window.clearTimeout(reviewAutosaveTimerRef.current);
+        reviewAutosaveTimerRef.current = null;
+      }
+      setReviewSelectedText(null);
+      setReviewSelectedOverlapIds([]);
+      setReviewSelectionPos(null);
+      setReviewClickedEntity(null);
+      setReviewEntityPopupPos(null);
       try {
         const info = await batchGetFileRaw(fileId);
+        const linkedItemId = itemIdByFileIdRef.current[fileId];
+        let draft:
+          | {
+              exists?: boolean;
+              entities?: Array<Record<string, unknown>>;
+              bounding_boxes?: Array<Record<string, unknown>>;
+            }
+          | null = null;
+        if (activeJobId && linkedItemId) {
+          try {
+            const loadedDraft = await getItemReviewDraft(activeJobId, linkedItemId);
+            if (loadedDraft.exists) {
+              draft = loadedDraft;
+            }
+          } catch {
+            /* ignore */
+          }
+        }
         if (isImage) {
           setReviewTextContent('');
-          const raw = flattenBoundingBoxesFromStore(info.bounding_boxes);
+          const raw =
+            draft?.bounding_boxes && draft.bounding_boxes.length > 0
+              ? draft.bounding_boxes
+              : flattenBoundingBoxesFromStore(info.bounding_boxes);
           const boxes: EditorBox[] = raw.map((b, idx) => ({
             id: String(b.id ?? `bbox_${idx}`),
             x: Number(b.x),
@@ -799,10 +1502,28 @@ export const Batch: React.FC = () => {
           }));
           setReviewBoxes(boxes);
           setReviewEntities([]);
+          setReviewImageUndoStack([]);
+          setReviewImageRedoStack([]);
+          reviewLastSavedJsonRef.current = JSON.stringify({
+            entities: [],
+            bounding_boxes: boxes.map(b => ({
+              id: b.id,
+              x: b.x,
+              y: b.y,
+              width: b.width,
+              height: b.height,
+              page: 1,
+              type: b.type,
+              text: b.text,
+              selected: b.selected,
+              source: b.source,
+              confidence: b.confidence,
+            })),
+          });
         } else {
           setReviewEntities([]);
           setReviewTextContent('');
-          const ents = (info.entities as ReviewEntity[]) || [];
+          const ents = ((draft?.entities as ReviewEntity[] | undefined) ?? (info.entities as ReviewEntity[]) ?? []);
           const mapped = ents.map((e, i) =>
             normalizeReviewEntity({
               id: e.id || `ent_${i}`,
@@ -810,11 +1531,12 @@ export const Batch: React.FC = () => {
               type: typeof e.type === 'string' ? e.type : String(e.type ?? 'CUSTOM'),
               start: typeof e.start === 'number' ? e.start : Number(e.start),
               end: typeof e.end === 'number' ? e.end : Number(e.end),
-              selected: true,
+              selected: e.selected !== false,
               page: e.page ?? 1,
               confidence: e.confidence,
               source: e.source,
               coref_id: e.coref_id,
+              replacement: e.replacement,
             })
           );
           setReviewBoxes([]);
@@ -822,14 +1544,34 @@ export const Batch: React.FC = () => {
           const contentStr = typeof c === 'string' ? c : '';
           setReviewEntities(mapped);
           setReviewTextContent(contentStr);
+          setReviewSelectedTypeId(mapped[0]?.type ?? cfg.selectedEntityTypeIds[0] ?? textTypes[0]?.id ?? 'CUSTOM');
+          setReviewTextUndoStack([]);
+          setReviewTextRedoStack([]);
           const map = await fetchBatchPreviewMap(mapped, cfg.replacementMode);
           setPreviewEntityMap(map);
+          reviewLastSavedJsonRef.current = JSON.stringify({
+            entities: mapped.map(e => ({
+              id: e.id,
+              text: e.text,
+              type: e.type,
+              start: e.start,
+              end: e.end,
+              page: e.page ?? 1,
+              confidence: e.confidence ?? 1,
+              selected: e.selected,
+              source: e.source,
+              coref_id: e.coref_id,
+              replacement: e.replacement,
+            })),
+            bounding_boxes: [],
+          });
         }
+        reviewDraftInitializedRef.current = true;
       } finally {
         setReviewLoading(false);
       }
     },
-    [cfg.replacementMode]
+    [activeJobId, cfg.replacementMode, cfg.selectedEntityTypeIds, textTypes]
   );
 
   useEffect(() => {
@@ -838,15 +1580,44 @@ export const Batch: React.FC = () => {
     void loadReviewData(reviewFile.file_id, isImg);
   }, [step, reviewFile?.file_id, reviewFile?.isImageMode, loadReviewData]);
 
+  useEffect(() => {
+    if (reviewSelectedTypeId) return;
+    const next = cfg.selectedEntityTypeIds[0] ?? textTypes[0]?.id ?? '';
+    if (next) setReviewSelectedTypeId(next);
+  }, [cfg.selectedEntityTypeIds, reviewSelectedTypeId, textTypes]);
+
+  useEffect(() => {
+    if (step !== 4 || !reviewFile || !reviewDraftInitializedRef.current) return;
+    if (!activeJobId || !reviewItemId) return;
+    const payload = buildCurrentReviewDraftPayload();
+    const json = JSON.stringify(payload);
+    if (json === reviewLastSavedJsonRef.current) return;
+    reviewDraftDirtyRef.current = true;
+    if (reviewAutosaveTimerRef.current !== null) {
+      window.clearTimeout(reviewAutosaveTimerRef.current);
+    }
+    reviewAutosaveTimerRef.current = window.setTimeout(() => {
+      void flushCurrentReviewDraft();
+    }, 900);
+    return () => {
+      if (reviewAutosaveTimerRef.current !== null) {
+        window.clearTimeout(reviewAutosaveTimerRef.current);
+        reviewAutosaveTimerRef.current = null;
+      }
+    };
+  }, [step, reviewFile?.file_id, reviewItemId, activeJobId, buildCurrentReviewDraftPayload, flushCurrentReviewDraft]);
+
   /** 文本批量第 4 步：配置变化时刷新替换预览（防抖；首屏映射由 loadReviewData 内联请求） */
   useEffect(() => {
     if (step !== 4 || mode !== 'text' || !reviewFile || reviewLoading) return;
     if (!reviewTextContent) return;
-    if (reviewEntities.length === 0) return;
+    if (reviewEntities.length === 0) {
+      setPreviewEntityMap({});
+      return;
+    }
     let cancelled = false;
     const t = window.setTimeout(async () => {
-      const withAllSelected = reviewEntities.map(e => ({ ...e, selected: true }));
-      const map = await fetchBatchPreviewMap(withAllSelected, cfg.replacementMode);
+      const map = await fetchBatchPreviewMap(reviewEntities, cfg.replacementMode);
       if (!cancelled) setPreviewEntityMap(map);
     }, 300);
     return () => {
@@ -854,6 +1625,61 @@ export const Batch: React.FC = () => {
       window.clearTimeout(t);
     };
   }, [step, mode, reviewFile?.file_id, reviewEntities, reviewTextContent, reviewLoading, cfg.replacementMode]);
+
+  useEffect(() => {
+    if (step !== 4 || mode !== 'image' || !reviewFile || reviewLoading) return;
+    let cancelled = false;
+    const t = window.setTimeout(async () => {
+      try {
+        setReviewImagePreviewLoading(true);
+        const imageBase64 = await batchPreviewImage({
+          file_id: reviewFile.file_id,
+          page: 1,
+          bounding_boxes: reviewBoxes
+            .filter(b => b.selected !== false)
+            .map(b => ({
+              id: b.id,
+              x: b.x,
+              y: b.y,
+              width: b.width,
+              height: b.height,
+              page: 1,
+              type: b.type,
+              text: b.text,
+              selected: b.selected,
+              source: b.source,
+              confidence: b.confidence,
+            })),
+          config: {
+            replacement_mode: ReplacementMode.STRUCTURED,
+            entity_types: [],
+            custom_replacements: {},
+            image_redaction_method: cfg.imageRedactionMethod ?? 'mosaic',
+            image_redaction_strength: cfg.imageRedactionStrength ?? 25,
+            image_fill_color: cfg.imageFillColor ?? '#000000',
+          },
+        });
+        if (!cancelled) setReviewImagePreview(imageBase64);
+      } catch {
+        if (!cancelled) setReviewImagePreview('');
+      } finally {
+        if (!cancelled) setReviewImagePreviewLoading(false);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [
+    step,
+    mode,
+    reviewFile?.file_id,
+    reviewBoxes,
+    reviewLoading,
+    cfg.imageRedactionMethod,
+    cfg.imageRedactionStrength,
+    cfg.imageFillColor,
+  ]);
 
   const displayPreviewMap = useMemo(
     () => mergePreviewMapWithDocumentSlices(reviewTextContent, reviewEntities, previewEntityMap),
@@ -882,11 +1708,11 @@ export const Batch: React.FC = () => {
   const batchMarkStyle = useCallback(
     (origKey: string): React.CSSProperties => {
       const tid = origToTypeIdBatch.get(origKey) ?? 'CUSTOM';
-      const cfg = getEntityRiskConfig(tid);
+      const riskCfg = getEntityRiskConfig(tid);
       return {
-        backgroundColor: cfg.bgColor,
-        color: cfg.textColor,
-        boxShadow: `inset 0 -2px 0 ${cfg.color}50`,
+        backgroundColor: riskCfg.bgColor,
+        color: riskCfg.textColor,
+        boxShadow: `inset 0 ${'-2px'} 0 ${String(riskCfg.color)}50`,
       };
     },
     [origToTypeIdBatch]
@@ -960,6 +1786,325 @@ export const Batch: React.FC = () => {
     }, 2500);
   }, [reviewTextContent]);
 
+  const getReviewSelectionOffsets = useCallback((range: Range, root: HTMLElement) => {
+    let start = -1;
+    let end = -1;
+    let offset = 0;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      const textLength = node.textContent?.length || 0;
+      if (node === range.startContainer) {
+        start = offset + range.startOffset;
+      }
+      if (node === range.endContainer) {
+        end = offset + range.endOffset;
+        break;
+      }
+      offset += textLength;
+    }
+    if (start === -1 || end === -1 || end <= start) return null;
+    return { start, end };
+  }, []);
+
+  const toggleReviewEntitySelected = useCallback((entityId: string) => {
+    applyReviewEntities(prev =>
+      prev.map(e => (e.id === entityId ? { ...e, selected: !e.selected } : e))
+    );
+    setReviewClickedEntity(prev =>
+      prev && prev.id === entityId ? { ...prev, selected: !prev.selected } : prev
+    );
+  }, [applyReviewEntities]);
+
+  const handleReviewEntityClick = useCallback((entity: ReviewEntity, event: React.MouseEvent) => {
+    event.stopPropagation();
+    reviewSelectionRangeRef.current = null;
+    setReviewSelectedText(null);
+    setReviewSelectionPos(null);
+    setReviewSelectedOverlapIds([]);
+    setReviewClickedEntity(entity);
+    setReviewSelectedTypeId(entity.type);
+  }, []);
+
+  const handleReviewTextSelect = useCallback(() => {
+    if (step !== 4 || mode !== 'text') return;
+    if (reviewClickedEntity) return;
+    const selection = window.getSelection();
+    const root = reviewTextContentRef.current;
+    if (!selection || !root) {
+      reviewSelectionRangeRef.current = null;
+      setReviewSelectedText(null);
+      setReviewSelectionPos(null);
+      setReviewSelectedOverlapIds([]);
+      return;
+    }
+    if (selection.isCollapsed) {
+      if (reviewSelectedText && reviewSelectionPos) return;
+      reviewSelectionRangeRef.current = null;
+      setReviewSelectedText(null);
+      setReviewSelectionPos(null);
+      setReviewSelectedOverlapIds([]);
+      return;
+    }
+    const text = selection.toString().trim();
+    if (!text || text.length < 1) {
+      reviewSelectionRangeRef.current = null;
+      setReviewSelectedText(null);
+      setReviewSelectionPos(null);
+      setReviewSelectedOverlapIds([]);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.commonAncestorContainer)) {
+      reviewSelectionRangeRef.current = null;
+      setReviewSelectedText(null);
+      setReviewSelectionPos(null);
+      setReviewSelectedOverlapIds([]);
+      return;
+    }
+    const offsets = getReviewSelectionOffsets(range, root);
+    const start = offsets?.start ?? reviewTextContent.indexOf(text);
+    const end = offsets?.end ?? (start + text.length);
+    if (start < 0 || end <= start) {
+      reviewSelectionRangeRef.current = null;
+      setReviewSelectedText(null);
+      setReviewSelectionPos(null);
+      setReviewSelectedOverlapIds([]);
+      return;
+    }
+    const overlaps = reviewEntities.filter(e => (e.start < end && e.end > start));
+    try {
+      reviewSelectionRangeRef.current = range.cloneRange();
+    } catch {
+      reviewSelectionRangeRef.current = null;
+    }
+    if (overlaps[0]) {
+      setReviewSelectedTypeId(overlaps[0].type);
+    } else if (!reviewSelectedTypeId) {
+      setReviewSelectedTypeId(cfg.selectedEntityTypeIds[0] ?? textTypes[0]?.id ?? 'CUSTOM');
+    }
+    setReviewSelectedOverlapIds(overlaps.map(e => e.id));
+    setReviewSelectionPos(null);
+    setReviewSelectedText({ text, start, end });
+  }, [
+    step,
+    mode,
+    reviewClickedEntity,
+    reviewSelectedText,
+    reviewSelectionPos,
+    getReviewSelectionOffsets,
+    reviewTextContent,
+    reviewEntities,
+    reviewSelectedTypeId,
+    cfg.selectedEntityTypeIds,
+    textTypes,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!reviewSelectedText) {
+      reviewSelectionRangeRef.current = null;
+      setReviewSelectionPos(null);
+      return;
+    }
+    const root = reviewTextContentRef.current;
+    if (!root) return;
+
+    const update = () => {
+      const range = reviewSelectionRangeRef.current;
+      if (!range || range.collapsed) {
+        setReviewSelectionPos(null);
+        return;
+      }
+      try {
+        const rect = range.getBoundingClientRect();
+        const canvas = root.getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) return;
+        setReviewSelectionPos(clampPopoverInCanvas(rect, canvas, 360, 320));
+      } catch {
+        setReviewSelectionPos(null);
+      }
+    };
+
+    update();
+    const scrollEl = reviewTextScrollRef.current;
+    window.addEventListener('resize', update);
+    scrollEl?.addEventListener('scroll', update, { passive: true });
+    return () => {
+      window.removeEventListener('resize', update);
+      scrollEl?.removeEventListener('scroll', update);
+    };
+  }, [reviewSelectedText]);
+
+  useLayoutEffect(() => {
+    if (!reviewClickedEntity) {
+      setReviewEntityPopupPos(null);
+      return;
+    }
+    const root = reviewTextContentRef.current;
+    if (!root) return;
+
+    const update = () => {
+      let el: HTMLElement | null = null;
+      try {
+        el = root.querySelector(`[data-review-entity-id="${CSS.escape(reviewClickedEntity.id)}"]`);
+      } catch {
+        el = null;
+      }
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const canvas = root.getBoundingClientRect();
+      setReviewEntityPopupPos(clampPopoverInCanvas(rect, canvas, 240, 240));
+    };
+
+    update();
+    const scrollEl = reviewTextScrollRef.current;
+    window.addEventListener('resize', update);
+    scrollEl?.addEventListener('scroll', update, { passive: true });
+    return () => {
+      window.removeEventListener('resize', update);
+      scrollEl?.removeEventListener('scroll', update);
+    };
+  }, [reviewClickedEntity]);
+
+  const addManualReviewEntity = useCallback((typeId: string) => {
+    if (!reviewSelectedText) return;
+    const nextEntity: ReviewEntity = normalizeReviewEntity({
+      id: `manual_${Date.now()}`,
+      text: reviewSelectedText.text,
+      type: typeId,
+      start: reviewSelectedText.start,
+      end: reviewSelectedText.end,
+      selected: true,
+      page: 1,
+      confidence: 1,
+      source: 'manual',
+    });
+    applyReviewEntities(prev =>
+      prev
+        .filter(e => !reviewSelectedOverlapIds.includes(e.id))
+        .concat(nextEntity)
+        .sort((a, b) => a.start - b.start)
+    );
+    reviewSelectionRangeRef.current = null;
+    setReviewSelectedText(null);
+    setReviewSelectionPos(null);
+    setReviewSelectedOverlapIds([]);
+    window.getSelection()?.removeAllRanges();
+  }, [applyReviewEntities, reviewSelectedOverlapIds, reviewSelectedText]);
+
+  const removeSelectedReviewEntities = useCallback(() => {
+    if (!reviewSelectedOverlapIds.length) return;
+    applyReviewEntities(prev => prev.filter(e => !reviewSelectedOverlapIds.includes(e.id)));
+    reviewSelectionRangeRef.current = null;
+    setReviewSelectedText(null);
+    setReviewSelectionPos(null);
+    setReviewSelectedOverlapIds([]);
+    window.getSelection()?.removeAllRanges();
+  }, [applyReviewEntities, reviewSelectedOverlapIds]);
+
+  const updateClickedReviewEntityType = useCallback((typeId: string) => {
+    if (!reviewClickedEntity) return;
+    applyReviewEntities(prev =>
+      prev.map(e => (e.id === reviewClickedEntity.id ? normalizeReviewEntity({ ...e, type: typeId, source: e.source ?? 'manual' }) : e))
+    );
+    setReviewClickedEntity(prev => (prev ? { ...prev, type: typeId } : prev));
+    setReviewSelectedTypeId(typeId);
+  }, [applyReviewEntities, reviewClickedEntity]);
+
+  const removeClickedReviewEntity = useCallback(() => {
+    if (!reviewClickedEntity) return;
+    applyReviewEntities(prev => prev.filter(e => e.id !== reviewClickedEntity.id));
+    setReviewClickedEntity(null);
+    setReviewEntityPopupPos(null);
+  }, [applyReviewEntities, reviewClickedEntity]);
+
+  const renderReviewMarkedContent = useCallback(() => {
+    if (!reviewTextContent) return <p className="text-gray-400">暂无文本</p>;
+    const sorted = [...reviewEntities].sort((a, b) => a.start - b.start);
+    const nodes: React.ReactNode[] = [];
+    const counters: Record<string, number> = {};
+    let lastEnd = 0;
+    sorted.forEach(entity => {
+      if (entity.start < lastEnd) return;
+      if (entity.start > lastEnd) {
+        nodes.push(<span key={`txt-${lastEnd}`}>{reviewTextContent.slice(lastEnd, entity.start)}</span>);
+      }
+      const risk = getEntityRiskConfig(entity.type);
+      const orig = reviewTextContent.slice(entity.start, entity.end) || entity.text;
+      const safeKey = orig.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_');
+      const matchIdx = counters[safeKey] || 0;
+      counters[safeKey] = matchIdx + 1;
+      nodes.push(
+        <span
+          key={entity.id}
+          data-review-entity-id={entity.id}
+          data-match-key={safeKey}
+          data-match-idx={matchIdx}
+          onClick={e => handleReviewEntityClick(entity, e)}
+          className="result-mark-orig cursor-pointer transition-all inline-flex items-center gap-0.5 rounded px-0.5 -mx-0.5 hover:ring-2 hover:ring-offset-1 hover:ring-[#007AFF]/20"
+          style={{
+            backgroundColor: risk.bgColor,
+            color: risk.textColor,
+            opacity: entity.selected ? 1 : 0.45,
+            boxShadow: `inset 0 ${'-2px'} 0 ${String(risk.color)}50`,
+          }}
+          title={`${getEntityTypeName(entity.type)} - 点击编辑`}
+        >
+          {reviewTextContent.slice(entity.start, entity.end)}
+        </span>
+      );
+      lastEnd = entity.end;
+    });
+    if (lastEnd < reviewTextContent.length) {
+      nodes.push(<span key="txt-end">{reviewTextContent.slice(lastEnd)}</span>);
+    }
+    return nodes;
+  }, [reviewEntities, reviewTextContent, handleReviewEntityClick]);
+
+  const navigateReviewIndex = useCallback(async (nextIndex: number) => {
+    if (nextIndex < 0 || nextIndex >= doneRows.length || nextIndex === reviewIndex) return;
+    await flushCurrentReviewDraft();
+    setReviewIndex(nextIndex);
+  }, [doneRows.length, flushCurrentReviewDraft, reviewIndex]);
+
+  const handleReviewBoxesCommit = useCallback((prevBoxes: EditorBox[], nextBoxes: EditorBox[]) => {
+    setReviewImageUndoStack(stack => [...stack, prevBoxes.map(b => ({ ...b }))]);
+    setReviewImageRedoStack([]);
+    setReviewBoxes(nextBoxes.map(b => ({ ...b })));
+    reviewDraftDirtyRef.current = true;
+  }, []);
+
+  const toggleReviewBoxSelected = useCallback((boxId: string) => {
+    setReviewBoxes(prev => prev.map(b => (b.id === boxId ? { ...b, selected: !b.selected } : b)));
+    reviewDraftDirtyRef.current = true;
+  }, []);
+
+  const reviewAvailableTextTypes = useMemo(() => {
+    const selectedIds = new Set(cfg.selectedEntityTypeIds);
+    const preferred = textTypes.filter(type => selectedIds.has(type.id));
+    const currentIds = new Set(preferred.map(type => type.id));
+    const currentTypeIds = [reviewSelectedTypeId, reviewClickedEntity?.type].filter(
+      (value): value is string => Boolean(value)
+    );
+    const extras = textTypes.filter(type => currentTypeIds.includes(type.id) && !currentIds.has(type.id));
+    return preferred.length ? [...preferred, ...extras] : textTypes;
+  }, [cfg.selectedEntityTypeIds, reviewClickedEntity?.type, reviewSelectedTypeId, textTypes]);
+
+  const reviewImagePreviewSrc = useMemo(
+    () => (reviewImagePreview ? `data:image/png;base64,${reviewImagePreview}` : ''),
+    [reviewImagePreview]
+  );
+
+  const selectedReviewEntityCount = useMemo(
+    () => reviewEntities.filter(entity => entity.selected !== false).length,
+    [reviewEntities]
+  );
+
+  const selectedReviewBoxCount = useMemo(
+    () => reviewBoxes.filter(box => box.selected !== false).length,
+    [reviewBoxes]
+  );
+
   const toggle = (id: string) => {
     setSelected(prev => {
       const next = new Set(prev);
@@ -985,7 +2130,7 @@ export const Batch: React.FC = () => {
       const bg = batchGroupIdRef.current;
       for (const file of accepted) {
         try {
-          const r = await fileApi.upload(file, bg);
+          const r = await fileApi.upload(file, bg, activeJobId ?? undefined, 'batch');
           uploaded.push({
             file_id: r.file_id,
             original_filename: r.filename,
@@ -993,6 +2138,7 @@ export const Batch: React.FC = () => {
             file_type: r.file_type,
             created_at: r.created_at ?? undefined,
             has_output: false,
+            reviewConfirmed: false,
             entity_count: 0,
             analyzeStatus: 'pending',
           });
@@ -1007,6 +2153,18 @@ export const Batch: React.FC = () => {
           uploaded.forEach(u => n.add(u.file_id));
           return n;
         });
+        if (activeJobId) {
+          try {
+            const d = await getJob(activeJobId);
+            const m = { ...itemIdByFileIdRef.current };
+            for (const it of d.items) {
+              m[it.file_id] = it.id;
+            }
+            itemIdByFileIdRef.current = m;
+          } catch {
+            /* ignore */
+          }
+        }
       }
       if (failed.length && uploaded.length) {
         setMsg({
@@ -1021,7 +2179,25 @@ export const Batch: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeJobId]);
+
+  const submitQueueToWorker = async () => {
+    if (!activeJobId) {
+      setMsg({ text: '请先在「任务与配置」完成步骤 1 并进入上传，以创建或绑定任务工单', tone: 'warn' });
+      return;
+    }
+    setMsg(null);
+    try {
+      const jobCfg = buildJobConfigForWorker(cfg, mode, furthestStep);
+      await updateJobDraft(activeJobId, { config: jobCfg });
+      lastSavedJobConfigJson.current = JSON.stringify(jobCfg);
+      await apiSubmitJob(activeJobId);
+      clearLocalWizardMaxStep(activeJobId);
+      setMsg({ text: '已提交后台队列，可在侧栏「任务中心」查看进度', tone: 'ok' });
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : '提交队列失败', tone: 'err' });
+    }
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -1040,12 +2216,12 @@ export const Batch: React.FC = () => {
     if (target === 3) return furthestStep >= 2 && rows.length > 0;
     if (target === 4) return furthestStep >= 3 && doneRows.length > 0;
     /** 步骤 4 时须先点「前往导出」或最后一份「确认」自动进入，步骤条才能点「5」 */
-    if (target === 5) return furthestStep >= 5 && rows.length > 0;
+    if (target === 5) return furthestStep >= 5 && allReviewConfirmed;
     return false;
   };
 
   /** 仅底部「下一步：上传」调用：首次从配置进入上传，不经过步骤条 */
-  const advanceToUploadStep = () => {
+  const advanceToUploadStep = async () => {
     if (!isStep1Complete) {
       setMsg({
         text: !configLoaded
@@ -1054,26 +2230,71 @@ export const Batch: React.FC = () => {
             ? '请在步骤 1 底部勾选「已确认上述配置」后再进入上传。'
             : mode === 'text'
               ? '请先完成步骤 1：至少勾选一个文本实体类型。'
-              : '请先完成步骤 1：在「图片类文本」或「图像特征」中至少勾选一类识别项（可只选其中一路）。',
+              : mode === 'smart'
+                ? '请先完成步骤 1：至少勾选一个文本实体类型或一类图像识别项。'
+                : '请先完成步骤 1：在「图片类文本」或「图像特征」中至少勾选一类识别项（可只选其中一路）。',
         tone: 'warn',
       });
       return;
     }
-    setStep(2);
-    setFurthestStep(prev => Math.max(prev, 2) as Step);
-    setMsg(null);
+    try {
+      const nextFurthest = Math.max(furthestStep, 2) as Step;
+      const payload = buildJobConfigForWorker(cfg, mode, nextFurthest);
+      let jid = activeJobId;
+      if (!jid) {
+        const j = await createJob({
+          job_type: mode === 'image' ? 'image_batch' : mode === 'smart' ? 'smart_batch' : 'text_batch',
+          title: `批量 ${new Date().toLocaleString()}`,
+          config: payload,
+          priority: jobPriority,
+        });
+        jid = j.id;
+        writeLocalWizardMaxStep(jid, nextFurthest);
+        setActiveJobId(jid);
+      } else {
+        writeLocalWizardMaxStep(jid, nextFurthest);
+        await updateJobDraft(jid, { config: payload });
+      }
+      lastSavedJobConfigJson.current = JSON.stringify(payload);
+      setStep(2);
+      setFurthestStep(prev => Math.max(prev, 2) as Step);
+      setMsg(null);
+    } catch (e) {
+      setMsg({ text: e instanceof Error ? e.message : '创建或更新任务失败', tone: 'err' });
+    }
   };
 
   /** 步骤 ④ 底部「前往导出」：首次进入导出步，步骤条上的「5」在此之前不可点（不弹离开确认） */
-  const advanceToExportStep = () => {
+  const advanceToExportStep = async () => {
     if (!rows.length) {
       setMsg({ text: '没有可导出的文件', tone: 'warn' });
       return;
     }
+    if (!allReviewConfirmed) {
+      setMsg({
+        text: `还有 ${pendingReviewCount} 份文件未确认审核，全部确认后才能进入导出。`,
+        tone: 'warn',
+      });
+      return;
+    }
+    await flushCurrentReviewDraft();
     setStep(5);
     setFurthestStep(prev => Math.max(prev, 5) as Step);
     setMsg(null);
   };
+
+  const flushJobDraftFromStep1 = useCallback(async () => {
+    if (!activeJobId) return;
+    const payload = buildJobConfigForWorker(cfg, mode, furthestStep);
+    const j = JSON.stringify(payload);
+    if (j === lastSavedJobConfigJson.current) return;
+    try {
+      await updateJobDraft(activeJobId, { config: payload });
+      lastSavedJobConfigJson.current = j;
+    } catch {
+      /* 与防抖 PUT 一致：失败时下一步仍会重试 */
+    }
+  }, [activeJobId, cfg, mode, furthestStep]);
 
   /** 实际切换步骤（不含第 4 步离开确认） */
   const applyStep = (s: Step) => {
@@ -1089,7 +2310,9 @@ export const Batch: React.FC = () => {
             ? '请在步骤 1 底部勾选「已确认上述配置」后再进入上传。'
             : mode === 'text'
               ? '请先完成步骤 1：至少勾选一个文本实体类型。'
-              : '请先完成步骤 1：在「图片类文本」或「图像特征」中至少勾选一类识别项（可只选其中一路）。',
+              : mode === 'smart'
+                ? '请先完成步骤 1：至少勾选一个文本实体类型或一类图像识别项。'
+                : '请先完成步骤 1：在「图片类文本」或「图像特征」中至少勾选一类识别项（可只选其中一路）。',
         tone: 'warn',
       });
       return;
@@ -1101,6 +2324,9 @@ export const Batch: React.FC = () => {
       });
       return;
     }
+    if (step === 1 && s >= 2 && activeJobId) {
+      void flushJobDraftFromStep1();
+    }
     setStep(s);
     setFurthestStep(prev => Math.max(prev, s) as Step);
     setMsg(null);
@@ -1110,8 +2336,10 @@ export const Batch: React.FC = () => {
   /** 从第 4 步去其它步骤（除「前往导出」进入步骤 5）时先确认 */
   const goStep = (s: Step) => {
     if (step === 4 && s !== 5) {
-      setPendingStepAfterLeave(s);
-      setLeaveConfirmOpen(true);
+      void (async () => {
+        const ok = await flushCurrentReviewDraft();
+        if (ok) applyStep(s);
+      })();
       return;
     }
     applyStep(s);
@@ -1120,7 +2348,9 @@ export const Batch: React.FC = () => {
   const showLeaveConfirmModal =
     leaveConfirmOpen || navigationBlocker.state === 'blocked';
 
-  const handleConfirmLeaveReview = () => {
+  const handleConfirmLeaveReview = async () => {
+    const ok = await flushCurrentReviewDraft();
+    if (!ok) return;
     if (navigationBlocker.state === 'blocked') {
       navigationBlocker.proceed();
     } else if (pendingStepAfterLeave !== null) {
@@ -1152,11 +2382,41 @@ export const Batch: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [showLeaveConfirmModal, navigationBlocker]);
 
-  const runBatchAnalyze = async () => {
+  useEffect(() => {
+    if (navigationBlocker.state !== 'blocked') return;
+    void (async () => {
+      const ok = await flushCurrentReviewDraft();
+      if (ok && navigationBlocker.state === 'blocked') {
+        navigationBlocker.proceed();
+      }
+    })();
+  }, [flushCurrentReviewDraft, navigationBlocker]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (step !== 4 || !reviewDraftDirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [step]);
+
+  useEffect(() => {
+    if (step !== 4) return;
+    const onPageHide = () => {
+      void flushCurrentReviewDraft();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [flushCurrentReviewDraft, step]);
+
+  const runBatchAnalyze = async (opts?: { advanceToReview?: boolean }) => {
     if (!rows.length) return;
     setAnalyzeRunning(true);
     setAnalyzeDoneCount(0);
     setMsg(null);
+    let successCount = 0;
     const entityIds = cfg.selectedEntityTypeIds;
     const bodyNer = {
       entity_type_ids: entityIds,
@@ -1205,6 +2465,7 @@ export const Batch: React.FC = () => {
             )
           );
         }
+        successCount += 1;
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
         setRows(prev =>
@@ -1214,8 +2475,24 @@ export const Batch: React.FC = () => {
         setAnalyzeDoneCount(i + 1);
       }
     }
+
     setAnalyzeRunning(false);
-    setMsg({ text: '批量识别已跑完，请进入「审阅确认」', tone: 'ok' });
+    if (successCount > 0) {
+      setFurthestStep(prev => Math.max(prev, 4) as Step);
+      if (opts?.advanceToReview) {
+        setStep(4);
+        setReviewIndex(0);
+      }
+    }
+    setMsg({
+      text:
+        successCount > 0
+          ? opts?.advanceToReview
+            ? '识别完成，已进入审阅。'
+            : '识别已完成。'
+          : '没有文件识别成功，请检查文件或配置后重试。',
+      tone: successCount > 0 ? 'ok' : 'warn',
+    });
   };
 
   const confirmCurrentReview = async () => {
@@ -1223,6 +2500,11 @@ export const Batch: React.FC = () => {
     setReviewExecuteLoading(true);
     setMsg(null);
     try {
+      const jid = activeJobId;
+      const linkedItemId = itemIdByFileIdRef.current[reviewFile.file_id];
+      if (!jid || !linkedItemId) {
+        throw new Error('当前文件未绑定任务项，无法提交审核结果');
+      }
       const entitiesPayload = reviewEntities.map(e => ({
         id: e.id,
         text: e.text,
@@ -1231,11 +2513,11 @@ export const Batch: React.FC = () => {
         end: e.end,
         page: e.page ?? 1,
         confidence: e.confidence ?? 1,
-        selected: true,
+        selected: e.selected,
         source: e.source,
         coref_id: e.coref_id,
+        replacement: e.replacement,
       }));
-
       const boxesPayload = reviewBoxes.map(b => ({
         id: b.id,
         x: b.x,
@@ -1247,53 +2529,47 @@ export const Batch: React.FC = () => {
         text: b.text,
         selected: b.selected,
         source: b.source,
+        confidence: b.confidence,
       }));
 
-      const imageMethod = cfg.imageRedactionMethod ?? 'mosaic';
-      const imageStrength = cfg.imageRedactionStrength ?? 25;
-      const imageFill = cfg.imageFillColor ?? '#000000';
-
-      await batchExecute({
-        file_id: reviewFile.file_id,
-        entities: entitiesPayload as any,
-        bounding_boxes: boxesPayload as any,
-        config: reviewFile.isImageMode
-          ? {
-              replacement_mode: ReplacementMode.STRUCTURED,
-              entity_types: [] as any,
-              custom_replacements: {},
-              image_redaction_method: imageMethod,
-              image_redaction_strength: imageStrength,
-              image_fill_color: imageFill,
-            }
-          : {
-              replacement_mode:
-                cfg.replacementMode === 'smart'
-                  ? ReplacementMode.SMART
-                  : cfg.replacementMode === 'mask'
-                    ? ReplacementMode.MASK
-                    : ReplacementMode.STRUCTURED,
-              entity_types: [] as any,
-              custom_replacements: {},
-            },
+      const ok = await flushCurrentReviewDraft();
+      if (!ok) {
+        throw new Error(reviewDraftError || '自动保存失败，请稍后重试');
+      }
+      const commitResult = await commitItemReview(jid, linkedItemId, {
+        entities: entitiesPayload as Array<Record<string, unknown>>,
+        bounding_boxes: boxesPayload as Array<Record<string, unknown>>,
       });
 
       setRows(prev =>
         prev.map(r =>
-          r.file_id === reviewFile.file_id ? { ...r, has_output: true } : r
+            r.file_id === reviewFile.file_id
+              ? {
+                  ...r,
+                  has_output: true,
+                  reviewConfirmed: true,
+                  entity_count:
+                    typeof commitResult.entity_count === 'number'
+                      ? commitResult.entity_count
+                      : reviewFile.isImageMode
+                      ? boxesPayload.length
+                      : entitiesPayload.length,
+              }
+            : r
         )
       );
+      reviewLastSavedJsonRef.current = JSON.stringify({ entities: entitiesPayload, bounding_boxes: boxesPayload });
+      reviewDraftDirtyRef.current = false;
 
       if (reviewIndex < doneRows.length - 1) {
-        setReviewIndex(reviewIndex + 1);
+        await navigateReviewIndex(reviewIndex + 1);
         setMsg({
-          text: reviewFile.isImageMode ? '本张已脱敏，已切换到下一张' : '本文件已脱敏，已切换到下一份',
+          text: reviewFile.isImageMode ? '当前文件已脱敏，已切换到下一张' : '当前文件已脱敏，已切换到下一份',
           tone: 'ok',
         });
       } else {
-        setMsg({ text: '本批已全部审阅完成，可进入「导出」', tone: 'ok' });
+        setMsg({ text: '本批已全部审阅完成，可点击下一步进入导出。', tone: 'ok' });
         setFurthestStep(prev => Math.max(prev, 5) as Step);
-        setStep(5);
       }
     } catch (e) {
       setMsg({ text: e instanceof Error ? e.message : '脱敏失败', tone: 'err' });
@@ -1345,25 +2621,25 @@ export const Batch: React.FC = () => {
   };
 
   if (!modeValid) {
-    return <Navigate to="/batch/text" replace />;
+    return <Navigate to="/batch" replace />;
   }
 
   return (
-    <div className="h-full min-h-0 min-w-0 flex flex-col bg-[#fafafa] overflow-hidden">
+    <div className="batch-root h-full min-h-0 min-w-0 flex flex-col bg-[#fafafa] overflow-hidden">
       <div
         className={`flex-1 flex flex-col min-h-0 min-w-0 w-full max-w-[min(100%,1920px)] mx-auto ${
           step === 1
             ? 'px-3 py-2 sm:px-4 sm:py-2.5 overflow-hidden'
-            : mode === 'image' && step === 4
+            : (mode === 'image' || (mode === 'smart' && reviewFile?.isImageMode)) && step === 4
               ? 'px-2 py-1.5 sm:px-3 sm:py-2 flex flex-col min-h-0 overflow-hidden'
-              : step === 4 && mode === 'text'
+              : step === 4 && (mode === 'text' || (mode === 'smart' && !reviewFile?.isImageMode))
                 ? 'px-2 py-2 sm:px-4 sm:py-3 flex flex-col min-h-0 overflow-hidden'
                 : 'px-3 py-3 sm:px-5 sm:py-4 overflow-y-auto overscroll-contain'
         }`}
       >
         <p
           className={`mb-1 flex-shrink-0 text-2xs sm:text-caption text-[#737373] leading-tight ${
-            step === 4 && (mode === 'image' || mode === 'text') ? 'hidden' : ''
+            step === 4 && (mode === 'image' || mode === 'text' || mode === 'smart') ? 'hidden' : ''
           }`}
         >
           五步：配置 → 上传 → 批量识别 → 审阅确认 → 导出（与 Playground 无关）
@@ -1371,27 +2647,24 @@ export const Batch: React.FC = () => {
 
         {/* 步骤条 */}
         <div
-          className={`flex flex-wrap items-center gap-1.5 flex-shrink-0 ${
+          className={`batch-stepper flex flex-wrap items-center gap-1.5 flex-shrink-0 ${
             step === 4 && (mode === 'image' || mode === 'text') ? 'mb-1' : 'mb-1.5'
           }`}
         >
           {STEPS.map((s, i) => (
             <React.Fragment key={s.n}>
-              <button
-                type="button"
-                onClick={() => goStep(s.n)}
-                disabled={!canGoStep(s.n)}
+              <div
                 className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                   step === s.n
                     ? 'bg-[#1d1d1f] text-white'
-                    : canGoStep(s.n)
-                      ? 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
-                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                }`}
+                    : step > s.n
+                      ? 'bg-white border border-gray-200 text-gray-700'
+                      : 'bg-gray-100 text-gray-400'
+                } batch-step-chip`}
               >
                 <span className="tabular-nums">{s.n}</span>
                 {s.label}
-              </button>
+              </div>
               {i < STEPS.length - 1 && <span className="text-gray-300 hidden sm:inline">→</span>}
             </React.Fragment>
           ))}
@@ -1403,129 +2676,194 @@ export const Batch: React.FC = () => {
         {step === 1 && (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0 overflow-hidden p-2 sm:p-3 space-y-2">
             <h3 className="font-semibold text-gray-900 shrink-0 text-sm leading-tight">
-              ① 识别与脱敏配置
+              ① 任务与配置
             </h3>
+            <p className="text-2xs text-gray-500 leading-snug">
+              本步绑定当前批量任务的识别项与脱敏选项。若已从 Hub/任务中心带入工单，修改会<strong className="text-gray-700">自动同步到任务草稿</strong>
+              （约 1 秒内防抖保存）；未建单时，点「下一步：上传」会创建工单并写入配置。
+            </p>
+            <div className="rounded-lg border border-gray-100 bg-[#f8fafc] px-2.5 py-2 space-y-1.5 shrink-0">
+              <p className="text-2xs font-medium text-gray-700">默认处理路径</p>
+              <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+                <label className="flex items-center gap-2 cursor-pointer text-2xs text-gray-700">
+                  <input
+                    type="radio"
+                    name="batch-exec-path"
+                    className="h-3.5 w-3.5 shrink-0 accent-[#1d1d1f]"
+                    checked={(cfg.executionDefault ?? 'queue') === 'queue'}
+                    onChange={() => setCfg(c => ({ ...c, executionDefault: 'queue' }))}
+                  />
+                  <span>
+                    <span className="font-medium text-gray-800">后台任务队列</span>（推荐：可关窗由 Worker 继续跑）
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-2xs text-gray-700">
+                  <input
+                    type="radio"
+                    name="batch-exec-path"
+                    className="h-3.5 w-3.5 shrink-0 accent-[#1d1d1f]"
+                    checked={cfg.executionDefault === 'local'}
+                    onChange={() => setCfg(c => ({ ...c, executionDefault: 'local' }))}
+                  />
+                  <span>
+                    <span className="font-medium text-gray-800">仅本页完成</span>（浏览器内识别→核对→导出，少依赖队列）
+                  </span>
+                </label>
+              </div>
+            </div>
+            <p className="text-2xs text-gray-400 leading-snug">
+              「处理路径」会写入任务草稿字段 <code className="text-[0.65rem]">preferred_execution</code>
+              ，便于后续与 Worker 对齐；当前以本页说明为准。
+            </p>
+            <p className="text-2xs text-gray-500 leading-snug">
+              进度与逐份确认见{' '}
+              <Link to="/jobs" className="text-[#007AFF] font-medium hover:underline">
+                任务中心
+              </Link>
+              ；处理历史见「处理历史」。
+            </p>
             {!configLoaded ? (
               <p className="text-sm text-gray-400">加载类型配置中…</p>
             ) : (
               <>
-                <div className="rounded-lg border border-gray-100 bg-[#fafafa] flex flex-col flex-1 min-h-0 overflow-hidden p-2 space-y-2">
-                  <div className="text-2xs text-gray-500 leading-snug space-y-0.5">
-                    <p>
-                      <span className="text-gray-600">「默认」</span>
-                      与「识别项配置」中当前启用的类型一致；未选命名预设时即为全选。
-                    </p>
-                    <p>命名预设可在「识别项配置」或 Playground 另存为后在此选用。</p>
-                  </div>
-                  <div className={`grid gap-2 sm:grid-cols-1 ${mode === 'image' ? 'max-w-full' : 'max-w-xl'}`}>
-                    {mode === 'text' && (
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-medium text-gray-800">文本脱敏配置清单</label>
-                        <p className="text-2xs text-gray-500">实体类型（HaS NER）与替换模式</p>
+                {/* ====== Smart 模式：左右双栏布局 ====== */}
+                {mode === 'smart' ? (
+                  <div className="flex gap-3 flex-1 min-h-0 overflow-hidden">
+                    {/* 左侧：配置选择 */}
+                    <div className="w-[280px] shrink-0 flex flex-col gap-3 overflow-y-auto">
+                      {/* 文本配置卡 */}
+                      <div className="rounded-xl border border-gray-200 bg-white p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                          <label className="text-xs font-semibold text-[#1d1d1f]">文本脱敏</label>
+                        </div>
+                        <p className="text-2xs text-gray-500">Word / PDF 文字实体识别</p>
                         <select
-                          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white w-full"
+                          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-[#fafafa] w-full"
                           value={cfg.presetTextId ?? ''}
                           onChange={onBatchTextPresetChange}
                         >
-                          <option value="">默认</option>
+                          <option value="">默认（全选）</option>
                           {textPresets.map(p => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                              {p.kind === 'full' ? '（组合）' : ''}
-                            </option>
+                            <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>
                           ))}
                         </select>
                       </div>
-                    )}
-                    {mode === 'image' && (
-                      <div className="flex flex-col gap-1.5">
-                        <label className="text-xs font-medium text-gray-800">图像脱敏配置清单</label>
+                      {/* 图像配置卡 */}
+                      <div className="rounded-xl border border-gray-200 bg-white p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                          <label className="text-xs font-semibold text-[#1d1d1f]">图像脱敏</label>
+                        </div>
+                        <p className="text-2xs text-gray-500">图片 / 扫描件区域检测</p>
                         <select
-                          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white w-full"
+                          className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-[#fafafa] w-full"
                           value={cfg.presetVisionId ?? ''}
                           onChange={onBatchVisionPresetChange}
                         >
-                          <option value="">默认</option>
+                          <option value="">默认（全选）</option>
                           {visionPresets.map(p => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                              {p.kind === 'full' ? '（组合）' : ''}
-                            </option>
+                            <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>
                           ))}
                         </select>
                       </div>
-                    )}
-                  </div>
-                  {((mode === 'text' && textPresets.length === 0) || (mode === 'image' && visionPresets.length === 0)) && (
-                    <p className="text-xs text-[#64748b] bg-slate-50 border border-slate-100 rounded-md px-3 py-2">
-                      暂无命名预设。已使用「默认」全选（与识别项配置一致）；需要复用时可到「
-                      <Link to="/settings" className="underline font-medium">
-                        识别项配置
-                      </Link>
-                      」或 Playground 另存为预设。
-                    </p>
-                  )}
-                  <div className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-black/[0.06] bg-white/80 p-2">
-                    <PresetDetailBlock
-                      cfg={cfg}
-                      textTypes={textTypes}
-                      pipelines={pipelines}
-                      allPresets={presets}
-                      scope={mode}
-                      onReplacementModeChange={mode =>
-                        setCfg(c => ({ ...c, presetTextId: null, replacementMode: mode }))
-                      }
-                      onVisionImagePatch={patch =>
-                        setCfg(c => ({ ...c, presetVisionId: null, ...patch }))
-                      }
-                    />
-                  </div>
-                </div>
-
-                {configLoaded &&
-                  (mode === 'image' ? (
-                    <div className="flex flex-col gap-1.5 pt-1.5 mt-0.5 border-t border-gray-100 sm:flex-row sm:items-center sm:justify-between sm:gap-2 shrink-0">
-                      <label className="flex items-start gap-2 cursor-pointer text-2xs text-gray-700 leading-snug min-w-0 flex-1">
-                        <input
-                          type="checkbox"
-                          checked={confirmStep1}
-                          onChange={e => setConfirmStep1(e.target.checked)}
-                          className={`mt-0.5 ${formCheckboxClass()}`}
-                        />
-                        <span>已确认当前识别与脱敏配置；未勾选无法进入「上传」。</span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={advanceToUploadStep}
-                        disabled={!isStep1Complete}
-                        className="shrink-0 px-4 py-2 text-sm font-medium rounded-xl bg-[#1d1d1f] text-white hover:bg-[#2d2d2f] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#1d1d1f]"
-                      >
-                        下一步：上传
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <label className="flex items-start gap-2 cursor-pointer text-2xs text-gray-700 mb-1 pt-1.5 border-t border-gray-100 leading-snug shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={confirmStep1}
-                          onChange={e => setConfirmStep1(e.target.checked)}
-                          className={`mt-0.5 ${formCheckboxClass()}`}
-                        />
-                        <span>已确认当前识别与脱敏配置；未勾选无法进入「上传」。</span>
-                      </label>
-                      <div className="flex justify-end">
+                      {/* 优先级 */}
+                      <div className="flex items-center gap-2 px-1">
+                        <span className="text-2xs text-gray-500">优先级</span>
+                        <select
+                          value={jobPriority}
+                          onChange={e => setJobPriority(Number(e.target.value))}
+                          className="text-2xs border border-gray-200 rounded-lg px-2 py-1 bg-white"
+                        >
+                          <option value={0}>普通</option>
+                          <option value={5}>高</option>
+                          <option value={10}>紧急</option>
+                        </select>
+                      </div>
+                      {/* 确认 + 下一步 */}
+                      <div className="space-y-2 pt-1 border-t border-gray-100">
+                        <label className="flex items-start gap-2 cursor-pointer text-2xs text-gray-700 leading-snug">
+                          <input
+                            type="checkbox"
+                            checked={confirmStep1}
+                            onChange={e => setConfirmStep1(e.target.checked)}
+                            className={`mt-0.5 ${formCheckboxClass()}`}
+                          />
+                          <span>已确认配置</span>
+                        </label>
                         <button
                           type="button"
                           onClick={advanceToUploadStep}
                           disabled={!isStep1Complete}
-                          className="px-4 py-2 text-sm font-medium rounded-xl bg-[#1d1d1f] text-white hover:bg-[#2d2d2f] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[#1d1d1f]"
+                          className="w-full px-4 py-2 text-sm font-medium rounded-xl bg-[#1d1d1f] text-white hover:bg-[#2d2d2f] disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           下一步：上传
                         </button>
                       </div>
-                    </>
-                  ))}
+                    </div>
+                    {/* 右侧：配置详情预览（只读 Tab 切换） */}
+                    <div className="flex-1 min-w-0 flex flex-col rounded-xl border border-gray-100 bg-[#fafafa] overflow-hidden">
+                      <SmartDetailTabs
+                        cfg={cfg}
+                        textTypes={textTypes}
+                        pipelines={pipelines}
+                        presets={presets}
+                        setCfg={setCfg}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  /* ====== 旧模式（text / image）：原有单栏布局 ====== */
+                  <div className="rounded-lg border border-gray-100 bg-[#fafafa] flex flex-col flex-1 min-h-0 overflow-hidden p-2 space-y-2">
+                    <div className="text-2xs text-gray-500 leading-snug space-y-0.5">
+                      <p><span className="text-gray-600">「默认」</span>与「识别项配置」中当前启用的类型一致。</p>
+                    </div>
+                    <div className="max-w-xl">
+                      {mode === 'text' && (
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-gray-800">文本脱敏配置清单</label>
+                          <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white w-full" value={cfg.presetTextId ?? ''} onChange={onBatchTextPresetChange}>
+                            <option value="">默认</option>
+                            {textPresets.map(p => <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>)}
+                          </select>
+                        </div>
+                      )}
+                      {mode === 'image' && (
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-medium text-gray-800">图像脱敏配置清单</label>
+                          <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white w-full" value={cfg.presetVisionId ?? ''} onChange={onBatchVisionPresetChange}>
+                            <option value="">默认</option>
+                            {visionPresets.map(p => <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-black/[0.06] bg-white/80 p-2">
+                      <PresetDetailBlock cfg={cfg} textTypes={textTypes} pipelines={pipelines} allPresets={presets} scope={mode} onReplacementModeChange={m => setCfg(c => ({ ...c, presetTextId: null, replacementMode: m }))} onVisionImagePatch={patch => setCfg(c => ({ ...c, presetVisionId: null, ...patch }))} />
+                    </div>
+                  </div>
+                )}
+
+                {/* 旧模式：优先级 + 确认（smart 模式已内含在左侧） */}
+                {mode !== 'smart' && configLoaded && (
+                  <>
+                    <div className="flex items-center gap-2 pt-1.5 mt-0.5 border-t border-gray-100 shrink-0">
+                      <span className="text-2xs text-gray-500">任务优先级</span>
+                      <select value={jobPriority} onChange={e => setJobPriority(Number(e.target.value))} className="text-2xs border border-gray-200 rounded-lg px-2 py-1 bg-white">
+                        <option value={0}>普通</option>
+                        <option value={5}>高</option>
+                        <option value={10}>紧急</option>
+                      </select>
+                    </div>
+                    <label className="flex items-start gap-2 cursor-pointer text-2xs text-gray-700 mb-1 leading-snug shrink-0">
+                      <input type="checkbox" checked={confirmStep1} onChange={e => setConfirmStep1(e.target.checked)} className={`mt-0.5 ${formCheckboxClass()}`} />
+                      <span>已确认当前识别与脱敏配置；未勾选无法进入「上传」。</span>
+                    </label>
+                    <div className="flex justify-end">
+                      <button type="button" onClick={advanceToUploadStep} disabled={!isStep1Complete} className="px-4 py-2 text-sm font-medium rounded-xl bg-[#1d1d1f] text-white hover:bg-[#2d2d2f] disabled:opacity-40 disabled:cursor-not-allowed">下一步：上传</button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -1535,6 +2873,15 @@ export const Batch: React.FC = () => {
         {step === 2 && (
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="flex flex-col gap-4">
+              {activeJobId && (
+                <div className="text-2xs sm:text-xs text-gray-600 rounded-lg border border-gray-100 bg-white px-3 py-2">
+                  当前任务工单{' '}
+                  <Link to={`/jobs/${activeJobId}`} className="font-mono text-[#007AFF] hover:underline break-all">
+                    {activeJobId}
+                  </Link>
+                  ；上传文件将自动归入此任务。
+                </div>
+              )}
               <div
                 {...getRootProps()}
                 className={`min-h-[220px] rounded-xl border-2 border-dashed flex flex-col items-center justify-center px-6 py-8 cursor-pointer transition-all ${
@@ -1543,7 +2890,13 @@ export const Batch: React.FC = () => {
               >
                 <input {...getInputProps()} />
                 <p className="text-base font-medium text-[#1d1d1f]">拖放多个文件，或点击选择</p>
-                <p className="text-xs text-[#a3a3a3] mt-2">Word · PDF · 图片</p>
+                <p className="text-xs text-[#a3a3a3] mt-2">
+                  {mode === 'smart'
+                    ? '支持 Word (.docx)、PDF、图片 (.jpg .png)，系统自动识别文件类型'
+                    : mode === 'image'
+                      ? '支持图片 (.jpg .png) 和扫描件 PDF'
+                      : '支持 Word (.docx .doc) 和 PDF 文档'}
+                </p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -1589,6 +2942,17 @@ export const Batch: React.FC = () => {
           <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-4">
             <h3 className="font-semibold text-gray-900">③ 批量识别</h3>
             <p className="text-xs text-gray-500">
+              {(cfg.executionDefault ?? 'queue') === 'queue' ? (
+                <>
+                  默认路径为<strong className="text-gray-800">后台队列</strong>：可先点「开始批量识别」在本页跑解析/识别，也可直接「提交后台队列」交给 Worker；二者可按需混用。
+                </>
+              ) : (
+                <>
+                  当前偏好<strong className="text-gray-800">仅本页完成</strong>：请用「开始批量识别」跑通后再进入核对；若仍需要 Worker，可点「提交后台队列」。
+                </>
+              )}
+            </p>
+            <p className="text-xs text-gray-500">
               将依次解析每个文件并运行文本 NER 或图像双路识别。失败项可在列表中查看原因，仍可对成功项继续核对。
             </p>
             {rows.length > 0 && (analyzeRunning || analyzeDoneCount > 0) && (
@@ -1619,12 +2983,22 @@ export const Batch: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={runBatchAnalyze}
+                onClick={() => void runBatchAnalyze()}
                 disabled={analyzeRunning || !rows.length}
                 className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-40"
               >
                 {analyzeRunning ? '识别中…' : '开始批量识别'}
               </button>
+              {activeJobId && (
+                <button
+                  type="button"
+                  onClick={() => void submitQueueToWorker()}
+                  disabled={!rows.length}
+                  className="px-4 py-2 text-sm font-medium rounded-lg border border-[#007AFF] text-[#007AFF] bg-white hover:bg-blue-50 disabled:opacity-40"
+                >
+                  提交后台队列
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => goStep(4)}
@@ -1647,149 +3021,210 @@ export const Batch: React.FC = () => {
         )}
 
         {/* 4 核对 · 图像：画布最大化，控件浮层 */}
-        {step === 4 && mode === 'image' && (
+        {step === 4 && (mode === 'image' || (mode === 'smart' && reviewFile?.isImageMode)) && (
           <div className="flex-1 flex flex-col min-h-0 rounded-xl border border-gray-200 shadow-sm bg-white overflow-hidden">
             {!doneRows.length ? (
-              <p className="p-3 text-sm text-gray-400 shrink-0">没有可核对的文件，请先完成识别。</p>
+              <p className="p-3 text-sm text-gray-400 shrink-0">暂无已完成识别的文件，请先完成第 3 步批量识别。</p>
             ) : reviewLoading || !reviewFile ? (
               <p className="p-3 text-sm text-gray-400 shrink-0">加载中…</p>
             ) : reviewFile.isImageMode ? (
-              <div className="flex-1 min-h-0 min-w-0 flex flex-col">
-                <ImageBBoxEditor
-                  imageSrc={fileApi.getDownloadUrl(reviewFile.file_id, false)}
-                  boxes={reviewBoxes}
-                  onBoxesChange={setReviewBoxes}
-                  getTypeConfig={getVisionTypeMeta}
-                  availableTypes={pipelines.flatMap(p => p.types.filter(t => t.enabled))}
-                  defaultType="CUSTOM"
-                  viewportTopSlot={
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => goStep(3)}
-                        className="px-2 py-0.5 text-2xs font-medium rounded border border-gray-200 bg-white/95 text-gray-800 shadow-sm hover:bg-white"
-                      >
-                        上一步
-                      </button>
-                      <span
-                        className="text-2xs font-medium text-gray-900 truncate max-w-[min(42vw,14rem)] px-1.5 py-0.5 rounded bg-white/90 border border-gray-200/80 shadow-sm"
-                        title={reviewFile.original_filename}
-                      >
-                        {reviewFile.original_filename}
-                      </span>
-                      {doneRows.length > 1 && (
-                        <>
-                          <button
-                            type="button"
-                            disabled={reviewIndex <= 0}
-                            onClick={() => setReviewIndex(i => Math.max(0, i - 1))}
-                            className="px-1.5 py-0.5 text-2xs rounded border border-gray-200 bg-white/95 disabled:opacity-40 shadow-sm"
-                          >
-                            上一张
-                          </button>
-                          <span className="text-2xs text-gray-700 tabular-nums px-0.5">
-                            {reviewIndex + 1}/{doneRows.length}
-                          </span>
-                          <button
-                            type="button"
-                            disabled={reviewIndex >= doneRows.length - 1}
-                            onClick={() => setReviewIndex(i => Math.min(doneRows.length - 1, i + 1))}
-                            className="px-1.5 py-0.5 text-2xs rounded border border-gray-200 bg-white/95 disabled:opacity-40 shadow-sm"
-                          >
-                            下一张
-                          </button>
-                        </>
+              <div className="flex-1 min-h-0 grid gap-3 p-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
+                <div className="min-h-0 rounded-2xl border border-gray-200 overflow-hidden bg-white">
+                  <ImageBBoxEditor
+                    imageSrc={reviewOrigImageBlobUrl}
+                    boxes={reviewBoxes}
+                    onBoxesChange={setReviewBoxes}
+                    onBoxesCommit={handleReviewBoxesCommit}
+                    getTypeConfig={getVisionTypeMeta}
+                    availableTypes={pipelines.flatMap(p => p.types.filter(t => t.enabled))}
+                    defaultType="CUSTOM"
+                    viewportTopSlot={
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => goStep(3)}
+                          className="px-2 py-0.5 text-2xs font-medium rounded border border-gray-200 bg-white/95 text-gray-800 shadow-sm hover:bg-white"
+                        >
+                          返回识别
+                        </button>
+                        <span
+                          className="text-2xs font-medium text-gray-900 truncate max-w-[min(36vw,16rem)] px-1.5 py-0.5 rounded bg-white/90 border border-gray-200/80 shadow-sm"
+                          title={reviewFile.original_filename}
+                        >
+                          {reviewFile.original_filename}
+                        </span>
+                        {doneRows.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={reviewIndex <= 0}
+                              onClick={() => void navigateReviewIndex(reviewIndex - 1)}
+                              className="px-1.5 py-0.5 text-2xs rounded border border-gray-200 bg-white/95 disabled:opacity-40 shadow-sm"
+                            >
+                              上一张
+                            </button>
+                            <span className="text-2xs text-gray-700 tabular-nums px-0.5">
+                              {reviewIndex + 1}/{doneRows.length}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={reviewIndex >= doneRows.length - 1}
+                              onClick={() => void navigateReviewIndex(reviewIndex + 1)}
+                              className="px-1.5 py-0.5 text-2xs rounded border border-gray-200 bg-white/95 disabled:opacity-40 shadow-sm"
+                            >
+                              下一张
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={undoReviewImage}
+                          disabled={!reviewImageUndoStack.length}
+                          className="px-2 py-0.5 text-2xs rounded border border-gray-200 bg-white/95 disabled:opacity-40 shadow-sm ml-auto"
+                        >
+                          Undo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={redoReviewImage}
+                          disabled={!reviewImageRedoStack.length}
+                          className="px-2 py-0.5 text-2xs rounded border border-gray-200 bg-white/95 disabled:opacity-40 shadow-sm"
+                        >
+                          Redo
+                        </button>
+                        {reviewDraftSaving && (
+                          <span className="text-2xs text-gray-500 whitespace-nowrap">保存草稿…</span>
+                        )}
+                        {!reviewDraftSaving && reviewDraftError && (
+                          <span className="text-2xs text-red-600 truncate max-w-[10rem]">{reviewDraftError}</span>
+                        )}
+                      </>
+                    }
+                    viewportBottomSlot={
+                      <div className="ml-auto flex items-center gap-2 rounded-2xl border border-white/70 bg-white/95 px-2.5 py-2 shadow-lg backdrop-blur">
+                        <span className="hidden sm:inline text-2xs text-gray-500 tabular-nums">
+                          已确认 {reviewedOutputCount} / {rows.length}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={confirmCurrentReview}
+                          disabled={reviewExecuteLoading}
+                          className="min-w-[132px] px-4 py-2 text-xs font-semibold rounded-xl bg-[#1d1d1f] text-white shadow-sm hover:bg-[#2d2d2f] disabled:opacity-50 disabled:hover:bg-[#1d1d1f]"
+                        >
+                          {reviewExecuteLoading ? '提交中…' : '确认审核并脱敏'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={advanceToExportStep}
+                          disabled={!allReviewConfirmed || reviewExecuteLoading}
+                          className="min-w-[132px] px-4 py-2 text-xs font-semibold rounded-xl border border-gray-200 bg-white text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-white"
+                        >
+                          下一步：进入导出
+                        </button>
+                      </div>
+                    }
+                  />
+                </div>
+
+                <div className="min-h-0 flex flex-col gap-3">
+                  <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden flex flex-col min-h-[240px]">
+                    <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold text-gray-800">脱敏预览</p>
+                        <p className="text-2xs text-gray-500">
+                          {reviewImagePreviewLoading
+                            ? '生成预览中…'
+                            : `已选区域 ${selectedReviewBoxCount} / ${reviewBoxes.length}`}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex-1 overflow-auto bg-[#fafafa] p-3">
+                      {reviewImagePreviewSrc ? (
+                        <img
+                          src={reviewImagePreviewSrc}
+                          alt="review preview"
+                          className="w-full h-auto rounded-xl border border-gray-200 bg-white"
+                        />
+                      ) : (
+                        <div className="h-full min-h-[180px] flex items-center justify-center text-sm text-gray-400 rounded-xl border border-dashed border-gray-200 bg-white">
+                          暂无预览，请勾选区域或等待生成完成
+                        </div>
                       )}
-                      <button
-                        type="button"
-                        onClick={advanceToExportStep}
-                        disabled={!rows.length}
-                        className="px-2 py-0.5 text-2xs font-medium rounded border border-gray-200 bg-white/95 text-gray-800 shadow-sm hover:bg-white disabled:opacity-40 ml-auto"
-                      >
-                        前往导出
-                      </button>
-                    </>
-                  }
-                  viewportBottomSlot={
-                    <button
-                      type="button"
-                      onClick={confirmCurrentReview}
-                      disabled={reviewExecuteLoading}
-                      className="px-4 py-2 text-xs font-semibold rounded-lg bg-[#1d1d1f] text-white shadow-lg disabled:opacity-50"
-                    >
-                      {reviewExecuteLoading ? '处理中…' : '确认本张并脱敏'}
-                    </button>
-                  }
-                />
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden flex-1 min-h-0">
+                    <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-gray-800">检测区域</span>
+                      <span className="text-2xs text-gray-500 tabular-nums">{selectedReviewBoxCount}/{reviewBoxes.length}</span>
+                    </div>
+                    <div className="flex-1 overflow-auto p-2 space-y-2">
+                      {reviewBoxes.map(box => {
+                        const meta = getVisionTypeMeta(box.type);
+                        return (
+                          <button
+                            key={box.id}
+                            type="button"
+                            onClick={() => toggleReviewBoxSelected(box.id)}
+                            className="w-full text-left rounded-xl border border-gray-200 px-3 py-2 transition hover:border-gray-300"
+                            style={{
+                              backgroundColor: box.selected === false ? '#f9fafb' : `${String(meta.color)}18`,
+                            }}
+                          >
+                            <div className="flex items-start gap-2">
+                              <input
+                                type="checkbox"
+                                checked={box.selected !== false}
+                                onChange={() => toggleReviewBoxSelected(box.id)}
+                                className={formCheckboxClass('sm')}
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-medium" style={{ color: meta.color }}>
+                                    {meta.name}
+                                  </span>
+                                  <span className="text-2xs text-gray-400">
+                                    {Math.round(box.width * 100)}×{Math.round(box.height * 100)}%
+                                  </span>
+                                </div>
+                                {box.text && <p className="mt-1 text-xs text-gray-600 break-all">{box.text}</p>}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                      {reviewBoxes.length === 0 && (
+                        <p className="text-xs text-gray-400 text-center py-6">暂无检测区域</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
-              <div className="flex flex-col flex-1 min-h-0 p-4 gap-3 overflow-auto">
-                <p className="text-xs font-medium text-gray-900 truncate">{reviewFile.original_filename}</p>
-                <div className="max-h-72 overflow-y-auto border border-gray-100 rounded-lg">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 text-left text-xs text-gray-500">
-                      <tr>
-                        <th className="p-2">类型</th>
-                        <th className="p-2">文本</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {reviewEntities.map(e => (
-                        <tr key={e.id} className="border-t border-gray-50">
-                          <td className="p-2 text-xs">
-                            {textTypes.find(t => t.id === e.type)?.name ?? getEntityTypeName(e.type)}
-                          </td>
-                          <td className="p-2 text-xs break-all">{e.text}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {reviewEntities.length === 0 && (
-                    <p className="p-4 text-sm text-gray-400">无识别实体，可直接确认（将不做文本替换）</p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={confirmCurrentReview}
-                  disabled={reviewExecuteLoading}
-                  className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-50 self-start"
-                >
-                  {reviewExecuteLoading ? '处理中…' : '确认本张并脱敏'}
-                </button>
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={advanceToExportStep}
-                    disabled={!rows.length}
-                    className="px-4 py-2 text-sm rounded-lg border border-gray-200 disabled:opacity-40"
-                  >
-                    前往导出
-                  </button>
-                </div>
+              <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
+                当前项不是图像模式，请从「图像批量」进入审阅。
               </div>
             )}
           </div>
         )}
 
-        {/* 4 审阅 · 文本（与 Playground 文本脱敏结果区一致：三列 + 逐份切换） */}
-        {step === 4 && mode === 'text' && (
-          <div className="flex-1 flex flex-col min-h-0 rounded-xl border border-gray-200 shadow-sm bg-white overflow-hidden">
+        {step === 4 && (mode === 'text' || (mode === 'smart' && !reviewFile?.isImageMode)) && (
+          <div className="flex-1 flex flex-col min-h-0 rounded-xl border border-gray-200 shadow-sm bg-white overflow-hidden relative">
             <div className="shrink-0 px-4 pt-3 pb-2 border-b border-gray-100/80 space-y-2">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <h3 className="font-semibold text-gray-900 text-sm">④ 审阅确认</h3>
+                  <h3 className="font-semibold text-gray-900 text-sm">文本审阅工作台</h3>
                   <p className="text-2xs text-gray-500 mt-0.5 leading-snug">
-                    与 Playground 一致：原文 / 脱敏预览 / 识别项。点击识别项可在左右两列同步定位并高亮。多文件时逐份审阅。
+                    划选添加标注、点击实体可改类型或删除；原文与脱敏预览联动；草稿约 900ms 自动保存到任务。
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={advanceToExportStep}
-                  disabled={!rows.length}
-                  className="shrink-0 px-3 py-1.5 text-xs rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-40"
-                >
-                  前往导出
-                </button>
+                <div className="flex items-center gap-2 text-2xs">
+                  {reviewDraftSaving && <span className="text-gray-500">正在保存草稿…</span>}
+                  {!reviewDraftSaving && reviewDraftError && <span className="text-red-600">{reviewDraftError}</span>}
+                  {!reviewDraftSaving && !reviewDraftError && step === 4 && (
+                    <span className="text-emerald-600">草稿已同步</span>
+                  )}
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -1797,14 +3232,14 @@ export const Batch: React.FC = () => {
                   onClick={() => goStep(3)}
                   className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg bg-white hover:bg-gray-50"
                 >
-                  上一步
+                  返回识别
                 </button>
                 {doneRows.length > 1 && (
                   <>
                     <button
                       type="button"
                       disabled={reviewIndex <= 0}
-                      onClick={() => setReviewIndex(i => Math.max(0, i - 1))}
+                      onClick={() => void navigateReviewIndex(reviewIndex - 1)}
                       className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg bg-white disabled:opacity-40"
                     >
                       上一份
@@ -1815,132 +3250,279 @@ export const Batch: React.FC = () => {
                     <button
                       type="button"
                       disabled={reviewIndex >= doneRows.length - 1}
-                      onClick={() => setReviewIndex(i => Math.min(doneRows.length - 1, i + 1))}
+                      onClick={() => void navigateReviewIndex(reviewIndex + 1)}
                       className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg bg-white disabled:opacity-40"
                     >
                       下一份
                     </button>
                   </>
                 )}
+                <button
+                  type="button"
+                  onClick={undoReviewText}
+                  disabled={!reviewTextUndoStack.length}
+                  className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg bg-white disabled:opacity-40 ml-auto"
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={redoReviewText}
+                  disabled={!reviewTextRedoStack.length}
+                  className="px-2.5 py-1 text-xs border border-gray-200 rounded-lg bg-white disabled:opacity-40"
+                >
+                  Redo
+                </button>
               </div>
             </div>
 
             {!doneRows.length && (
-              <p className="p-4 text-sm text-gray-400 shrink-0">没有可审阅的文件，请先完成识别。</p>
+              <p className="p-4 text-sm text-gray-400 shrink-0">暂无已完成识别的文件，请先完成第 3 步批量识别。</p>
             )}
 
             {!!doneRows.length && reviewFile && (
-              <div className="flex-1 flex flex-col min-h-0 min-w-0 px-2 pb-3 sm:px-4 sm:pb-4 pt-2">
-                <p
-                  className="text-xs font-medium text-gray-900 truncate shrink-0 mb-2 px-0.5"
-                  title={reviewFile.original_filename}
-                >
-                  {reviewFile.original_filename}
-                </p>
-                {reviewLoading ? (
-                  <p className="text-sm text-gray-400 px-1">加载中…</p>
-                ) : (
-                  <div className="flex-1 flex gap-2 sm:gap-3 min-h-0 min-w-0">
-                    <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                      <div className="flex-shrink-0 px-3 sm:px-4 py-2 border-b border-gray-100 flex items-center gap-2">
-                        <span className="text-xs font-semibold text-gray-700 tracking-tight">原始文档</span>
-                      </div>
-                      <div className="flex-1 overflow-auto p-3 sm:p-4">
-                        <div className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]">
-                          {textPreviewSegments.map((seg, i) =>
-                            seg.isMatch ? (
-                              <mark
-                                key={i}
-                                data-match-key={seg.safeKey}
-                                data-match-idx={seg.matchIdx}
-                                style={batchMarkStyle(seg.origKey)}
-                                className="result-mark-orig px-0.5 rounded-md transition-all duration-300"
-                              >
-                                {seg.text}
-                              </mark>
-                            ) : (
-                              <span key={i}>{seg.text}</span>
-                            )
-                          )}
-                        </div>
-                      </div>
+              <div className="flex-1 min-h-0 grid gap-3 p-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_320px]">
+                <div className="min-h-0 rounded-2xl border border-gray-200/80 bg-white flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-3 sm:px-4 py-2 border-b border-gray-100 flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-gray-700 tracking-tight">原文</span>
+                    <span className="text-2xs text-gray-500 tabular-nums">
+                      已选 {selectedReviewEntityCount} / {reviewEntities.length}
+                    </span>
+                  </div>
+                  <div ref={reviewTextScrollRef} className="flex-1 overflow-auto p-3 sm:p-4">
+                    <div
+                      ref={reviewTextContentRef}
+                      className="relative text-sm leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]"
+                      onMouseUp={handleReviewTextSelect}
+                      onKeyUp={handleReviewTextSelect}
+                    >
+                      {renderReviewMarkedContent()}
                     </div>
-                    <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                      <div className="flex-shrink-0 px-3 sm:px-4 py-2 border-b border-gray-100 flex items-center gap-2">
-                        <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏预览</span>
-                      </div>
-                      <div className="flex-1 overflow-auto p-3 sm:p-4">
-                        <div className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]">
-                          {textPreviewSegments.map((seg, i) =>
-                            seg.isMatch ? (
-                              <mark
-                                key={i}
-                                data-match-key={seg.safeKey}
-                                data-match-idx={seg.matchIdx}
-                                style={batchMarkStyle(seg.origKey)}
-                                className="result-mark-redacted px-0.5 rounded-md transition-all duration-300"
-                              >
-                                {displayPreviewMap[seg.origKey] ?? '…'}
-                              </mark>
-                            ) : (
-                              <span key={i}>{seg.text}</span>
-                            )
-                          )}
-                        </div>
-                      </div>
+                  </div>
+                </div>
+
+                <div className="min-h-0 rounded-2xl border border-gray-200/80 bg-white flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-3 sm:px-4 py-2 border-b border-gray-100 flex items-center gap-2">
+                    <span className="text-xs font-semibold text-gray-700 tracking-tight">脱敏预览</span>
+                  </div>
+                  <div className="flex-1 overflow-auto p-3 sm:p-4">
+                    <div className="text-sm leading-relaxed text-gray-800 whitespace-pre-wrap font-[system-ui]">
+                      {textPreviewSegments.map((seg, i) =>
+                        seg.isMatch ? (
+                          <mark
+                            key={i}
+                            data-match-key={seg.safeKey}
+                            data-match-idx={seg.matchIdx}
+                            style={batchMarkStyle(seg.origKey)}
+                            className="result-mark-redacted px-0.5 rounded-md transition-all duration-300"
+                          >
+                            {displayPreviewMap[seg.origKey] ?? seg.origKey}
+                          </mark>
+                        ) : (
+                          <span key={i}>{seg.text}</span>
+                        )
+                      )}
                     </div>
-                    <div className="w-[min(100%,18rem)] sm:w-64 flex-shrink-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden min-h-0">
-                      <div className="flex-shrink-0 px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-                        <span className="text-xs font-semibold text-gray-700 tracking-tight">识别项</span>
-                        <span className="text-2xs text-gray-400 tabular-nums">{reviewEntities.length}</span>
-                      </div>
-                      <div className="flex-1 overflow-y-auto overflow-x-hidden">
-                        {reviewEntities.map(e => {
-                          const repl =
-                            displayPreviewMap[e.text] ??
-                            (typeof e.start === 'number' && typeof e.end === 'number' && e.end <= reviewTextContent.length
-                              ? displayPreviewMap[reviewTextContent.slice(e.start, e.end)]
-                              : undefined);
-                          const cfg = getEntityRiskConfig(e.type);
-                          return (
-                            <button
-                              key={e.id}
-                              type="button"
-                              className="w-full text-left px-2.5 py-2.5 mx-1.5 my-1.5 rounded-xl border border-black/[0.06] shadow-sm shadow-violet-900/5 hover:brightness-[0.99] transition-all"
-                              style={{ borderLeft: `3px solid ${cfg.color}`, backgroundColor: cfg.bgColor }}
-                              onClick={() => scrollToBatchMatch(e)}
-                            >
-                              <span className="text-caption font-medium" style={{ color: cfg.textColor }}>
+                  </div>
+                </div>
+
+                <div className="min-h-0 rounded-2xl border border-gray-200/80 bg-white flex flex-col overflow-hidden">
+                  <div className="flex-shrink-0 px-3 py-2 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-gray-700 tracking-tight">实体列表</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-2xs text-gray-500 tabular-nums">{selectedReviewEntityCount}/{reviewEntities.length}</span>
+                      <button
+                        type="button"
+                        onClick={() => applyReviewEntities(prev => prev.map(e => ({ ...e, selected: true })))}
+                        className="text-2xs font-medium px-2 py-0.5 rounded border border-gray-200 bg-white hover:bg-gray-50"
+                      >
+                        全选
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyReviewEntities(prev => prev.map(e => ({ ...e, selected: false })))}
+                        className="text-2xs font-medium px-2 py-0.5 rounded border border-gray-200 bg-white hover:bg-gray-50"
+                      >
+                        全不选
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-2">
+                    {reviewEntities.map(e => {
+                      const repl =
+                        displayPreviewMap[e.text] ??
+                        (typeof e.start === 'number' && typeof e.end === 'number' && e.end <= reviewTextContent.length
+                          ? displayPreviewMap[reviewTextContent.slice(e.start, e.end)]
+                          : undefined);
+                      const risk = getEntityRiskConfig(e.type);
+                      return (
+                        <div
+                          key={e.id}
+                          className="rounded-xl border border-black/[0.06] shadow-sm px-3 py-2"
+                          style={{ backgroundColor: e.selected === false ? '#f9fafb' : risk.bgColor, borderLeft: `3px solid ${risk.color}` }}
+                        >
+                          <div className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              checked={e.selected !== false}
+                              onChange={() => toggleReviewEntitySelected(e.id)}
+                              className={formCheckboxClass('sm')}
+                            />
+                            <button type="button" className="min-w-0 flex-1 text-left" onClick={() => scrollToBatchMatch(e)}>
+                              <span className="text-caption font-medium" style={{ color: risk.textColor }}>
                                 {textTypes.find(t => t.id === e.type)?.name ?? getEntityTypeName(e.type)}
                               </span>
-                              <span className="block text-xs break-all mt-0.5" style={{ color: cfg.textColor }}>
+                              <span className="block text-xs break-all mt-0.5" style={{ color: risk.textColor }}>
                                 {e.text}
                               </span>
                               {repl != null && (
-                                <span className="block text-2xs mt-0.5 truncate opacity-90" style={{ color: cfg.textColor }}>
-                                  → {repl}
+                                <span className="block text-2xs mt-0.5 truncate opacity-90" style={{ color: risk.textColor }}>
+                                  {repl}
                                 </span>
                               )}
                             </button>
-                          );
-                        })}
-                        {reviewEntities.length === 0 && (
-                          <p className="text-xs text-gray-400 text-center py-6 px-2">
-                            无识别实体，可直接确认（将不做文本替换）
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {reviewEntities.length === 0 && (
+                      <p className="text-xs text-gray-400 text-center py-6 px-2">暂无识别实体</p>
+                    )}
                   </div>
-                )}
-                <div className="shrink-0 flex flex-wrap items-center gap-2 pt-3">
+                </div>
+              </div>
+            )}
+
+            {reviewSelectedText && reviewSelectionPos && (
+              <div
+                className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-2xl p-3 w-[320px]"
+                style={{ left: reviewSelectionPos.left, top: reviewSelectionPos.top }}
+                onMouseDown={e => e.stopPropagation()}
+                onMouseUp={e => e.stopPropagation()}
+              >
+                <div className="mb-3">
+                  <div className="text-caption text-gray-500 mb-1 font-medium">选中片段</div>
+                  <div className="text-sm text-gray-900 bg-gray-50 rounded-lg px-3 py-2 max-w-full break-all border border-gray-100">
+                    {reviewSelectedText.text}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-caption text-gray-500 mb-1 font-medium">实体类型</div>
+                  <EntityTypeGroupPicker
+                    entityTypes={reviewAvailableTextTypes}
+                    selectedTypeId={reviewSelectedTypeId}
+                    onSelectType={setReviewSelectedTypeId}
+                  />
+                </div>
+                <div className="flex gap-2 pt-3 border-t border-gray-100 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => addManualReviewEntity(reviewSelectedTypeId)}
+                    disabled={!reviewSelectedTypeId}
+                    className="flex-1 text-sm font-medium bg-black text-white rounded-lg px-3 py-2 disabled:opacity-50"
+                  >
+                    {reviewSelectedOverlapIds.length > 0 ? '替换为所选类型' : '添加标注'}
+                  </button>
+                  {reviewSelectedOverlapIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={removeSelectedReviewEntities}
+                      className="text-sm font-medium text-red-700 border border-red-200 rounded-lg px-3 py-2 hover:bg-red-50"
+                    >
+                      移除重叠
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      reviewSelectionRangeRef.current = null;
+                      setReviewSelectedText(null);
+                      setReviewSelectionPos(null);
+                      setReviewSelectedOverlapIds([]);
+                    }}
+                    className="text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50"
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {reviewClickedEntity && reviewEntityPopupPos && (
+              <div
+                className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-2xl p-3 w-[260px]"
+                style={{ left: reviewEntityPopupPos.left, top: reviewEntityPopupPos.top }}
+                onMouseDown={e => e.stopPropagation()}
+                onMouseUp={e => e.stopPropagation()}
+              >
+                <div className="mb-3">
+                  <div className="text-caption text-gray-500 mb-1 font-medium">实体文本</div>
+                  <div className="text-sm font-medium px-2 py-1.5 rounded-lg break-all bg-gray-50 text-gray-900 border border-gray-100">
+                    {reviewClickedEntity.text}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-caption text-gray-500 mb-1 font-medium">实体类型</div>
+                  <EntityTypeGroupPicker
+                    entityTypes={reviewAvailableTextTypes}
+                    selectedTypeId={reviewSelectedTypeId}
+                    onSelectType={id => {
+                      setReviewSelectedTypeId(id);
+                      updateClickedReviewEntityType(id);
+                    }}
+                  />
+                </div>
+                <div className="space-y-2 pt-3 border-t border-gray-100 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleReviewEntitySelected(reviewClickedEntity.id)}
+                    className="w-full text-sm font-medium text-gray-800 border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50"
+                  >
+                    {reviewClickedEntity.selected === false ? '参与脱敏' : '不参与脱敏'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={removeClickedReviewEntity}
+                    className="w-full text-sm font-medium text-red-700 border border-red-200 rounded-lg px-3 py-2 hover:bg-red-50"
+                  >
+                    删除实体
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReviewClickedEntity(null);
+                      setReviewEntityPopupPos(null);
+                    }}
+                    className="w-full text-sm text-gray-500 border border-gray-200 rounded-lg px-3 py-2 hover:bg-gray-50"
+                  >
+                    关闭
+                  </button>
+                </div>
+              </div>
+            )}
+
+{!!doneRows.length && reviewFile && (
+              <div className="shrink-0 px-4 pb-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-gray-500 tabular-nums">
+                  已确认 {reviewedOutputCount} / {rows.length}
+                  {!allReviewConfirmed && <span className="ml-2 text-amber-600">全部确认后才能进入导出</span>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={confirmCurrentReview}
                     disabled={reviewExecuteLoading}
-                    className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-50"
+                    className="min-w-[148px] px-4 py-2 text-sm font-semibold rounded-xl bg-[#1d1d1f] text-white shadow-sm hover:bg-[#2d2d2f] disabled:opacity-50 disabled:hover:bg-[#1d1d1f]"
                   >
-                    {reviewExecuteLoading ? '处理中…' : '确认本文件并脱敏'}
+                    {reviewExecuteLoading ? '提交中…' : '确认审核并脱敏'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={advanceToExportStep}
+                    disabled={!allReviewConfirmed || reviewExecuteLoading}
+                    className="min-w-[148px] px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 bg-white text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-40 disabled:hover:bg-white"
+                  >
+                    下一步：进入导出
                   </button>
                 </div>
               </div>
@@ -1948,7 +3530,6 @@ export const Batch: React.FC = () => {
           </div>
         )}
 
-        {/* 5 导出 */}
         {step === 5 && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-4">
             <h3 className="font-semibold text-gray-900">⑤ 导出</h3>
@@ -1961,16 +3542,28 @@ export const Batch: React.FC = () => {
                 type="button"
                 onClick={() => downloadZip(false)}
                 disabled={zipLoading || !selectedIds.length}
-                className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-40"
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-40 inline-flex items-center gap-1.5"
               >
-                {zipLoading ? '处理中…' : '下载原始 ZIP'}
+                {zipLoading && (
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                )}
+                {zipLoading ? '正在打包下载...' : '下载原始 ZIP'}
               </button>
               <button
                 type="button"
                 onClick={() => downloadZip(true)}
                 disabled={zipLoading || !selectedIds.length}
-                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 bg-white disabled:opacity-40"
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-200 bg-white disabled:opacity-40 inline-flex items-center gap-1.5"
               >
+                {zipLoading && (
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                )}
                 下载脱敏 ZIP
               </button>
             </div>
@@ -1994,21 +3587,6 @@ export const Batch: React.FC = () => {
                 </div>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                batchGroupIdRef.current = null;
-                setRows([]);
-                setSelected(new Set());
-                setFurthestStep(1);
-                setStep(1);
-                setAnalyzeDoneCount(0);
-                setMsg(null);
-              }}
-              className="text-sm text-gray-500 hover:text-gray-800"
-            >
-              清空本批并回到步骤 1
-            </button>
           </div>
         )}
 

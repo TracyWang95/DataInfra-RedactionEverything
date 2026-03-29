@@ -247,6 +247,9 @@ const EntityItem: React.FC<EntityItemProps> = ({
         {/* 选择框 */}
         <button
           onClick={onToggle}
+          role="checkbox"
+          aria-checked={entity.selected}
+          aria-label={`选择 ${config.label}: ${entity.text}`}
           className={clsx(
             'w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors',
             entity.selected
@@ -300,12 +303,14 @@ const EntityItem: React.FC<EntityItemProps> = ({
               <button
                 onClick={onEditSave}
                 className="p-1 text-green-600 hover:bg-green-50 rounded"
+                aria-label="保存替换文本"
               >
                 <CheckIcon className="w-4 h-4" />
               </button>
               <button
                 onClick={onEditCancel}
                 className="p-1 text-ink-subtle hover:bg-surface-tertiary rounded"
+                aria-label="取消编辑"
               >
                 <XMarkIcon className="w-4 h-4" />
               </button>
@@ -317,6 +322,7 @@ const EntityItem: React.FC<EntityItemProps> = ({
               <button
                 onClick={onEditStart}
                 className="p-1 text-ink-subtle hover:text-ink-muted hover:bg-surface-tertiary rounded"
+                aria-label="编辑替换文本"
               >
                 <PencilIcon className="w-3 h-3" />
               </button>

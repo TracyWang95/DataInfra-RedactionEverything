@@ -366,6 +366,16 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
   // 渲染调整手柄
   const renderResizeHandles = (box: BoundingBox) => {
     const handleSize = 8;
+    const handleLabels: Record<string, string> = {
+      nw: '向左上调整大小',
+      n: '向上调整大小',
+      ne: '向右上调整大小',
+      e: '向右调整大小',
+      se: '向右下调整大小',
+      s: '向下调整大小',
+      sw: '向左下调整大小',
+      w: '向左调整大小',
+    };
     const handles: { pos: ResizeHandle; style: React.CSSProperties }[] = [
       { pos: 'nw', style: { left: -handleSize/2, top: -handleSize/2, cursor: 'nwse-resize' } },
       { pos: 'n', style: { left: '50%', marginLeft: -handleSize/2, top: -handleSize/2, cursor: 'ns-resize' } },
@@ -380,6 +390,8 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
     return handles.map(({ pos, style }) => (
       <div
         key={pos}
+        role="separator"
+        aria-label={handleLabels[pos!] || '调整大小'}
         className="absolute bg-white border border-slate-400 rounded-sm shadow-sm"
         style={{
           width: handleSize,
@@ -525,12 +537,14 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
           <button
             onClick={() => setZoom(z => Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2)))}
             className="px-2 py-1 text-xs rounded border border-line text-ink-muted hover:border-gray-300"
+            aria-label="缩小"
           >
             -
           </button>
           <button
             onClick={() => setZoom(z => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2)))}
             className="px-2 py-1 text-xs rounded border border-line text-ink-muted hover:border-gray-300"
+            aria-label="放大"
           >
             +
           </button>

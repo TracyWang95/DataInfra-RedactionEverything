@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+    ultralytics \
+    fastapi \
+    uvicorn \
+    httpx \
+    Pillow
+
+COPY has_image_server.py .
+COPY app/core/has_image_categories.py ./app/core/
+
+RUN mkdir -p /app/models && \
+    adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8081
+
+CMD ["uvicorn", "has_image_server:app", "--host", "0.0.0.0", "--port", "8081"]

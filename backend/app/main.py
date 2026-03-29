@@ -3,25 +3,135 @@
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from fastapi import Depends, FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 import httpx
 
+from app.core.auth import require_auth
 from app.core.config import settings, get_has_display_name, get_has_chat_base_url, get_has_health_check_url
-from app.api import files, redaction, entity_types, vision_pipeline, model_config, ner_backend, presets
+from app.core.errors import AppError, app_error_handler, http_exception_handler, validation_exception_handler
+from app.api import auth as auth_api
+from app.api import files, redaction, entity_types, vision_pipeline, model_config, ner_backend, presets, jobs
 from app.models.schemas import HealthResponse
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _job_worker_task
+
+    # === Startup ===
+
+    # 1. Clean up orphan files
+    import time
+    from app.api.files import file_store
+
+    known_paths = set()
+    for info in file_store.values():
+        if isinstance(info, dict):
+            fp = info.get("file_path")
+            if fp:
+                known_paths.add(os.path.realpath(fp))
+            op = info.get("output_path")
+            if op:
+                known_paths.add(os.path.realpath(op))
+
+    removed = 0
+    for directory in (settings.UPLOAD_DIR, settings.OUTPUT_DIR):
+        if not os.path.isdir(directory):
+            continue
+        for fname in os.listdir(directory):
+            fpath = os.path.join(directory, fname)
+            if not os.path.isfile(fpath):
+                continue
+            real = os.path.realpath(fpath)
+            if real not in known_paths:
+                age = time.time() - os.path.getmtime(fpath)
+                if age > 3600:
+                    try:
+                        os.remove(fpath)
+                        removed += 1
+                    except OSError:
+                        pass
+
+    if removed:
+        logger.info("Cleaned up %d orphan files", removed)
+
+    # 2. Check external services
+    from app.services.ocr_service import ocr_service
+    if ocr_service.is_available():
+        logger.info("OCR service online (%s)", ocr_service.get_model_name())
+    else:
+        logger.info("OCR service offline (expected at %s)", ocr_service.base_url)
+
+    # 3. Start job worker
+    from app.api.jobs import get_job_store
+    from app.services.job_runner import worker_loop_forever
+
+    _job_worker_task = asyncio.create_task(worker_loop_forever(get_job_store(), interval_sec=2.0))
+
+    yield
+
+    # === Shutdown ===
+    if _job_worker_task and not _job_worker_task.done():
+        _job_worker_task.cancel()
+        try:
+            await _job_worker_task
+        except asyncio.CancelledError:
+            pass
+
 
 # 创建 FastAPI 应用
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="智能数据脱敏平台，支持 Word/PDF/图片等多格式文档的敏感信息自动识别与脱敏处理，基于 GB/T 37964-2019 国家标准",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
+    lifespan=lifespan,
 )
+
+app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+
+# ---------------------------------------------------------------------------
+# Request body size limit middleware (runs before CORS)
+# ---------------------------------------------------------------------------
+class MaxBodySizeMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, max_body_size: int = 60 * 1024 * 1024):  # 60MB
+        super().__init__(app)
+        self.max_body_size = max_body_size
+
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > self.max_body_size:
+            return JSONResponse(
+                status_code=413,
+                content={"error_code": "BODY_TOO_LARGE", "message": "请求体过大", "detail": {}},
+            )
+        return await call_next(request)
+
+
+# NOTE: Starlette processes middleware in reverse registration order (last added
+# runs first). Register MaxBodySizeMiddleware AFTER CORSMiddleware so that the
+# body-size check executes BEFORE CORS headers are evaluated.
 
 # 配置 CORS
 app.add_middleware(
@@ -32,24 +142,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(MaxBodySizeMiddleware)
+
+# Rate-limit: 120 requests/minute per IP
+from app.core.rate_limit import RateLimitMiddleware  # noqa: E402
+app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
+
 # 确保上传和输出目录存在
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
 
-# 挂载静态文件目录
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
-app.mount("/outputs", StaticFiles(directory=settings.OUTPUT_DIR), name="outputs")
+# 注意：不再挂载 /uploads 和 /outputs 为 StaticFiles，
+# 因为 StaticFiles 会绕过 require_auth 认证中间件。
+# 所有文件访问统一通过 /api/v1/files/{file_id}/download 端点（已有认证保护）。
 
 # 注册路由
-app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理"])
-app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["脱敏处理"])
-app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"])
-app.include_router(vision_pipeline.router, prefix=settings.API_PREFIX, tags=["图像识别Pipeline管理"])
-app.include_router(model_config.router, prefix=settings.API_PREFIX, tags=["推理模型配置"])
-app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本NER后端"])
-app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["识别配置预设"])
+app.include_router(auth_api.router, prefix=settings.API_PREFIX)
+app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理"], dependencies=[Depends(require_auth)])
+app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["脱敏处理"], dependencies=[Depends(require_auth)])
+app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
+app.include_router(vision_pipeline.router, prefix=settings.API_PREFIX, tags=["图像识别Pipeline管理"], dependencies=[Depends(require_auth)])
+app.include_router(model_config.router, prefix=settings.API_PREFIX, tags=["推理模型配置"], dependencies=[Depends(require_auth)])
+app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本NER后端"], dependencies=[Depends(require_auth)])
+app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["识别配置预设"], dependencies=[Depends(require_auth)])
+app.include_router(jobs.router, prefix=settings.API_PREFIX, tags=["批量任务"], dependencies=[Depends(require_auth)])
 
-print(f"[BOOT] presets API: GET/POST {settings.API_PREFIX}/presets (若前端仍 404，请重启本进程以加载最新路由)")
+logger.info("presets API: GET/POST %s/presets (若前端仍 404，请重启本进程以加载最新路由)", settings.API_PREFIX)
+
+_job_worker_task: asyncio.Task | None = None
 
 
 def check_sync(url: str, default_name: str, timeout: float = 3.0) -> tuple:
@@ -71,7 +191,7 @@ def check_sync(url: str, default_name: str, timeout: float = 3.0) -> tuple:
                 if data.get("status") == "unavailable":
                     ready = False
                 return name, ready
-    except Exception:
+    except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError):
         pass
     return default_name, False
 
@@ -174,7 +294,6 @@ def _run_one_nvidia_smi(
     exe: str,
     *,
     use_no_window: bool,
-    use_shell: bool,
     cwd: str | None = None,
     loose_fallback: bool = False,
 ) -> dict | None:
@@ -197,8 +316,7 @@ def _run_one_nvidia_smi(
     }
     if workdir and os.path.isdir(workdir):
         base_kw["cwd"] = workdir
-    # shell=True 时勿加 CREATE_NO_WINDOW，部分环境会导致子进程无输出
-    if os.name == "nt" and use_no_window and not use_shell:
+    if os.name == "nt" and use_no_window:
         base_kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     def _parse(out: str) -> dict | None:
@@ -210,15 +328,7 @@ def _run_one_nvidia_smi(
         return None
 
     try:
-        if use_shell and os.name == "nt":
-            cmdline = f'"{exe}" --query-gpu=memory.used,memory.total --format=csv,noheader,nounits'
-            r = subprocess.run(
-                cmdline,
-                shell=True,
-                **base_kw,
-            )
-        else:
-            r = subprocess.run(args, **base_kw)
+        r = subprocess.run(args, **base_kw)
         out = (r.stdout or "").strip()
         if not out and (r.stderr or "").strip():
             out = (r.stderr or "").strip()
@@ -238,14 +348,14 @@ def _run_one_nvidia_smi(
             }
             if workdir and os.path.isdir(workdir):
                 kw2["cwd"] = workdir
-            if os.name == "nt" and use_no_window and not use_shell:
+            if os.name == "nt" and use_no_window:
                 kw2["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             r2 = subprocess.run([exe], **kw2)
             out2 = ((r2.stdout or "") + "\n" + (r2.stderr or "")).strip()
             parsed2 = _parse_nvidia_smi_loose(out2)
             if parsed2:
                 return parsed2
-    except Exception:
+    except (subprocess.SubprocessError, OSError, ValueError, TypeError):
         pass
     return None
 
@@ -258,14 +368,10 @@ def _query_gpu_memory_nvidia_smi() -> dict | None:
 
     for exe in _nvidia_smi_executable_candidates():
         for m in (
-            _run_one_nvidia_smi(exe, use_no_window=True, use_shell=False, loose_fallback=False),
-            _run_one_nvidia_smi(exe, use_no_window=False, use_shell=False, loose_fallback=False),
-            _run_one_nvidia_smi(exe, use_no_window=False, use_shell=False, loose_fallback=True),
+            _run_one_nvidia_smi(exe, use_no_window=True, loose_fallback=False),
+            _run_one_nvidia_smi(exe, use_no_window=False, loose_fallback=False),
+            _run_one_nvidia_smi(exe, use_no_window=False, loose_fallback=True),
         ):
-            if m:
-                return m
-        if os.name == "nt":
-            m = _run_one_nvidia_smi(exe, use_no_window=False, use_shell=True, loose_fallback=True)
             if m:
                 return m
     return None
@@ -317,7 +423,7 @@ def _query_gpu_memory_pynvml() -> dict | None:
         mem = pynvml.nvmlDeviceGetMemoryInfo(h)
         mib = 1024 * 1024
         return {"used_mb": int(mem.used // mib), "total_mb": max(1, int(mem.total // mib))}
-    except Exception:
+    except Exception:  # broad catch: pynvml.NVMLError cannot be referenced if pynvml import fails
         return None
 
 
@@ -337,7 +443,7 @@ def _query_gpu_memory_paddle() -> dict | None:
         total = int(prop.total_memory)
         mib = 1024 * 1024
         return {"used_mb": used // mib, "total_mb": max(1, total // mib)}
-    except Exception:
+    except Exception:  # broad catch: paddle internal errors are not part of public API
         return None
 
 
@@ -377,14 +483,6 @@ def check_has_ner() -> tuple:
     return default_name, False
 
 
-@app.on_event("startup")
-async def check_services() -> None:
-    """启动时检查外部服务连通性"""
-    from app.services.ocr_service import ocr_service
-    if ocr_service.is_available():
-        print(f"[BOOT] OCR service online ({ocr_service.get_model_name()})")
-    else:
-        print(f"[BOOT] OCR service offline (expected at {ocr_service.base_url})")
 
 
 @app.get("/", tags=["根路径"])
@@ -393,7 +491,7 @@ async def root():
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "docs": "/docs",
+        "docs": "/docs" if settings.DEBUG else None,
     }
 
 
@@ -457,4 +555,3 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.DEBUG,
     )
-

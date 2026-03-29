@@ -27,7 +27,9 @@ export const TextModelSettings: React.FC = () => {
       const data = await res.json();
       setLlamacppBaseUrl(data.llamacpp_base_url || 'http://127.0.0.1:8080/v1');
     } catch (e) {
-      console.error('获取文本 NER 配置失败', e);
+      if (import.meta.env.DEV) {
+        console.error('获取文本 NER 配置失败', e);
+      }
     } finally {
       setNerLoading(false);
     }
@@ -84,7 +86,9 @@ export const TextModelSettings: React.FC = () => {
       }
       setTestResult({ success: true, message: '配置已保存并生效。' });
     } catch (e) {
-      console.error(e);
+      if (import.meta.env.DEV) {
+        console.error(e);
+      }
       alert('保存失败');
     } finally {
       setNerSaving(false);
@@ -145,7 +149,9 @@ export const TextModelSettings: React.FC = () => {
         setTestResult({ success: true, message: '已恢复为环境变量默认。' });
       }
     } catch (e) {
-      console.error(e);
+      if (import.meta.env.DEV) {
+        console.error(e);
+      }
     }
   };
 

@@ -7,6 +7,15 @@ from typing import Any, List, Optional
 import httpx
 
 from app.core.config import settings
+from app.core.retry import retry_async, RETRYABLE_HTTPX
+
+
+async def _do_detect_request(url: str, body: dict) -> httpx.Response:
+    """Execute a single detect HTTP request (retryable)."""
+    async with httpx.AsyncClient(timeout=settings.HAS_IMAGE_TIMEOUT, trust_env=False) as client:
+        resp = await client.post(url, json=body)
+        resp.raise_for_status()
+        return resp
 
 
 async def detect_privacy_regions(
@@ -24,8 +33,10 @@ async def detect_privacy_regions(
     body: dict = {"image_base64": b64, "conf": c}
     if category_slugs is not None:
         body["categories"] = category_slugs
-    async with httpx.AsyncClient(timeout=settings.HAS_IMAGE_TIMEOUT, trust_env=False) as client:
-        resp = await client.post(url, json=body)
-        resp.raise_for_status()
-        data = resp.json()
+    resp = await retry_async(
+        _do_detect_request, url, body,
+        max_retries=2, base_delay=1.0,
+        retryable_exceptions=RETRYABLE_HTTPX,
+    )
+    data = resp.json()
     return list(data.get("boxes") or [])

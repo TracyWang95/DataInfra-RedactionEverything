@@ -13,10 +13,15 @@ NER / Hide / Pair / Seek 的 user 提示须与模型卡模板逐字一致（勿�
 """
 
 import json
+import logging
 import re
 import httpx
+
+logger = logging.getLogger(__name__)
 from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass, field
+
+from app.core.retry import retry_sync, RETRYABLE_HTTPX
 
 
 @dataclass
@@ -62,6 +67,13 @@ class HaSClient:
             return self._base_url_override.rstrip("/")
         return get_has_chat_base_url().rstrip("/")
     
+    def _do_chat_request(self, base: str, payload: Dict[str, Any]) -> httpx.Response:
+        """Execute a single chat completions HTTP request (retryable)."""
+        with httpx.Client(timeout=self.timeout, trust_env=False) as client:
+            resp = client.post(f"{base}/chat/completions", json=payload)
+            resp.raise_for_status()
+            return resp
+
     def _call_model(self, messages: List[Dict]) -> str:
         """调用 OpenAI 兼容接口（llama.cpp HaS 或 Ollama）。"""
         from app.core.config import is_ner_ollama, get_ollama_model
@@ -70,13 +82,12 @@ class HaSClient:
         if is_ner_ollama():
             payload["model"] = get_ollama_model()
             payload["temperature"] = 0.1
-        with httpx.Client(timeout=self.timeout, trust_env=False) as client:
-            response = client.post(
-                f"{base}/chat/completions",
-                json=payload,
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+        response = retry_sync(
+            self._do_chat_request, base, payload,
+            max_retries=2, base_delay=1.0,
+            retryable_exceptions=RETRYABLE_HTTPX,
+        )
+        return response.json()["choices"][0]["message"]["content"]
     
     def reset_history(self):
         """重置历史映射"""
@@ -127,7 +138,7 @@ Specified types:{types_str}
                     pass
             return {}
         except Exception as e:
-            print(f"HaS NER 失败: {e}")
+            logger.error("HaS NER 失败: %s", e)
             return {}
     
     def hide(
@@ -217,7 +228,7 @@ Specified types:{types_str}
             return masked_text, mapping
             
         except Exception as e:
-            print(f"HaS Hide 失败: {e}")
+            logger.error("HaS Hide 失败: %s", e)
             return text, {}
     
     def pair(self, original_text: str, masked_text: str) -> Dict[str, List[str]]:
@@ -253,7 +264,7 @@ Extract the mapping from anonymized entities to original entities."""
                     pass
             return {}
         except Exception as e:
-            print(f"HaS Pair 失败: {e}")
+            logger.error("HaS Pair 失败: %s", e)
             return {}
     
     def seek(self, masked_text: str, mapping: Optional[Dict[str, List[str]]] = None) -> str:
@@ -287,7 +298,7 @@ Restore the original text based on the above mapping:
             restored_text = self._call_model(messages)
             return restored_text
         except Exception as e:
-            print(f"HaS Seek 失败: {e}")
+            logger.error("HaS Seek 失败: %s", e)
             return masked_text
     
     def extract_entities_for_ui(

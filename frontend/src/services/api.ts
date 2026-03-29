@@ -13,16 +13,37 @@ import type {
   ReplacementModeConfig,
 } from '../types';
 
+// Auth token key in localStorage (shared with login flow)
+const AUTH_TOKEN_KEY = 'auth_token';
+
+/** Read the current JWT from localStorage (null when AUTH_ENABLED=false). */
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+/** Persist a JWT so all subsequent requests include it. */
+export function setAuthToken(token: string): void {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+/** Clear the stored JWT (logout). */
+export function clearAuthToken(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
 // 创建 axios 实例
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 60000, // 60秒超时（AI处理可能较慢）
 });
 
-// 请求拦截器
+// 请求拦截器 - automatically attach JWT when available
 api.interceptors.request.use(
   (config) => {
-    // 可以在这里添加认证 token
+    const token = getAuthToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => Promise.reject(error)
@@ -32,8 +53,10 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response.data,
   (error) => {
-    const message = error.response?.data?.detail || error.message || '请求失败';
-    console.error('API Error:', message);
+    const message = error.response?.data?.message || error.response?.data?.detail || error.message || '请求失败';
+    if (import.meta.env.DEV) {
+      console.error('API Error:', message);
+    }
     return Promise.reject(new Error(message));
   }
 );
@@ -41,11 +64,22 @@ api.interceptors.response.use(
 // 文件管理 API
 export const fileApi = {
   // 上传文件（批量向导可传 batch_group_id，同一会话多文件共享）
-  upload: async (file: File, batchGroupId?: string | null): Promise<FileInfo> => {
+  upload: async (
+    file: File,
+    batchGroupId?: string | null,
+    jobId?: string | null,
+    uploadSource?: 'playground' | 'batch' | null
+  ): Promise<FileInfo> => {
     const formData = new FormData();
     formData.append('file', file);
     if (batchGroupId) {
       formData.append('batch_group_id', batchGroupId);
+    }
+    if (jobId) {
+      formData.append('job_id', jobId);
+    }
+    if (uploadSource) {
+      formData.append('upload_source', uploadSource);
     }
     return api.post('/files/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -62,10 +96,19 @@ export const fileApi = {
     return api.get(`/files/${fileId}`);
   },
 
-  /** 文件列表（处理历史，分页） */
-  list: async (page: number = 1, pageSize: number = 10): Promise<FileListResponse> => {
+  /** 文件列表（处理历史，分页）；source 筛选 Playground / 批量与任务 */
+  list: async (
+    page: number = 1,
+    pageSize: number = 10,
+    opts?: { source?: 'playground' | 'batch'; embed_job?: boolean }
+  ): Promise<FileListResponse> => {
     return api.get('/files', {
-      params: { page, page_size: pageSize },
+      params: {
+        page,
+        page_size: pageSize,
+        ...(opts?.source ? { source: opts.source } : {}),
+        ...(opts?.embed_job ? { embed_job: true } : {}),
+      },
     });
   },
 
@@ -73,7 +116,10 @@ export const fileApi = {
   batchDownloadZip: async (fileIds: string[], redacted: boolean): Promise<Blob> => {
     const res = await fetch('/api/v1/files/batch/download', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {}),
+      },
       body: JSON.stringify({ file_ids: fileIds, redacted }),
     });
     if (!res.ok) {
@@ -120,14 +166,19 @@ export const redactionApi = {
     return api.get(`/redaction/${fileId}/compare`);
   },
 
-  // 视觉识别
+  // 视觉识别（OCR+NER+YOLO 可能耗时很长，独立超时 > 后端 OCR_TIMEOUT 360s）
   detectSensitiveRegions: async (fileId: string, page: number = 1): Promise<VisionResult> => {
-    return api.post(`/redaction/${fileId}/vision?page=${page}`);
+    return api.post(`/redaction/${fileId}/vision?page=${page}`, undefined, { timeout: 400000 });
   },
 
   // 获取实体类型列表（旧版兼容）
   getEntityTypes: async (): Promise<{ entity_types: EntityTypeConfigSimple[] }> => {
     return api.get('/redaction/entity-types');
+  },
+
+  // 获取脱敏质量报告
+  getReport: async (fileId: string): Promise<any> => {
+    return api.get(`/redaction/${fileId}/report`);
   },
 
   // 获取替换模式列表
@@ -175,5 +226,64 @@ export const entityTypesApi = {
 };
 
 // visionTypesApi 已废弃，图像类型通过 vision-pipelines API 统一管理
+
+/* ─── Authenticated download / fetch helpers ─── */
+
+/** Build a Headers object that includes the JWT Bearer token when available. */
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+/**
+ * Download a file via authenticated fetch (works even with AUTH_ENABLED=true).
+ * Falls back to a plain `<a>` link when no auth token is stored.
+ */
+export async function downloadFile(url: string, filename: string): Promise<void> {
+  const token = getAuthToken();
+  if (!token) {
+    // No auth – direct navigation works when AUTH_ENABLED=false
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    return;
+  }
+
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    throw new Error(`下载失败: ${res.status}`);
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = objectUrl;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(objectUrl);
+}
+
+/**
+ * Fetch a file as a Blob URL with authentication.
+ * Useful for <img src> / preview scenarios.
+ * Returns the original URL directly if no token is stored.
+ */
+export async function authenticatedBlobUrl(url: string, mime?: string): Promise<string> {
+  const token = getAuthToken();
+  if (!token) {
+    return url;
+  }
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    throw new Error(`加载文件失败: ${res.status}`);
+  }
+  const buf = await res.arrayBuffer();
+  const blob = mime ? new Blob([buf], { type: mime }) : new Blob([buf]);
+  return URL.createObjectURL(blob);
+}
 
 export default api;

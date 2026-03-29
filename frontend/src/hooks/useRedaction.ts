@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import {
   EntityType,
   ReplacementMode,
@@ -203,19 +204,16 @@ export const useSelectedEntities = () => {
   );
 };
 
-// 自定义 Hook：按类型分组的实体
+// 自定义 Hook：按类型分组的实体（使用 useShallow 避免不必要的重渲染）
 export const useEntitiesByType = () => {
-  return useRedactionStore((state) => {
+  return useRedactionStore(useShallow((state) => {
     const grouped: Record<string, Entity[]> = {};
     state.entities.forEach((entity) => {
-      const type = entity.type;
-      if (!grouped[type]) {
-        grouped[type] = [];
-      }
-      grouped[type].push(entity);
+      if (!grouped[entity.type]) grouped[entity.type] = [];
+      grouped[entity.type].push(entity);
     });
     return grouped;
-  });
+  }));
 };
 
 // 自定义 Hook：实体统计
@@ -230,3 +228,22 @@ export const useEntityStats = () => {
     return { total, selected, byType };
   });
 };
+
+// Fine-grained selector hooks to avoid unnecessary re-renders
+export const useFileInfo = () => useRedactionStore((s) => s.fileInfo);
+export const useSetFileInfo = () => useRedactionStore((s) => s.setFileInfo);
+export const useStage = () => useRedactionStore((s) => s.stage);
+export const useSetStage = () => useRedactionStore((s) => s.setStage);
+export const useEntities = () => useRedactionStore((s) => s.entities);
+export const useSetEntities = () => useRedactionStore((s) => s.setEntities);
+export const useBoundingBoxes = () => useRedactionStore((s) => s.boundingBoxes);
+export const useSetBoundingBoxes = () => useRedactionStore((s) => s.setBoundingBoxes);
+export const useRedactionConfig = () => useRedactionStore((s) => s.config);
+export const useSetConfig = () => useRedactionStore((s) => s.setConfig);
+export const useRedactionResult = () => useRedactionStore((s) => s.redactionResult);
+export const useCompareData = () => useRedactionStore((s) => s.compareData);
+export const useIsLoading = () => useRedactionStore((s) => s.isLoading);
+export const useSetIsLoading = () => useRedactionStore((s) => s.setIsLoading);
+export const useLoadingMessage = () => useRedactionStore((s) => s.loadingMessage);
+export const useAppError = () => useRedactionStore((s) => s.error);
+export const useResetStore = () => useRedactionStore((s) => s.reset);

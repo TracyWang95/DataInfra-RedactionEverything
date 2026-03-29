@@ -22,7 +22,7 @@ def load_json(path: str, default: Optional[Any] = None) -> Any:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except (json.JSONDecodeError, OSError, ValueError):
         return default
 
 
@@ -35,4 +35,6 @@ def save_json(path: str, data: Any) -> None:
     tmp_path = f"{path}.tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(to_jsonable(data), f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_path, path)

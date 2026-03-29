@@ -64,7 +64,9 @@ async function parseJson<T>(res: Response): Promise<T> {
 
 export async function fetchPresets(): Promise<RecognitionPreset[]> {
   const res = await fetch(`${BASE}/presets`);
-  return parseJson<RecognitionPreset[]>(res);
+  const data = await parseJson<any>(res);
+  // 兼容分页响应 { presets: [...] } 和旧的直接数组格式
+  return Array.isArray(data) ? data : Array.isArray(data?.presets) ? data.presets : [];
 }
 
 export async function createPreset(body: PresetPayload): Promise<RecognitionPreset> {

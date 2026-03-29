@@ -82,6 +82,25 @@ export async function batchPreviewEntityMap(body: {
   return data.entity_map ?? {};
 }
 
+export async function batchPreviewImage(body: {
+  file_id: string;
+  page?: number;
+  bounding_boxes: unknown[];
+  config: Record<string, unknown>;
+}): Promise<string> {
+  const page = body.page ?? 1;
+  const res = await fetch(`${BASE}/redaction/${encodeURIComponent(body.file_id)}/preview-image?page=${page}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      bounding_boxes: body.bounding_boxes,
+      config: body.config,
+    }),
+  });
+  const data = await parseJson<{ image_base64?: string }>(res);
+  return data.image_base64 ?? '';
+}
+
 /** 将 file_store 中的 bounding_boxes 规范为单层数组（多页合并） */
 export function flattenBoundingBoxesFromStore(raw: unknown): Array<Record<string, unknown>> {
   if (!raw) return [];
@@ -103,7 +122,7 @@ export function flattenBoundingBoxesFromStore(raw: unknown): Array<Record<string
 }
 
 /** 批量向导 session 分「文本类批量」与「图片类文本批量」两套 */
-export type BatchWizardMode = 'text' | 'image';
+export type BatchWizardMode = 'text' | 'image' | 'smart';
 
 const LEGACY_BATCH_WIZARD_KEY = 'batchWizard:config:v1';
 
@@ -112,6 +131,7 @@ const LEGACY_BATCH_WIZARD_KEY = 'batchWizard:config:v1';
  */
 export function batchWizardStorageKey(mode: BatchWizardMode): string {
   if (mode === 'image') return 'batchWizard:config:v2:image';
+  if (mode === 'smart') return 'batchWizard:config:v2:smart';
   return `batchWizard:config:v1:${mode}`;
 }
 
@@ -133,6 +153,10 @@ export interface BatchWizardPersistedConfig {
   presetVisionId?: string | null;
   /** @deprecated 已拆分为 presetTextId / presetVisionId，仅用于兼容旧 session */
   presetId?: string | null;
+  /**
+   * 默认处理路径：queue=与后台 Worker 队列协同（推荐）；local=倾向在本页跑完识别与导出
+   */
+  executionDefault?: 'queue' | 'local';
 }
 
 export function loadBatchWizardConfig(mode: BatchWizardMode = 'text'): BatchWizardPersistedConfig | null {
