@@ -95,25 +95,9 @@ class RedactionContext:
         self.type_counters[type_key] += 1
         count = self.type_counters[type_key]
         
-        # 根据类型生成替换文本
-        type_labels = {
-            "PERSON": "当事人",
-            "ORG": "公司",
-            "ID_CARD": "证件号",
-            "PHONE": "电话",
-            "ADDRESS": "地址",
-            "BANK_CARD": "账号",
-            "CASE_NUMBER": "案号",
-            "DATE": "日期",
-            "MONEY": "金额",
-            "AMOUNT": "金额",
-            "EMAIL": "邮箱",
-            "LICENSE_PLATE": "车牌",
-            "CONTRACT_NO": "合同编号",
-            "CUSTOM": "敏感信息",
-        }
-        
-        label = type_labels.get(type_key, "敏感信息")
+        # 根据类型生成替换文本（使用统一映射）
+        from app.models.type_mapping import id_to_label
+        label = id_to_label(type_key)
         
         # 使用中文数字编号
         chinese_nums = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
@@ -235,6 +219,38 @@ class Redactor:
     
     def __init__(self):
         self.vision_service = VisionService()
+
+    def _resolve_existing_path(self, raw_path: Any, preferred_dir: str) -> Optional[str]:
+        """Resolve legacy relative storage paths against the configured storage directory."""
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return None
+
+        path = raw_path.strip()
+        if os.path.isabs(path) and os.path.exists(path):
+            return os.path.realpath(path)
+
+        basename = os.path.basename(path)
+        backend_root = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        project_root = os.path.realpath(os.path.join(backend_root, ".."))
+        candidates: list[str] = []
+        if basename:
+            candidates.append(os.path.join(preferred_dir, basename))
+            candidates.append(os.path.join(backend_root, os.path.basename(preferred_dir), basename))
+            candidates.append(os.path.join(project_root, os.path.basename(preferred_dir), basename))
+        if not os.path.isabs(path):
+            candidates.append(os.path.join(preferred_dir, path))
+            candidates.append(os.path.join(os.getcwd(), path))
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            real = os.path.realpath(candidate)
+            if real in seen:
+                continue
+            seen.add(real)
+            if os.path.exists(real):
+                return real
+
+        return os.path.realpath(path if os.path.isabs(path) else os.path.join(preferred_dir, basename or path))
     
     async def redact(
         self,
@@ -268,7 +284,7 @@ class Redactor:
         output_ext = original_ext
         if file_type == FileType.DOC:
             output_ext = ".docx"
-        output_path = os.path.join(settings.OUTPUT_DIR, f"{output_file_id}{output_ext}")
+        output_path = os.path.realpath(os.path.join(settings.OUTPUT_DIR, f"{output_file_id}{output_ext}"))
         
         # 只处理选中的实体
         selected_entities = [e for e in entities if e.selected]
@@ -631,7 +647,9 @@ class Redactor:
         entities: list[Entity],
         context: RedactionContext,
     ) -> int:
-        """纯文本文件脱敏（.txt, .md, .html, .rtf）— 简单字符串替换"""
+        """纯文本文件脱敏（.txt, .md, .html, .rtf）— 单次正则替换，O(n) 遍历"""
+        import re as _re
+
         # 读取原文（兼容多种编码）
         content = None
         for enc in ("utf-8", "gbk", "gb2312", "latin-1"):
@@ -646,19 +664,29 @@ class Redactor:
                 content = f.read()
 
         # 构建替换映射
-        replacements = {}
+        replacements: dict[str, str] = {}
         for entity in entities:
-            if entity.text not in replacements:
+            if entity.text and entity.text not in replacements:
                 replacements[entity.text] = context.get_replacement(entity)
 
-        # 按长度降序替换，避免短匹配吞长文本
+        if not replacements:
+            # 无需替换，直接拷贝
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return 0
+
+        # 构建一个联合正则：按长度降序排列，用 | 连接，单次遍历完成所有替换
+        # 比逐个 str.replace 更高效（避免多次全文扫描）
+        sorted_keys = sorted(replacements.keys(), key=len, reverse=True)
+        pattern = _re.compile("|".join(_re.escape(k) for k in sorted_keys))
         redacted_count = 0
-        for old_text in sorted(replacements.keys(), key=len, reverse=True):
-            new_text = replacements[old_text]
-            count = content.count(old_text)
-            if count > 0:
-                content = content.replace(old_text, new_text)
-                redacted_count += count
+
+        def _replace_match(m: _re.Match) -> str:
+            nonlocal redacted_count
+            redacted_count += 1
+            return replacements[m.group(0)]
+
+        content = pattern.sub(_replace_match, content)
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(content)
@@ -720,8 +748,8 @@ class Redactor:
         获取脱敏前后对比数据
         """
         file_type = file_info["file_type"]
-        original_path = file_info["file_path"]
-        redacted_path = file_info.get("output_path")
+        original_path = self._resolve_existing_path(file_info.get("file_path"), settings.UPLOAD_DIR) or file_info["file_path"]
+        redacted_path = self._resolve_existing_path(file_info.get("output_path"), settings.OUTPUT_DIR)
         redacted_text = file_info.get("redacted_text")
         
         if not redacted_path or not os.path.exists(redacted_path):
@@ -729,6 +757,14 @@ class Redactor:
         
         # 统一转为字符串比较（兼容枚举和字符串）
         ft = str(file_type.value) if hasattr(file_type, 'value') else str(file_type)
+        # 防御：output 扩展名与 file_type 不匹配时报错（而非静默返回错误对比）
+        out_ext = os.path.splitext(redacted_path)[1].lower() if redacted_path else ""
+        text_exts = {".docx", ".doc", ".txt", ".pdf"}
+        if out_ext and out_ext not in text_exts and ft in ("docx", "doc", "txt", "pdf", "pdf_scanned"):
+            raise ValueError(
+                f"脱敏输出文件类型不匹配：file_type={ft} 但 output={out_ext}，"
+                f"请重新执行脱敏。(output_path={redacted_path})"
+            )
         is_docx = ft in ("docx", "doc")
         is_txt = ft == "txt"
         is_pdf = ft in ("pdf", "pdf_scanned")

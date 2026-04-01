@@ -2190,6 +2190,8 @@ export const Batch: React.FC = () => {
       for (const file of accepted) {
         try {
           const r = await fileApi.upload(file, bg, activeJobId ?? undefined, 'batch');
+          const ft = String(r.file_type ?? '').toLowerCase();
+          const isImg = ft === 'image' || ft === 'jpg' || ft === 'jpeg' || ft === 'png' || ft === 'pdf_scanned';
           uploaded.push({
             file_id: r.file_id,
             original_filename: r.filename,
@@ -2200,6 +2202,7 @@ export const Batch: React.FC = () => {
             reviewConfirmed: false,
             entity_count: 0,
             analyzeStatus: 'pending',
+            isImageMode: isImg,
           });
         } catch {
           failed.push(file.name);
@@ -2290,11 +2293,14 @@ export const Batch: React.FC = () => {
             if (!item) return r;
             const newStatus = mapBackendStatus(item.status);
             if (RECOGNITION_DONE_STATUSES.has(newStatus) || newStatus === 'failed') doneCount++;
+            const itemFt = String(item.file_type ?? '').toLowerCase();
+            const isImg = r.isImageMode ?? (itemFt === 'image' || itemFt === 'jpg' || itemFt === 'jpeg' || itemFt === 'png' || itemFt === 'pdf_scanned');
             return {
               ...r,
               analyzeStatus: newStatus,
               reviewConfirmed: deriveReviewConfirmed(item),
               has_output: Boolean(item.has_output),
+              isImageMode: isImg,
               analyzeError: item.status === 'failed' || item.status === 'cancelled'
                 ? (item.error_message || '处理失败')
                 : undefined,
