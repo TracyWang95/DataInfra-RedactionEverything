@@ -645,9 +645,11 @@ async def commit_item_review(
                 "commit_item_review: stored_info.output_path=%r, result.output_path=%r, result.output_file_id=%r, file_info.file_path=%r",
                 info.get("output_path"), getattr(result, "output_path", "N/A"), getattr(result, "output_file_id", "N/A"), file_info.get("file_path"),
             )
-            output_path = _resolve_committed_output_path(file_info, result, info)
+            # 直接使用 result 的 output_path — redact() 返回时文件已写入磁盘
+            # 不用 _resolve_committed_output_path 做 exists 检查，避免 fallback 到旧路径
+            output_path = getattr(result, "output_path", None) or info.get("output_path")
             if not output_path:
-                raise RuntimeError(f"redacted output missing after review commit: stored_output={info.get('output_path')!r}, result_attrs={[a for a in dir(result) if not a.startswith('_')]}")
+                raise RuntimeError(f"redacted output missing after review commit")
             info["output_path"] = output_path
             if not info.get("entity_map"):
                 info["entity_map"] = getattr(result, "entity_map", {}) or {}
