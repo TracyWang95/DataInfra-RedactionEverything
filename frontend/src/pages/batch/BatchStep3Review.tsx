@@ -26,7 +26,6 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
   requeueFailedItems,
 }) => {
   const allDone = rows.length > 0 && rows.every(r => RECOGNITION_DONE_STATUSES.has(r.analyzeStatus));
-  const hasSubmitted = analyzeRunning || analyzeDoneCount > 0;
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
@@ -46,7 +45,7 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
       </p>
 
       {/* 进度条 */}
-      {rows.length > 0 && hasSubmitted && (
+      {rows.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs text-gray-600">
             <span>识别进度</span>
