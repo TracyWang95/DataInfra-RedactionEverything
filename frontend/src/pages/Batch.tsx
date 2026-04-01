@@ -3089,31 +3089,46 @@ export const Batch: React.FC = () => {
                   </div>
                 </div>
 
-                {/* ── 三列主体：原图+bbox(40%) | 脱敏预览(40%) | 标签(20%) ── */}
+                {/* ── 三列主体 ── */}
                 <div className="flex-1 min-h-0 flex overflow-hidden">
-                  {/* 列 1：原图 + 标注框 */}
-                  <div className="flex-[2] min-w-0 min-h-0 border-r border-gray-100">
-                    <ImageBBoxEditor
-                      imageSrc={reviewOrigImageBlobUrl}
-                      boxes={reviewBoxes}
-                      onBoxesChange={setReviewBoxes}
-                      onBoxesCommit={handleReviewBoxesCommit}
-                      getTypeConfig={getVisionTypeMeta}
-                      availableTypes={pipelines.flatMap(p => p.types.filter(t => t.enabled))}
-                      defaultType="CUSTOM"
-                    />
+
+                  {/* 列 1：原图 + bbox 标注 */}
+                  <div className="flex-[2] min-w-0 min-h-0 flex flex-col border-r border-gray-100">
+                    <div className="shrink-0 px-3 py-2 border-b border-gray-100 bg-white flex items-center justify-between">
+                      <span className="text-xs font-semibold text-gray-800">原图 + 标注</span>
+                      <span className="text-2xs text-gray-400">{reviewBoxes.length} 区域</span>
+                    </div>
+                    <div className="flex-1 min-h-0">
+                      <ImageBBoxEditor
+                        imageSrc={reviewOrigImageBlobUrl}
+                        boxes={reviewBoxes}
+                        onBoxesChange={setReviewBoxes}
+                        onBoxesCommit={handleReviewBoxesCommit}
+                        getTypeConfig={getVisionTypeMeta}
+                        availableTypes={pipelines.flatMap(p => p.types.filter(t => t.enabled))}
+                        defaultType="CUSTOM"
+                      />
+                    </div>
                   </div>
 
-                  {/* 列 2：脱敏预览 — 与列1齐平 */}
-                  <div className="flex-[2] min-w-0 min-h-0 border-r border-gray-100 bg-[#f0f0f2] overflow-auto flex items-center justify-center">
-                    {reviewImagePreviewSrc ? (
-                      <img src={reviewImagePreviewSrc} alt="脱敏预览"
-                        className="max-w-full max-h-full object-contain" />
-                    ) : (
-                      <div className="text-sm text-gray-400">
-                        {reviewImagePreviewLoading ? '生成预览中…' : '勾选区域后生成预览'}
-                      </div>
-                    )}
+                  {/* 列 2：脱敏预览 */}
+                  <div className="flex-[2] min-w-0 min-h-0 flex flex-col border-r border-gray-100">
+                    <div className="shrink-0 px-3 py-2 border-b border-gray-100 bg-white flex items-center justify-between">
+                      <span className="text-xs font-semibold text-gray-800">脱敏预览</span>
+                      <span className="text-2xs text-gray-400">
+                        {reviewImagePreviewLoading ? '生成中…' : `${selectedReviewBoxCount}/${reviewBoxes.length} 已选`}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-auto bg-[#f0f0f2] flex items-start justify-center p-2">
+                      {reviewImagePreviewSrc ? (
+                        <img src={reviewImagePreviewSrc} alt="脱敏预览"
+                          className="max-w-full max-h-full object-contain" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-sm text-gray-400">
+                          {reviewImagePreviewLoading ? '生成预览中…' : '勾选区域后生成预览'}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* 列 3：检测标签列表 */}
