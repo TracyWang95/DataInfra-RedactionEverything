@@ -18,7 +18,38 @@
 
 ---
 
-## 二、待实施优化项
+## 二、Codex Review 发现的回归 Bug（必修）
+
+> 以下 5 项由 Codex (GPT-5.4) 审核 uncommitted diff 时发现，均为之前 39-fix overhaul 引入的功能回归。
+
+#### CR-1. [P1] JSON→SQLite 迁移丢失历史文件
+- **文件**: `backend/app/api/files.py:229-231`
+- **问题**: 迁移时用原始相对路径 `./uploads/...` 检查文件是否存在，在不同工作目录下启动时路径不匹配，导致历史上传记录被跳过不迁移
+- **修复**: 在存在性检查前先调用 `_repair_file_store_paths()` 或用 `os.path.realpath()` 规范化路径
+
+#### CR-2. [P1] skip_item_review 任务卡在 awaiting_review
+- **文件**: `backend/app/services/task_queue.py:212-214`
+- **问题**: `_run_recognition` 完成后统一设为 `awaiting_review`，但 `skip_item_review=true` 的任务应该直接进入脱敏，现在无人审批导致任务永远卡住
+- **修复**: 识别完成后检查 job 的 `skip_item_review` 配置，若为 true 则直接入队 redaction 任务
+
+#### CR-3. [P1] 重启恢复入队逻辑错误
+- **文件**: `backend/app/main.py:146-157`
+- **问题**: 启动恢复只入队 `pending/processing/queued/parsing/ner/vision` 状态且全部当作 `recognition` 任务。`review_approved` 状态的 item 不会被恢复（脱敏丢失），已在脱敏中的 item 被错误重跑识别
+- **修复**: 区分 task_type — `review_approved` 应入队为 `redaction`，已完成识别的不重跑
+
+#### CR-4. [P2] requeue-failed 状态转换失败
+- **文件**: `backend/app/api/jobs.py:472-474`
+- **问题**: 用 `QUEUED` 状态重排队，但状态机只允许 `FAILED→PENDING`，导致 `InvalidStatusTransition` 异常
+- **修复**: 改为 `update_item_status(..., JobItemStatus.PENDING)`
+
+#### CR-5. [P2] 文件上传 job 注册 400 错误被吞为 500
+- **文件**: `backend/app/api/files.py:690-699`
+- **问题**: `_register_file_with_job()` 抛出的 400（job 不存在/非 draft）被外层 `except Exception` 捕获后转为 500
+- **修复**: 在 except 中先 `isinstance(e, HTTPException)` 检查，若是则直接 re-raise
+
+---
+
+## 三、待实施优化项
 
 ### P0 — 快速修复（每项 < 30 分钟，低风险）
 
@@ -127,7 +158,7 @@
 
 ---
 
-## 三、不做的项（本地 4090 不需要）
+## 四、不做的项（本地 4090 不需要）
 
 | 项目 | 不做原因 |
 |------|----------|
@@ -140,9 +171,10 @@
 
 ---
 
-## 四、实施顺序
+## 五、实施顺序
 
 ```
+Phase 0 (半天)  CR-1 ~ CR-5   Codex 发现的回归 Bug（最高优先级）
 Phase 1 (1天)   P0-1 ~ P0-5   快速修复 5 项
 Phase 2 (2-3天) P1-1           拆分 Batch.tsx（最大改动）
 Phase 3 (1天)   P1-2 ~ P1-4   拆分 Playground + 常量 + 类型
@@ -154,7 +186,7 @@ Phase 5 (持续)  P3-1 ~ P3-2   补测试
 
 ---
 
-## 五、E2E 测试安全网
+## 六、E2E 测试安全网
 
 | 测试文件 | 覆盖 | 数量 |
 |----------|------|------|
