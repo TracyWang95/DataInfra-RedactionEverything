@@ -3001,11 +3001,8 @@ export const Batch: React.FC = () => {
         {step === 3 && (
           <BatchStep3Review
             rows={rows}
-            analyzeRunning={analyzeRunning}
-            analyzeDoneCount={analyzeDoneCount}
             activeJobId={activeJobId}
             failedRows={failedRows}
-            canGoStep={canGoStep}
             goStep={goStep}
             submitQueueToWorker={submitQueueToWorker}
             requeueFailedItems={requeueFailedItems}
