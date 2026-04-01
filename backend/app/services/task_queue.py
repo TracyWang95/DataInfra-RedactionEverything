@@ -209,9 +209,20 @@ class SimpleTaskQueue:
                 log.info("[queue] item=%s → NER (%d types)", task.item_id[:8], len(entity_type_ids))
                 await hybrid_ner(task.file_id, entity_type_ids)
 
-            # 3) 完成识别 → 等待审阅
-            store.update_item_status(task.item_id, JobItemStatus.AWAITING_REVIEW)
-            log.info("[queue] item=%s → awaiting_review ✓", task.item_id[:8])
+            # 3) 完成识别
+            skip_review = bool(job.get("skip_item_review"))
+            if skip_review:
+                # skip_item_review=true: 直接入队脱敏，不等人工审阅
+                store.update_item_status(task.item_id, JobItemStatus.AWAITING_REVIEW)
+                log.info("[queue] item=%s → skip review, enqueue redaction", task.item_id[:8])
+                self._queue.put_nowait(TaskItem(
+                    job_id=task.job_id, item_id=task.item_id,
+                    file_id=task.file_id, task_type="redaction",
+                ))
+                self._pending_items.add(task.item_id)
+            else:
+                store.update_item_status(task.item_id, JobItemStatus.AWAITING_REVIEW)
+                log.info("[queue] item=%s → awaiting_review ✓", task.item_id[:8])
 
         except Exception as e:
             err_msg = str(e)[:500]
@@ -339,10 +350,13 @@ class SimpleTaskQueue:
         try:
             if all(s == JobItemStatus.COMPLETED.value for s in sts):
                 self._try_update_job_status(store, job_id, JobStatus.COMPLETED)
+            elif all(s == JobItemStatus.FAILED.value for s in sts):
+                # 全部失败 → job 标为 FAILED
+                self._try_update_job_status(store, job_id, JobStatus.FAILED)
             elif any(s == JobItemStatus.PROCESSING.value for s in sts):
                 self._try_update_job_status(store, job_id, JobStatus.PROCESSING)
             elif all(s in terminal for s in sts):
-                # 所有 item 都到达终态（awaiting_review / completed / failed）
+                # 混合终态（有成功有失败有待审）→ AWAITING_REVIEW
                 self._try_update_job_status(store, job_id, JobStatus.AWAITING_REVIEW)
             elif any(s == JobItemStatus.PENDING.value for s in sts):
                 self._try_update_job_status(store, job_id, JobStatus.QUEUED)

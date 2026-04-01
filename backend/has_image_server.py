@@ -33,7 +33,7 @@ from app.core.has_image_categories import (  # noqa: E402
 )
 
 app = FastAPI(title="HaS Image Service", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"], allow_methods=["*"], allow_headers=["*"])
 
 _model = None
 _ready = False

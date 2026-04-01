@@ -24,25 +24,41 @@ from app.api import auth as auth_api
 from app.api import files, redaction, entity_types, vision_pipeline, model_config, ner_backend, presets, jobs
 from app.models.schemas import HealthResponse
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+from app.core.logging_config import setup_logging
+# 生产环境用 JSON 格式；DEBUG 模式用文本格式（人类可读）
+setup_logging(json_mode=settings.LOG_JSON and not settings.DEBUG, level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = logging.getLogger(__name__)
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global _job_worker_task
+def cleanup_orphan_files() -> int:
+    """Remove orphan files from upload/output directories that are not tracked in file_store.
 
-    # === Startup ===
-
-    # 1. Clean up orphan files
+    Safety guard: if file_store has far fewer entries than the number of files
+    on disk, skip cleanup entirely to avoid accidental mass deletion (e.g. after
+    a failed migration that left file_store empty).
+    """
     import time
     from app.api.files import file_store
 
+    # Count files on disk first
+    disk_count = 0
+    for directory in (settings.UPLOAD_DIR, settings.OUTPUT_DIR):
+        if os.path.isdir(directory):
+            disk_count += sum(1 for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f)))
+
+    store_count = len(file_store)
+    # Safety: if disk has files but file_store is nearly empty, something is wrong — skip cleanup
+    if disk_count > 5 and store_count < disk_count // 2:
+        logger.warning(
+            "Orphan cleanup SKIPPED: disk has %d files but file_store only tracks %d. "
+            "Possible migration issue — refusing to delete.",
+            disk_count, store_count,
+        )
+        return 0
+
+    # Build known paths set
     known_paths = set()
-    for info in file_store.values():
+    snapshot = dict(file_store.items())
+    for info in snapshot.values():
         if isinstance(info, dict):
             fp = info.get("file_path")
             if fp:
@@ -62,13 +78,38 @@ async def lifespan(app: FastAPI):
             real = os.path.realpath(fpath)
             if real not in known_paths:
                 age = time.time() - os.path.getmtime(fpath)
-                if age > 3600:
+                if age > settings.ORPHAN_CLEANUP_AGE_SEC:
                     try:
                         os.remove(fpath)
                         removed += 1
+                        logger.info("Orphan cleanup: removed %s (age %.0fs)", fname, age)
                     except OSError:
                         pass
+    return removed
 
+
+async def _periodic_cleanup():
+    """Background task: run orphan file cleanup every hour."""
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            removed = cleanup_orphan_files()
+            if removed:
+                logger.info("Periodic cleanup removed %d orphan files", removed)
+        except Exception:
+            logger.exception("periodic orphan cleanup failed")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # === Startup ===
+
+    # 0. Database integrity check + restore from backup if corrupted
+    from app.core.db_backup import ensure_db_healthy, backup_sqlite
+    ensure_db_healthy(settings.JOB_DB_PATH)
+
+    # 1. Clean up orphan files (once at startup)
+    removed = cleanup_orphan_files()
     if removed:
         logger.info("Cleaned up %d orphan files", removed)
 
@@ -79,21 +120,87 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("OCR service offline (expected at %s)", ocr_service.base_url)
 
-    # 3. Start job worker
+    # 2b. Repair dirty data
     from app.api.jobs import get_job_store
-    from app.services.job_runner import worker_loop_forever
+    _store = get_job_store()
 
-    _job_worker_task = asyncio.create_task(worker_loop_forever(get_job_store(), interval_sec=2.0))
+    _repaired = _store.repair_completed_without_output()
+    if _repaired:
+        logger.info("Repaired %d completed items without output (reset to awaiting_review)", _repaired)
+
+    _requeued = _store.repair_failed_missing_files()
+    if _requeued:
+        logger.info("Requeued %d failed items after repairing missing-file path records", _requeued)
+
+    # 3. 启动进程内任务队列（替代 Celery）
+    from app.services.task_queue import get_task_queue, TaskItem
+    _task_queue = get_task_queue()
+    _task_queue.start()
+
+    # 恢复未完成的任务：根据 item 状态区分 recognition / redaction
+    from app.services.job_store import JobItemStatus
+    _all_jobs = _store.list_schedulable_jobs()
+    _redispatched = 0
+    _recognition_statuses = {
+        JobItemStatus.PENDING.value,
+        JobItemStatus.PROCESSING.value,
+        JobItemStatus.QUEUED.value,
+        JobItemStatus.PARSING.value,
+        JobItemStatus.NER.value,
+        JobItemStatus.VISION.value,
+    }
+    _redaction_statuses = {
+        JobItemStatus.REVIEW_APPROVED.value,
+        JobItemStatus.REDACTING.value,
+    }
+    for _j in _all_jobs:
+        for _it in _store.list_items(_j["id"]):
+            if _it["status"] in _recognition_statuses:
+                _task_queue.enqueue(TaskItem(
+                    job_id=_j["id"], item_id=_it["id"], file_id=_it["file_id"],
+                    task_type="recognition",
+                ))
+                _redispatched += 1
+            elif _it["status"] in _redaction_statuses:
+                _task_queue.enqueue(TaskItem(
+                    job_id=_j["id"], item_id=_it["id"], file_id=_it["file_id"],
+                    task_type="redaction",
+                ))
+                _redispatched += 1
+    if _redispatched:
+        logger.info("Startup: re-enqueued %d items (recognition + redaction)", _redispatched)
+
+    # 4. Start periodic orphan cleanup
+    _cleanup_task = asyncio.create_task(_periodic_cleanup())
+
+    # 5. Start periodic database backup (every hour)
+    async def _periodic_backup():
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                backup_sqlite(settings.JOB_DB_PATH)
+            except Exception:
+                logger.exception("periodic database backup failed")
+
+    _backup_task = asyncio.create_task(_periodic_backup())
 
     yield
 
-    # === Shutdown ===
-    if _job_worker_task and not _job_worker_task.done():
-        _job_worker_task.cancel()
+    # === Shutdown (graceful: wait up to 30s for in-progress work) ===
+    logger.info("Shutting down: stopping task queue and background tasks...")
+    _task_queue.stop()
+    _cleanup_task.cancel()
+    _backup_task.cancel()
+    tasks_to_wait = [_cleanup_task, _backup_task]
+    done, pending = await asyncio.wait(tasks_to_wait, timeout=30.0)
+    for t in pending:
+        t.cancel()
+    for t in done | pending:
         try:
-            await _job_worker_task
-        except asyncio.CancelledError:
+            await t
+        except (asyncio.CancelledError, Exception):
             pass
+    logger.info("Shutdown complete.")
 
 
 # 创建 FastAPI 应用
@@ -138,15 +245,27 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key", "X-CSRF-Token"],
 )
+
+# CSRF protection (double-submit cookie) — registered after CORS so that
+# Starlette's reverse middleware order means CSRF runs *after* CORS headers
+# are attached (the browser needs to see the CORS headers even on 403).
+# CSRF middleware disabled for local personal tool (no cross-site risk).
+# Uncomment for multi-user / cloud deployments:
+# from app.core.csrf import CSRFMiddleware  # noqa: E402
+# app.add_middleware(CSRFMiddleware)
 
 app.add_middleware(MaxBodySizeMiddleware)
 
-# Rate-limit: 120 requests/minute per IP
+# Rate-limit: 600 requests/minute per IP（批量任务含高频轮询，120 太紧）
 from app.core.rate_limit import RateLimitMiddleware  # noqa: E402
-app.add_middleware(RateLimitMiddleware, max_requests=120, window_seconds=60)
+app.add_middleware(RateLimitMiddleware, max_requests=600, window_seconds=60)
+
+# Request-ID: outermost middleware (registered last = runs first in Starlette)
+from app.core.request_id import RequestIdMiddleware  # noqa: E402
+app.add_middleware(RequestIdMiddleware)
 
 # 确保上传和输出目录存在
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -169,28 +288,29 @@ app.include_router(jobs.router, prefix=settings.API_PREFIX, tags=["批量任务"
 
 logger.info("presets API: GET/POST %s/presets (若前端仍 404，请重启本进程以加载最新路由)", settings.API_PREFIX)
 
-_job_worker_task: asyncio.Task | None = None
+
+
+_health_check_client = httpx.Client(timeout=45.0, trust_env=False)
 
 
 def check_sync(url: str, default_name: str, timeout: float = 3.0) -> tuple:
-    """同步检查 HTTP 服务（供 /health/services 在线程池中调用）。"""
+    """同步检查 HTTP 服务（供 /health/services 在线程池中调用）。复用连接池。"""
     try:
-        with httpx.Client(timeout=timeout, trust_env=False) as client:
-            resp = client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                name = default_name
-                if "model" in data:
-                    name = data["model"]
-                elif "data" in data and isinstance(data["data"], list) and data["data"]:
-                    name = data["data"][0].get("id", default_name)
-                elif "models" in data and isinstance(data["models"], list) and data["models"]:
-                    name = data["models"][0].get("name", default_name)
-                # 显式带 ready 字段时以布尔为准（OCR / HaS Image）；缺省则视为就绪
-                ready = bool(data["ready"]) if "ready" in data else True
-                if data.get("status") == "unavailable":
-                    ready = False
-                return name, ready
+        resp = _health_check_client.get(url, timeout=timeout)
+        if resp.status_code == 200:
+            data = resp.json()
+            name = default_name
+            if "model" in data:
+                name = data["model"]
+            elif "data" in data and isinstance(data["data"], list) and data["data"]:
+                name = data["data"][0].get("id", default_name)
+            elif "models" in data and isinstance(data["models"], list) and data["models"]:
+                name = data["models"][0].get("name", default_name)
+            # 显式带 ready 字段时以布尔为准（OCR / HaS Image）；缺省则视为就绪
+            ready = bool(data["ready"]) if "ready" in data else True
+            if data.get("status") == "unavailable":
+                ready = False
+            return name, ready
     except (httpx.HTTPError, OSError, ValueError, TypeError, KeyError):
         pass
     return default_name, False
@@ -485,6 +605,11 @@ def check_has_ner() -> tuple:
 
 
 
+# Prometheus metrics endpoint
+from app.core.metrics import metrics_endpoint
+app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+
+
 @app.get("/", tags=["根路径"])
 async def root():
     """API 根路径"""
@@ -544,6 +669,76 @@ async def services_health():
         "probe_ms": probe_ms,
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "gpu_memory": gpu_mem,
+    }
+
+
+@app.get("/api/v1/safety/storage-info", tags=["数据安全"], dependencies=[Depends(require_auth)])
+async def storage_info():
+    """返回数据存储路径信息，便于用户了解文件存放位置。"""
+    import shutil
+    upload_size = sum(
+        os.path.getsize(os.path.join(settings.UPLOAD_DIR, f))
+        for f in os.listdir(settings.UPLOAD_DIR)
+        if os.path.isfile(os.path.join(settings.UPLOAD_DIR, f))
+    ) if os.path.isdir(settings.UPLOAD_DIR) else 0
+    output_size = sum(
+        os.path.getsize(os.path.join(settings.OUTPUT_DIR, f))
+        for f in os.listdir(settings.OUTPUT_DIR)
+        if os.path.isfile(os.path.join(settings.OUTPUT_DIR, f))
+    ) if os.path.isdir(settings.OUTPUT_DIR) else 0
+    return {
+        "upload_dir": os.path.realpath(settings.UPLOAD_DIR),
+        "output_dir": os.path.realpath(settings.OUTPUT_DIR),
+        "db_path": os.path.realpath(settings.JOB_DB_PATH),
+        "upload_size_bytes": upload_size,
+        "output_size_bytes": output_size,
+        "total_size_bytes": upload_size + output_size,
+    }
+
+
+@app.post("/api/v1/safety/cleanup", tags=["数据安全"], dependencies=[Depends(require_auth)])
+async def cleanup_all_data():
+    """一键清理所有上传文件、脱敏产物和任务记录。"""
+    import shutil
+    files_removed = 0
+    # Clear upload directory
+    if os.path.isdir(settings.UPLOAD_DIR):
+        for f in os.listdir(settings.UPLOAD_DIR):
+            fp = os.path.join(settings.UPLOAD_DIR, f)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                    files_removed += 1
+                except OSError:
+                    pass
+    # Clear output directory
+    if os.path.isdir(settings.OUTPUT_DIR):
+        for f in os.listdir(settings.OUTPUT_DIR):
+            fp = os.path.join(settings.OUTPUT_DIR, f)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                    files_removed += 1
+                except OSError:
+                    pass
+    # Clear file store
+    from app.api.files import file_store, _file_store_lock
+    async with _file_store_lock:
+        file_store.clear()
+    # Clear jobs database
+    from app.api.jobs import get_job_store
+    store = get_job_store()
+    jobs_list, total = store.list_jobs(page=1, page_size=10000)
+    jobs_removed = len(jobs_list)
+    for j in jobs_list:
+        try:
+            store.delete_job(j["id"])
+        except Exception:
+            pass
+    logger.info("Cleanup: removed %d files and %d jobs", files_removed, jobs_removed)
+    return {
+        "files_removed": files_removed,
+        "jobs_removed": jobs_removed,
     }
 
 

@@ -3,7 +3,9 @@
 """
 from __future__ import annotations
 
+import logging
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -24,55 +26,66 @@ class JobType(str, Enum):
 class JobStatus(str, Enum):
     DRAFT = "draft"
     QUEUED = "queued"
-    RUNNING = "running"
+    PROCESSING = "processing"           # 合并旧 running/redacting
     AWAITING_REVIEW = "awaiting_review"
-    REDACTING = "redacting"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # 兼容旧数据读取（不做新写入）
+    RUNNING = "running"
+    REDACTING = "redacting"
 
 
 class JobItemStatus(str, Enum):
     PENDING = "pending"
+    PROCESSING = "processing"           # 合并旧 queued/parsing/ner/vision/redacting
+    AWAITING_REVIEW = "awaiting_review"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    # 兼容旧数据读取
     QUEUED = "queued"
     PARSING = "parsing"
     NER = "ner"
     VISION = "vision"
-    AWAITING_REVIEW = "awaiting_review"
     REVIEW_APPROVED = "review_approved"
     REDACTING = "redacting"
-    COMPLETED = "completed"
-    FAILED = "failed"
     CANCELLED = "cancelled"
 
 
 # ---------------------------------------------------------------------------
-# State-machine: allowed status transitions
+# State-machine: 简化版，只有核心转换
 # ---------------------------------------------------------------------------
 
+# 新状态 + 旧状态兼容：任何旧中间状态都可转到新状态
+_ALL_JOB = tuple(JobStatus)
 VALID_JOB_TRANSITIONS: dict[JobStatus, tuple[JobStatus, ...]] = {
-    JobStatus.DRAFT: (JobStatus.QUEUED, JobStatus.CANCELLED),
-    JobStatus.QUEUED: (JobStatus.RUNNING, JobStatus.CANCELLED),
-    JobStatus.RUNNING: (JobStatus.AWAITING_REVIEW, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
-    JobStatus.AWAITING_REVIEW: (JobStatus.REDACTING, JobStatus.CANCELLED),
-    JobStatus.REDACTING: (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
-    JobStatus.COMPLETED: (),  # terminal
-    JobStatus.FAILED: (JobStatus.QUEUED, JobStatus.CANCELLED),  # retry allowed
-    JobStatus.CANCELLED: (),  # terminal
+    JobStatus.DRAFT:           (JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.CANCELLED),
+    JobStatus.QUEUED:          (JobStatus.PROCESSING, JobStatus.CANCELLED),
+    JobStatus.PROCESSING:      (JobStatus.AWAITING_REVIEW, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
+    JobStatus.AWAITING_REVIEW: (JobStatus.PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
+    JobStatus.COMPLETED:       (JobStatus.QUEUED,),
+    JobStatus.FAILED:          (JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.CANCELLED),
+    JobStatus.CANCELLED:       (),
+    # 旧状态兼容：可以转到任何新状态
+    JobStatus.RUNNING:         _ALL_JOB,
+    JobStatus.REDACTING:       _ALL_JOB,
 }
 
+_ALL_ITEM = tuple(JobItemStatus)
 VALID_ITEM_TRANSITIONS: dict[JobItemStatus, tuple[JobItemStatus, ...]] = {
-    JobItemStatus.PENDING: (JobItemStatus.QUEUED, JobItemStatus.CANCELLED),
-    JobItemStatus.QUEUED: (JobItemStatus.PARSING, JobItemStatus.CANCELLED),
-    JobItemStatus.PARSING: (JobItemStatus.NER, JobItemStatus.FAILED, JobItemStatus.CANCELLED),
-    JobItemStatus.NER: (JobItemStatus.VISION, JobItemStatus.AWAITING_REVIEW, JobItemStatus.REVIEW_APPROVED, JobItemStatus.FAILED, JobItemStatus.CANCELLED),
-    JobItemStatus.VISION: (JobItemStatus.AWAITING_REVIEW, JobItemStatus.REVIEW_APPROVED, JobItemStatus.FAILED, JobItemStatus.CANCELLED),
-    JobItemStatus.AWAITING_REVIEW: (JobItemStatus.REVIEW_APPROVED, JobItemStatus.CANCELLED),
-    JobItemStatus.REVIEW_APPROVED: (JobItemStatus.REDACTING, JobItemStatus.CANCELLED),
-    JobItemStatus.REDACTING: (JobItemStatus.COMPLETED, JobItemStatus.FAILED, JobItemStatus.CANCELLED),
-    JobItemStatus.COMPLETED: (),  # terminal
-    JobItemStatus.FAILED: (),  # terminal
-    JobItemStatus.CANCELLED: (),  # terminal
+    JobItemStatus.PENDING:         (JobItemStatus.PROCESSING, JobItemStatus.AWAITING_REVIEW, JobItemStatus.CANCELLED),
+    JobItemStatus.PROCESSING:      (JobItemStatus.AWAITING_REVIEW, JobItemStatus.COMPLETED, JobItemStatus.FAILED),
+    JobItemStatus.AWAITING_REVIEW: (JobItemStatus.PROCESSING, JobItemStatus.COMPLETED, JobItemStatus.FAILED),
+    JobItemStatus.COMPLETED:       (),
+    JobItemStatus.FAILED:          (JobItemStatus.PENDING, JobItemStatus.PROCESSING),
+    # 旧状态兼容：可以转到任何新状态
+    JobItemStatus.QUEUED:           _ALL_ITEM,
+    JobItemStatus.PARSING:          _ALL_ITEM,
+    JobItemStatus.NER:              _ALL_ITEM,
+    JobItemStatus.VISION:           _ALL_ITEM,
+    JobItemStatus.REVIEW_APPROVED:  _ALL_ITEM,
+    JobItemStatus.REDACTING:        _ALL_ITEM,
+    JobItemStatus.CANCELLED:        (),
 }
 
 
@@ -128,8 +141,10 @@ class JobStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._path)
+        conn = sqlite3.connect(self._path, check_same_thread=False, timeout=10.0)
         conn.row_factory = sqlite3.Row
+        # 性能优化 pragmas
+        conn.execute("PRAGMA busy_timeout = 5000")
         return conn
 
     def _init_db(self) -> None:
@@ -140,6 +155,8 @@ class JobStore:
             os.makedirs(d, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # WAL 自动 checkpoint 阈值，防止 WAL 文件无限增长
+            conn.execute("PRAGMA wal_autocheckpoint = 1000")
             cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(job_items)").fetchall()}
             if "review_draft_json" not in cols:
                 conn.execute("ALTER TABLE job_items ADD COLUMN review_draft_json TEXT")
@@ -156,23 +173,37 @@ class JobStore:
                 )
                 conn.execute("DELETE FROM jobs WHERE id = '__test_smart'")
             except sqlite3.IntegrityError:
-                conn.executescript("""
-                    ALTER TABLE jobs RENAME TO jobs_old;
-                    CREATE TABLE jobs (
-                        id TEXT PRIMARY KEY,
-                        job_type TEXT NOT NULL CHECK(job_type IN ('text_batch','image_batch','smart_batch')),
-                        title TEXT NOT NULL DEFAULT '',
-                        status TEXT NOT NULL,
-                        skip_item_review INTEGER NOT NULL DEFAULT 0,
-                        config_json TEXT NOT NULL DEFAULT '{}',
-                        priority INTEGER NOT NULL DEFAULT 0,
-                        error_message TEXT,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    );
-                    INSERT INTO jobs SELECT * FROM jobs_old;
-                    DROP TABLE jobs_old;
-                """)
+                # Rebuild table with updated CHECK constraint.
+                # Wrap in IMMEDIATE transaction to prevent data loss on crash.
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
+                    conn.execute("""
+                        CREATE TABLE jobs (
+                            id TEXT PRIMARY KEY,
+                            job_type TEXT NOT NULL CHECK(job_type IN ('text_batch','image_batch','smart_batch')),
+                            title TEXT NOT NULL DEFAULT '',
+                            status TEXT NOT NULL,
+                            skip_item_review INTEGER NOT NULL DEFAULT 0,
+                            config_json TEXT NOT NULL DEFAULT '{}',
+                            priority INTEGER NOT NULL DEFAULT 0,
+                            error_message TEXT,
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT INTO jobs (id, job_type, title, status, skip_item_review,
+                                         config_json, priority, error_message, created_at, updated_at)
+                        SELECT id, job_type, title, status, skip_item_review,
+                               config_json, COALESCE(priority, 0), error_message, created_at, updated_at
+                        FROM jobs_old
+                    """)
+                    conn.execute("DROP TABLE jobs_old")
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
             conn.commit()
 
     def create_job(
@@ -223,24 +254,28 @@ class JobStore:
         return iid
 
     def submit_job(self, job_id: str) -> None:
+        """提交任务：将非终态 item 重置为 PENDING，等待队列消费。"""
         now = _utc_iso()
+        terminal = (JobItemStatus.AWAITING_REVIEW.value, JobItemStatus.COMPLETED.value)
         with self._connect() as conn:
             cur = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,))
             row = cur.fetchone()
             if not row:
                 raise KeyError(job_id)
-            if row["status"] not in (JobStatus.DRAFT.value, JobStatus.QUEUED.value):
-                raise ValueError(f"job not submittable: {row['status']}")
+            st = row["status"]
+            if st in (JobStatus.COMPLETED.value, JobStatus.CANCELLED.value):
+                raise ValueError(f"job not submittable: {st}")
             conn.execute(
                 "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
                 (JobStatus.QUEUED.value, now, job_id),
             )
+            # 将所有非终态 item 重置为 PENDING
             conn.execute(
-                """
-                UPDATE job_items SET status = ?, updated_at = ?
-                WHERE job_id = ? AND status IN (?, ?)
+                f"""
+                UPDATE job_items SET status = ?, error_message = NULL, updated_at = ?
+                WHERE job_id = ? AND status NOT IN (?, ?)
                 """,
-                (JobItemStatus.QUEUED.value, now, job_id, JobItemStatus.PENDING.value, JobItemStatus.QUEUED.value),
+                (JobItemStatus.PENDING.value, now, job_id, *terminal),
             )
             conn.commit()
 
@@ -278,18 +313,19 @@ class JobStore:
             conn.commit()
 
     def list_schedulable_jobs(self, limit: int = 5000) -> list[dict[str, Any]]:
-        """供 Worker 扫描：不限于分页列表，避免仅处理「最近 N 条」任务。"""
+        """供 Worker 扫描：包含所有可能有未完成 item 的 job 状态。"""
         lim = max(1, min(50_000, int(limit)))
         with self._connect() as conn:
             cur = conn.execute(
                 """
                 SELECT * FROM jobs
-                WHERE status IN (?, ?, ?, ?)
+                WHERE status IN (?, ?, ?, ?, ?)
                 ORDER BY updated_at ASC
                 LIMIT ?
                 """,
                 (
                     JobStatus.QUEUED.value,
+                    JobStatus.PROCESSING.value,
                     JobStatus.RUNNING.value,
                     JobStatus.AWAITING_REVIEW.value,
                     JobStatus.REDACTING.value,
@@ -487,38 +523,196 @@ class JobStore:
             conn.commit()
 
     def mark_item_redacting(self, item_id: str) -> None:
-        now = _utc_iso()
-        with self._connect() as conn:
-            cur = conn.execute("SELECT id FROM job_items WHERE id = ?", (item_id,))
-            row = cur.fetchone()
-            if not row:
-                raise KeyError(item_id)
-            conn.execute(
-                """
-                UPDATE job_items SET status = ?, error_message = NULL, updated_at = ?
-                WHERE id = ?
-                """,
-                (JobItemStatus.REDACTING.value, now, item_id),
-            )
-            conn.commit()
+        self.update_item_status(item_id, JobItemStatus.PROCESSING)
 
     def complete_item_review(self, item_id: str, reviewer: str = "local") -> None:
+        self.update_item_status(item_id, JobItemStatus.COMPLETED)
         now = _utc_iso()
         with self._connect() as conn:
-            cur = conn.execute("SELECT id FROM job_items WHERE id = ?", (item_id,))
-            row = cur.fetchone()
-            if not row:
-                raise KeyError(item_id)
             conn.execute(
                 """
                 UPDATE job_items
-                SET status = ?, error_message = NULL, reviewed_at = ?, reviewer = ?, review_draft_json = NULL,
+                SET error_message = NULL, reviewed_at = ?, reviewer = ?, review_draft_json = NULL,
                     review_draft_updated_at = NULL, updated_at = ?
                 WHERE id = ?
                 """,
-                (JobItemStatus.COMPLETED.value, now, reviewer, now, item_id),
+                (now, reviewer, now, item_id),
             )
             conn.commit()
+
+    def find_item_status_by_file_id(self, file_id: str) -> Optional[str]:
+        """查找文件关联的最新 job_item 状态，用于三态脱敏显示。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM job_items WHERE file_id = ? ORDER BY updated_at DESC LIMIT 1",
+                (file_id,),
+            ).fetchone()
+            return row["status"] if row else None
+
+    def batch_find_item_statuses(self, file_ids: list[str]) -> dict[str, dict[str, str]]:
+        """批量查找文件关联的最新 job_item 状态和 item_id。"""
+        if not file_ids:
+            return {}
+        with self._connect() as conn:
+            placeholders = ",".join("?" for _ in file_ids)
+            rows = conn.execute(
+                f"SELECT id, file_id, status FROM job_items WHERE file_id IN ({placeholders}) ORDER BY updated_at DESC",
+                file_ids,
+            ).fetchall()
+            result: dict[str, dict[str, str]] = {}
+            for row in rows:
+                fid = row["file_id"]
+                if fid not in result:
+                    result[fid] = {"status": row["status"], "item_id": row["id"]}
+            return result
+
+    def repair_completed_without_output(self) -> int:
+        """修复脏数据：status=completed 但文件没有 output_path 的 item 重置为 awaiting_review。"""
+        from app.api.files import file_store
+        repaired = 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, file_id, job_id FROM job_items WHERE status = ?",
+                (JobItemStatus.COMPLETED.value,),
+            ).fetchall()
+            for row in rows:
+                fid = row["file_id"]
+                info = file_store.get(fid)
+                if info and info.get("output_path"):
+                    continue
+                conn.execute(
+                    "UPDATE job_items SET status = ?, error_message = NULL, updated_at = ? WHERE id = ?",
+                    (JobItemStatus.AWAITING_REVIEW.value, _utc_iso(), row["id"]),
+                )
+                repaired += 1
+                logging.getLogger("legal_redaction.job_store").info("repair_completed_without_output: item %s (file %s) reset to awaiting_review", row["id"], fid)
+            if repaired:
+                # 受影响的 job 需要强制回退状态（state machine 不允许 COMPLETED→AWAITING_REVIEW）
+                affected_jobs = set(row["job_id"] for row in rows if not (file_store.get(row["file_id"]) or {}).get("output_path"))
+                for jid in affected_jobs:
+                    conn.execute(
+                        "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
+                        (JobStatus.AWAITING_REVIEW.value, _utc_iso(), jid),
+                    )
+                    logging.getLogger("legal_redaction.job_store").info(
+                        "repair_completed_without_output: job %s reset to awaiting_review", jid
+                    )
+                conn.commit()
+        return repaired
+
+    def repair_failed_missing_files(self) -> int:
+        """修复旧脏数据：文件仍存在，但 item 因“文件不存在”被错误标记为 failed。"""
+        from app.api.files import file_store
+
+        repaired = 0
+        affected_jobs: set[str] = set()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, file_id, job_id, error_message FROM job_items WHERE status = ?",
+                (JobItemStatus.FAILED.value,),
+            ).fetchall()
+            for row in rows:
+                err = str(row["error_message"] or "")
+                err_lower = err.lower()
+                if "文件不存在" not in err and "file not found" not in err_lower:
+                    continue
+
+                info = file_store.get(str(row["file_id"]))
+                if not isinstance(info, dict):
+                    continue
+                file_path = info.get("file_path")
+                if not isinstance(file_path, str) or not file_path.strip() or not os.path.exists(file_path):
+                    continue
+
+                conn.execute(
+                    "UPDATE job_items SET status = ?, error_message = NULL, updated_at = ? WHERE id = ?",
+                    (JobItemStatus.QUEUED.value, _utc_iso(), row["id"]),
+                )
+                affected_jobs.add(str(row["job_id"]))
+                repaired += 1
+
+            for job_id in affected_jobs:
+                conn.execute(
+                    "UPDATE jobs SET status = ?, error_message = NULL, updated_at = ? WHERE id = ?",
+                    (JobStatus.QUEUED.value, _utc_iso(), job_id),
+                )
+
+            if repaired:
+                conn.commit()
+
+        return repaired
+
+    def repair_stuck_in_flight_items(self) -> list[dict]:
+        """
+        崩溃恢复：将上次进程异常退出时卡在中间识别状态的 item 重置，
+        并返回需要重新分发给 Celery 的 item 信息列表。
+
+        - PARSING / NER / VISION  → QUEUED  （重新识别）
+        - REDACTING               → AWAITING_REVIEW  （交还人工复核，避免重复覆盖输出）
+        直接操作 SQL，绕过状态机，与已有 repair_* 方法保持一致。
+        """
+        _log = logging.getLogger("legal_redaction.job_store")
+        to_redispatch: list[dict] = []
+        stuck_recognition = [
+            JobItemStatus.PARSING.value,
+            JobItemStatus.NER.value,
+            JobItemStatus.VISION.value,
+        ]
+        now = _utc_iso()
+
+        with self._connect() as conn:
+            # 1. PARSING / NER / VISION → QUEUED
+            placeholders = ",".join("?" for _ in stuck_recognition)
+            rows = conn.execute(
+                f"SELECT id, job_id, file_id, status FROM job_items WHERE status IN ({placeholders})",
+                stuck_recognition,
+            ).fetchall()
+            affected_jobs: set[str] = set()
+            for row in rows:
+                conn.execute(
+                    "UPDATE job_items SET status = ?, error_message = 'auto-reset: stuck in recognition', updated_at = ? WHERE id = ?",
+                    (JobItemStatus.QUEUED.value, now, row["id"]),
+                )
+                affected_jobs.add(row["job_id"])
+                to_redispatch.append({
+                    "item_id": row["id"],
+                    "job_id": row["job_id"],
+                    "file_id": row["file_id"],
+                    "task": "process_item",
+                })
+                _log.info(
+                    "repair_stuck: item %s (status=%s) → queued, job=%s",
+                    row["id"], row["status"], row["job_id"],
+                )
+
+            # 2. REDACTING → AWAITING_REVIEW
+            redacting_rows = conn.execute(
+                "SELECT id, job_id, file_id FROM job_items WHERE status = ?",
+                (JobItemStatus.REDACTING.value,),
+            ).fetchall()
+            for row in redacting_rows:
+                conn.execute(
+                    "UPDATE job_items SET status = ?, error_message = 'auto-reset: stuck in redaction', updated_at = ? WHERE id = ?",
+                    (JobItemStatus.AWAITING_REVIEW.value, now, row["id"]),
+                )
+                affected_jobs.add(row["job_id"])
+                _log.info(
+                    "repair_stuck: item %s (REDACTING) → awaiting_review, job=%s",
+                    row["id"], row["job_id"],
+                )
+
+            # 3. 受影响的 Job：若已 COMPLETED/FAILED 则拉回 QUEUED/AWAITING_REVIEW
+            for job_id in affected_jobs:
+                conn.execute(
+                    "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ? AND status IN (?, ?)",
+                    (JobStatus.QUEUED.value, now, job_id,
+                     JobStatus.COMPLETED.value, JobStatus.FAILED.value),
+                )
+
+            if to_redispatch or redacting_rows:
+                conn.commit()
+
+        return to_redispatch
 
     def touch_job_updated(self, job_id: str) -> None:
         now = _utc_iso()

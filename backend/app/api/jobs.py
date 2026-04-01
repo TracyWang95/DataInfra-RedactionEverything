@@ -5,8 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
 from functools import lru_cache
 from typing import Any, Literal, Optional
+
+log = logging.getLogger("legal_redaction.jobs")
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -21,19 +25,29 @@ from app.models.schemas import (
     JobDeleteResponse, JobProgressResponse, ReviewDraftResponse,
 )
 from app.services.job_store import JobItemStatus, JobStatus, JobStore, JobType
+def _refresh_job_status(store: JobStore, job_id: str) -> None:
+    """从 item 状态推导 job 状态（简化版）。"""
+    job = store.get_job(job_id)
+    if not job or job["status"] == JobStatus.CANCELLED.value:
+        return
+    items = store.list_items(job_id)
+    if not items:
+        return
+    sts = [i["status"] for i in items]
+    try:
+        if all(s == JobItemStatus.COMPLETED.value for s in sts):
+            store.update_job_status(job_id, JobStatus.COMPLETED)
+        elif any(s == JobItemStatus.PROCESSING.value for s in sts):
+            store.update_job_status(job_id, JobStatus.PROCESSING)
+        elif any(s == JobItemStatus.AWAITING_REVIEW.value for s in sts):
+            store.update_job_status(job_id, JobStatus.AWAITING_REVIEW)
+        elif any(s == JobItemStatus.FAILED.value for s in sts):
+            store.update_job_status(job_id, JobStatus.FAILED)
+    except Exception:
+        pass  # 状态已是目标值或转换不合法，忽略
 from app.services.wizard_furthest import coerce_wizard_furthest_step, infer_batch_step1_configured
 
 router = APIRouter(prefix="/jobs", tags=["batch jobs"])
-
-ACTIVE_ITEM_STATUSES = frozenset(
-    {
-        JobItemStatus.QUEUED.value,
-        JobItemStatus.PARSING.value,
-        JobItemStatus.NER.value,
-        JobItemStatus.VISION.value,
-        JobItemStatus.REDACTING.value,
-    }
-)
 
 DELETABLE_JOB_STATUSES = frozenset(
     {
@@ -53,6 +67,21 @@ def _singleton_store() -> JobStore:
 
 def get_job_store() -> JobStore:
     return _singleton_store()
+
+
+def _enqueue_task(task_type: str, job_id: str, item_id: str, file_id: str) -> None:
+    """投递任务到进程内队列（替代 Celery）。"""
+    try:
+        from app.services.task_queue import get_task_queue, TaskItem
+        queue = get_task_queue()
+        queue.enqueue(TaskItem(
+            job_id=job_id,
+            item_id=item_id,
+            file_id=file_id,
+            task_type=task_type,
+        ))
+    except Exception:
+        log.exception("_enqueue_task: 投递 %s 失败（item=%s）", task_type, item_id[:8])
 
 
 class JobCreateBody(BaseModel):
@@ -109,6 +138,7 @@ def _progress_from_items(items: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "total_items": total,
         "pending": by[JobItemStatus.PENDING.value],
+        "processing": by.get(JobItemStatus.PROCESSING.value, 0),
         "queued": by[JobItemStatus.QUEUED.value],
         "parsing": by[JobItemStatus.PARSING.value],
         "ner": by[JobItemStatus.NER.value],
@@ -121,48 +151,6 @@ def _progress_from_items(items: list[dict[str, Any]]) -> dict[str, int]:
         "cancelled": by[JobItemStatus.CANCELLED.value],
     }
 
-
-def _walk_job_to(store: JobStore, job_id: str, target: JobStatus) -> None:
-    """Walk a job through valid transitions to reach the target status."""
-    chain = [
-        JobStatus.QUEUED,
-        JobStatus.RUNNING,
-        JobStatus.AWAITING_REVIEW,
-        JobStatus.REDACTING,
-        JobStatus.COMPLETED,
-    ]
-    for step in chain:
-        current = store.get_job(job_id)["status"]
-        if current == target.value:
-            return
-        try:
-            store.update_job_status(job_id, step)
-        except Exception:
-            pass
-        if step == target:
-            return
-
-
-def _refresh_job_status(store: JobStore, job_id: str) -> None:
-    job = store.get_job(job_id)
-    if not job or job["status"] == JobStatus.CANCELLED.value:
-        return
-    items = store.list_items(job_id)
-    if not items:
-        return
-    sts = [i["status"] for i in items]
-    if all(s == JobItemStatus.COMPLETED.value for s in sts):
-        _walk_job_to(store, job_id, JobStatus.COMPLETED)
-    elif any(s == JobItemStatus.FAILED.value for s in sts):
-        store.update_job_status(job_id, JobStatus.FAILED)
-    elif any(s in ACTIVE_ITEM_STATUSES for s in sts):
-        _walk_job_to(store, job_id, JobStatus.RUNNING)
-    elif any(s == JobItemStatus.AWAITING_REVIEW.value for s in sts):
-        _walk_job_to(store, job_id, JobStatus.AWAITING_REVIEW)
-    elif any(s == JobItemStatus.REVIEW_APPROVED.value for s in sts):
-        _walk_job_to(store, job_id, JobStatus.REDACTING)
-    else:
-        _walk_job_to(store, job_id, JobStatus.RUNNING)
 
 
 def _file_meta_for_item(file_id: str) -> dict[str, Any]:
@@ -210,7 +198,7 @@ def _item_to_out(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _detach_job_from_files(job_id: str, items: list[dict[str, Any]]) -> int:
-    from app.api.files import _file_store_lock, file_store, persist_file_store
+    from app.api.files import _file_store_lock, file_store
 
     detached = 0
     file_ids = {str(item["file_id"]) for item in items if item.get("file_id")}
@@ -223,24 +211,33 @@ async def _detach_job_from_files(job_id: str, items: list[dict[str, Any]]) -> in
                 continue
             info.pop("job_id", None)
             info["upload_source"] = "batch"
+            file_store.set(file_id, info)
             detached += 1
-        if detached:
-            persist_file_store()
     return detached
 
 
 def _job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
     items = store.list_items(row["id"])
+    from app.api.files import file_store
     first_awaiting: str | None = None
+    redacted_count = 0
+    awaiting_review_count = 0
     for i in items:
-        if i.get("status") == "awaiting_review":
-            first_awaiting = str(i["id"])
-            break
+        fid = str(i["file_id"])
+        has_output = bool((file_store.get(fid) or {}).get("output_path"))
+        if has_output:
+            redacted_count += 1
+        elif i.get("status") in ("awaiting_review", "review_approved", "completed"):
+            awaiting_review_count += 1
+            if first_awaiting is None:
+                first_awaiting = str(i["id"])
     cfg = _job_config_dict(row)
     nav_hints: dict[str, Any] = {
         "item_count": len(items),
         "first_awaiting_review_item_id": first_awaiting,
         "batch_step1_configured": infer_batch_step1_configured(cfg, str(row["job_type"])),
+        "redacted_count": redacted_count,
+        "awaiting_review_count": awaiting_review_count,
     }
     wf = coerce_wizard_furthest_step(cfg.get("wizard_furthest_step"))
     if wf is not None:
@@ -306,6 +303,39 @@ def _group_boxes_by_page(boxes: list[BoundingBox]) -> dict[int, list[dict[str, A
     return grouped
 
 
+def _resolve_committed_output_path(
+    file_info: dict[str, Any],
+    result: Any,
+    stored_info: dict[str, Any],
+) -> Optional[str]:
+    candidates: list[str] = []
+
+    for raw in (getattr(result, "output_path", None), stored_info.get("output_path")):
+        if isinstance(raw, str) and raw.strip():
+            candidates.append(raw.strip())
+
+    output_file_id = getattr(result, "output_file_id", None)
+    if isinstance(output_file_id, str) and output_file_id.strip():
+        source_path = str(file_info.get("file_path") or "")
+        ext = os.path.splitext(source_path)[1]
+        raw_file_type = getattr(file_info.get("file_type"), "value", file_info.get("file_type"))
+        if raw_file_type == "doc":
+            ext = ".docx"
+        if ext:
+            candidates.append(os.path.join(settings.OUTPUT_DIR, f"{output_file_id}{ext}"))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        real = os.path.realpath(candidate)
+        if real in seen:
+            continue
+        seen.add(real)
+        if os.path.exists(real):
+            return real
+
+    return None
+
+
 @router.post("", response_model=JobResponse)
 async def create_job(body: JobCreateBody, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
     jt = _job_type_from_str(body.job_type)
@@ -335,6 +365,16 @@ async def list_jobs(
     return {"jobs": jobs, "total": total, "page": page, "page_size": page_size}
 
 
+UPDATABLE_JOB_STATUSES = frozenset(
+    {
+        JobStatus.DRAFT.value,
+        JobStatus.QUEUED.value,
+        JobStatus.RUNNING.value,
+        JobStatus.AWAITING_REVIEW.value,
+    }
+)
+
+
 @router.put("/{job_id}", response_model=JobResponse)
 async def update_job_draft(
     job_id: str,
@@ -344,8 +384,8 @@ async def update_job_draft(
     row = store.get_job(job_id)
     if not row:
         raise HTTPException(status_code=404, detail="job not found")
-    if row["status"] != JobStatus.DRAFT.value:
-        raise HTTPException(status_code=400, detail="only draft jobs can be updated")
+    if row["status"] not in UPDATABLE_JOB_STATUSES:
+        raise HTTPException(status_code=400, detail="terminal jobs cannot be updated")
     patch = body.model_dump(exclude_unset=True)
     if not patch:
         return _job_to_summary(row, store)
@@ -398,6 +438,10 @@ async def submit_job(job_id: str, store: JobStore = Depends(get_job_store)) -> d
         store.submit_job(job_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # 将所有 PENDING item 入队
+    for it in store.list_items(job_id):
+        if it["status"] == JobItemStatus.PENDING.value:
+            _enqueue_task("recognition", job_id, it["id"], it["file_id"])
     row2 = store.get_job(job_id)
     assert row2
     return _job_to_summary(row2, store)
@@ -409,6 +453,48 @@ async def cancel_job(job_id: str, store: JobStore = Depends(get_job_store)) -> d
     if not row:
         raise HTTPException(status_code=404, detail="job not found")
     store.cancel_job(job_id)
+    row2 = store.get_job(job_id)
+    assert row2
+    return _job_to_summary(row2, store)
+
+
+@router.post("/{job_id}/requeue-failed", response_model=JobResponse)
+async def requeue_failed_items(job_id: str, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
+    """将该 Job 下所有 FAILED 的 item 重新设为 QUEUED，由 Worker 重新处理。"""
+    from app.services.job_store import InvalidStatusTransition
+
+    row = store.get_job(job_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="job not found")
+    items = store.list_items(job_id)
+    count = 0
+    errors: list[str] = []
+    for it in items:
+        if it["status"] == JobItemStatus.FAILED.value:
+            try:
+                store.update_item_status(it["id"], JobItemStatus.PENDING)
+                count += 1
+            except InvalidStatusTransition as e:
+                errors.append(str(e))
+    if count == 0 and not errors:
+        raise HTTPException(status_code=409, detail="没有失败的项可以重新排队")
+    if count == 0 and errors:
+        raise HTTPException(status_code=409, detail=f"状态转换失败: {'; '.join(errors)}")
+    # 把 job 拉回可运行状态让 worker 继续
+    try:
+        job_status = row["status"]
+        if job_status in (JobStatus.FAILED.value, JobStatus.COMPLETED.value):
+            store.update_job_status(job_id, JobStatus.QUEUED)
+        elif job_status == JobStatus.CANCELLED.value:
+            pass  # 已取消的 job 不动
+        # RUNNING / QUEUED / AWAITING_REVIEW 等状态无需变更，worker 会自动拾取 QUEUED 的 item
+    except InvalidStatusTransition:
+        pass  # job 状态不允许转换时忽略，item 已经 requeue 了
+    audit_log("requeue_failed", "job", job_id, detail={"requeued_count": count})
+    # 重新入队
+    for it in store.list_items(job_id):
+        if it["status"] == JobItemStatus.PENDING.value:
+            _enqueue_task("recognition", job_id, it["id"], it["file_id"])
     row2 = store.get_job(job_id)
     assert row2
     return _job_to_summary(row2, store)
@@ -477,6 +563,8 @@ async def approve_item_review(
     assert ir
     store.touch_job_updated(job_id)
     _refresh_job_status(store, job_id)
+    # 触发脱敏任务
+    _enqueue_task("redaction", job_id, item_id, ir["file_id"])
     return _item_to_out(ir)
 
 
@@ -496,6 +584,8 @@ async def reject_item_review(
     assert ir
     store.touch_job_updated(job_id)
     _refresh_job_status(store, job_id)
+    # 打回重跑：重新识别
+    _enqueue_task("recognition", job_id, item_id, ir["file_id"])
     return _item_to_out(ir)
 
 
@@ -515,14 +605,18 @@ async def commit_item_review(
 
     payload = body.model_dump(mode="json")
     store.save_item_review_draft(item_id, payload)
+    # 本地识别模式下 item 可能仍为 pending，需先推到 awaiting_review 再转 redacting
+    if item["status"] == JobItemStatus.PENDING.value:
+        store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW)
     store.mark_item_redacting(item_id)
     store.touch_job_updated(job_id)
     _refresh_job_status(store, job_id)
 
     import app.api.redaction as redaction_mod
-    from app.api.files import _file_store_lock, file_store, persist_file_store
+    from app.api.files import _file_store_lock, file_store
 
-    file_info = file_store.get(item["file_id"])
+    async with _file_store_lock:
+        file_info = file_store.get(item["file_id"])
     if not file_info:
         store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW, error_message="file not found")
         _refresh_job_status(store, job_id)
@@ -542,23 +636,47 @@ async def commit_item_review(
             )
         )
         async with _file_store_lock:
-            file_store[item["file_id"]]["output_path"] = getattr(result, "output_path", None) or file_store[item["file_id"]].get("output_path")
-            file_store[item["file_id"]]["entity_map"] = getattr(result, "entity_map", {}) or {}
-            file_store[item["file_id"]]["redacted_count"] = int(getattr(result, "redacted_count", 0) or 0)
-            file_store[item["file_id"]]["entities"] = to_jsonable(body.entities)
-            file_store[item["file_id"]]["bounding_boxes"] = _group_boxes_by_page(body.bounding_boxes)
-            persist_file_store()
+            # Re-read from file_store — execute_redaction already wrote output_path, entity_map, etc.
+            info = file_store.get(item["file_id"])
+            if info is None:
+                info = dict(file_info)
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "commit_item_review: stored_info.output_path=%r, result.output_path=%r, result.output_file_id=%r, file_info.file_path=%r",
+                info.get("output_path"), getattr(result, "output_path", "N/A"), getattr(result, "output_file_id", "N/A"), file_info.get("file_path"),
+            )
+            output_path = _resolve_committed_output_path(file_info, result, info)
+            if not output_path:
+                raise RuntimeError(f"redacted output missing after review commit: stored_output={info.get('output_path')!r}, result_attrs={[a for a in dir(result) if not a.startswith('_')]}")
+            info["output_path"] = output_path
+            if not info.get("entity_map"):
+                info["entity_map"] = getattr(result, "entity_map", {}) or {}
+            if not info.get("redacted_count"):
+                info["redacted_count"] = int(getattr(result, "redacted_count", 0) or 0)
+            info["entities"] = to_jsonable(body.entities)
+            info["bounding_boxes"] = _group_boxes_by_page(body.bounding_boxes)
+            file_store.set(item["file_id"], info)
 
         store.complete_item_review(item_id, reviewer=reviewer)
         store.touch_job_updated(job_id)
         _refresh_job_status(store, job_id)
-    except HTTPException:
-        store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW, error_message="review commit failed")
+    except HTTPException as exc:
+        import traceback, logging
+        logging.getLogger(__name__).error("commit_item_review HTTPException for item %s: %s\n%s", item_id, exc.detail, traceback.format_exc())
+        try:
+            store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW, error_message="review commit failed")
+        except Exception:
+            store.update_item_status(item_id, JobItemStatus.FAILED, error_message=f"review commit failed: {exc.detail}")
         store.touch_job_updated(job_id)
         _refresh_job_status(store, job_id)
         raise
     except Exception as exc:
-        store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW, error_message=str(exc))
+        import traceback, logging
+        logging.getLogger(__name__).error("commit_item_review Exception for item %s: %s\n%s", item_id, str(exc), traceback.format_exc())
+        try:
+            store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW, error_message=str(exc))
+        except Exception:
+            store.update_item_status(item_id, JobItemStatus.FAILED, error_message=str(exc))
         store.touch_job_updated(job_id)
         _refresh_job_status(store, job_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
