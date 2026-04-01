@@ -26,6 +26,8 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
   requeueFailedItems,
 }) => {
   const allDone = rows.length > 0 && rows.every(r => RECOGNITION_DONE_STATUSES.has(r.analyzeStatus));
+  const hasAnyProgress = rows.some(r => r.analyzeStatus !== 'pending' && r.analyzeStatus !== 'failed');
+  const isRunning = analyzeRunning || (rows.length > 0 && !allDone && hasAnyProgress);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
@@ -37,6 +39,13 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
     }
   };
 
+  // 进度状态文案
+  const progressLabel = allDone
+    ? '✓ 全部完成'
+    : isRunning
+      ? `正在处理 ${analyzeDoneCount}/${rows.length}…`
+      : `${rows.length} 个文件待处理`;
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-4">
       <h3 className="font-semibold text-gray-900">③ 批量识别</h3>
@@ -44,18 +53,22 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
         点击「提交后台队列」将所有文件交给后台 Worker 逐个处理。全部文件识别完成后才可进入核对。
       </p>
 
-      {/* 进度条 */}
-      {rows.length > 0 && (
+      {/* 进度条：提交后才显示 */}
+      {rows.length > 0 && (isRunning || allDone) && (
         <div className="space-y-1.5">
-          <div className="flex justify-between text-xs text-gray-600">
-            <span>识别进度</span>
+          <div className="flex justify-between text-xs">
+            <span className={allDone ? 'text-green-600 font-medium' : 'text-gray-600'}>
+              {progressLabel}
+            </span>
             <span className="tabular-nums font-medium text-gray-800">
               {analyzeDoneCount} / {rows.length}
             </span>
           </div>
           <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
             <div
-              className={`h-full rounded-full bg-[#007AFF] transition-[width] duration-700 ease-out ${!allDone ? 'animate-pulse' : ''}`}
+              className={`h-full rounded-full transition-[width] duration-700 ease-out ${
+                allDone ? 'bg-green-500' : 'bg-[#007AFF] animate-pulse'
+              }`}
               style={{
                 width: `${rows.length ? Math.min(100, (analyzeDoneCount / rows.length) * 100) : 0}%`,
               }}
@@ -64,7 +77,7 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
         </div>
       )}
 
-      {/* 操作按钮：上一步 | 提交后台队列 | 重新处理失败项 | 下一步 */}
+      {/* 操作按钮 */}
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -81,7 +94,7 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
             disabled={!rows.length || analyzeRunning || submitting}
             className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-40"
           >
-            {submitting ? '提交中…' : analyzeRunning ? '处理中…' : '提交后台队列'}
+            {submitting ? '提交中…' : isRunning ? '处理中…' : '提交后台队列'}
           </button>
         )}
 
@@ -96,7 +109,6 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
           </button>
         )}
 
-        {/* 下一步：始终显示，全部完成前置灰 */}
         <button
           type="button"
           onClick={() => goStep(4)}
