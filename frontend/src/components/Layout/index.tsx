@@ -31,6 +31,14 @@ export const Layout: React.FC = () => {
   const { dark, toggle: toggleDark } = useDarkMode();
   const { locale, setLocale } = useI18n();
   const t = useT();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Close sidebar on mobile when navigating
+  useEffect(() => {
+    if (window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
+  }, [location.pathname]);
 
   // 服务状态 - 真实轮询
   const [health, setHealth] = useState<ServicesHealth | null>(null);
@@ -66,10 +74,20 @@ export const Layout: React.FC = () => {
   }, []);
   
   // 首次加载 + 每15秒轮询（轮询不闪「检测中」，避免干扰）
+  // 仅在页面可见时轮询，切回可见时立即刷新
   useEffect(() => {
     fetchHealth(false);
-    const timer = setInterval(() => fetchHealth(false), 15000);
-    return () => clearInterval(timer);
+    const tick = () => {
+      if (document.visibilityState === 'visible') {
+        fetchHealth(false);
+      }
+    };
+    const timer = setInterval(tick, 15000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [fetchHealth]);
 
   const navItems: {
@@ -149,8 +167,22 @@ export const Layout: React.FC = () => {
   return (
     <div className="app-shell flex h-dvh min-h-0 min-w-0 overflow-hidden bg-[#f5f5f7] dark:bg-gray-900">
       <OfflineBanner />
+      {/* Mobile overlay backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
       {/* Sidebar */}
-      <aside className="app-sidebar w-[220px] min-[1280px]:w-[252px] shrink-0 bg-[#fbfbfc] dark:bg-gray-800 border-r border-black/[0.06] dark:border-gray-700 flex flex-col min-h-0 min-w-0">
+      <aside className={`
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        md:translate-x-0 md:relative
+        fixed inset-y-0 left-0 z-40
+        w-[220px] min-[1280px]:w-[252px]
+        transition-transform duration-200
+        shrink-0 bg-[#fbfbfc] dark:bg-gray-800 border-r border-black/[0.06] dark:border-gray-700 flex flex-col min-h-0 min-w-0
+      `}>
         {/* Logo */}
         <div className="app-sidebar-brand h-[52px] flex items-center px-4 border-b border-black/[0.06] dark:border-gray-700">
           <div className="flex items-center gap-2.5">
@@ -169,7 +201,7 @@ export const Layout: React.FC = () => {
         </div>
         
         {/* Navigation */}
-        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto" aria-label={t('layout.navLabel')}>
           {navItems.map(item => (
             item.disabled ? (
               <div
@@ -238,6 +270,16 @@ export const Layout: React.FC = () => {
           </div>
         </nav>
         
+        {/* Data Safety Badge */}
+        <div className="px-3 py-1.5 border-t border-black/[0.06] dark:border-gray-700">
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200/60 dark:border-emerald-700/40">
+            <svg className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <span className="text-[10px] font-medium text-emerald-700 dark:text-emerald-300 leading-tight">{t('safety.badge.short')}</span>
+          </div>
+        </div>
+
         {/* Footer - 服务状态（真实轮询） */}
         <div className="app-sidebar-footer p-3 border-t border-black/[0.06]">
           <div className="app-health-card px-3 py-2.5 rounded-xl bg-white/80 border border-black/[0.06] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
@@ -246,7 +288,7 @@ export const Layout: React.FC = () => {
                 <span className={`w-[6px] h-[6px] rounded-full ${
                   checking ? 'bg-gray-300 animate-pulse' :
                   health?.all_online ? 'bg-[#22c55e]' : 'bg-amber-400'
-                }`}></span>
+                }`} aria-label={checking ? t('health.status.checking') : health?.all_online ? t('health.status.allOnline') : t('health.status.someOffline')}></span>
                 <span className="text-caption font-semibold text-[#1d1d1f] tracking-wide">{t('health.title')}</span>
               </div>
               <button
@@ -334,7 +376,19 @@ export const Layout: React.FC = () => {
       <main className="app-main flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden bg-[#f5f5f7] dark:bg-gray-900">
         {/* Header */}
         <header className="app-header h-[52px] shrink-0 bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl border-b border-black/[0.06] dark:border-gray-700 flex items-center justify-between px-4 sm:px-6 min-w-0">
-          <div className="min-h-[36px] flex flex-col justify-center">
+          <div className="min-h-[36px] flex items-center gap-2 flex-1 min-w-0">
+            {/* Hamburger menu - visible on mobile only */}
+            <button
+              type="button"
+              className="md:hidden p-1.5 -ml-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
+              onClick={() => setSidebarOpen(o => !o)}
+              aria-label="Toggle sidebar"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <div className="flex flex-col justify-center min-w-0">
             {(() => {
               const h = getPageHeader();
               if (h.sub) {
@@ -349,8 +403,9 @@ export const Layout: React.FC = () => {
               }
               return <h1 className="text-base font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-[-0.02em]">{h.title}</h1>;
             })()}
+            </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 shrink-0">
             <button
               type="button"
               onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
@@ -363,8 +418,8 @@ export const Layout: React.FC = () => {
               type="button"
               onClick={toggleDark}
               className="app-icon-button p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
-              aria-label={dark ? '切换到亮色模式' : '切换到深色模式'}
-              title={dark ? '切换到亮色模式' : '切换到深色模式'}
+              aria-label={dark ? t('layout.darkMode.toLight') : t('layout.darkMode.toDark')}
+              title={dark ? t('layout.darkMode.toLight') : t('layout.darkMode.toDark')}
             >
               {dark ? (
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -379,22 +434,22 @@ export const Layout: React.FC = () => {
             <div className="flex items-center gap-1.5 text-caption">
               {checking ? (
                 <>
-                  <span className="w-[6px] h-[6px] rounded-full bg-gray-300 animate-pulse"></span>
+                  <span className="w-[6px] h-[6px] rounded-full bg-gray-300 animate-pulse" aria-label={t('health.status.checking')}></span>
                   <span className="text-gray-400">{t('health.checking')}</span>
                 </>
               ) : health?.all_online ? (
                 <>
-                  <span className="w-[6px] h-[6px] rounded-full bg-[#22c55e]"></span>
+                  <span className="w-[6px] h-[6px] rounded-full bg-[#22c55e]" aria-label={t('health.status.allOnline')}></span>
                   <span className="text-[#737373]">{t('health.allOnline')}</span>
                 </>
               ) : health ? (
                 <>
-                  <span className="w-[6px] h-[6px] rounded-full bg-amber-400"></span>
+                  <span className="w-[6px] h-[6px] rounded-full bg-amber-400" aria-label={t('health.status.someOffline')}></span>
                   <span className="text-amber-600">{t('health.someOffline')}</span>
                 </>
               ) : (
                 <>
-                  <span className="w-[6px] h-[6px] rounded-full bg-red-500"></span>
+                  <span className="w-[6px] h-[6px] rounded-full bg-red-500" aria-label={t('health.status.backendDown')}></span>
                   <span className="text-red-500">{t('health.backendDown')}</span>
                 </>
               )}
@@ -403,7 +458,7 @@ export const Layout: React.FC = () => {
         </header>
         
         {/* Content：单页内滚动，避免整页出现双滚动条 */}
-        <div className="flex-1 min-h-0 min-w-0 overflow-hidden overscroll-contain flex flex-col">
+        <div key={location.pathname} className="flex-1 min-h-0 min-w-0 overflow-hidden overscroll-contain flex flex-col animate-fade-in">
           <Outlet />
         </div>
       </main>

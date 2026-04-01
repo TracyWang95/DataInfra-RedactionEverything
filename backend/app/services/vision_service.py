@@ -163,6 +163,8 @@ class VisionService:
         boxes: list[BoundingBox],
         iou_threshold: float = 0.3,
     ) -> list[BoundingBox]:
+        """去重：OCR 优先；对新增 box 按 x 排序后仅与邻近 box 比较 IoU，
+        将最坏 O(n*m) 降低为 O(n*k)，k 为 x 方向邻近数量（远小于 n）。"""
         if len(boxes) <= 1:
             return boxes
 
@@ -172,28 +174,29 @@ class VisionService:
 
         result = list(ocr_boxes)
 
+        def _overlaps_any(candidate: BoundingBox, existing: list[BoundingBox]) -> bool:
+            """检查 candidate 是否与 existing 中任何 box 的 IoU 超过阈值。
+            按 x 排序后利用 x 范围快速跳过不可能重叠的 box。"""
+            cx_end = candidate.x + candidate.width
+            for eb in existing:
+                # x 方向无交集则跳过
+                if eb.x > cx_end or eb.x + eb.width < candidate.x:
+                    continue
+                if self._calculate_iou(candidate, eb) > iou_threshold:
+                    return True
+            return False
+
+        # 按 x 排序加速剪枝
+        hi_boxes.sort(key=lambda b: b.x)
         for hi_box in hi_boxes:
-            is_duplicate = False
-            for ocr_box in ocr_boxes:
-                iou = self._calculate_iou(hi_box, ocr_box)
-                if iou > iou_threshold:
-                    logger.debug(
-                        "DEDUP HaS-Image '%s' overlaps OCR '%s' (IoU=%.2f), skipping HaS-Image",
-                        hi_box.type, ocr_box.type, iou,
-                    )
-                    is_duplicate = True
-                    break
-            if not is_duplicate:
+            if _overlaps_any(hi_box, ocr_boxes):
+                logger.debug("DEDUP HaS-Image '%s' overlaps OCR box, skipping", hi_box.type)
+            else:
                 result.append(hi_box)
 
+        other_boxes.sort(key=lambda b: b.x)
         for other_box in other_boxes:
-            is_duplicate = False
-            for existing_box in result:
-                iou = self._calculate_iou(other_box, existing_box)
-                if iou > iou_threshold:
-                    is_duplicate = True
-                    break
-            if not is_duplicate:
+            if not _overlaps_any(other_box, result):
                 result.append(other_box)
 
         removed_count = len(boxes) - len(result)
@@ -293,7 +296,7 @@ class VisionService:
                 if os.path.exists(fp):
                     font = ImageFont.truetype(fp, 16)
                     break
-        except Exception:
+        except (OSError, IOError):
             pass
 
         type_colors = {

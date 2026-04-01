@@ -66,7 +66,7 @@ class FileParser:
                 if docx_path != file_path:
                     try:
                         os.remove(docx_path)
-                    except:
+                    except OSError:
                         pass
         
         # 转换失败，返回提示
@@ -140,13 +140,13 @@ class FileParser:
                 if doc:
                     try:
                         doc.Close(SaveChanges=False)
-                    except:
-                        pass
+                    except (OSError, AttributeError, Exception):
+                        logger.debug("Failed to close Word document handle")
                 if word:
                     try:
                         word.Quit()
-                    except:
-                        pass
+                    except (OSError, AttributeError, Exception):
+                        logger.debug("Failed to quit Word COM instance")
                 pythoncom.CoUninitialize()
                 
         except ImportError:

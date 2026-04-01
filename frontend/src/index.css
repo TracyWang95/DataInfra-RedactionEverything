@@ -123,8 +123,9 @@ body {
   animation: pulse 2s ease-in-out infinite;
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.2s ease-out;
+.animate-fadeIn,
+.animate-fade-in {
+  animation: fadeIn 0.15s ease-out;
 }
 
 .animate-slideUp {
@@ -511,28 +512,87 @@ input[type="checkbox"]:focus-visible {
    7 列：缩进标记 | 勾选框 | 文件名 | 时间 | 识别项 | 状态 | 操作
    所有行（表头、独立文件、批量子文件）共享同一模板，确保纵向对齐
    ============================================ */
-.history-row {
+.history-head,
+.history-row,
+.history-batch-row,
+.history-batch-summary {
   display: grid;
-  /*                   indent  cb   filename  time       entities  status    actions */
-  grid-template-columns: 20px 20px 1fr       minmax(96px, auto) minmax(56px, auto) minmax(88px, auto) minmax(76px, auto);
-  gap: 0 16px;
-  align-items: center;
-}
-
-.history-batch-row {
-  display: grid;
-  /*                   indent  cb   filename  time       entities  status    actions */
-  grid-template-columns: 20px 20px 1fr       minmax(96px, auto) minmax(56px, auto) minmax(88px, auto) minmax(76px, auto);
-  gap: 0 16px;
+  /*                   indent  cb   filename       time            entities     status       actions     more */
+  grid-template-columns: 24px 24px minmax(0, 1fr) minmax(140px, auto) minmax(52px, auto) 72px 44px 36px;
+  gap: 0 12px;
   align-items: center;
 }
 
 .history-batch-summary {
-  display: grid;
-  /*                   indent  cb   filename  time       entities  status    actions */
-  grid-template-columns: 20px 20px 1fr       minmax(96px, auto) minmax(56px, auto) minmax(88px, auto) minmax(76px, auto);
-  gap: 0 16px;
   align-items: start;
+}
+
+.history-action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+
+.history-tree-cell {
+  position: relative;
+  font-size: 0;
+}
+
+.history-tree-hook {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-left: 1px solid #d1d5db;
+  border-bottom: 1px solid #d1d5db;
+  border-bottom-left-radius: 8px;
+}
+
+.history-tree-children {
+  position: relative;
+  padding-left: 14px;
+}
+
+.history-tree-children::before {
+  content: '';
+  position: absolute;
+  left: 19px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(180deg, rgba(209, 213, 219, 0.9), rgba(209, 213, 219, 0));
+}
+
+.history-row-child .history-tree-cell::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: -12px;
+  bottom: -12px;
+  width: 1px;
+  background: rgba(209, 213, 219, 0.8);
+}
+
+.history-row-child .history-tree-cell::after {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-left: 1px solid #d1d5db;
+  border-bottom: 1px solid #d1d5db;
+  border-bottom-left-radius: 8px;
+  transform: translateY(-20%);
+}
+
+@media (max-width: 639px) {
+  .history-head,
+  .history-row,
+  .history-batch-row,
+  .history-batch-summary {
+    grid-template-columns: 24px 24px minmax(0, 1fr) 64px 40px 36px;
+  }
 }
 
 .jobs-table-head,
@@ -544,22 +604,87 @@ input[type="checkbox"]:focus-visible {
   .jobs-table-head,
   .jobs-row-main {
     display: grid;
-    grid-template-columns: 28px minmax(0, 2.4fr) 96px minmax(240px, 1.3fr) 112px 136px minmax(272px, auto);
-    gap: 0 14px;
+    grid-template-columns: 32px minmax(300px, 2.35fr) minmax(92px, 0.8fr) minmax(260px, 1.45fr) minmax(116px, 0.9fr) minmax(144px, 1fr) minmax(320px, 1.2fr);
+    gap: 0 16px;
     align-items: center;
+    width: 100%;
   }
 
   .jobs-row-main {
     min-height: 72px;
   }
 
-  .jobs-child-head,
-  .jobs-child-row {
-    display: grid;
-    grid-template-columns: 20px minmax(0, 2.3fr) 110px 110px 140px;
-    gap: 0 12px;
-    align-items: center;
+  .jobs-table-head > *,
+  .jobs-row-main > * {
+    min-width: 0;
   }
+}
+
+.jobs-tree-cell,
+.jobs-expand-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.jobs-task-cell,
+.jobs-progress-cell {
+  min-width: 0;
+}
+
+.jobs-task-badge {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.jobs-task-cell p,
+.jobs-updated-cell,
+.jobs-table-head span {
+  white-space: nowrap;
+}
+
+.jobs-actions-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.jobs-actions-cell > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* 表头标签：居中对齐各自按钮 */
+.jobs-action-head {
+  text-align: center;
+}
+
+.jobs-child-row {
+  min-height: 56px;
+}
+
+.jobs-child-task {
+  padding-left: 18px;
+}
+
+.jobs-child-row > span:first-child {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  color: transparent;
+}
+
+.jobs-child-row > span:first-child::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border-left: 1px solid #d1d5db;
+  border-bottom: 1px solid #d1d5db;
+  border-bottom-left-radius: 8px;
+  transform: translateY(-2px);
 }
 
 /* ============================================
@@ -1102,6 +1227,7 @@ input[type="checkbox"]:focus-visible {
   border-color: rgba(255, 255, 255, 0.08) !important;
 }
 
+.dark .history-head,
 .dark .history-row,
 .dark .history-batch-row,
 .dark .history-batch-summary,
@@ -1110,12 +1236,24 @@ input[type="checkbox"]:focus-visible {
   color: #a3a3a3 !important;
 }
 
+.dark .history-head,
 .dark .history-row,
 .dark .history-batch-row,
 .dark .history-batch-summary,
 .dark .jobs-row-main,
 .dark .jobs-child-row {
   border-color: rgba(255, 255, 255, 0.055) !important;
+}
+
+.dark .history-tree-children::before,
+.dark .history-row-child .history-tree-cell::before {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.dark .history-tree-hook,
+.dark .history-row-child .history-tree-cell::after {
+  border-left-color: rgba(255, 255, 255, 0.18);
+  border-bottom-color: rgba(255, 255, 255, 0.18);
 }
 
 .dark .jobs-table-head,

@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.retry import retry_sync, RETRYABLE_HTTPX
+from app.core.circuit_breaker import ocr_breaker
+
+
+class OCRServiceError(Exception):
+    """OCR 服务错误，区分瞬态（可重试）和永久错误。"""
+    def __init__(self, message: str, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 @dataclass
@@ -29,45 +37,47 @@ class OCRItem:
 
 
 class OCRService:
-    """OCR 服务客户端 - 通过 HTTP 调用独立微服务"""
+    """OCR 服务客户端 - 通过 HTTP 调用独立微服务（带连接池复用）"""
 
     def __init__(self) -> None:
         self.base_url = settings.OCR_BASE_URL.rstrip('/')
         self._read_timeout = float(settings.OCR_TIMEOUT)
+        # 健康检查用短超时客户端（复用连接池）
+        probe_timeout = max(5.0, float(settings.OCR_HEALTH_PROBE_TIMEOUT))
+        self._health_client = httpx.Client(timeout=probe_timeout, trust_env=False)
+        # OCR 推理用长超时客户端
+        ocr_timeout = httpx.Timeout(connect=15.0, read=self._read_timeout, write=60.0, pool=15.0)
+        self._ocr_client = httpx.Client(timeout=ocr_timeout, trust_env=False)
 
     def is_available(self) -> bool:
         """检查 OCR 微服务是否在线且模型已就绪"""
         try:
-            t = max(5.0, float(settings.OCR_HEALTH_PROBE_TIMEOUT))
-            with httpx.Client(timeout=t, trust_env=False) as client:
-                resp = client.get(f"{self.base_url}/health")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return bool(data.get("ready", False))
-        except Exception:
-            pass
+            resp = self._health_client.get(f"{self.base_url}/health")
+            if resp.status_code == 200:
+                data = resp.json()
+                return bool(data.get("ready", False))
+        except Exception as e:
+            logger.debug("OCR health check failed: %s", e)
         return False
 
     def get_model_name(self) -> str:
         """获取模型名称"""
         try:
-            t = max(5.0, float(settings.OCR_HEALTH_PROBE_TIMEOUT))
-            with httpx.Client(timeout=t, trust_env=False) as client:
-                resp = client.get(f"{self.base_url}/health")
-                if resp.status_code == 200:
-                    return resp.json().get("model", "PaddleOCR-VL")
-        except Exception:
-            pass
+            resp = self._health_client.get(f"{self.base_url}/health")
+            if resp.status_code == 200:
+                return resp.json().get("model", "PaddleOCR-VL")
+        except Exception as e:
+            logger.debug("OCR model name check failed: %s", e)
         return "PaddleOCR-VL"
 
     def _do_ocr_request(self, image_b64: str) -> httpx.Response:
-        """Execute a single OCR HTTP request (retryable)."""
-        ocr_timeout = httpx.Timeout(connect=15.0, read=self._read_timeout, write=60.0, pool=15.0)
-        with httpx.Client(timeout=ocr_timeout, trust_env=False) as client:
-            return client.post(
+        """Execute a single OCR HTTP request (retryable, uses pooled client)."""
+        def _request():
+            return self._ocr_client.post(
                 f"{self.base_url}/ocr",
                 json={"image": image_b64, "max_new_tokens": 512},
             )
+        return ocr_breaker.call_sync(_request)
 
     def extract_text_boxes(self, image_bytes: bytes) -> List[OCRItem]:
         """调用 OCR 微服务提取文本框"""
@@ -102,17 +112,21 @@ class OCRService:
             logger.info("OCR Client got %d boxes in %.2fs", len(items), data.get('elapsed', 0))
             return items
 
-        except httpx.TimeoutException:
-            logger.warning(
-                "等待 OCR 微服务超时（read≈%.0fs）。"
-                "若 8082 仍在推理属正常，请增大环境变量 OCR_TIMEOUT 或减轻并发；"
-                "若长期无响应请查看 ocr_server 控制台。",
-                self._read_timeout,
+        except httpx.TimeoutException as e:
+            msg = (
+                f"OCR 微服务超时（read≈{self._read_timeout:.0f}s）。"
+                "若 8082 仍在推理属正常，请增大 OCR_TIMEOUT；若长期无响应请查看 ocr_server 控制台。"
             )
-            return []
+            logger.warning(msg)
+            raise OCRServiceError(msg, transient=True) from e
+        except (httpx.ConnectError, httpx.NetworkError) as e:
+            msg = f"无法连接 OCR 微服务 ({self.base_url}): {e}"
+            logger.error(msg)
+            raise OCRServiceError(msg, transient=True) from e
         except Exception as e:
-            logger.error("OCR Client error: %s", e)
-            return []
+            msg = f"OCR 识别失败: {e}"
+            logger.error(msg)
+            raise OCRServiceError(msg, transient=False) from e
 
 
 # 全局实例

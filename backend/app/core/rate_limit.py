@@ -1,28 +1,42 @@
-"""Simple in-memory rate limiter (no external dependencies)."""
+"""Simple in-memory rate limiter with bounded memory (no external dependencies)."""
 import time
-from collections import defaultdict
+from collections import OrderedDict
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+# 最大跟踪的不同 IP 数，超过后淘汰最旧条目，防止内存无限增长
+_MAX_TRACKED_IPS = 10_000
+
 
 class RateLimiter:
-    """Token-bucket-style per-IP rate limiter."""
+    """Token-bucket-style per-IP rate limiter with LRU eviction."""
 
     def __init__(self, max_requests: int = 120, window_seconds: int = 60):
         self.max_requests = max_requests
         self.window = window_seconds
-        self._hits: dict[str, list[float]] = defaultdict(list)
+        # OrderedDict 用作 LRU：最近访问的 key move_to_end
+        self._hits: OrderedDict[str, list[float]] = OrderedDict()
 
     def check(self, key: str) -> bool:
         now = time.monotonic()
-        hits = self._hits[key]
+
+        # 清理过期条目 + LRU 淘汰
+        if len(self._hits) >= _MAX_TRACKED_IPS and key not in self._hits:
+            # 淘汰最旧的 IP 条目
+            self._hits.popitem(last=False)
+
+        hits = self._hits.get(key, [])
         # Remove expired entries
-        self._hits[key] = [t for t in hits if now - t < self.window]
-        if len(self._hits[key]) >= self.max_requests:
+        hits = [t for t in hits if now - t < self.window]
+        if len(hits) >= self.max_requests:
+            self._hits[key] = hits
             return False
-        self._hits[key].append(now)
+        hits.append(now)
+        self._hits[key] = hits
+        # 标记为最近使用
+        self._hits.move_to_end(key)
         return True
 
 

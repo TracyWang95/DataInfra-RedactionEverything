@@ -87,7 +87,7 @@ export const PlaygroundUpload: React.FC<PlaygroundUploadProps> = ({
             <div className="w-full max-w-lg">
               <div
                 {...getRootProps()}
-                className={`playground-drop-card border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all bg-white ${
+                className={`playground-drop-card border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all bg-white dark:bg-gray-800 ${
                   isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400'
                 }`}
               >
@@ -104,12 +104,12 @@ export const PlaygroundUpload: React.FC<PlaygroundUploadProps> = ({
           </div>
 
           {/* 类型配置面板 */}
-          <div className="playground-side-surface w-full lg:w-[min(100%,400px)] xl:w-[420px] 2xl:w-[460px] shrink-0 max-h-[min(52vh,480px)] lg:max-h-none lg:self-stretch bg-white/90 backdrop-blur-2xl rounded-2xl border border-black/[0.06] flex flex-col shadow-[0_2px_16px_rgba(0,0,0,0.06)] min-h-0 overflow-hidden">
+          <div className="playground-side-surface w-full lg:w-[min(100%,400px)] xl:w-[420px] 2xl:w-[460px] shrink-0 max-h-[min(52vh,480px)] lg:max-h-none lg:self-stretch bg-white/90 dark:bg-gray-800/90 backdrop-blur-2xl rounded-2xl border border-black/[0.06] dark:border-gray-700 flex flex-col shadow-[0_2px_16px_rgba(0,0,0,0.06)] min-h-0 overflow-hidden">
             {/* 头部 */}
-            <div className="px-3 py-2 border-b border-gray-100/80 space-y-1.5">
+            <div className="px-3 py-2 border-b border-gray-100/80 dark:border-gray-700 space-y-1.5">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-[#eef3fb] tracking-tight">识别类型</h3>
-                <div className="playground-tab-strip flex bg-gray-100 rounded-lg p-0.5">
+                <div className="playground-tab-strip flex bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
                   <button onClick={() => setTypeTab('text')} className={`playground-tab-button text-caption px-2.5 py-1 rounded-md font-medium transition-all ${typeTab === 'text' ? 'playground-tab-button-active bg-white text-[#1d1d1f] shadow-sm' : 'text-[#737373]'}`}>文本</button>
                   <button onClick={() => setTypeTab('vision')} className={`playground-tab-button text-caption px-2.5 py-1 rounded-md font-medium transition-all ${typeTab === 'vision' ? 'playground-tab-button-active bg-white text-[#1d1d1f] shadow-sm' : 'text-[#737373]'}`}>图像</button>
                 </div>
@@ -209,7 +209,7 @@ export const PlaygroundUpload: React.FC<PlaygroundUploadProps> = ({
 
                       return (
                         <div key={pipeline.mode}>
-                          <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-gray-200/90">
+                          <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-gray-200/90 dark:border-gray-700">
                             <span
                               className={`text-2xs font-semibold text-[#1d1d1f] pl-2 border-l-[3px] ${
                                 isHasImage ? 'border-[#AF52DE]' : 'border-[#34C759]'
@@ -296,7 +296,7 @@ export const PlaygroundUpload: React.FC<PlaygroundUploadProps> = ({
                     const allOn = ids.length > 0 && ids.every(id => selectedTypes.includes(id));
                     return (
                       <div key={group.key}>
-                        <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-gray-200/90">
+                        <div className="flex items-center justify-between mb-1.5 pb-1 border-b border-gray-200/90 dark:border-gray-700">
                           <span
                             className={`text-2xs font-semibold text-[#1d1d1f] pl-2 border-l-[3px] ${
                               group.key === 'regex'
@@ -352,7 +352,7 @@ export const PlaygroundUpload: React.FC<PlaygroundUploadProps> = ({
             </div>
 
             {/* 底部 */}
-            <div className="px-3 py-1.5 border-t border-gray-100/80 shrink-0">
+            <div className="px-3 py-1.5 border-t border-gray-100/80 dark:border-gray-700 shrink-0">
               <div className="text-2xs text-[#a3a3a3] text-center leading-tight">
                 {typeTab === 'vision'
                   ? `OCR ${selectedOcrHasTypes.length} · HaS图像 ${selectedHasImageTypes.length}`

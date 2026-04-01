@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { showToast } from '../components/Toast';
 import {
   fetchPresets,
   createPreset,
@@ -350,7 +351,7 @@ export const RedactionListSettings: React.FC = () => {
 
   const savePresetModal = async () => {
     if (!presetForm.name.trim()) {
-      alert('请填写预设名称');
+      showToast('请填写预设名称', 'error');
       return;
     }
     const normalized: PresetPayload =
@@ -378,7 +379,7 @@ export const RedactionListSettings: React.FC = () => {
       setPresetModalOpen(false);
       await reloadPresets();
     } catch (e) {
-      alert(e instanceof Error ? e.message : '保存失败');
+      showToast(e instanceof Error ? e.message : '保存失败', 'error');
     } finally {
       setPresetSaving(false);
     }
@@ -405,7 +406,7 @@ export const RedactionListSettings: React.FC = () => {
         return v;
       });
     } catch (e) {
-      alert(e instanceof Error ? e.message : '删除失败');
+      showToast(e instanceof Error ? e.message : '删除失败', 'error');
     }
   };
 

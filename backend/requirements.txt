@@ -38,6 +38,17 @@ paddleocr[doc-parser]>=2.7.0
 PyJWT>=2.8.0
 passlib[bcrypt]==1.7.4
 
+# 可观测性
+python-json-logger>=2.0.0
+prometheus-client>=0.20.0
+
+# 安全（可选：文件加密需要 cryptography，病毒扫描需要 pyclamd + ClamAV daemon）
+cryptography>=42.0.0
+# pyclamd>=0.4.0  # 按需安装，需配合 ClamAV daemon
+
+# 任务队列（Celery + Redis broker）
+celery[redis]>=5.4.0
+
 # 开发工具
 python-dotenv>=1.0.1
 pytest>=8.0.0

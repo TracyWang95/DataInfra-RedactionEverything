@@ -1,5 +1,5 @@
 import React from 'react';
-import { useRedactionStore } from '../../hooks/useRedaction';
+import { useFileStore, useEntityStore } from '../../hooks/useRedaction';
 import { EntityHighlighter } from '../EntityHighlighter';
 import { DocumentTextIcon, PhotoIcon } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
@@ -13,7 +13,8 @@ export const DocumentViewer: React.FC<DocumentViewerProps> = ({
   showHighlights = true,
   className,
 }) => {
-  const { fileInfo, content, pages, entities, boundingBoxes } = useRedactionStore();
+  const { fileInfo, content, pages } = useFileStore();
+  const { entities, boundingBoxes } = useEntityStore();
 
   // 根据文件类型渲染不同的视图
   const isScanned = fileInfo?.is_scanned;
@@ -93,7 +94,7 @@ interface ImageViewerProps {
 }
 
 const ImageViewer: React.FC<ImageViewerProps> = ({ fileId, boundingBoxes }) => {
-  const { toggleBoxSelection } = useRedactionStore();
+  const { toggleBoxSelection } = useEntityStore();
 
   // 图片预览URL
   const imageUrl = `/api/v1/files/${fileId}/download`;

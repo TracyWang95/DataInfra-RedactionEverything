@@ -39,33 +39,38 @@ class SensitiveRegion:
 
 @dataclass
 class OCRTextBlock:
-    """OCR 识别的文本块"""
+    """OCR 识别的文本块（bbox 在构造时缓存，避免每次 property 访问重算）"""
     text: str
     polygon: List[List[float]]  # 四边形顶点 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
     confidence: float = 1.0
-    
-    @property
-    def bbox(self) -> Tuple[int, int, int, int]:
-        """获取边界框 (left, top, right, bottom)"""
+
+    # 构造后缓存的 bbox 值
+    _bbox_cache: Tuple[int, int, int, int] = field(default=(0, 0, 0, 0), init=False, repr=False)
+
+    def __post_init__(self):
         xs = [p[0] for p in self.polygon]
         ys = [p[1] for p in self.polygon]
-        return (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
-    
+        self._bbox_cache = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+
+    @property
+    def bbox(self) -> Tuple[int, int, int, int]:
+        return self._bbox_cache
+
     @property
     def left(self) -> int:
-        return self.bbox[0]
-    
+        return self._bbox_cache[0]
+
     @property
     def top(self) -> int:
-        return self.bbox[1]
-    
+        return self._bbox_cache[1]
+
     @property
     def width(self) -> int:
-        return self.bbox[2] - self.bbox[0]
-    
+        return self._bbox_cache[2] - self._bbox_cache[0]
+
     @property
     def height(self) -> int:
-        return self.bbox[3] - self.bbox[1]
+        return self._bbox_cache[3] - self._bbox_cache[1]
 
 
 class HybridVisionService:
@@ -152,7 +157,14 @@ class HybridVisionService:
         image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
 
-        items = self._ocr_service.extract_text_boxes(image_bytes)
+        from app.services.ocr_service import OCRServiceError
+        try:
+            items = self._ocr_service.extract_text_boxes(image_bytes)
+        except OCRServiceError as e:
+            logger.warning("OCR 服务异常 (transient=%s): %s", e.transient, e)
+            if not e.transient:
+                raise  # 永久错误向上抛出
+            items = []  # 瞬态错误降级为空结果
         if not items:
             return [], []
 
@@ -241,7 +253,13 @@ class HybridVisionService:
             # 把所有 OCR 文字拼接起来
             all_texts = [block.text for block in ocr_blocks if block.text.strip()]
             text_content = "\n".join(all_texts)
-            
+
+            # 文本长度保护：OCR 大图可能产生大量文本，截断防止 HaS 超时/OOM
+            MAX_VISION_TEXT_LENGTH = 500_000
+            if len(text_content) > MAX_VISION_TEXT_LENGTH:
+                logger.warning("OCR 文本过长 (%d chars)，截断至 %d", len(text_content), MAX_VISION_TEXT_LENGTH)
+                text_content = text_content[:MAX_VISION_TEXT_LENGTH]
+
             if not text_content.strip():
                 return []
             
@@ -253,44 +271,8 @@ class HybridVisionService:
             # HaS 擅长语义理解，处理文字类敏感信息
             # 视觉类（签名/印章/指纹等）由 HaS Image / OCR 视觉分支处理，HaS NER 跳过
             # =====================================================================
-            id_to_chinese = {
-                # === 直接标识符 (GB/T 37964-2019 §3.6) ===
-                "PERSON": "人名",
-                "ID_CARD": "身份证号",
-                "PASSPORT": "护照号",
-                "PHONE": "电话号码",
-                "EMAIL": "电子邮箱",
-                "BANK_CARD": "银行卡号",
-                "BANK_ACCOUNT": "银行账号",
-                "BANK_NAME": "开户行",
-                "SOCIAL_SECURITY": "社保号",
-                
-                # === 准标识符 (GB/T 37964-2019 §3.7) ===
-                "COMPANY": "公司名称",
-                "ORG": "机构名称",
-                "ADDRESS": "详细地址",
-                "BIRTH_DATE": "出生日期",
-                "DATE": "日期",
-                "LICENSE_PLATE": "车牌号",
-                "CASE_NUMBER": "案件编号",
-                "CONTRACT_NO": "合同编号",
-                "COMPANY_CODE": "统一社会信用代码",
-                
-                # === 敏感属性 (GB/T 37964-2019 §3.8) ===
-                "AMOUNT": "金额",
-                
-                # === 法律文书特有 ===
-                "LEGAL_PARTY": "当事人",
-                "LAWYER": "律师",
-                "JUDGE": "法官",
-                "WITNESS": "证人",
-                
-                # === 兼容旧版 ID ===
-                "COMPANY": "机构名称",
-                "ACCOUNT_NAME": "账户名",
-                "BANK_NAME": "开户行",
-                "ACCOUNT_NUMBER": "银行账号",
-            }
+            # 使用统一类型映射数据源
+            from app.models.type_mapping import TYPE_ID_TO_CN as id_to_chinese
             
             # 视觉专属类型（HaS NER 文本侧不处理；由图像分割 / OCR 视觉承担）
             VISUAL_ONLY_TYPES = {
@@ -340,74 +322,9 @@ class HybridVisionService:
             # 中文 -> 类型 ID 反向映射（HaS 返回中文，需转回 ID）
             # HaS 可能返回不同的中文表述，需要多种映射
             # =====================================================================
-            chinese_to_id = {
-                # === 直接标识符 ===
-                # 人名
-                "人名": "PERSON", "姓名": "PERSON", "名字": "PERSON",
-                # 身份证
-                "身份证号": "ID_CARD", "身份证": "ID_CARD", "身份证号码": "ID_CARD",
-                # 护照
-                "护照号": "PASSPORT", "护照": "PASSPORT", "护照号码": "PASSPORT",
-                # 电话
-                "电话号码": "PHONE", "电话": "PHONE", "手机号": "PHONE",
-                "联系方式": "PHONE", "手机": "PHONE",
-                # 邮箱
-                "电子邮箱": "EMAIL", "邮箱": "EMAIL", "邮件": "EMAIL",
-                # 银行卡
-                "银行卡号": "BANK_CARD", "银行卡": "BANK_CARD", "卡号": "BANK_CARD",
-                # 银行账号
-                "银行账号": "BANK_ACCOUNT", "账号": "BANK_ACCOUNT",
-                "账户号": "BANK_ACCOUNT", "账户号码": "BANK_ACCOUNT",
-                # 社保
-                "社保号": "SOCIAL_SECURITY", "社保卡号": "SOCIAL_SECURITY",
-                "医保号": "SOCIAL_SECURITY",
-                
-                # === 准标识符 ===
-                # 公司/企业
-                "公司名称": "COMPANY", "公司": "COMPANY", "公司名": "COMPANY",
-                "企业": "COMPANY", "企业名称": "COMPANY",
-                "甲方": "COMPANY", "乙方": "COMPANY", "丙方": "COMPANY",
-                "发包方": "COMPANY", "承包方": "COMPANY",
-                "出借人": "COMPANY", "借款人": "COMPANY",
-                "出卖人": "COMPANY", "买受人": "COMPANY",
-                "委托方": "COMPANY", "受托方": "COMPANY",
-                "供应商": "COMPANY", "承揽方": "COMPANY",
-                "转让方": "COMPANY", "受让方": "COMPANY",
-                # 机构（非企业）
-                "机构名称": "ORG", "组织机构": "ORG", "组织": "ORG",
-                "机构": "ORG", "单位": "ORG",
-                # 地址
-                "详细地址": "ADDRESS", "地址": "ADDRESS",
-                "住址": "ADDRESS", "居住地": "ADDRESS",
-                # 出生日期
-                "出生日期": "BIRTH_DATE", "生日": "BIRTH_DATE",
-                # 日期
-                "日期": "DATE", "时间": "DATE", "日期时间": "DATE",
-                # 车牌
-                "车牌号": "LICENSE_PLATE", "车牌": "LICENSE_PLATE",
-                # 案件编号
-                "案件编号": "CASE_NUMBER", "案号": "CASE_NUMBER",
-                # 合同编号
-                "合同编号": "CONTRACT_NO", "合同号": "CONTRACT_NO",
-                # 信用代码
-                "统一社会信用代码": "COMPANY_CODE", "信用代码": "COMPANY_CODE",
-                
-                # === 敏感属性 ===
-                "金额": "AMOUNT", "数额": "AMOUNT", "款项": "AMOUNT",
-                
-                # === 法律文书特有 ===
-                "当事人": "LEGAL_PARTY", "原告": "LEGAL_PARTY", "被告": "LEGAL_PARTY",
-                "律师": "LAWYER", "代理人": "LAWYER",
-                "法官": "JUDGE", "审判长": "JUDGE", "书记员": "JUDGE",
-                "证人": "WITNESS",
-                
-                # 开户行
-                "开户行": "BANK_NAME", "开户银行": "BANK_NAME",
-                "银行名称": "BANK_NAME", "银行": "BANK_NAME",
-                
-                # === 兼容旧版 ===
-                "账户名": "PERSON", "户名": "PERSON",
-            }
+            # 使用统一类型映射数据源
+            from app.models.type_mapping import TYPE_CN_TO_ID
+            chinese_to_id = dict(TYPE_CN_TO_ID)  # 浅拷贝以允许动态添加自定义类型
             
             # 如果有用户自定义类型，也加入映射
             if vision_types:
@@ -903,7 +820,7 @@ class HybridVisionService:
                 try:
                     font = ImageFont.truetype(fp, 14)
                     break
-                except:
+                except (OSError, IOError):
                     pass
         if not font:
             font = ImageFont.load_default()

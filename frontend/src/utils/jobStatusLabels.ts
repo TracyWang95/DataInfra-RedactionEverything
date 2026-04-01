@@ -21,8 +21,13 @@ const AGGREGATE_JOB_STATUS_META: Record<string, JobStatusMeta> = {
     description: '队列调度',
     tone: 'brand',
   },
+  processing: {
+    label: '处理中',
+    description: '系统处理中',
+    tone: 'warning',
+  },
   running: {
-    label: '识别处理中',
+    label: '处理中',
     description: '系统处理中',
     tone: 'warning',
   },
@@ -58,6 +63,11 @@ const JOB_ITEM_ONLY_META: Record<string, JobStatusMeta> = {
     label: '待纳入处理',
     description: '等待执行',
     tone: 'neutral',
+  },
+  processing: {
+    label: '处理中',
+    description: '识别/脱敏中',
+    tone: 'warning',
   },
   parsing: {
     label: '解析版面中',

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
 import { formCheckboxClass } from '../ui/selectionClasses';
+import { showToast } from '../components/Toast';
 
 interface ModelConfig {
   id: string;
@@ -128,7 +129,7 @@ export const VisionModelSettings: React.FC = () => {
         fetchModelConfigs();
       } else {
         const data = await res.json();
-        alert(data.detail || '保存失败');
+        showToast(data.detail || '保存失败', 'error');
       }
     } catch (err) {
       if (import.meta.env.DEV) {
@@ -145,7 +146,7 @@ export const VisionModelSettings: React.FC = () => {
         fetchModelConfigs();
       } else {
         const data = await res.json();
-        alert(data.detail || '删除失败');
+        showToast(data.detail || '删除失败', 'error');
       }
     } catch (err) {
       if (import.meta.env.DEV) {

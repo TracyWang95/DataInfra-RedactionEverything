@@ -1,14 +1,7 @@
 import React, { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { useUndoRedo } from '../hooks/useUndoRedo';
 
-/** 安全解析 JSON 响应，遇到非 JSON 内容时抛出可读错误 */
-async function safeJson<T = any>(res: Response): Promise<T> {
-  try {
-    return await res.json();
-  } catch {
-    throw new Error('服务端返回了非 JSON 响应');
-  }
-}
+// safeJson moved to playground-utils.ts
 import {
   fetchPresets,
   createPreset,
@@ -23,20 +16,27 @@ import {
   getActivePresetVisionId,
 } from '../services/activePresetBridge';
 import { useDropzone } from 'react-dropzone';
+import { t } from '../i18n';
 import { showToast } from '../components/Toast';
 import ImageBBoxEditor from '../components/ImageBBoxEditor';
 import { EntityTypeGroupPicker } from '../components/EntityTypeGroupPicker';
 import {
   getEntityTypeName,
   getEntityGroup,
-  ENTITY_GROUPS,
 } from '../config/entityTypes';
-import {
-  selectableCheckboxClass,
-  type SelectionVariant,
-} from '../ui/selectionClasses';
 import { PlaygroundUpload } from './PlaygroundUpload';
+import { PlaygroundToolbar } from './PlaygroundToolbar';
+import { PlaygroundEntityPanel } from './PlaygroundEntityPanel';
 import { PlaygroundResult } from './PlaygroundResult';
+import { PlaygroundLoadingOverlay } from './PlaygroundLoadingOverlay';
+import {
+  safeJson,
+  clampPopoverInCanvas,
+  previewEntityMarkStyle,
+  previewEntityHoverRingClass,
+  authBlobUrl,
+  runVisionDetection,
+} from './playground-utils';
 import type {
   FileInfo,
   Entity,
@@ -47,162 +47,7 @@ import type {
   Stage,
 } from './playground-types';
 
-/** 将弹层锚在选区附近，并限制在中间文档 Canvas（contentRef）可视区域内，避免压到侧栏或顶出视口 */
-function clampPopoverInCanvas(
-  anchorRect: DOMRect,
-  canvasRect: DOMRect,
-  popoverWidth: number,
-  popoverHeight: number
-): { left: number; top: number } {
-  const margin = 8;
-  const maxW = Math.max(120, Math.min(popoverWidth, canvasRect.width - 2 * margin));
-  const maxH = Math.max(80, Math.min(popoverHeight, canvasRect.height - 2 * margin));
-  const cx = anchorRect.left + anchorRect.width / 2;
-  let left = cx - maxW / 2;
-  left = Math.max(canvasRect.left + margin, Math.min(left, canvasRect.right - margin - maxW));
-
-  let top = anchorRect.top - margin - maxH;
-  if (top < canvasRect.top + margin) {
-    top = anchorRect.bottom + margin;
-  }
-  if (top + maxH > canvasRect.bottom - margin) {
-    top = Math.max(canvasRect.top + margin, canvasRect.bottom - margin - maxH);
-  }
-
-  return { left, top };
-}
-
-// Types imported from './playground-types'
-
-/**
- * 预览区原文高亮：与侧栏 selectableCardClassCompact（正则 / 语义 / 图像）同底色与字色，
- * 不用重色下划线，避免与侧栏标签观感脱节。
- */
-function previewEntityMarkStyle(entity: Entity): React.CSSProperties {
-  const base: React.CSSProperties = (() => {
-    switch (entity.source) {
-      case 'regex':
-        return {
-          backgroundColor: 'rgba(0, 122, 255, 0.09)',
-          color: '#0a4a8c',
-        };
-      case 'llm':
-        return {
-          backgroundColor: 'rgba(52, 199, 89, 0.09)',
-          color: '#0d5c2f',
-        };
-      case 'manual':
-        return {
-          backgroundColor: 'rgba(175, 82, 222, 0.11)',
-          color: '#5c2d7a',
-        };
-      case 'has':
-      default:
-        return {
-          backgroundColor: 'rgba(175, 82, 222, 0.11)',
-          color: '#5c2d7a',
-        };
-    }
-  })();
-  if (!entity.selected) {
-    return { ...base, opacity: 0.5, filter: 'saturate(0.55)' };
-  }
-  return base;
-}
-
-/** 与侧栏勾选态 hover:ring 语义一致，略弱以免抢正文 */
-function previewEntityHoverRingClass(source: Entity['source']): string {
-  switch (source) {
-    case 'regex':
-      return 'hover:ring-[#007AFF]/25';
-    case 'llm':
-      return 'hover:ring-[#34C759]/25';
-    case 'manual':
-      return 'hover:ring-[#AF52DE]/25';
-    case 'has':
-    default:
-      return 'hover:ring-[#AF52DE]/25';
-  }
-}
-
-// ============================================================
-// 核心函数：执行图像识别
-// ============================================================
-/** 图像识别：仅勾选的路会跑；含 OCR+HaS 时常需数十秒（CPU Paddle 更久）。与 axios 默认 60s 无关，此处单独放宽 */
-const VISION_FETCH_TIMEOUT_MS = 400000; // 400s > 后端 OCR_TIMEOUT 360s
-
-async function runVisionDetection(
-  fileId: string,
-  ocrHasTypes: string[],
-  hasImageTypes: string[]
-): Promise<{ boxes: BoundingBox[]; resultImage?: string }> {
-  if (import.meta.env.DEV) {
-    console.log('[Vision] 发送识别请求:', { ocrHasTypes, hasImageTypes });
-  }
-
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), VISION_FETCH_TIMEOUT_MS);
-
-  let res: Response;
-  try {
-    res = await fetch(`/api/v1/redaction/${fileId}/vision?page=1`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        selected_ocr_has_types: ocrHasTypes,
-        selected_has_image_types: hasImageTypes,
-      }),
-      signal: controller.signal,
-    });
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') {
-      throw new Error(
-        '图像识别超时（超过 3 分钟）。若 Paddle 在 CPU 上跑会很慢，可换更小图片或安装 paddle GPU 版加速。'
-      );
-    }
-    throw e;
-  } finally {
-    window.clearTimeout(timer);
-  }
-
-  if (!res.ok) {
-    throw new Error('图像识别失败');
-  }
-
-  const data = await safeJson(res);
-  const boxes = (data.bounding_boxes || []).map((b: any, idx: number) => ({
-    ...b,
-    id: b.id || `bbox_${idx}`,
-    selected: true,
-  }));
-  return { boxes, resultImage: data.result_image };
-}
-
-function getModePreview(mode: string, sampleEntity?: Entity) {
-  const name = sampleEntity?.text || '张三';
-  switch (mode) {
-    case 'smart':
-      return `${name} → [当事人一]`;
-    case 'mask':
-      return `${name} → ${name[0]}${'*'.repeat(Math.max(name.length - 1, 1))}`;
-    case 'structured':
-      return `${name} → <人物[001].个人.姓名>`;
-    default:
-      return '';
-  }
-}
-
-async function authBlobUrl(url: string, mime?: string): Promise<string> {
-  const token = localStorage.getItem('auth_token');
-  if (!token) return url;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-  if (!res.ok) {
-    throw new Error(`加载文件失败: ${res.status}`);
-  }
-  const buf = await res.arrayBuffer();
-  const blob = mime ? new Blob([buf], { type: mime }) : new Blob([buf]);
-  return URL.createObjectURL(blob);
-}
+// 工具函数已提取到 playground-utils.ts
 
 export const Playground: React.FC = () => {
   const [stage, setStage] = useState<Stage>('upload');
@@ -214,9 +59,9 @@ export const Playground: React.FC = () => {
   const [_redactedContent, setRedactedContent] = useState('');
   const [redactedCount, setRedactedCount] = useState(0);
   const [entityMap, setEntityMap] = useState<Record<string, string>>({});
-  const [redactionReport, setRedactionReport] = useState<any>(null);
+  const [redactionReport, setRedactionReport] = useState<Record<string, unknown> | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
-  const [versionHistory, setVersionHistory] = useState<any[]>([]);
+  const [versionHistory, setVersionHistory] = useState<import('../types').VersionHistoryEntry[]>([]);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
 
   // 实体类型配置
@@ -360,7 +205,7 @@ export const Playground: React.FC = () => {
   }, []);
 
   const saveTextPresetFromPlayground = useCallback(async () => {
-    const name = window.prompt('另存为文本预设：请输入名称');
+    const name = window.prompt(t('preset.saveText.prompt'));
     if (!name?.trim()) return;
     try {
       const created = await createPreset({
@@ -375,14 +220,14 @@ export const Playground: React.FC = () => {
       setPlaygroundPresets(list);
       setPlaygroundPresetTextId(created.id);
       setActivePresetTextId(created.id);
-      alert('已另存为文本预设。');
+      showToast(t('preset.saveText.success'), 'success');
     } catch (e) {
-      alert(e instanceof Error ? e.message : '保存失败');
+      showToast(e instanceof Error ? e.message : t('preset.save.failed'), 'error');
     }
   }, [selectedTypes]);
 
   const saveVisionPresetFromPlayground = useCallback(async () => {
-    const name = window.prompt('另存为图像预设：请输入名称');
+    const name = window.prompt(t('preset.saveVision.prompt'));
     if (!name?.trim()) return;
     try {
       const created = await createPreset({
@@ -397,9 +242,9 @@ export const Playground: React.FC = () => {
       setPlaygroundPresets(list);
       setPlaygroundPresetVisionId(created.id);
       setActivePresetVisionId(created.id);
-      alert('已另存为图像预设。');
+      showToast(t('preset.saveVision.success'), 'success');
     } catch (e) {
-      alert(e instanceof Error ? e.message : '保存失败');
+      showToast(e instanceof Error ? e.message : t('preset.save.failed'), 'error');
     }
   }, [selectedOcrHasTypes, selectedHasImageTypes]);
 
@@ -418,6 +263,9 @@ export const Playground: React.FC = () => {
   const imgRef = useRef<HTMLImageElement>(null);
   
   const [boundingBoxes, setBoundingBoxes] = useState<BoundingBox[]>([]);
+  /** 新窗口标注用 BroadcastChannel，关闭后为 null */
+  const popoutChannelRef = useRef<BroadcastChannel | null>(null);
+  const popoutTimerRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const entityHistory = useUndoRedo<Entity[]>();
   const imageHistory = useUndoRedo<BoundingBox[]>();
@@ -427,7 +275,15 @@ export const Playground: React.FC = () => {
 
   // 组件卸载时中止进行中的请求
   useEffect(() => {
-    return () => { abortRef.current?.abort(); };
+    return () => {
+      abortRef.current?.abort();
+      // 清理弹窗监听定时器
+      if (popoutTimerRef.current !== null) {
+        clearInterval(popoutTimerRef.current);
+        popoutTimerRef.current = null;
+      }
+      popoutChannelRef.current?.close();
+    };
   }, []);
 
   // 加载实体类型配置
@@ -817,7 +673,7 @@ export const Playground: React.FC = () => {
 
           if (nerRes.ok) {
             const nerData = await safeJson(nerRes);
-            const entitiesWithSource = (nerData.entities || []).map((e: any, idx: number) => ({
+            const entitiesWithSource = (nerData.entities || []).map((e: Record<string, unknown>, idx: number) => ({
               ...e,
               id: e.id || `entity_${idx}`,
               selected: true,
@@ -1122,7 +978,7 @@ export const Playground: React.FC = () => {
         });
         if (!nerRes.ok) throw new Error('重新识别失败');
         const nerData = await safeJson(nerRes);
-        const entitiesWithSource = (nerData.entities || []).map((e: any, idx: number) => ({
+        const entitiesWithSource = (nerData.entities || []).map((e: Record<string, unknown>, idx: number) => ({
           ...e,
           id: e.id || `entity_${idx}`,
           selected: true,
@@ -1430,20 +1286,9 @@ export const Playground: React.FC = () => {
     return segments;
   };
 
-  // 统计
-  const getStats = () => {
-    const stats: Record<string, { total: number; selected: number }> = {};
-    entities.forEach(e => {
-      if (!stats[e.type]) stats[e.type] = { total: 0, selected: 0 };
-      stats[e.type].total++;
-      if (e.selected) stats[e.type].selected++;
-    });
-    return stats;
-  };
-  const stats = getStats();
 
   return (
-    <div className="playground-root h-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#f5f5f7]">
+    <div className="playground-root h-full min-h-0 min-w-0 flex flex-col overflow-hidden bg-[#f5f5f7] dark:bg-gray-900">
       {/* 上传阶段 */}
       {stage === 'upload' && (
         <PlaygroundUpload
@@ -1479,80 +1324,60 @@ export const Playground: React.FC = () => {
       )}
       {/* 预览编辑阶段 */}
       {stage === 'preview' && (
-        <div className="flex-1 flex gap-2 sm:gap-3 p-2 sm:p-3 min-h-0 min-w-0 overflow-hidden">
+        <div className="flex-1 flex flex-col lg:flex-row gap-2 sm:gap-3 p-2 sm:p-3 min-h-0 min-w-0 overflow-auto lg:overflow-hidden">
           {/* 文档内容 - 占满中间区域 */}
-          <div className="playground-editor-surface flex-1 flex flex-col bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0">
-            <div className="px-3 py-2 border-b border-[#f0f0f0] flex items-center justify-between bg-[#fafafa] flex-shrink-0">
-              <div className="min-w-0 flex-1">
-                <h3 className="font-semibold text-[#1d1d1f] text-sm truncate">{fileInfo?.filename}</h3>
-                <p className="text-xs text-[#737373]">
-                  {isImageMode 
-                    ? '拖拽框选添加区域 | 点击区域切换脱敏状态' 
-                    : '点击高亮文字切换脱敏状态 | 划选文字添加新标记'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                {isImageMode && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // 弹出新窗口查看大图 — 使用 DOM API 替代 document.write 避免 XSS 风险
-                      const w = window.open('', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
-                      if (!w) return;
-                      const doc = w.document;
-                      doc.title = `图像查看 - ${fileInfo?.filename || '未命名'}`;
+          <div className="playground-editor-surface flex-1 flex flex-col bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden min-w-0">
+            <PlaygroundToolbar
+              fileInfo={fileInfo}
+              isImageMode={isImageMode}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              handleUndo={handleUndo}
+              handleRedo={handleRedo}
+              handleReset={handleReset}
+              hintText={isImageMode
+                ? '拖拽框选添加区域 | 点击区域切换脱敏状态'
+                : '点击高亮文字切换脱敏状态 | 划选文字添加新标记'}
+              onPopoutClick={isImageMode ? () => {
+                // 关闭旧 channel
+                popoutChannelRef.current?.close();
+                const ch = new BroadcastChannel('playground-image-popout');
+                popoutChannelRef.current = ch;
 
-                      const style = doc.createElement('style');
-                      style.textContent = `
-                        * { margin: 0; padding: 0; box-sizing: border-box; }
-                        body { font-family: system-ui, -apple-system, sans-serif; background: #1a1a1a; }
-                        .container { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
-                        img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-                        .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.9); padding: 8px 16px; border-radius: 20px; font-size: 12px; color: #333; }
-                      `;
-                      doc.head.appendChild(style);
+                const sendInit = () => {
+                  ch.postMessage({
+                    type: 'init',
+                    imageUrl,
+                    boxes: boundingBoxes,
+                    visionTypes: visionTypes.map(t => ({ id: t.id, name: t.name, color: '#6366F1' })),
+                    defaultType: visionTypes[0]?.id || 'CUSTOM',
+                  });
+                };
 
-                      const container = doc.createElement('div');
-                      container.className = 'container';
-                      const img = doc.createElement('img');
-                      img.src = imageUrl || '';
-                      img.alt = '查看图像';
-                      container.appendChild(img);
-                      doc.body.appendChild(container);
+                ch.onmessage = (e) => {
+                  const d = e.data;
+                  if (d?.type === 'popout-ready') sendInit();
+                  if (d?.type === 'boxes-sync') setBoundingBoxes(d.boxes);
+                  if (d?.type === 'boxes-commit') {
+                    const prevAll = mergeVisibleBoxes(d.prevBoxes, d.nextBoxes);
+                    const nextAll = mergeVisibleBoxes(d.nextBoxes, d.prevBoxes);
+                    imageHistory.save(prevAll);
+                    setBoundingBoxes(nextAll);
+                  }
+                };
 
-                      const hint = doc.createElement('div');
-                      hint.className = 'hint';
-                      hint.textContent = '在此窗口查看大图，编辑请在主窗口进行';
-                      doc.body.appendChild(hint);
-                    }}
-                    className="text-xs text-[#737373] hover:text-[#1d1d1f] px-2 py-1 rounded hover:bg-[#f5f5f5]"
-                    title="在新窗口中查看大图"
-                    aria-label="在新窗口中查看大图"
-                  >
-                    新窗口
-                  </button>
-                )}
-                <button
-                  onClick={handleUndo}
-                  disabled={!canUndo}
-                  className="text-xs px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-                  title="撤销 (Ctrl+Z)"
-                  aria-label="撤销"
-                >
-                  ↩ 撤销
-                </button>
-                <button
-                  onClick={handleRedo}
-                  disabled={!canRedo}
-                  className="text-xs px-2 py-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
-                  title="重做 (Ctrl+Y)"
-                  aria-label="重做"
-                >
-                  ↪ 重做
-                </button>
-                <button onClick={handleReset} className="text-xs text-[#737373] hover:text-[#1d1d1f]">重新上传</button>
-              </div>
-            </div>
+                const w = window.open('/playground/image-editor', '_blank', 'width=1200,height=900,scrollbars=yes,resizable=yes');
+                if (popoutTimerRef.current !== null) clearInterval(popoutTimerRef.current);
+                popoutTimerRef.current = window.setInterval(() => {
+                  if (w && w.closed) {
+                    if (popoutTimerRef.current !== null) clearInterval(popoutTimerRef.current);
+                    popoutTimerRef.current = null;
+                    ch.close();
+                    popoutChannelRef.current = null;
+                  }
+                }, 1000);
+              } : undefined}
+            />
             <div
               ref={contentRef}
               onMouseUp={handleTextSelect}
@@ -1583,7 +1408,7 @@ export const Playground: React.FC = () => {
                 </div>
               ) : (
                 <div ref={textScrollRef} className="flex-1 overflow-auto min-h-0">
-                  <div className="whitespace-pre-wrap text-sm text-[#1d1d1f] leading-relaxed font-[system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] p-4">
+                  <div className="whitespace-pre-wrap text-sm text-[#1d1d1f] dark:text-gray-100 leading-relaxed font-[system-ui,-apple-system,BlinkMacSystemFont,'Segoe_UI',sans-serif] p-4">
                     {renderMarkedContent()}
                   </div>
                 </div>
@@ -1591,7 +1416,7 @@ export const Playground: React.FC = () => {
               {/* 划词添加/修改弹窗 - 二级标签选择器 */}
               {!isImageMode && selectedText && selectionPos && (
                 <div
-                  className="playground-floating-card fixed z-50 bg-white border border-gray-200 rounded-2xl shadow-2xl p-4 min-w-[320px] max-w-[400px]"
+                  className="playground-floating-card fixed z-50 bg-white border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl dark:shadow-gray-900/50 p-4 min-w-[320px] max-w-[400px]"
                   style={{
                     left: selectionPos.left,
                     top: selectionPos.top,
@@ -1602,7 +1427,7 @@ export const Playground: React.FC = () => {
                   {/* 选中文本预览 */}
                   <div className="mb-3">
                     <div className="text-caption text-[#737373] mb-1 font-medium">选中文本</div>
-                    <div className="text-sm text-[#262626] bg-gray-50 rounded-lg px-3 py-2 max-w-full break-all border border-gray-100">
+                    <div className="text-sm text-[#262626] bg-gray-50 dark:bg-gray-900 rounded-lg px-3 py-2 max-w-full break-all border border-gray-100">
                       {selectedText.text}
                     </div>
                   </div>
@@ -1652,7 +1477,7 @@ export const Playground: React.FC = () => {
               {/* 点击实体弹出的操作菜单 */}
               {!isImageMode && clickedEntity && entityPopupPos && (
                 <div
-                  className="playground-floating-card fixed z-50 bg-white border border-gray-200 rounded-xl shadow-2xl p-3 min-w-[200px]"
+                  className="playground-floating-card fixed z-50 bg-white border border-gray-200 dark:border-gray-700 rounded-xl shadow-2xl dark:shadow-gray-900/50 p-3 min-w-[200px]"
                   style={{
                     left: entityPopupPos.left,
                     top: entityPopupPos.top,
@@ -1668,7 +1493,7 @@ export const Playground: React.FC = () => {
                         {/* 实体信息 */}
                         <div className="mb-3">
                           <div className="flex items-center gap-2 mb-1.5">
-                            <span className="text-caption font-semibold px-2 py-0.5 rounded bg-gray-100 text-[#1d1d1f]">
+                            <span className="text-caption font-semibold px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-[#1d1d1f] dark:text-gray-100">
                               {group?.label} · {typeName}
                             </span>
                           </div>
@@ -1703,265 +1528,27 @@ export const Playground: React.FC = () => {
             </div>
           </div>
 
-          {/* 右侧面板：标注编辑仅保留「重新识别」；类型与预设请在设置/上传阶段配置 */}
-          <div className="w-full min-w-0 max-w-full sm:max-w-[320px] sm:w-[min(100%,300px)] lg:w-[300px] flex-shrink-0 flex flex-col gap-2 min-h-0 self-stretch overflow-y-auto overflow-x-hidden pr-1">
-            <div className="playground-side-card bg-white/95 rounded-2xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.05)] p-3">
-              <div className="flex flex-col gap-2 min-w-0">
-                <button
-                  type="button"
-                  onClick={handleRerunNer}
-                  disabled={isLoading}
-                  className={`w-full text-xs font-medium bg-black text-white rounded-lg py-2.5 px-2 hover:bg-zinc-900 transition-colors ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  {isLoading ? '识别中...' : '重新识别'}
-                </button>
-                <p className="text-2xs text-[#a3a3a3] leading-snug break-words">
-                  类型与预设请在「识别项配置」或上传页选择；此处仅重新跑识别。
-                </p>
-              </div>
-            </div>
-
-            {/* 交互说明 */}
-            <div className="playground-side-hint bg-gradient-to-br from-gray-50 to-white rounded-xl border border-[#e5e5e5] p-3">
-              <div className="text-xs font-semibold text-[#1d1d1f] mb-2">💡 操作说明</div>
-              <div className="space-y-2 text-xs text-[#737373]">
-                <div className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded bg-violet-100 text-violet-700 flex items-center justify-center text-2xs font-bold flex-shrink-0">点</span>
-                  <span>点击高亮文字 → 弹出菜单 → 确认移除</span>
-                </div>
-                <div className="flex items-start gap-2">
-                  <span className="w-5 h-5 rounded bg-gray-100 text-[#1d1d1f] flex items-center justify-center text-2xs flex-shrink-0">选</span>
-                  <span>划选文字 → 选择类型 → 添加标记</span>
-                </div>
-              </div>
-            </div>
-
-            {/* 统计 */}
-            <div className="bg-white/95 rounded-2xl border border-black/[0.06] shadow-[0_2px_12px_rgba(0,0,0,0.05)] p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-[#1d1d1f]">识别结果</h3>
-                <span className="text-xs text-[#737373] font-medium">
-                  {selectedCount}/{isImageMode ? visibleBoxes.length : entities.length}
-                </span>
-              </div>
-              <div className="flex gap-2 mb-3">
-                <button onClick={selectAll} className="flex-1 py-1.5 text-xs font-medium text-[#1d1d1f] bg-[#f5f5f5] rounded-lg hover:bg-[#e5e5e5] transition-colors">全选</button>
-                <button onClick={deselectAll} className="flex-1 py-1.5 text-xs font-medium text-[#737373] bg-white border border-[#e5e5e5] rounded-lg hover:bg-[#fafafa] transition-colors">取消</button>
-              </div>
-              {!isImageMode && (
-                <>
-                  <div className="mb-3">
-                    <label className="block text-caption text-[#737373] mb-1.5 font-medium">脱敏方式</label>
-                    {(() => {
-                      const sampleEntity = entities.find(e => e.text && e.text.length > 0);
-                      const modes: { value: 'structured' | 'smart' | 'mask'; label: string; badge?: string }[] = [
-                        { value: 'structured', label: '结构化语义标签', badge: '推荐' },
-                        { value: 'smart', label: '智能替换' },
-                        { value: 'mask', label: '掩码替换' },
-                      ];
-                      return (
-                        <div className="space-y-1.5">
-                          {modes.map(m => (
-                            <label
-                              key={m.value}
-                              className={`flex flex-col px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
-                                replacementMode === m.value
-                                  ? 'border-[#1d1d1f] bg-[#fafafa]'
-                                  : 'border-[#e5e5e5] bg-white hover:border-[#d4d4d4]'
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="radio"
-                                  name="replacementMode"
-                                  value={m.value}
-                                  checked={replacementMode === m.value}
-                                  onChange={() => {
-                                    clearPlaygroundTextPresetTracking();
-                                    setReplacementMode(m.value);
-                                  }}
-                                  className="accent-[#1d1d1f]"
-                                />
-                                <span className="text-sm font-medium text-[#1d1d1f]">{m.label}</span>
-                                {m.badge && (
-                                  <span className="text-2xs px-1.5 py-0.5 rounded bg-[#1d1d1f] text-white leading-none">{m.badge}</span>
-                                )}
-                              </div>
-                              <span className="text-2xs text-[#a3a3a3] mt-0.5 font-mono ml-6">
-                                {getModePreview(m.value, sampleEntity)}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                  {Object.keys(stats).length > 0 && (
-                    <div className="space-y-2">
-                      {/* 按分组统计 */}
-                      {ENTITY_GROUPS.map(group => {
-                        const groupStats = Object.entries(stats).filter(([typeId]) => {
-                          return group.types.some(t => t.id === typeId);
-                        });
-                        
-                        if (groupStats.length === 0) return null;
-                        
-                        const totalInGroup = groupStats.reduce((sum, [, c]) => sum + c.total, 0);
-                        const selectedInGroup = groupStats.reduce((sum, [, c]) => sum + c.selected, 0);
-                        
-                        return (
-                          <div key={group.id} className="rounded-lg overflow-hidden border border-gray-200">
-                            <div className="flex items-center justify-between px-2.5 py-1.5 bg-gray-100 border-b border-gray-200">
-                              <span className="text-caption font-semibold text-[#262626]">
-                                {group.label}
-                              </span>
-                              <span className="text-caption font-medium text-[#737373] tabular-nums">
-                                {selectedInGroup}/{totalInGroup}
-                              </span>
-                            </div>
-                            <div className="px-2.5 py-1.5 space-y-0.5 bg-white">
-                              {groupStats.map(([typeId, count]) => (
-                                <div key={typeId} className="flex items-center justify-between text-caption">
-                                  <span className="text-[#737373]">{getEntityTypeName(typeId)}</span>
-                                  <span className="text-[#1d1d1f] tabular-nums">{count.selected}/{count.total}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* 实体列表 - 按分组显示 */}
-            <div className="flex-1 bg-white rounded-2xl border border-black/[0.06] shadow-[0_1px_8px_rgba(0,0,0,0.04)] overflow-hidden flex flex-col min-h-0">
-              <div className="px-4 py-2.5 border-b border-[#f0f0f0] bg-[#fafafa] flex items-center justify-between">
-                <span className="text-sm font-semibold text-[#1d1d1f]">
-                  {isImageMode ? '区域列表' : '识别结果'}
-                </span>
-                <span className="text-xs text-[#737373]">
-                  点击可编辑/移除
-                </span>
-              </div>
-              <div className="flex-1 overflow-auto">
-                {isImageMode ? (
-                  visibleBoxes.length === 0 ? (
-                    <p className="p-4 text-center text-md text-[#a3a3a3]">暂无识别结果</p>
-                  ) : (
-                    visibleBoxes.map(box => {
-                      const group = getEntityGroup(box.type);
-                      const v: SelectionVariant = box.source === 'has_image' ? 'yolo' : 'ner';
-                      return (
-                        <div
-                          key={box.id}
-                          className="px-3 py-2.5 flex items-center gap-2 cursor-pointer border-b border-gray-50 transition-all hover:bg-gray-50"
-                          onClick={() => toggleBox(box.id)}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={box.selected}
-                            onChange={() => {}}
-                            className={selectableCheckboxClass(v, 'md')}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 mb-1">
-                              <span className="text-caption font-medium px-1.5 py-0.5 rounded bg-gray-100 text-[#1d1d1f]">
-                                {group?.label} · {getEntityTypeName(box.type)}
-                              </span>
-                              <span className="px-1 py-0.5 rounded text-2xs font-medium text-[#1d1d1f] bg-gray-200">
-                                {box.source === 'ocr_has' ? 'OCR' : box.source === 'has_image' ? '图像' : '手动'}
-                              </span>
-                            </div>
-                            <p className="text-md truncate text-[#1d1d1f]">
-                              {box.text || '图像区域'}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )
-                ) : (
-                  entities.length === 0 ? (
-                    <p className="p-4 text-center text-md text-[#a3a3a3]">暂无识别结果</p>
-                  ) : (
-                    // 按分组显示
-                    ENTITY_GROUPS.map(group => {
-                      const groupEntities = entities.filter(e => 
-                        group.types.some(t => t.id === e.type)
-                      );
-                      
-                      if (groupEntities.length === 0) return null;
-                      
-                      return (
-                        <div key={group.id}>
-                          {/* 分组标题 */}
-                          <div className="px-3 py-2 flex items-center justify-between sticky top-0 z-10 bg-gray-100 border-b border-gray-200">
-                            <span className="text-xs font-semibold text-[#262626]">
-                              {group.label}
-                            </span>
-                            <span className="text-caption font-medium text-[#737373] tabular-nums">
-                              {groupEntities.length}
-                            </span>
-                          </div>
-                          {/* 该分组下的实体 */}
-                          {groupEntities.map(entity => {
-                            return (
-                              <div
-                                key={entity.id}
-                                className="px-3 py-2.5 flex items-center gap-2 cursor-pointer border-b border-gray-50 transition-all hover:bg-gray-50"
-                                onClick={(e) => handleEntityClick(entity, e)}
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-1.5 mb-1">
-                                    <span className="text-caption font-medium px-1.5 py-0.5 rounded bg-gray-100 text-[#1d1d1f]">
-                                      {getEntityTypeName(entity.type)}
-                                    </span>
-                                    <span className="text-2xs text-[#a3a3a3]">
-                                      {entity.source === 'regex' ? '正则' : entity.source === 'manual' ? '手动' : 'AI'}
-                                    </span>
-                                  </div>
-                                  <p className="text-md truncate text-[#1d1d1f]">
-                                    {entity.text}
-                                  </p>
-                                </div>
-                                <button
-                                  onClick={e => { e.stopPropagation(); removeEntity(entity.id); }}
-                                  className="p-1 text-[#d4d4d4] hover:text-violet-600 flex-shrink-0"
-                                  aria-label="移除此标注"
-                                >
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                  </svg>
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })
-                  )
-                )}
-              </div>
-            </div>
-
-            {/* 操作按钮 */}
-            <button
-              onClick={handleRedact}
-              disabled={selectedCount === 0 || isLoading}
-                  className={`py-3 rounded-xl text-md font-semibold flex items-center justify-center gap-2 transition-all ${
-                selectedCount > 0 && !isLoading
-                  ? 'bg-black text-white hover:bg-zinc-900'
-                  : 'bg-[#f0f0f0] text-[#a3a3a3] cursor-not-allowed'
-              } ${isLoading ? 'opacity-50' : ''}`}
-            >
-              {isLoading ? '处理中...' : `开始脱敏 (${selectedCount})`}
-            </button>
-          </div>
+          {/* 右侧面板 */}
+          <PlaygroundEntityPanel
+            isImageMode={isImageMode}
+            isLoading={isLoading}
+            entities={entities}
+            visibleBoxes={visibleBoxes}
+            selectedCount={selectedCount}
+            handleRerunNer={handleRerunNer}
+            handleRedact={handleRedact}
+            selectAll={selectAll}
+            deselectAll={deselectAll}
+            toggleBox={toggleBox}
+            handleEntityClick={handleEntityClick}
+            removeEntity={removeEntity}
+            replacementMode={replacementMode}
+            setReplacementMode={setReplacementMode}
+            clearPlaygroundTextPresetTracking={clearPlaygroundTextPresetTracking}
+          />
         </div>
       )}
+
 
       {/* 结果阶段 */}
       {stage === 'result' && (
@@ -1992,26 +1579,11 @@ export const Playground: React.FC = () => {
 
       {/* Loading */}
       {isLoading && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-white rounded-2xl shadow-2xl px-8 py-6 text-center max-w-sm">
-            <div className="w-12 h-12 border-3 border-gray-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-base font-medium text-[#1d1d1f] mb-1">{loadingMessage || '处理中...'}</p>
-            {isImageMode ? (
-              <>
-                <p className="text-xs text-[#737373] leading-relaxed">
-                  仅勾选「文字 OCR+HaS」时才会跑 Paddle；只勾选「HaS Image」则不走 OCR。
-                  若含 OCR+HaS，<strong className="font-medium text-[#1d1d1f]">CPU 跑 Paddle 时常需 30–90 秒甚至更久</strong>
-                  ，等待较久为正常现象，请勿刷新。
-                </p>
-                {loadingElapsedSec > 0 && (
-                  <p className="text-xs text-[#737373] mt-2 tabular-nums">已等待 {loadingElapsedSec} 秒…</p>
-                )}
-              </>
-            ) : (
-              <p className="text-xs text-[#a3a3a3]">处理中，请稍候</p>
-            )}
-          </div>
-        </div>
+        <PlaygroundLoadingOverlay
+          loadingMessage={loadingMessage}
+          isImageMode={isImageMode}
+          elapsedSec={loadingElapsedSec}
+        />
       )}
     </div>
   );

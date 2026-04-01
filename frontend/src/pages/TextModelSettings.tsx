@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { showToast } from '../components/Toast';
 
 /** 仅 HaS（llama-server）；保存时仍附带后端兼容用的占位字段 */
 const OLLAMA_PLACEHOLDER = {
@@ -81,7 +82,7 @@ export const TextModelSettings: React.FC = () => {
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        alert((d as { detail?: string }).detail || '保存失败');
+        showToast((d as { detail?: string }).detail || '保存失败', 'error');
         return;
       }
       setTestResult({ success: true, message: '配置已保存并生效。' });
@@ -89,7 +90,7 @@ export const TextModelSettings: React.FC = () => {
       if (import.meta.env.DEV) {
         console.error(e);
       }
-      alert('保存失败');
+      showToast('保存失败', 'error');
     } finally {
       setNerSaving(false);
     }

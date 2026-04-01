@@ -1,5 +1,5 @@
 import React from 'react';
-import { useRedactionStore } from '../../hooks/useRedaction';
+import { useRedactionConfigStore } from '../../hooks/useRedaction';
 import { EntityType, ReplacementMode, IdentifierCategory } from '../../types';
 import { Switch } from '@headlessui/react';
 import clsx from 'clsx';
@@ -210,20 +210,20 @@ const REPLACEMENT_MODES = [
 ];
 
 export const ConfigPanel: React.FC = () => {
-  const { config, toggleEntityType, setReplacementMode } = useRedactionStore();
+  const { config, toggleEntityType, setReplacementMode } = useRedactionConfigStore();
 
   return (
-    <div className="bg-white rounded-lg border border-line overflow-hidden">
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-line dark:border-gray-700 overflow-hidden" role="form" aria-label="脱敏配置">
       {/* 头部 */}
       <div className="p-4 border-b border-line">
-        <h3 className="text-lg font-semibold text-ink">脱敏配置</h3>
+        <h3 className="text-lg font-semibold text-ink" id="config-panel-title">脱敏配置</h3>
         <p className="text-sm text-ink-muted mt-1">配置要识别的实体类型和替换方式</p>
       </div>
 
       {/* 替换模式 */}
       <div className="p-4 border-b border-line">
-        <h4 className="text-sm font-medium text-gray-700 mb-3">替换模式</h4>
-        <div className="space-y-2">
+        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3" id="replacement-mode-label">替换模式</h4>
+        <div className="space-y-2" role="radiogroup" aria-labelledby="replacement-mode-label">
           {REPLACEMENT_MODES.map((mode) => (
             <label
               key={mode.value}
@@ -231,7 +231,7 @@ export const ConfigPanel: React.FC = () => {
                 'flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all',
                 config.replacement_mode === mode.value
                   ? 'border-primary-500 bg-primary-50'
-                  : 'border-line hover:border-gray-300'
+                  : 'border-line dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
               )}
             >
               <input
@@ -245,7 +245,7 @@ export const ConfigPanel: React.FC = () => {
               <div>
                 <p className="font-medium text-ink">{mode.label}</p>
                 <p className="text-sm text-ink-muted">{mode.description}</p>
-                <p className="text-xs text-gray-400 mt-0.5 font-mono">{mode.preview}</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 font-mono">{mode.preview}</p>
               </div>
             </label>
           ))}
@@ -254,7 +254,7 @@ export const ConfigPanel: React.FC = () => {
 
       {/* 实体类型 - 按GB/T 37964-2019分类 */}
       <div className="p-4">
-        <h4 className="text-sm font-medium text-gray-700 mb-1">识别的实体类型</h4>
+        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">识别的实体类型</h4>
         <p className="text-xs text-ink-subtle mb-3">基于 GB/T 37964-2019 分类</p>
         
         {/* 按分类显示 */}

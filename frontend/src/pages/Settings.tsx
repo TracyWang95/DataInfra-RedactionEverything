@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout';
+import { showToast } from '../components/Toast';
 
 interface EntityTypeConfig {
   id: string;
@@ -248,7 +249,7 @@ export const Settings: React.FC = () => {
         fetchPipelines();
       } else {
         const data = await res.json();
-        alert(data.detail || '创建失败');
+        showToast(data.detail || '创建失败', 'error');
       }
     } catch (err) {
       console.error('创建Pipeline类型失败', err);
@@ -263,7 +264,7 @@ export const Settings: React.FC = () => {
         fetchPipelines();
       } else {
         const data = await res.json();
-        alert(data.detail || '删除失败');
+        showToast(data.detail || '删除失败', 'error');
       }
     } catch (err) {
       console.error('删除Pipeline类型失败', err);
@@ -303,7 +304,7 @@ export const Settings: React.FC = () => {
         fetchPipelines();
       } else {
         const data = await res.json();
-        alert(data.detail || '更新失败');
+        showToast(data.detail || '更新失败', 'error');
       }
     } catch (err) {
       console.error('更新Pipeline类型失败', err);
@@ -374,7 +375,7 @@ export const Settings: React.FC = () => {
         fetchEntityTypes();
       } else {
         const data = await res.json();
-        alert(data.detail || '删除失败');
+        showToast(data.detail || '删除失败', 'error');
       }
     } catch (err) {
       console.error('删除失败', err);
@@ -409,7 +410,7 @@ export const Settings: React.FC = () => {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('导出预设失败', err);
-      alert('导出预设失败');
+      showToast('导出预设失败', 'error');
     }
   };
 
@@ -426,10 +427,10 @@ export const Settings: React.FC = () => {
         body: JSON.stringify({ presets, merge: false }),
       });
       if (!res.ok) throw new Error('导入失败');
-      alert('预设导入成功');
+      showToast('预设导入成功', 'success');
     } catch (err) {
       console.error('导入预设失败', err);
-      alert('导入预设失败，请检查文件格式');
+      showToast('导入预设失败，请检查文件格式', 'error');
     } finally {
       // reset file input so re-selecting the same file triggers onChange
       if (importFileRef.current) importFileRef.current.value = '';

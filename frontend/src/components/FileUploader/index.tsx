@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import { CloudArrowUpIcon, DocumentIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import clsx from 'clsx';
 import { fileApi, nerApi, redactionApi } from '../../services/api';
-import { useRedactionStore } from '../../hooks/useRedaction';
+import { useFileStore, useEntityStore, useUIStore, resetAllStores } from '../../hooks/useRedaction';
 
 const ACCEPTED_FILES = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
@@ -13,16 +13,9 @@ const ACCEPTED_FILES = {
 };
 
 export const FileUploader: React.FC = () => {
-  const {
-    setFileInfo,
-    setContent,
-    setEntities,
-    setBoundingBoxes,
-    setStage,
-    setIsLoading,
-    setLoadingMessage,
-    setError,
-  } = useRedactionStore();
+  const { setFileInfo, setContent } = useFileStore();
+  const { setEntities, setBoundingBoxes } = useEntityStore();
+  const { setStage, setIsLoading, setLoadingMessage, setError } = useUIStore();
 
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
@@ -66,8 +59,15 @@ export const FileUploader: React.FC = () => {
       // 4. 进入预览阶段
       setStage('preview');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '文件处理失败');
-      console.error('File processing error:', err);
+      // 区分不同错误类型，给出更具体的提示
+      let errorMsg = '文件处理失败';
+      if (err instanceof TypeError && err.message === 'Failed to fetch') {
+        errorMsg = '网络连接失败，请检查后端服务是否启动';
+      } else if (err instanceof Error) {
+        errorMsg = err.message;
+      }
+      setError(errorMsg);
+      if (import.meta.env.DEV) console.error('File processing error:', err);
     } finally {
       setIsLoading(false);
       setLoadingMessage('');
@@ -94,7 +94,7 @@ export const FileUploader: React.FC = () => {
 
   const clearFile = () => {
     setUploadedFile(null);
-    useRedactionStore.getState().reset();
+    resetAllStores();
   };
 
   return (

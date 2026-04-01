@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useRedactionStore, useEntityStats } from '../../hooks/useRedaction';
+import { useEntityStore, useEntityStats } from '../../hooks/useRedaction';
 import type { Entity } from '../../types';
 import {
   CheckIcon,
@@ -80,7 +80,7 @@ export const EntityEditor: React.FC = () => {
     selectAllEntities,
     deselectAllEntities,
     updateEntity,
-  } = useRedactionStore();
+  } = useEntityStore();
 
   const stats = useEntityStats();
   const [filterType, setFilterType] = useState<string | null>(null);
@@ -117,25 +117,27 @@ export const EntityEditor: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col bg-white rounded-lg border border-line overflow-hidden">
+    <div className="h-full flex flex-col bg-white dark:bg-gray-800 rounded-lg border border-line dark:border-gray-700 overflow-hidden" role="region" aria-label="识别结果编辑器">
       {/* 头部 */}
       <div className="p-4 border-b border-line">
-        <h3 className="text-lg font-semibold text-ink">识别结果</h3>
-        <p className="text-sm text-ink-muted mt-1">
+        <h3 className="text-lg font-semibold text-ink" id="entity-editor-title">识别结果</h3>
+        <p className="text-sm text-ink-muted mt-1" aria-live="polite">
           共识别 {stats.total} 个敏感信息，已选中 {stats.selected} 个
         </p>
       </div>
 
       {/* 快捷操作 */}
-      <div className="p-3 border-b border-line flex items-center gap-2 flex-wrap">
+      <div className="p-3 border-b border-line flex items-center gap-2 flex-wrap" role="toolbar" aria-label="实体操作">
         <button
           onClick={selectAllEntities}
+          aria-label="全选所有实体"
           className="px-3 py-1.5 text-sm bg-primary-50 text-primary-700 rounded-md hover:bg-primary-100 transition-colors"
         >
           全选
         </button>
         <button
           onClick={deselectAllEntities}
+          aria-label="取消全选"
           className="px-3 py-1.5 text-sm bg-surface-tertiary text-gray-700 rounded-md hover:bg-neutral-200 transition-colors"
         >
           取消全选
@@ -254,7 +256,7 @@ const EntityItem: React.FC<EntityItemProps> = ({
             'w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 mt-0.5 transition-colors',
             entity.selected
               ? 'bg-primary-600 border-primary-600 text-white'
-              : 'border-gray-300 hover:border-primary-400'
+              : 'border-gray-300 dark:border-gray-600 hover:border-primary-400'
           )}
         >
           {entity.selected && <CheckIcon className="w-3 h-3" />}
@@ -296,7 +298,7 @@ const EntityItem: React.FC<EntityItemProps> = ({
                 type="text"
                 value={editValue}
                 onChange={(e) => onEditChange(e.target.value)}
-                className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
+                className="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-primary-500"
                 placeholder="输入替换文本"
                 autoFocus
               />

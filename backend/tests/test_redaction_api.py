@@ -61,3 +61,35 @@ def test_preview_image_returns_base64_and_respects_selected_and_page(client, tmp
     assert rendered.getpixel((7, 7)) == (0, 0, 0)
     assert rendered.getpixel((1, 7)) == (255, 255, 255)
     assert rendered.getpixel((1, 1)) == (255, 255, 255)
+
+
+def test_compare_repairs_legacy_relative_output_path_for_image(client, tmp_path, monkeypatch):
+    upload_dir = tmp_path / "uploads"
+    output_dir = tmp_path / "output"
+    upload_dir.mkdir()
+    output_dir.mkdir()
+
+    original = upload_dir / "sample.png"
+    redacted = output_dir / "redacted-sample.png"
+    Image.new("RGB", (12, 12), "white").save(original)
+    Image.new("RGB", (12, 12), "black").save(redacted)
+
+    monkeypatch.setattr(settings, "UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setattr(settings, "OUTPUT_DIR", str(output_dir))
+
+    files_mod.file_store["img-compare-1"] = {
+        "id": "img-compare-1",
+        "original_filename": "sample.png",
+        "file_path": str(original),
+        "output_path": "output/redacted-sample.png",
+        "file_type": "image",
+        "file_size": original.stat().st_size,
+        "entity_map": {},
+    }
+
+    res = client.get(f"{settings.API_PREFIX}/redaction/img-compare-1/compare")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["file_id"] == "img-compare-1"
+    assert "图片文件" in body["original_content"]
+    assert "已脱敏图片" in body["redacted_content"]

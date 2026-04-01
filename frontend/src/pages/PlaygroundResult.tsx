@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ImageBBoxEditor from '../components/ImageBBoxEditor';
 import { getEntityRiskConfig } from '../config/entityTypes';
 import { downloadFile } from '../services/api';
@@ -54,6 +54,8 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
   onBackToEdit,
   onReset,
 }) => {
+  const [mobileTab, setMobileTab] = useState<'original' | 'redacted' | 'mapping'>('original');
+
   // 共享分段：按 entityMap keys 把原文切段，每段记录 { origKey, matchIdx }
   const buildSegments = (text: string, map: Record<string, string>) => {
     if (!text || Object.keys(map).length === 0) return [{ text, isMatch: false as const }];
@@ -189,9 +191,9 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
             <div className="flex-shrink-0 mx-3 sm:mx-4 mb-2">
               <button
                 onClick={() => setReportOpen(v => !v)}
-                className="w-full flex items-center justify-between bg-white border border-gray-200/80 rounded-2xl px-5 py-3 hover:bg-gray-50 transition-colors"
+                className="w-full flex items-center justify-between bg-white dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700 rounded-2xl px-5 py-3 hover:bg-gray-50 transition-colors"
               >
-                <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight flex items-center gap-2">
+                <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight flex items-center gap-2">
                   <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                   脱敏质量报告
                 </span>
@@ -203,7 +205,7 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
                 const maxSourceCount = Math.max(1, ...Object.values(r.source_distribution || {}) as number[]);
                 const confTotal = Math.max(1, (r.confidence_distribution?.high || 0) + (r.confidence_distribution?.medium || 0) + (r.confidence_distribution?.low || 0));
                 return (
-                  <div className="bg-white border border-t-0 border-gray-200/80 rounded-b-2xl -mt-3 pt-3 px-5 pb-4 space-y-4">
+                  <div className="bg-white dark:bg-gray-800 border border-t-0 border-gray-200/80 dark:border-gray-700 rounded-b-2xl -mt-3 pt-3 px-5 pb-4 space-y-4">
                     <div className="flex gap-6 flex-wrap">
                       <div className="flex flex-col">
                         <span className="text-2xs text-gray-400 uppercase tracking-wider">识别实体总数</span>
@@ -289,12 +291,23 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
           )}
 
           {/* 三列主体 */}
+          {/* Mobile tab switcher */}
+          <div className="flex md:hidden border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 gap-1 shrink-0 mx-3 rounded-t-xl">
+            {([['original', '原文'], ['redacted', '脱敏结果'], ['mapping', '脱敏记录']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => setMobileTab(key)}
+                className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
+                  mobileTab === key ? 'border-[#1d1d1f] text-[#1d1d1f]' : 'border-transparent text-gray-500'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
           {isImageMode ? (
             <div className="flex-1 flex gap-2 sm:gap-3 px-3 sm:px-4 pb-3 sm:pb-4 min-h-0 min-w-0">
               {/* 左：原始图片（与右侧同高视口、同底色，只读无工具栏） */}
-              <div className="flex-1 min-w-0 min-h-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">原始图片</span>
+              <div className={`flex-1 min-w-0 min-h-0 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700 flex flex-col overflow-hidden ${mobileTab === 'original' ? '' : 'hidden'} md:flex`}>
+                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">原始图片</span>
                 </div>
                 <div className="flex-1 min-h-0 min-w-0 flex flex-col">
                   {fileInfo && (
@@ -311,9 +324,9 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
                 </div>
               </div>
               {/* 中：脱敏后图片（与左侧相同 flex 视口 + object-contain，缩放一致） */}
-              <div className="flex-1 min-w-0 min-h-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">脱敏结果</span>
+              <div className={`flex-1 min-w-0 min-h-0 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700 flex flex-col overflow-hidden ${mobileTab === 'redacted' ? '' : 'hidden'} md:flex`}>
+                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">脱敏结果</span>
                 </div>
                 <div className="flex-1 min-h-0 min-w-0 flex items-center justify-center bg-[#f0f0f2] overflow-hidden">
                   {fileInfo && (
@@ -326,9 +339,9 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
                 </div>
               </div>
               {/* 右：映射表 */}
-              <div className="w-52 sm:w-60 flex-shrink-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden min-h-0 min-w-0">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">脱敏记录</span>
+              <div className={`md:w-52 md:flex-shrink-0 w-full bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700 flex flex-col overflow-hidden min-h-0 min-w-0 ${mobileTab === 'mapping' ? '' : 'hidden'} md:flex`}>
+                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">脱敏记录</span>
                   <span className="text-2xs text-[#a3a3a3] tabular-nums">{Object.keys(entityMap).length}</span>
                 </div>
                 <div className="flex-1 overflow-auto">
@@ -353,12 +366,12 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
                 </div>
                 {/* 版本历史 (image mode) */}
                 {versionHistory.length > 0 && (
-                  <div className="border-t border-gray-100">
+                  <div className="border-t border-gray-100 dark:border-gray-700">
                     <button
                       onClick={() => setVersionHistoryOpen(v => !v)}
                       className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-gray-50 transition-colors"
                     >
-                      <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">版本历史</span>
+                      <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">版本历史</span>
                       <div className="flex items-center gap-1.5">
                         <span className="text-2xs text-[#a3a3a3] tabular-nums">{versionHistory.length}</span>
                         <svg className={`w-3 h-3 text-[#a3a3a3] transition-transform ${versionHistoryOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -394,31 +407,31 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
           ) : (
             <div className="flex-1 flex gap-2 sm:gap-3 px-3 sm:px-4 pb-3 sm:pb-4 min-h-0 min-w-0">
               {/* 左：原始文档 */}
-              <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">原始文档</span>
+              <div className={`flex-1 min-w-0 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700 flex flex-col overflow-hidden ${mobileTab === 'original' ? '' : 'hidden'} md:flex`}>
+                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">原始文档</span>
                 </div>
                 <div className="flex-1 overflow-auto p-4" id="original-scroll">
-                  <div className="text-sm leading-relaxed text-[#262626] whitespace-pre-wrap font-[system-ui]">
+                  <div className="text-sm leading-relaxed text-[#262626] dark:text-gray-200 whitespace-pre-wrap font-[system-ui]">
                     {renderOriginal()}
                   </div>
                 </div>
               </div>
               {/* 中：脱敏后文档 */}
-              <div className="flex-1 min-w-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center gap-2">
-                  <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">脱敏结果</span>
+              <div className={`flex-1 min-w-0 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700 flex flex-col overflow-hidden ${mobileTab === 'redacted' ? '' : 'hidden'} md:flex`}>
+                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">脱敏结果</span>
                 </div>
                 <div className="flex-1 overflow-auto p-4" id="redacted-scroll">
-                  <div className="text-sm leading-relaxed text-[#262626] whitespace-pre-wrap font-[system-ui]">
+                  <div className="text-sm leading-relaxed text-[#262626] dark:text-gray-200 whitespace-pre-wrap font-[system-ui]">
                     {renderRedacted()}
                   </div>
                 </div>
               </div>
               {/* 右：映射列表 */}
-              <div className="w-64 flex-shrink-0 bg-white rounded-2xl border border-gray-200/80 flex flex-col overflow-hidden">
-                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">脱敏记录</span>
+              <div className={`md:w-64 md:flex-shrink-0 w-full bg-white dark:bg-gray-800 rounded-2xl border border-gray-200/80 dark:border-gray-700 flex flex-col overflow-hidden ${mobileTab === 'mapping' ? '' : 'hidden'} md:flex`}>
+                <div className="flex-shrink-0 px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">脱敏记录</span>
                   <span className="text-2xs text-[#a3a3a3] tabular-nums">{Object.keys(entityMap).length}</span>
                 </div>
                 <div className="flex-1 overflow-auto">
@@ -454,12 +467,12 @@ export const PlaygroundResult: React.FC<PlaygroundResultProps> = ({
                 </div>
                 {/* 版本历史 */}
                 {versionHistory.length > 0 && (
-                  <div className="border-t border-gray-100">
+                  <div className="border-t border-gray-100 dark:border-gray-700">
                     <button
                       onClick={() => setVersionHistoryOpen(v => !v)}
                       className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-gray-50 transition-colors"
                     >
-                      <span className="text-xs font-semibold text-[#1d1d1f] tracking-tight">版本历史</span>
+                      <span className="text-xs font-semibold text-[#1d1d1f] dark:text-gray-100 tracking-tight">版本历史</span>
                       <div className="flex items-center gap-1.5">
                         <span className="text-2xs text-[#a3a3a3] tabular-nums">{versionHistory.length}</span>
                         <svg className={`w-3 h-3 text-[#a3a3a3] transition-transform ${versionHistoryOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">

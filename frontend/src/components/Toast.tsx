@@ -31,16 +31,16 @@ export function showToast(message: string, type: 'success' | 'error' | 'info' = 
 }
 
 const typeStyles = {
-  success: 'bg-green-600',
-  error: 'bg-red-600',
-  info: 'bg-gray-800',
+  success: 'bg-green-600 dark:bg-green-700',
+  error: 'bg-red-600 dark:bg-red-700',
+  info: 'bg-gray-800 dark:bg-gray-700',
 };
 
 export function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts);
   if (!toasts.length) return null;
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+    <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none" role="alert" aria-live="assertive">
       {toasts.map((t) => (
         <div
           key={t.id}

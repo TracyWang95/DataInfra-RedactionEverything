@@ -25,41 +25,10 @@ EntityTypeConfig = Any
 
 class HaSService:
     """HaS NER 服务 - 用于混合 NER 架构"""
-    
-    # 中文类型到实体类型ID的映射 - 基于 GB/T 37964-2019
-    TYPE_MAPPING_CN_TO_ID = {
-        # 直接标识符
-        "人名": "PERSON", "姓名": "PERSON",
-        "身份证号": "ID_CARD", "身份证": "ID_CARD",
-        "护照号": "PASSPORT",
-        "电话号码": "PHONE", "联系方式": "PHONE", "手机号": "PHONE",
-        "电子邮箱": "EMAIL", "邮箱": "EMAIL",
-        "银行卡号": "BANK_CARD",
-        "银行账号": "BANK_ACCOUNT", "账号": "BANK_ACCOUNT",
-        "开户行": "BANK_NAME", "开户银行": "BANK_NAME", "银行名称": "BANK_NAME",
-        "社保号": "SOCIAL_SECURITY",
-        # 准标识符
-        "公司名称": "COMPANY", "公司": "COMPANY", "企业": "COMPANY",
-        "甲方": "COMPANY", "乙方": "COMPANY", "丙方": "COMPANY",
-        "组织": "ORG", "机构名称": "ORG",
-        "地址": "ADDRESS", "详细地址": "ADDRESS",
-        "出生日期": "BIRTH_DATE",
-        "日期": "DATE",
-        "车牌号": "LICENSE_PLATE",
-        "案件编号": "CASE_NUMBER",
-        "合同编号": "CONTRACT_NO",
-        "统一社会信用代码": "COMPANY_CODE",
-        # 敏感属性
-        "金额": "AMOUNT",
-        # 法律文书
-        "当事人": "LEGAL_PARTY",
-        "律师": "LAWYER",
-        "法官": "JUDGE",
-        "证人": "WITNESS",
-    }
-    
-    # 实体类型ID到中文的映射
-    TYPE_MAPPING_ID_TO_CN = {v: k for k, v in TYPE_MAPPING_CN_TO_ID.items()}
+
+    # 统一引用 models/type_mapping.py 的单一数据源
+    from app.models.type_mapping import TYPE_CN_TO_ID as TYPE_MAPPING_CN_TO_ID
+    from app.models.type_mapping import TYPE_ID_TO_CN as TYPE_MAPPING_ID_TO_CN
     
     def __init__(self, base_url: Optional[str] = None):
         self.client = HaSClient(base_url=base_url)

@@ -139,7 +139,7 @@ def test_delete_job_detaches_file_links(
         "upload_source": "batch",
         "entities": [],
     }
-    monkeypatch.setattr(files_mod, "persist_file_store", lambda: None)
+    # persist_file_store removed — SQLite auto-persists; no monkeypatch needed
 
     res = client.delete(f"{settings.API_PREFIX}/jobs/{jid}")
 
@@ -248,7 +248,9 @@ def test_review_commit_marks_completed_and_clears_draft(
     job_store.save_item_review_draft(iid, {"entities": [{"id": "e1"}], "bounding_boxes": []})
 
     async def fake_execute(request):
-        files_mod.file_store["f1"]["output_path"] = str(tmp_path / "out.docx")
+        output_path = tmp_path / "out.docx"
+        output_path.write_bytes(b"redacted")
+        files_mod.file_store["f1"]["output_path"] = str(output_path)
         files_mod.file_store["f1"]["entities"] = request.entities
         return RedactionResult(
             file_id=request.file_id,
@@ -274,6 +276,76 @@ def test_review_commit_marks_completed_and_clears_draft(
     assert body["has_review_draft"] is False
     assert job_store.get_item(iid)["review_draft_json"] is None
     assert job_store.get_job(jid)["status"] == JobStatus.COMPLETED.value
+
+
+def test_review_commit_recovers_output_path_from_output_file_id(
+    client: TestClient,
+    job_store: JobStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api import redaction as redaction_mod
+
+    output_file_id = "img-out-1"
+    output_path = Path(settings.OUTPUT_DIR) / f"{output_file_id}.png"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(b"png")
+
+    files_mod.file_store["img1"] = {
+        "original_filename": "sample.png",
+        "file_type": "image",
+        "file_path": "D:/tmp/sample.png",
+        "bounding_boxes": {"1": []},
+    }
+    jid = job_store.create_job(
+        job_type=JobType.IMAGE_BATCH,
+        title="image",
+        config={"image_redaction_method": "fill"},
+    )
+    iid = job_store.add_item(jid, file_id="img1", sort_order=0)
+    job_store.update_item_status(iid, JobItemStatus.QUEUED)
+    job_store.update_item_status(iid, JobItemStatus.PARSING)
+    job_store.update_item_status(iid, JobItemStatus.VISION)
+    job_store.update_item_status(iid, JobItemStatus.AWAITING_REVIEW)
+
+    async def fake_execute(_request):
+        info = files_mod.file_store["img1"]
+        info.pop("output_path", None)
+        files_mod.file_store["img1"] = info
+        return RedactionResult(
+            file_id="img1",
+            output_file_id=output_file_id,
+            redacted_count=1,
+            entity_map={},
+            download_url="/api/v1/files/img1/download?redacted=true",
+        )
+
+    monkeypatch.setattr(redaction_mod, "execute_redaction", fake_execute)
+
+    try:
+        res = client.post(
+            f"{settings.API_PREFIX}/jobs/{jid}/items/{iid}/review/commit",
+            json={
+                "entities": [],
+                "bounding_boxes": [
+                    {
+                        "id": "b1",
+                        "x": 0.1,
+                        "y": 0.2,
+                        "width": 0.3,
+                        "height": 0.4,
+                        "page": 1,
+                        "type": "face",
+                        "selected": True,
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "completed"
+        assert res.json()["has_output"] is True
+        assert files_mod.file_store["img1"]["output_path"] == str(output_path.resolve())
+    finally:
+        output_path.unlink(missing_ok=True)
 
 
 def test_review_commit_idempotent_for_completed_item(client: TestClient, job_store: JobStore) -> None:

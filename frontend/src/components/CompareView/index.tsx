@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useRedactionStore } from '../../hooks/useRedaction';
+import { useFileStore, useRedactionConfigStore } from '../../hooks/useRedaction';
 import {
   ArrowsRightLeftIcon,
   Square2StackIcon,
@@ -11,7 +11,9 @@ import { fileApi } from '../../services/api';
 type CompareMode = 'side-by-side' | 'overlay' | 'changes-only';
 
 export const CompareView: React.FC = () => {
-  const { fileInfo, compareData, redactionResult } = useRedactionStore();
+  const fileInfo = useFileStore((s) => s.fileInfo);
+  const compareData = useRedactionConfigStore((s) => s.compareData);
+  const redactionResult = useRedactionConfigStore((s) => s.redactionResult);
   const [mode, setMode] = useState<CompareMode>('side-by-side');
 
   if (!compareData || !redactionResult) {
@@ -32,16 +34,19 @@ export const CompareView: React.FC = () => {
   return (
     <div className="h-full flex flex-col bg-surface-secondary">
       {/* 工具栏 */}
-      <div className="p-4 bg-white border-b border-line flex items-center justify-between">
+      <div className="p-4 bg-white dark:bg-gray-800 border-b border-line dark:border-gray-700 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-sm text-ink-muted">对比模式:</span>
-          <div className="flex bg-surface-tertiary rounded-lg p-1">
+          <div className="flex bg-surface-tertiary rounded-lg p-1" role="tablist" aria-label="对比模式">
             <button
+              role="tab"
+              aria-selected={mode === 'side-by-side'}
+              aria-label="左右对比模式"
               onClick={() => setMode('side-by-side')}
               className={clsx(
                 'px-3 py-1.5 text-sm rounded-md flex items-center gap-1.5 transition-colors',
                 mode === 'side-by-side'
-                  ? 'bg-white text-ink shadow-sm'
+                  ? 'bg-white dark:bg-gray-700 text-ink shadow-sm'
                   : 'text-ink-muted hover:text-ink'
               )}
             >
@@ -49,11 +54,14 @@ export const CompareView: React.FC = () => {
               左右对比
             </button>
             <button
+              role="tab"
+              aria-selected={mode === 'changes-only'}
+              aria-label="仅显示变更"
               onClick={() => setMode('changes-only')}
               className={clsx(
                 'px-3 py-1.5 text-sm rounded-md flex items-center gap-1.5 transition-colors',
                 mode === 'changes-only'
-                  ? 'bg-white text-ink shadow-sm'
+                  ? 'bg-white dark:bg-gray-700 text-ink shadow-sm'
                   : 'text-ink-muted hover:text-ink'
               )}
             >
@@ -73,7 +81,7 @@ export const CompareView: React.FC = () => {
       </div>
 
       {/* 统计信息 */}
-      <div className="px-4 py-3 bg-green-50 border-b border-green-200">
+      <div className="px-4 py-3 bg-green-50 dark:bg-green-900/30 border-b border-green-200 dark:border-green-800">
         <div className="flex items-center gap-4 text-sm">
           <span className="text-green-700 font-medium">
             ✓ 脱敏完成
@@ -111,9 +119,9 @@ const SideBySideView: React.FC<SideBySideViewProps> = ({ original, redacted }) =
       {/* 原始文档 */}
       <div className="flex flex-col h-full">
         <div className="px-4 py-2 bg-surface-tertiary rounded-t-lg border border-b-0 border-line">
-          <h4 className="text-sm font-medium text-gray-700">原始文档</h4>
+          <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">原始文档</h4>
         </div>
-        <div className="flex-1 overflow-auto bg-white rounded-b-lg border border-line p-4">
+        <div className="flex-1 overflow-auto bg-white dark:bg-gray-800 rounded-b-lg border border-line dark:border-gray-700 p-4">
           <pre className="whitespace-pre-wrap font-serif text-ink leading-relaxed text-sm">
             {original}
           </pre>
@@ -154,25 +162,25 @@ const ChangesOnlyView: React.FC<ChangesOnlyViewProps> = ({ changes }) => {
   }
 
   return (
-    <div className="bg-white rounded-lg border border-line overflow-hidden">
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-line dark:border-gray-700 overflow-hidden">
       <table className="w-full">
         <thead>
           <tr className="bg-surface-secondary border-b border-line">
-            <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
+            <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 dark:text-gray-300">
               原始内容
             </th>
-            <th className="px-4 py-3 text-center text-sm font-medium text-gray-700 w-16">
+            <th className="px-4 py-3 text-center text-sm font-medium text-gray-700 dark:text-gray-300 w-16">
               →
             </th>
-            <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">
+            <th className="px-4 py-3 text-left text-sm font-medium text-gray-700 dark:text-gray-300">
               替换内容
             </th>
-            <th className="px-4 py-3 text-center text-sm font-medium text-gray-700 w-20">
+            <th className="px-4 py-3 text-center text-sm font-medium text-gray-700 dark:text-gray-300 w-20">
               次数
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-200">
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
           {changes.map((change, index) => (
             <tr key={index} className="hover:bg-surface-secondary">
               <td className="px-4 py-3">

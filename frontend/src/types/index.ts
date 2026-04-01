@@ -179,6 +179,10 @@ export interface FileListItem {
   batch_group_id?: string | null;
   /** 该批次全局文件数（跨页时仍准确） */
   batch_group_count?: number | null;
+  /** 关联 job_item 的 pipeline 状态，用于三态脱敏显示 */
+  item_status?: string | null;
+  /** 关联 job_item 的 ID，用于构建审阅跳转 URL */
+  item_id?: string | null;
   /** 列表 embed_job=1 时由后端填充 */
   job_embed?: JobEmbedSummary | null;
 }
@@ -283,6 +287,16 @@ export interface ReplacementModeConfig {
   value: ReplacementMode;
   label: string;
   description: string;
+}
+
+// 脱敏版本历史条目
+export interface VersionHistoryEntry {
+  output_file_id: string;
+  output_path?: string;
+  redacted_count: number;
+  entity_map: Record<string, string>;
+  mode: string;
+  created_at: string;
 }
 
 // 应用状态

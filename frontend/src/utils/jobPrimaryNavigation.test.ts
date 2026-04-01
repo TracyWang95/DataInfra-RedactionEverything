@@ -78,7 +78,7 @@ describe('resolveJobPrimaryNavigation', () => {
     expect(a.kind).toBe('link');
     if (a.kind === 'link') {
       expect(a.label).toBe('继续上传');
-      expect(a.to).toContain('/batch/image');
+      expect(a.to).toContain('/batch/smart');
     }
   });
 

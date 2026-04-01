@@ -321,6 +321,14 @@ class FileListItem(BaseModel):
         default=None,
         description="该批次在系统中的文件总数（仅 batch_group_id 非空时有意义）",
     )
+    item_status: Optional[str] = Field(
+        default=None,
+        description="关联 job_item 的 pipeline 状态（awaiting_review / completed 等），用于三态脱敏显示",
+    )
+    item_id: Optional[str] = Field(
+        default=None,
+        description="关联 job_item 的 ID，用于构建审阅跳转 URL",
+    )
     job_embed: Optional[JobEmbedSummary] = Field(
         default=None,
         description="embed_job=1 且存在 job_id 时返回，供历史页主 CTA 与任务中心一致",
@@ -351,6 +359,7 @@ class NERResult(BaseModel):
     entities: list[Entity]
     entity_count: int
     entity_summary: dict[str, int] = Field(default_factory=dict, description="各类型实体数量统计")
+    warnings: list[str] = Field(default_factory=list, description="识别过程中的警告信息")
 
 
 class VisionResult(BaseModel):
@@ -368,6 +377,7 @@ class RedactionResult(BaseModel):
     redacted_count: int
     entity_map: dict[str, str] = Field(default_factory=dict, description="实体映射表")
     download_url: str
+    output_path: Optional[str] = Field(default=None, exclude=True)
 
 
 class CompareData(BaseModel):

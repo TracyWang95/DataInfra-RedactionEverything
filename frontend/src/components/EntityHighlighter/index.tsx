@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { useRedactionStore } from '../../hooks/useRedaction';
+import { useEntityStore } from '../../hooks/useRedaction';
 import type { Entity } from '../../types';
+import { t } from '../../i18n';
 import clsx from 'clsx';
 
 interface EntityHighlighterProps {
@@ -14,7 +15,7 @@ export const EntityHighlighter: React.FC<EntityHighlighterProps> = ({
   entities,
   onEntityClick,
 }) => {
-  const { toggleEntitySelection } = useRedactionStore();
+  const { toggleEntitySelection } = useEntityStore();
 
   // 按位置排序实体
   const sortedEntities = useMemo(() => {
@@ -93,31 +94,28 @@ interface EntityTagProps {
 }
 
 const EntityTag: React.FC<EntityTagProps> = ({ entity, onClick }) => {
-  const typeLabels: Record<string, string> = {
-    PERSON: '人名',
-    ID_CARD: '身份证',
-    PHONE: '电话',
-    ADDRESS: '地址',
-    BANK_CARD: '银行卡',
-    CASE_NUMBER: '案号',
-    DATE: '日期',
-    MONEY: '金额',
-    CUSTOM: '自定义',
-  };
+  const label = t(`entityTag.${entity.type}`) !== `entityTag.${entity.type}`
+    ? t(`entityTag.${entity.type}`)
+    : entity.type;
 
   return (
     <span
+      role="button"
+      tabIndex={0}
+      aria-pressed={entity.selected}
+      aria-label={`${label}: ${entity.text}${entity.selected ? t('entityTag.selected') : ''}`}
       onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
       className={clsx(
         'entity-highlight',
         `entity-${entity.type}`,
         entity.selected && 'selected'
       )}
-      title={`${typeLabels[entity.type] || entity.type}${entity.replacement ? ` → ${entity.replacement}` : ''}`}
+      title={`${label}${entity.replacement ? ` → ${entity.replacement}` : ''}`}
     >
       {entity.text}
       {entity.selected && (
-        <span className="ml-1 text-xs opacity-70">✓</span>
+        <span className="ml-1 text-xs opacity-70" aria-hidden="true">✓</span>
       )}
     </span>
   );

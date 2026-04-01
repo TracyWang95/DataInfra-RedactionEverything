@@ -1,20 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { t } from '../i18n';
 import {
-  approveItemReview,
   cancelJob,
   deleteJob,
   getJob,
-  rejectItemReview,
+  requeueFailed,
   submitJob,
   type JobDetail,
-  type JobItemRow,
 } from '../services/jobsApi';
 import { resolveJobPrimaryNavigation } from '../utils/jobPrimaryNavigation';
-import { formatAggregateJobStatus, formatJobItemStatus } from '../utils/jobStatusLabels';
 
-function pathLabel(jobType: string): string {
-  return jobType === 'image_batch' ? '图像批量' : '文本批量';
+import { resolveRedactionState, REDACTION_STATE_LABEL, REDACTION_STATE_CLASS } from '../utils/redactionState';
+
+function pathLabel(_jobType: string): string {
+  return t('jobDetail.batchTask');
 }
 
 function canDeleteJob(status: string): boolean {
@@ -41,7 +41,7 @@ export const JobDetailPage: React.FC = () => {
       const d = await getJob(jobId);
       setData(d);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '加载失败');
+      setErr(e instanceof Error ? e.message : t('jobDetail.loadFailed'));
       setData(null);
     } finally {
       setLoading(false);
@@ -53,92 +53,34 @@ export const JobDetailPage: React.FC = () => {
     load();
   }, [load]);
 
-  // SSE for real-time progress updates
-  const sseActiveRef = useRef(false);
+  // Polling for progress updates (SSE removed — EventSource cannot carry Bearer tokens)
   useEffect(() => {
-    if (!jobId) return;
     const terminalStatuses = ['completed', 'failed', 'cancelled'];
-    if (data && terminalStatuses.includes(data.status)) {
-      sseActiveRef.current = false;
-      return;
-    }
+    if (data && terminalStatuses.includes(data.status)) return;
 
-    const es = new EventSource(`/api/v1/jobs/${jobId}/stream`);
-
-    es.onopen = () => {
-      sseActiveRef.current = true;
-    };
-
-    es.onmessage = (event) => {
-      try {
-        const progress = JSON.parse(event.data);
-        if (progress.error) {
-          es.close();
-          sseActiveRef.current = false;
-          return;
-        }
-        // Update progress and status within current data
-        setData((prev) => {
-          if (!prev) return prev;
-          const { status, ...progressFields } = progress;
-          return {
-            ...prev,
-            status: status ?? prev.status,
-            progress: { ...prev.progress, ...progressFields },
-          };
-        });
-        // If terminal, close SSE and do a full reload
-        if (progress.status && terminalStatuses.includes(progress.status)) {
-          es.close();
-          sseActiveRef.current = false;
-          load();
-        }
-      } catch {
-        // ignore parse errors
-      }
-    };
-
-    es.onerror = () => {
-      es.close();
-      sseActiveRef.current = false;
-      // Polling fallback will continue working
-    };
-
-    return () => {
-      es.close();
-      sseActiveRef.current = false;
-    };
-  }, [jobId, data?.status]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Polling fallback (runs at slower rate when SSE is active)
-  useEffect(() => {
     const tick = () => {
       if (document.visibilityState === 'visible') {
-        load().catch((err) => { if (import.meta.env.DEV) console.error('Load failed:', err); });
+        load().catch((e) => { if (import.meta.env.DEV) console.error('Load failed:', e); });
       }
     };
-    const interval = sseActiveRef.current ? 15000 : 3500;
+    const interval = data?.status === 'redacting' || data?.status === 'processing' ? 5000 : 2000;
     const t = window.setInterval(tick, interval);
     document.addEventListener('visibilitychange', tick);
     return () => {
       window.clearInterval(t);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [load]);
-
-  const batchPath = (j: JobDetail) => (j.job_type === 'image_batch' ? '/batch/image' : j.job_type === 'smart_batch' ? '/batch/smart' : '/batch/text');
-  const editHref = (item: JobItemRow) =>
-    `${batchPath(data!)}?jobId=${encodeURIComponent(jobId)}&itemId=${encodeURIComponent(item.id)}&step=4`;
+  }, [load, data?.status]);
 
   const onSubmit = async () => {
     if (!jobId) return;
     setActionMsg(null);
     try {
       await submitJob(jobId);
-      setActionMsg('已提交队列');
+      setActionMsg(t('jobDetail.submitted'));
       await load();
     } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : '提交失败');
+      setActionMsg(e instanceof Error ? e.message : t('jobDetail.submitFailed'));
     }
   };
 
@@ -147,18 +89,18 @@ export const JobDetailPage: React.FC = () => {
     setActionMsg(null);
     try {
       await cancelJob(jobId);
-      setActionMsg('已取消');
+      setActionMsg(t('jobDetail.cancelled'));
       await load();
     } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : '取消失败');
+      setActionMsg(e instanceof Error ? e.message : t('jobDetail.cancelFailed'));
     }
   };
 
   const onDelete = async () => {
     if (!jobId || !data || deleting || !canDeleteJob(data.status)) return;
-    const title = data.title?.trim() || '未命名任务';
+    const title = data.title?.trim() || t('jobDetail.unnamedTask');
     const confirmed = window.confirm(
-      `确定删除任务「${title}」吗？\n\n将删除任务中心中的工单与文件项记录，但保留已上传原件和脱敏结果，处理历史仍可查看。`
+      t('jobDetail.confirmDelete').replace('{title}', title)
     );
     if (!confirmed) return;
 
@@ -168,44 +110,34 @@ export const JobDetailPage: React.FC = () => {
       await deleteJob(jobId);
       navigate('/jobs', { replace: true });
     } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : '删除任务失败');
+      setActionMsg(e instanceof Error ? e.message : t('jobDetail.deleteFailed'));
     } finally {
       setDeleting(false);
     }
   };
 
-  const onApprove = async (item: JobItemRow) => {
+  const onRequeueFailed = async () => {
+    if (!jobId) return;
     setActionMsg(null);
     try {
-      await approveItemReview(jobId, item.id);
-      setActionMsg('已确认');
+      await requeueFailed(jobId);
+      setActionMsg(t('jobDetail.requeuedSuccess'));
       await load();
     } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : '操作失败');
-    }
-  };
-
-  const onReject = async (item: JobItemRow) => {
-    setActionMsg(null);
-    try {
-      await rejectItemReview(jobId, item.id);
-      setActionMsg('已打回重跑');
-      await load();
-    } catch (e) {
-      setActionMsg(e instanceof Error ? e.message : '操作失败');
+      setActionMsg(e instanceof Error ? e.message : t('jobDetail.requeueFailed'));
     }
   };
 
   const detailItems = useMemo(() => data?.items ?? [], [data]);
 
-  if (!jobId) return <p className="p-4 text-sm text-gray-500">无效任务</p>;
-  if (loading && !data) return <p className="p-4 text-sm text-gray-500">加载中...</p>;
+  if (!jobId) return <p className="p-4 text-sm text-gray-500 dark:text-gray-400">{t('jobDetail.invalidJob')}</p>;
+  if (loading && !data) return <p className="p-4 text-sm text-gray-500 dark:text-gray-400">{t('jobDetail.loading')}</p>;
   if (err || !data) {
     return (
       <div className="p-4 space-y-2">
-        <p className="text-sm text-red-700">{err ?? '未找到任务'}</p>
+        <p className="text-sm text-red-700 dark:text-red-400">{err ?? t('jobDetail.notFound')}</p>
         <Link to="/jobs" className="text-sm text-[#007AFF]">
-          返回列表
+          {t('jobDetail.backToList')}
         </Link>
       </div>
     );
@@ -223,28 +155,27 @@ export const JobDetailPage: React.FC = () => {
   });
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-[#fafafa] px-3 py-3 sm:px-5 sm:py-4 overflow-y-auto">
+    <div className="h-full min-h-0 flex flex-col bg-[#fafafa] dark:bg-gray-900 px-3 py-3 sm:px-5 sm:py-4 overflow-y-auto">
       <div className="max-w-5xl mx-auto w-full space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Link to="/jobs" className="text-[#007AFF] hover:underline">
-            任务中心
+            {t('jobDetail.jobCenter')}
           </Link>
-          <span className="text-gray-300">/</span>
-          <span className="text-[#1d1d1f] font-medium truncate">{j.title || '未命名任务'}</span>
+          <span className="text-gray-300 dark:text-gray-600">/</span>
+          <span className="text-[#1d1d1f] dark:text-gray-100 font-medium truncate">{j.title || t('jobDetail.unnamedTask')}</span>
         </div>
 
         {actionMsg && (
-          <div className="rounded-lg border border-gray-200 bg-white text-sm px-3 py-2 text-gray-800">{actionMsg}</div>
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-sm px-3 py-2 text-gray-800 dark:text-gray-200">{actionMsg}</div>
         )}
 
-        <div className="rounded-xl border border-black/[0.06] bg-white shadow-sm p-3 sm:p-4 space-y-2">
-          <div className="flex flex-wrap gap-2 text-2xs sm:text-xs text-gray-600">
-            <span>类型：{pathLabel(j.job_type)}</span>
-            <span>状态：{formatAggregateJobStatus(j.status)}</span>
-            <span>共 {j.progress.total_items} 项</span>
-            <span>待审 {j.progress.awaiting_review}</span>
-            <span>完成 {j.progress.completed}</span>
-            {j.skip_item_review && <span className="text-amber-700 font-medium">已开启跳过逐项确认</span>}
+        <div className="rounded-xl border border-black/[0.06] dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm dark:shadow-gray-900/30 p-3 sm:p-4 space-y-2">
+          <div className="flex flex-wrap gap-2 text-2xs sm:text-xs text-gray-600 dark:text-gray-400">
+            <span>{t('jobDetail.type')}{pathLabel(j.job_type)}</span>
+            <span>{t('jobDetail.progressTotal').replace('{n}', String(j.progress.total_items))}</span>
+            <span className="text-emerald-700">{t('jobDetail.progressRedacted').replace('{n}', String(detailItems.filter(it => resolveRedactionState(Boolean(it.has_output), it.status) === 'redacted').length))}</span>
+            <span className="text-amber-700">{t('jobDetail.progressAwaiting').replace('{n}', String(detailItems.filter(it => resolveRedactionState(Boolean(it.has_output), it.status) === 'awaiting_review').length))}</span>
+            {j.progress.failed > 0 && <span className="text-red-600">{t('jobDetail.progressFailed').replace('{n}', String(j.progress.failed))}</span>}
           </div>
           <div className="flex flex-wrap gap-2">
             {j.status === 'draft' && (
@@ -253,16 +184,16 @@ export const JobDetailPage: React.FC = () => {
                 onClick={onSubmit}
                 className="text-xs sm:text-sm font-medium rounded-lg bg-[#1d1d1f] text-white px-3 py-1.5 hover:opacity-90"
               >
-                提交队列
+                {t('jobDetail.submitQueue')}
               </button>
             )}
             {!['completed', 'cancelled', 'failed'].includes(j.status) && (
               <button
                 type="button"
                 onClick={onCancel}
-                className="text-xs sm:text-sm font-medium rounded-lg border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+                className="text-xs sm:text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
               >
-                取消任务
+                {t('jobDetail.cancelTask')}
               </button>
             )}
             {canDeleteJob(j.status) ? (
@@ -270,111 +201,78 @@ export const JobDetailPage: React.FC = () => {
                 type="button"
                 disabled={deleting}
                 onClick={onDelete}
-                className="text-xs sm:text-sm font-medium rounded-lg border border-red-200 px-3 py-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                className="text-xs sm:text-sm font-medium rounded-lg border border-red-200 dark:border-red-800 px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-50"
               >
-                {deleting ? '删除中…' : '删除任务'}
+                {deleting ? t('jobDetail.deleting') : t('jobDetail.deleteTask')}
               </button>
             ) : (
-              <span className="text-xs text-gray-400">运行中任务请先取消，再删除</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">{t('jobDetail.deleteHintRunning')}</span>
+            )}
+            {j.progress.failed > 0 && (
+              <button
+                type="button"
+                onClick={onRequeueFailed}
+                className="text-xs sm:text-sm font-medium rounded-lg border border-red-200 dark:border-red-800 px-3 py-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30"
+              >
+                {t('jobDetail.requeueFailed.btn').replace('{n}', String(j.progress.failed))}
+              </button>
             )}
             {primaryNav.kind === 'link' && (
               <Link
                 to={primaryNav.to}
-                className="text-xs sm:text-sm font-medium rounded-lg bg-[#007AFF] text-white px-3 py-1.5 hover:opacity-95"
+                className="text-xs sm:text-sm font-medium rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-[#1d1d1f] dark:text-gray-100 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
               >
                 {primaryNav.label}
               </Link>
             )}
             {primaryNav.kind === 'none' && primaryNav.reason && (
-              <span className="text-xs text-gray-400">{primaryNav.reason}</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">{primaryNav.reason}</span>
             )}
           </div>
-          {detailItems.some(it => it.status === 'awaiting_review') && (
-            <p className="text-2xs text-gray-500 pt-1 border-t border-gray-100 mt-2">
-              「快速确认」将本文件标为审阅通过并入队脱敏；完整划词/拉框修改请在主按钮进入的批量向导第 4 步中操作并保存草稿。
-            </p>
-          )}
         </div>
 
-        <h3 className="text-sm font-semibold text-[#1d1d1f]">文件明细</h3>
-        <div className="rounded-xl border border-black/[0.06] bg-white overflow-hidden">
+        <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-gray-100">{t('jobDetail.fileDetail')}</h3>
+        <div className="rounded-xl border border-black/[0.06] dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
           <table className="w-full text-left text-2xs sm:text-xs">
-            <thead className="bg-gray-50 text-gray-600 border-b border-gray-100">
+            <thead className="bg-gray-50 dark:bg-gray-900 text-gray-600 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
               <tr>
-                <th className="px-3 py-2 font-medium">文件</th>
-                <th className="px-3 py-2 font-medium">状态</th>
-                <th className="px-3 py-2 font-medium">草稿</th>
-                <th className="px-3 py-2 font-medium text-right">操作</th>
+                <th className="px-3 py-2 font-medium">{t('jobDetail.col.file')}</th>
+                <th className="px-3 py-2 font-medium text-right">{t('jobDetail.col.status')}</th>
               </tr>
             </thead>
             <tbody>
               {detailItems.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-3 py-6 text-center text-gray-500">
-                    暂无文件，请先在批量入口上传。
+                  <td colSpan={2} className="px-3 py-6 text-center text-gray-500 dark:text-gray-400">
+                    {t('jobDetail.noFiles')}
                   </td>
                 </tr>
               ) : (
-                detailItems.map(it => (
-                  <tr key={it.id} className="border-t border-gray-100">
+                detailItems.map(it => {
+                  const rs = resolveRedactionState(Boolean(it.has_output), it.status);
+                  return (
+                  <tr key={it.id} className="border-t border-gray-100 dark:border-gray-700">
                     <td className="px-3 py-2">
-                      <div className="font-medium text-gray-900 truncate" title={it.filename || it.file_id}>
+                      <div className="font-medium text-gray-900 dark:text-gray-100 truncate" title={it.filename || it.file_id}>
                         {it.filename || it.file_id}
                       </div>
-                      <div className="text-2xs text-gray-400 font-mono break-all">{it.file_id}</div>
-                      <div className="text-2xs text-gray-500 mt-0.5">
-                        {it.file_type ? String(it.file_type) : 'unknown'} · {it.entity_count ?? 0} 项
-                        {it.has_output ? ' · 已脱敏' : ''}
+                      <div className="text-2xs text-gray-500 dark:text-gray-400 mt-0.5">
+                        {it.file_type ? String(it.file_type) : 'unknown'} · {it.entity_count ?? 0} {t('jobDetail.items')}
                       </div>
                     </td>
-                    <td className="px-3 py-2">
-                      <span className="text-gray-800">{formatJobItemStatus(it.status)}</span>
-                      {it.error_message && (
+                    <td className="px-3 py-2 text-right">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${REDACTION_STATE_CLASS[rs]}`}>
+                        {REDACTION_STATE_LABEL[rs]}
+                      </span>
+                      {it.error_message && !it.error_message.startsWith('auto-repaired') && (
                         <div className="text-red-600 mt-0.5 max-w-xs truncate" title={it.error_message}>
                           {it.error_message}
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2">
-                      {it.has_review_draft ? (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-800">
-                          有草稿 {it.review_draft_updated_at ? `· ${new Date(it.review_draft_updated_at).toLocaleString()}` : ''}
-                        </span>
-                      ) : (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">无草稿</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap">
-                      {j.status === 'cancelled' ? (
-                        <span className="text-gray-400 text-2xs">已取消</span>
-                      ) : (
-                        <>
-                          <Link to={editHref(it)} className="text-[#007AFF] font-medium hover:underline">
-                            进入审阅
-                          </Link>
-                          {it.status === 'awaiting_review' && (
-                            <>
-                              <button
-                                type="button"
-                                className="text-emerald-700 font-medium hover:underline"
-                                onClick={() => onApprove(it)}
-                              >
-                                快速确认
-                              </button>
-                              <button
-                                type="button"
-                                className="text-gray-600 hover:underline"
-                                onClick={() => onReject(it)}
-                              >
-                                打回
-                              </button>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>

@@ -3,30 +3,94 @@
 支持从环境变量和 .env 文件加载配置
 """
 import json
+import logging
 import os
-import uuid
-from pydantic import model_validator
+import secrets
+from pathlib import Path
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, Literal
 from functools import lru_cache
 
 
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+
+def _resolve_local_path(raw: str, *, base_dir: Path = BACKEND_DIR) -> str:
+    """Resolve relative repo-local paths against the backend root, not the process CWD."""
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    expanded = Path(os.path.expandvars(os.path.expanduser(value)))
+    if expanded.is_absolute():
+        return str(expanded.resolve())
+    return str((base_dir / expanded).resolve())
+
+
+def _hide_file_windows(path: str) -> None:
+    """Best-effort: set the 'hidden' attribute on Windows via kernel32."""
+    try:
+        import ctypes
+        # FILE_ATTRIBUTE_HIDDEN = 0x2
+        ctypes.windll.kernel32.SetFileAttributesW(path, 0x2)  # type: ignore[union-attr]
+    except Exception:
+        pass
+
+
 def _load_or_create_jwt_secret(data_dir: str) -> str:
-    """首次启动时生成 JWT 密钥并持久化到 data 目录，后续重启复用。"""
+    """Load or generate a JWT secret.
+
+    Resolution order:
+    1. ``LEGAL_REDACTION_JWT_SECRET`` environment variable (highest priority)
+    2. Persisted file in *data_dir* (``jwt_secret.json``)
+    3. Generate a new secret, persist it, and return it.
+
+    On Windows the file is marked *hidden* as a best-effort protection
+    (``os.chmod 0o600`` has no effect on NTFS).
+    """
+    _log = logging.getLogger(__name__)
+
+    # --- 1. Environment variable -------------------------------------------------
+    env_secret = os.environ.get("LEGAL_REDACTION_JWT_SECRET", "").strip()
+    if env_secret:
+        _log.debug("JWT secret loaded from LEGAL_REDACTION_JWT_SECRET env var")
+        return env_secret
+
+    # --- 2. Existing file --------------------------------------------------------
     secret_path = os.path.join(data_dir, "jwt_secret.json")
     if os.path.exists(secret_path):
         try:
             with open(secret_path, "r") as f:
-                return json.load(f).get("secret", "")
-        except Exception:
-            pass
-    secret = str(uuid.uuid4()) + "-" + str(uuid.uuid4())
+                secret = json.load(f).get("secret", "")
+            if secret:
+                return secret
+        except (json.JSONDecodeError, OSError, KeyError) as e:
+            _log.warning("JWT secret file corrupted, regenerating: %s", e)
+
+    # --- 3. Generate & persist ---------------------------------------------------
+    secret = secrets.token_urlsafe(32)
     os.makedirs(data_dir, exist_ok=True)
     try:
         with open(secret_path, "w") as f:
             json.dump({"secret": secret}, f)
-    except Exception:
-        pass
+    except OSError as e:
+        _log.error("Failed to persist JWT secret: %s", e)
+
+    # Platform-specific file protection
+    if os.name == "nt":
+        _hide_file_windows(secret_path)
+        _log.warning(
+            "Windows: JWT secret file '%s' is hidden but NOT permission-protected "
+            "(NTFS does not honour POSIX chmod). Consider setting the "
+            "LEGAL_REDACTION_JWT_SECRET environment variable instead.",
+            secret_path,
+        )
+    else:
+        try:
+            os.chmod(secret_path, 0o600)
+        except OSError:
+            pass
+
     return secret
 
 
@@ -36,7 +100,7 @@ class Settings(BaseSettings):
     # 应用基础配置
     APP_NAME: str = "DataShield 智能数据脱敏平台"
     APP_VERSION: str = "0.1.0"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # API 配置
     API_PREFIX: str = "/api/v1"
@@ -99,24 +163,61 @@ class Settings(BaseSettings):
     # 批量任务并发配置
     JOB_CONCURRENCY: int = 1  # Number of concurrent job items to process
 
+    # 后台工作循环 / 清理
+    WORKER_LOOP_INTERVAL_SEC: float = 2.0
+    ORPHAN_CLEANUP_AGE_SEC: int = 3600
+
     # 脱敏配置
     DEFAULT_REPLACEMENT_MODE: Literal["smart", "mask", "custom"] = "smart"
+
+    # 文件加密（默认关闭；启用后上传文件 AES-256-GCM 加密落盘）
+    FILE_ENCRYPTION_ENABLED: bool = False
+
+    # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
+    VIRUS_SCAN_ENABLED: bool = False
+
+    # 结构化日志（默认生产 JSON，DEBUG 文本）
+    LOG_JSON: bool = True
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def _coerce_debug_bool(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "prod", "production"}:
+                return False
+            if normalized in {"debug", "dev", "development"}:
+                return True
+        return value
 
     @model_validator(mode="after")
     def _derive_paths_and_secrets(self) -> "Settings":
         """在所有字段（含环境变量覆盖）解析完毕后，派生依赖 DATA_DIR 的路径。"""
+        self.DATA_DIR = _resolve_local_path(self.DATA_DIR)
+        self.UPLOAD_DIR = _resolve_local_path(self.UPLOAD_DIR)
+        self.OUTPUT_DIR = _resolve_local_path(self.OUTPUT_DIR)
+        self.HAS_MODEL_PATH = _resolve_local_path(self.HAS_MODEL_PATH)
+
         d = self.DATA_DIR
         if not self.FILE_STORE_PATH:
             self.FILE_STORE_PATH = os.path.join(d, "file_store.json")
+        else:
+            self.FILE_STORE_PATH = _resolve_local_path(self.FILE_STORE_PATH)
         if not self.JOB_DB_PATH:
             self.JOB_DB_PATH = os.path.join(d, "jobs.sqlite3")
+        else:
+            self.JOB_DB_PATH = _resolve_local_path(self.JOB_DB_PATH)
         if not self.PIPELINE_STORE_PATH:
             self.PIPELINE_STORE_PATH = os.path.join(d, "pipelines.json")
+        else:
+            self.PIPELINE_STORE_PATH = _resolve_local_path(self.PIPELINE_STORE_PATH)
         if not self.PRESET_STORE_PATH:
             self.PRESET_STORE_PATH = os.path.join(d, "presets.json")
+        else:
+            self.PRESET_STORE_PATH = _resolve_local_path(self.PRESET_STORE_PATH)
         # JWT 密钥：优先环境变量，否则从 data 目录加载或首次生成并持久化
         if not self.JWT_SECRET_KEY:
-            env_key = os.environ.get("JWT_SECRET_KEY", "")
+            env_key = os.environ.get("JWT_SECRET_KEY", "") or os.environ.get("LEGAL_REDACTION_JWT_SECRET", "")
             if env_key:
                 self.JWT_SECRET_KEY = env_key
             else:
@@ -124,7 +225,7 @@ class Settings(BaseSettings):
         return self
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(BACKEND_DIR / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
     )

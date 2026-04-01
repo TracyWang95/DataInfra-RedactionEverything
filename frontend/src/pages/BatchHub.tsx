@@ -1,17 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { t } from '../i18n';
 import { createJob, listJobs, type JobSummary, type JobTypeApi } from '../services/jobsApi';
 import { resolveJobPrimaryNavigation } from '../utils/jobPrimaryNavigation';
 import { formatAggregateJobStatus } from '../utils/jobStatusLabels';
+import { EmptyState } from '../components/EmptyState';
 
-function batchPath(jobType: JobTypeApi): string {
-  if (jobType === 'image_batch') return '/batch/image';
-  if (jobType === 'smart_batch') return '/batch/smart';
-  return '/batch/text';
+function batchPath(_jobType: JobTypeApi): string {
+  // 统一走 smart 模式，旧 text_batch / image_batch 兼容路由
+  return '/batch/smart';
 }
 
 function isActiveJob(status: string): boolean {
-  return ['draft', 'queued', 'running', 'awaiting_review', 'redacting'].includes(status);
+  return ['draft', 'queued', 'processing', 'running', 'awaiting_review', 'redacting'].includes(status);
 }
 
 export const BatchHub: React.FC = () => {
@@ -58,12 +59,12 @@ export const BatchHub: React.FC = () => {
     try {
       const j = await createJob({
         job_type: jobType,
-        title: `批量任务 ${new Date().toLocaleString()}`,
+        title: t('batchHub.batchTaskTitle').replace('{time}', new Date().toLocaleString()),
         config: {},
       });
-      nav(`${batchPath(jobType)}?jobId=${encodeURIComponent(j.id)}&step=1`);
+      nav(`${batchPath(jobType)}?jobId=${encodeURIComponent(j.id)}&step=1&new=1`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '创建失败');
+      setErr(e instanceof Error ? e.message : t('batchHub.createFailed'));
     } finally {
       setBusy(false);
     }
@@ -87,46 +88,46 @@ export const BatchHub: React.FC = () => {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-[#fafafa] px-3 py-4 sm:px-6 overflow-y-auto">
+    <div className="h-full min-h-0 flex flex-col bg-[#fafafa] dark:bg-gray-900 px-3 py-4 sm:px-6 overflow-y-auto">
       <div className="max-w-3xl mx-auto w-full space-y-4">
         <div>
-          <h2 className="text-lg font-semibold text-[#1d1d1f]">开始或恢复批量任务</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            先创建任务工单，再进入配置、上传、识别和审阅。最近活跃任务可以直接继续，不必重新创建。
+          <h2 className="text-lg font-semibold text-[#1d1d1f] dark:text-gray-100">{t('batchHub.title')}</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            {t('batchHub.desc')}
           </p>
         </div>
-        {err && <div className="rounded-lg border border-red-200 bg-red-50 text-red-900 text-sm px-3 py-2">{err}</div>}
+        {err && <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 text-red-900 dark:text-red-300 text-sm px-3 py-2">{err}</div>}
 
         <div className="grid gap-3">
           <button
             type="button"
             disabled={busy}
             onClick={() => void start('smart_batch')}
-            className="text-left rounded-xl border border-black/[0.08] bg-white p-5 shadow-sm hover:border-[#1d1d1f]/20 transition-colors disabled:opacity-50"
+            className="text-left rounded-xl border border-black/[0.08] dark:border-gray-700 bg-white dark:bg-gray-800 p-5 shadow-sm dark:shadow-gray-900/30 hover:border-[#1d1d1f]/20 dark:hover:border-gray-500 transition-colors disabled:opacity-50"
           >
-            <div className="text-sm font-semibold text-[#1d1d1f]">新建批量任务</div>
-            <p className="text-2xs text-gray-500 mt-1">
-              支持 Word / PDF / 图片混合上传，系统自动识别文件类型并选择最佳处理方式。
+            <div className="text-sm font-semibold text-[#1d1d1f] dark:text-gray-100">{t('batchHub.newTask')}</div>
+            <p className="text-2xs text-gray-500 dark:text-gray-400 mt-1">
+              {t('batchHub.newTaskDesc')}
             </p>
           </button>
         </div>
 
-        <div className="rounded-2xl border border-black/[0.06] bg-white shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
+        <div className="rounded-2xl border border-black/[0.06] dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm dark:shadow-gray-900/30 overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between gap-2">
             <div>
-              <h3 className="text-sm font-semibold text-[#1d1d1f]">继续最近任务</h3>
-              <p className="text-2xs text-gray-500 mt-0.5">按任务状态跳转到配置、上传、监控或审阅。</p>
+              <h3 className="text-sm font-semibold text-[#1d1d1f] dark:text-gray-100">{t('batchHub.recentTitle')}</h3>
+              <p className="text-2xs text-gray-500 dark:text-gray-400 mt-0.5">{t('batchHub.recentDesc')}</p>
             </div>
             <Link to="/jobs" className="text-xs font-medium text-[#007AFF] hover:underline">
-              任务中心
+              {t('batchHub.jobCenter')}
             </Link>
           </div>
           {recentLoading ? (
-            <div className="px-4 py-6 text-sm text-gray-500">加载中...</div>
+            <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">{t('batchHub.loading')}</div>
           ) : recentByType.length === 0 ? (
-            <div className="px-4 py-6 text-sm text-gray-500">暂无可恢复的活跃任务。可以直接新建一个批量工单。</div>
+            <EmptyState title={t('emptyState.noActiveJobs')} description={t('emptyState.noActiveJobsDesc')} />
           ) : (
-            <ul className="divide-y divide-gray-100">
+            <ul className="divide-y divide-gray-100 dark:divide-gray-700">
               {recentByType.map(job => {
                 const primary = resolveJobPrimaryNavigation({
                   jobId: job.id,
@@ -141,15 +142,15 @@ export const BatchHub: React.FC = () => {
                   <li key={job.id} className="px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-2xs font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-700">
-                          {job.job_type === 'text_batch' ? '文本' : job.job_type === 'smart_batch' ? '智能' : '图像'}
+                        <span className="text-2xs font-semibold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                          {t('batchHub.batch')}
                         </span>
-                        <span className="text-sm font-medium text-[#1d1d1f] truncate">{job.title || '未命名任务'}</span>
-                        <span className="text-2xs text-gray-500">{formatAggregateJobStatus(job.status)}</span>
+                        <span className="text-sm font-medium text-[#1d1d1f] dark:text-gray-100 truncate">{job.title || t('batchHub.unnamedTask')}</span>
+                        <span className="text-2xs text-gray-500 dark:text-gray-400">{formatAggregateJobStatus(job.status)}</span>
                       </div>
-                      <div className="text-2xs text-gray-500 mt-1 tabular-nums">
-                        共 {job.progress.total_items} 项 · 待审 {job.progress.awaiting_review} · 已完成 {job.progress.completed}
-                        {job.progress.failed ? ` · 失败 ${job.progress.failed}` : ''}
+                      <div className="text-2xs text-gray-500 dark:text-gray-400 mt-1 tabular-nums">
+                        {t('batchHub.progressSummary').replace('{total}', String(job.progress.total_items)).replace('{awaiting}', String(job.progress.awaiting_review)).replace('{completed}', String(job.progress.completed))}
+                        {job.progress.failed ? t('batchHub.failedSuffix').replace('{n}', String(job.progress.failed)) : ''}
                       </div>
                     </div>
                     <div className="shrink-0 flex flex-wrap items-center gap-2 justify-end">
@@ -166,7 +167,7 @@ export const BatchHub: React.FC = () => {
                           to={`/jobs/${job.id}`}
                           className="text-sm font-medium text-[#007AFF] hover:underline"
                         >
-                          查看详情
+                          {t('batchHub.viewDetail')}
                         </Link>
                       )}
                     </div>
@@ -177,14 +178,14 @@ export const BatchHub: React.FC = () => {
           )}
         </div>
 
-        <p className="text-2xs text-gray-400">
-          {busy ? '正在创建…' : ' '}
+        <p className="text-2xs text-gray-400 dark:text-gray-500">
+          {busy ? t('batchHub.creating') : ' '}
           <Link to="/jobs" className="text-[#007AFF] hover:underline ml-2">
-            任务中心
+            {t('batchHub.jobCenter')}
           </Link>
           <span className="mx-1">·</span>
           <Link to="/history" className="text-[#007AFF] hover:underline">
-            处理历史
+            {t('batchHub.history')}
           </Link>
         </p>
       </div>

@@ -1,3 +1,15 @@
+/**
+ * 拆分后的 Zustand 状态管理
+ *
+ * 将原 monolithic store 拆为 4 个领域 store：
+ * - useFileStore:       文件信息、内容、页面
+ * - useEntityStore:     实体列表、边界框、选择操作
+ * - useRedactionStore:  脱敏配置、结果、对比数据
+ * - useUIStore:         加载状态、错误、阶段
+ *
+ * 同时保留原有的 selector hooks 以保持向后兼容。
+ */
+
 import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -14,21 +26,31 @@ import type {
   AppStage,
 } from '../types';
 
-interface RedactionState {
-  // 当前阶段
-  stage: AppStage;
-  setStage: (stage: AppStage) => void;
-
-  // 文件信息
+// ============================================================
+// 1. File Store
+// ============================================================
+interface FileState {
   fileInfo: FileInfo | null;
   setFileInfo: (info: FileInfo | null) => void;
-
-  // 文件内容
   content: string;
   pages: string[];
   setContent: (content: string, pages: string[]) => void;
+  resetFile: () => void;
+}
 
-  // 实体列表
+export const useFileStore = create<FileState>((set) => ({
+  fileInfo: null,
+  setFileInfo: (fileInfo) => set({ fileInfo }),
+  content: '',
+  pages: [],
+  setContent: (content, pages) => set({ content, pages }),
+  resetFile: () => set({ fileInfo: null, content: '', pages: [] }),
+}));
+
+// ============================================================
+// 2. Entity Store
+// ============================================================
+interface EntityState {
   entities: Entity[];
   setEntities: (entities: Entity[]) => void;
   updateEntity: (id: string, updates: Partial<Entity>) => void;
@@ -36,67 +58,13 @@ interface RedactionState {
   selectAllEntities: () => void;
   deselectAllEntities: () => void;
   addManualEntity: (entity: Omit<Entity, 'id'>) => void;
-
-  // 图片边界框
   boundingBoxes: BoundingBox[];
   setBoundingBoxes: (boxes: BoundingBox[]) => void;
   toggleBoxSelection: (id: string) => void;
-
-  // 脱敏配置
-  config: RedactionConfig;
-  setConfig: (config: Partial<RedactionConfig>) => void;
-  toggleEntityType: (type: EntityType) => void;
-  setReplacementMode: (mode: ReplacementMode) => void;
-
-  // 脱敏结果
-  redactionResult: RedactionResult | null;
-  setRedactionResult: (result: RedactionResult | null) => void;
-
-  // 对比数据
-  compareData: CompareData | null;
-  setCompareData: (data: CompareData | null) => void;
-
-  // 加载状态
-  isLoading: boolean;
-  setIsLoading: (loading: boolean) => void;
-  loadingMessage: string;
-  setLoadingMessage: (message: string) => void;
-
-  // 错误状态
-  error: string | null;
-  setError: (error: string | null) => void;
-
-  // 重置状态
-  reset: () => void;
+  resetEntities: () => void;
 }
 
-const initialConfig: RedactionConfig = {
-  replacement_mode: ReplacementMode.SMART,
-  entity_types: [
-    EntityType.PERSON,
-    EntityType.PHONE,
-    EntityType.ID_CARD,
-    EntityType.BANK_CARD,
-    EntityType.CASE_NUMBER,
-  ],
-  custom_replacements: {},
-};
-
-export const useRedactionStore = create<RedactionState>((set) => ({
-  // 当前阶段
-  stage: 'upload',
-  setStage: (stage) => set({ stage }),
-
-  // 文件信息
-  fileInfo: null,
-  setFileInfo: (fileInfo) => set({ fileInfo }),
-
-  // 文件内容
-  content: '',
-  pages: [],
-  setContent: (content, pages) => set({ content, pages }),
-
-  // 实体列表
+export const useEntityStore = create<EntityState>((set) => ({
   entities: [],
   setEntities: (entities) => set({ entities }),
   updateEntity: (id, updates) =>
@@ -123,14 +91,9 @@ export const useRedactionStore = create<RedactionState>((set) => ({
     set((state) => ({
       entities: [
         ...state.entities,
-        {
-          ...entity,
-          id: `manual_${Date.now()}`,
-        },
+        { ...entity, id: `manual_${Date.now()}` },
       ],
     })),
-
-  // 图片边界框
   boundingBoxes: [],
   setBoundingBoxes: (boundingBoxes) => set({ boundingBoxes }),
   toggleBoxSelection: (id) =>
@@ -139,86 +102,162 @@ export const useRedactionStore = create<RedactionState>((set) => ({
         b.id === id ? { ...b, selected: !b.selected } : b
       ),
     })),
+  resetEntities: () => set({ entities: [], boundingBoxes: [] }),
+}));
 
-  // 脱敏配置
+// ============================================================
+// 3. Redaction Config & Result Store
+// ============================================================
+const initialConfig: RedactionConfig = {
+  replacement_mode: ReplacementMode.SMART,
+  entity_types: [
+    EntityType.PERSON,
+    EntityType.PHONE,
+    EntityType.ID_CARD,
+    EntityType.BANK_CARD,
+    EntityType.CASE_NUMBER,
+  ],
+  custom_replacements: {},
+};
+
+interface RedactionState {
+  config: RedactionConfig;
+  setConfig: (config: Partial<RedactionConfig>) => void;
+  toggleEntityType: (type: EntityType) => void;
+  setReplacementMode: (mode: ReplacementMode) => void;
+  redactionResult: RedactionResult | null;
+  setRedactionResult: (result: RedactionResult | null) => void;
+  compareData: CompareData | null;
+  setCompareData: (data: CompareData | null) => void;
+  resetRedaction: () => void;
+}
+
+export const useRedactionConfigStore = create<RedactionState>((set) => ({
   config: initialConfig,
   setConfig: (config) =>
-    set((state) => ({
-      config: { ...state.config, ...config },
-    })),
+    set((state) => ({ config: { ...state.config, ...config } })),
   toggleEntityType: (type) =>
     set((state) => {
       const types = state.config.entity_types;
       const newTypes = types.includes(type)
         ? types.filter((t) => t !== type)
         : [...types, type];
-      return {
-        config: { ...state.config, entity_types: newTypes },
-      };
+      return { config: { ...state.config, entity_types: newTypes } };
     }),
   setReplacementMode: (mode) =>
-    set((state) => ({
-      config: { ...state.config, replacement_mode: mode },
-    })),
-
-  // 脱敏结果
+    set((state) => ({ config: { ...state.config, replacement_mode: mode } })),
   redactionResult: null,
   setRedactionResult: (redactionResult) => set({ redactionResult }),
-
-  // 对比数据
   compareData: null,
   setCompareData: (compareData) => set({ compareData }),
+  resetRedaction: () =>
+    set({ config: initialConfig, redactionResult: null, compareData: null }),
+}));
 
-  // 加载状态
+// ============================================================
+// 4. UI Store
+// ============================================================
+interface UIState {
+  stage: AppStage;
+  setStage: (stage: AppStage) => void;
+  isLoading: boolean;
+  setIsLoading: (loading: boolean) => void;
+  loadingMessage: string;
+  setLoadingMessage: (message: string) => void;
+  error: string | null;
+  setError: (error: string | null) => void;
+  resetUI: () => void;
+}
+
+export const useUIStore = create<UIState>((set) => ({
+  stage: 'upload',
+  setStage: (stage) => set({ stage }),
   isLoading: false,
   setIsLoading: (isLoading) => set({ isLoading }),
   loadingMessage: '',
   setLoadingMessage: (loadingMessage) => set({ loadingMessage }),
-
-  // 错误状态
   error: null,
   setError: (error) => set({ error }),
-
-  // 重置状态
-  reset: () =>
-    set({
-      stage: 'upload',
-      fileInfo: null,
-      content: '',
-      pages: [],
-      entities: [],
-      boundingBoxes: [],
-      config: initialConfig,
-      redactionResult: null,
-      compareData: null,
-      isLoading: false,
-      loadingMessage: '',
-      error: null,
-    }),
+  resetUI: () =>
+    set({ stage: 'upload', isLoading: false, loadingMessage: '', error: null }),
 }));
 
-// 自定义 Hook：获取选中的实体
+// ============================================================
+// 兼容层：保留原有的 useRedactionStore 接口
+// ============================================================
+
+/**
+ * Reset all sub-stores. Can be called outside of React components.
+ */
+export function resetAllStores() {
+  useFileStore.getState().resetFile();
+  useEntityStore.getState().resetEntities();
+  useRedactionConfigStore.getState().resetRedaction();
+  useUIStore.getState().resetUI();
+}
+
+/**
+ * React hook that returns a reset callback (composes sub-store resets).
+ */
+export const useResetAllStores = () => {
+  const resetFile = useFileStore((s) => s.resetFile);
+  const resetEntities = useEntityStore((s) => s.resetEntities);
+  const resetRedaction = useRedactionConfigStore((s) => s.resetRedaction);
+  const resetUI = useUIStore((s) => s.resetUI);
+  return () => {
+    resetFile();
+    resetEntities();
+    resetRedaction();
+    resetUI();
+  };
+};
+
+/**
+ * Legacy compatibility facade -- delegates entirely to sub-stores.
+ * No local state duplication. Prefer using sub-stores directly.
+ */
+export function useRedactionStore() {
+  const file = useFileStore();
+  const entity = useEntityStore();
+  const redaction = useRedactionConfigStore();
+  const ui = useUIStore();
+
+  return {
+    ...file,
+    ...entity,
+    ...redaction,
+    ...ui,
+    reset: () => {
+      file.resetFile();
+      entity.resetEntities();
+      redaction.resetRedaction();
+      ui.resetUI();
+    },
+  };
+}
+
+// ============================================================
+// Selector Hooks（保持原有 API 不变）
+// ============================================================
 export const useSelectedEntities = () => {
-  return useRedactionStore((state) =>
-    state.entities.filter((e) => e.selected)
+  return useEntityStore((state) => state.entities.filter((e) => e.selected));
+};
+
+export const useEntitiesByType = () => {
+  return useEntityStore(
+    useShallow((state) => {
+      const grouped: Record<string, Entity[]> = {};
+      state.entities.forEach((entity) => {
+        if (!grouped[entity.type]) grouped[entity.type] = [];
+        grouped[entity.type].push(entity);
+      });
+      return grouped;
+    })
   );
 };
 
-// 自定义 Hook：按类型分组的实体（使用 useShallow 避免不必要的重渲染）
-export const useEntitiesByType = () => {
-  return useRedactionStore(useShallow((state) => {
-    const grouped: Record<string, Entity[]> = {};
-    state.entities.forEach((entity) => {
-      if (!grouped[entity.type]) grouped[entity.type] = [];
-      grouped[entity.type].push(entity);
-    });
-    return grouped;
-  }));
-};
-
-// 自定义 Hook：实体统计
 export const useEntityStats = () => {
-  return useRedactionStore((state) => {
+  return useEntityStore((state) => {
     const total = state.entities.length;
     const selected = state.entities.filter((e) => e.selected).length;
     const byType: Record<string, number> = {};
@@ -229,21 +268,24 @@ export const useEntityStats = () => {
   });
 };
 
-// Fine-grained selector hooks to avoid unnecessary re-renders
-export const useFileInfo = () => useRedactionStore((s) => s.fileInfo);
-export const useSetFileInfo = () => useRedactionStore((s) => s.setFileInfo);
-export const useStage = () => useRedactionStore((s) => s.stage);
-export const useSetStage = () => useRedactionStore((s) => s.setStage);
-export const useEntities = () => useRedactionStore((s) => s.entities);
-export const useSetEntities = () => useRedactionStore((s) => s.setEntities);
-export const useBoundingBoxes = () => useRedactionStore((s) => s.boundingBoxes);
-export const useSetBoundingBoxes = () => useRedactionStore((s) => s.setBoundingBoxes);
-export const useRedactionConfig = () => useRedactionStore((s) => s.config);
-export const useSetConfig = () => useRedactionStore((s) => s.setConfig);
-export const useRedactionResult = () => useRedactionStore((s) => s.redactionResult);
-export const useCompareData = () => useRedactionStore((s) => s.compareData);
-export const useIsLoading = () => useRedactionStore((s) => s.isLoading);
-export const useSetIsLoading = () => useRedactionStore((s) => s.setIsLoading);
-export const useLoadingMessage = () => useRedactionStore((s) => s.loadingMessage);
-export const useAppError = () => useRedactionStore((s) => s.error);
-export const useResetStore = () => useRedactionStore((s) => s.reset);
+// Fine-grained selector hooks
+export const useFileInfo = () => useFileStore((s) => s.fileInfo);
+export const useSetFileInfo = () => useFileStore((s) => s.setFileInfo);
+export const useStage = () => useUIStore((s) => s.stage);
+export const useSetStage = () => useUIStore((s) => s.setStage);
+export const useEntities = () => useEntityStore((s) => s.entities);
+export const useSetEntities = () => useEntityStore((s) => s.setEntities);
+export const useBoundingBoxes = () => useEntityStore((s) => s.boundingBoxes);
+export const useSetBoundingBoxes = () => useEntityStore((s) => s.setBoundingBoxes);
+export const useRedactionConfig = () => useRedactionConfigStore((s) => s.config);
+export const useSetConfig = () => useRedactionConfigStore((s) => s.setConfig);
+export const useRedactionResult = () => useRedactionConfigStore((s) => s.redactionResult);
+export const useCompareData = () => useRedactionConfigStore((s) => s.compareData);
+export const useIsLoading = () => useUIStore((s) => s.isLoading);
+export const useSetIsLoading = () => useUIStore((s) => s.setIsLoading);
+export const useLoadingMessage = () => useUIStore((s) => s.loadingMessage);
+export const useAppError = () => useUIStore((s) => s.error);
+export const useResetStore = () => {
+  const reset = useResetAllStores();
+  return reset;
+};
