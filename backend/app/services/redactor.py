@@ -758,14 +758,16 @@ class Redactor:
         
         # 统一转为字符串比较（兼容枚举和字符串）
         ft = str(file_type.value) if hasattr(file_type, 'value') else str(file_type)
-        # 防御：output 扩展名与 file_type 不匹配时报错（而非静默返回错误对比）
+        # 防御：output 扩展名与 file_type 不匹配时（旧脏数据），返回提示对比
         out_ext = os.path.splitext(redacted_path)[1].lower() if redacted_path else ""
         text_exts = {".docx", ".doc", ".txt", ".pdf"}
         if out_ext and out_ext not in text_exts and ft in ("docx", "doc", "txt", "pdf", "pdf_scanned"):
-            raise ValueError(
-                f"脱敏输出文件类型不匹配：file_type={ft} 但 output={out_ext}，"
-                f"请重新执行脱敏。(output_path={redacted_path})"
-            )
+            logger.warning("output ext %s mismatches file_type %s, returning placeholder compare", out_ext, ft)
+            return {
+                "original": file_info.get("content", "[原始文本不可用]"),
+                "redacted": f"[脱敏输出类型不匹配 ({out_ext})，请重新执行脱敏]",
+                "changes": [],
+            }
         is_docx = ft in ("docx", "doc")
         is_txt = ft == "txt"
         is_pdf = ft in ("pdf", "pdf_scanned")
