@@ -22,6 +22,11 @@
 | 🔄 **脱敏模式** | 智能替换 / 掩码 / 结构化替换 |
 | 📊 **对比与导出** | 脱敏前后对比预览、下载 |
 | 🧪 **测试用例** | `testdata/ce.png` |
+| 📦 **批量处理** | 智能批量向导（5 步：配置→上传→后台队列→逐份审核→ZIP 导出） |
+| 🔄 **后台队列** | 进程内 asyncio 队列，单 GPU 串行，支持断点恢复 |
+| 🖼️ **三列审阅** | 原图+标注 &#124; 脱敏预览 &#124; 检测区域列表（图文混合批量） |
+| 🌐 **国际化** | 中/英双语（i18n），暗色模式 |
+| 🧪 **E2E 测试** | 76 项 Playwright 测试（含全链路 5 步 + GPU 显存监控） |
 
 ---
 
@@ -467,6 +472,16 @@ Windows PowerShell：
 详见：`tests/smoke_test.md`
 
 测试用例：`testdata/ce.png`
+
+### E2E 自动化测试（Playwright）
+
+```bash
+cd frontend
+npm run test:e2e                                    # 自动启动前端
+PLAYWRIGHT_SKIP_WEBSERVER=1 npm run test:e2e        # 已有前端时
+```
+
+覆盖 76 项测试：导航、API 健康、Playground 单文件流程、批量全链路（配置→上传→队列→审核→导出）、多任务排队、GPU 显存监控、历史对比、设置页面等。
 
 ---
 
