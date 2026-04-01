@@ -346,20 +346,25 @@ class SimpleTaskQueue:
             return
 
         sts = [i["status"] for i in items]
+        active = {JobItemStatus.PENDING.value, JobItemStatus.PROCESSING.value}
         terminal = {JobItemStatus.AWAITING_REVIEW.value, JobItemStatus.COMPLETED.value, JobItemStatus.FAILED.value}
         try:
-            if all(s == JobItemStatus.COMPLETED.value for s in sts):
+            if any(s in active for s in sts):
+                # 还有 item 在跑或排队 — job 保持活跃状态
+                if any(s == JobItemStatus.PROCESSING.value for s in sts):
+                    self._try_update_job_status(store, job_id, JobStatus.PROCESSING)
+                else:
+                    self._try_update_job_status(store, job_id, JobStatus.QUEUED)
+            elif all(s == JobItemStatus.COMPLETED.value for s in sts):
                 self._try_update_job_status(store, job_id, JobStatus.COMPLETED)
             elif all(s == JobItemStatus.FAILED.value for s in sts):
-                # 全部失败 → job 标为 FAILED
                 self._try_update_job_status(store, job_id, JobStatus.FAILED)
-            elif any(s == JobItemStatus.PROCESSING.value for s in sts):
-                self._try_update_job_status(store, job_id, JobStatus.PROCESSING)
             elif all(s in terminal for s in sts):
-                # 混合终态（有成功有失败有待审）→ AWAITING_REVIEW
-                self._try_update_job_status(store, job_id, JobStatus.AWAITING_REVIEW)
-            elif any(s == JobItemStatus.PENDING.value for s in sts):
-                self._try_update_job_status(store, job_id, JobStatus.QUEUED)
+                # 混合终态：有待审 → AWAITING_REVIEW，否则 COMPLETED（含部分失败）
+                if any(s == JobItemStatus.AWAITING_REVIEW.value for s in sts):
+                    self._try_update_job_status(store, job_id, JobStatus.AWAITING_REVIEW)
+                else:
+                    self._try_update_job_status(store, job_id, JobStatus.COMPLETED)
         except Exception:
             log.warning("_refresh_job_status failed for job %s", job_id[:8], exc_info=True)
 

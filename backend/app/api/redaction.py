@@ -32,7 +32,7 @@ from app.models.schemas import (
 from app.services.redactor import Redactor, build_preview_entity_map
 from app.services.vision_service import VisionService
 from app.core.persistence import to_jsonable
-from app.api.files import _file_store_lock, file_store, persist_file_store
+from app.api.files import _file_store_lock, file_store
 
 router = APIRouter()
 
@@ -55,12 +55,15 @@ async def execute_redaction(
     - 文本类文档: 替换敏感文本
     - 图片类文档: 添加黑色遮罩
     """
+    import time as _time
+    _t0 = _time.perf_counter()
+
     cached = check_idempotency(x_idempotency_key)
     if cached is not None:
         return cached
 
     file_id = request.file_id
-    
+
     if file_id not in file_store:
         raise HTTPException(status_code=404, detail="文件不存在")
     
@@ -76,27 +79,32 @@ async def execute_redaction(
     
     # 更新文件存储：脱敏条数 + 本次实际提交的实体/框（识别阶段可能未写入 file_store，导致历史一直为 0）
     async with _file_store_lock:
-        file_store[file_id]["output_path"] = result.get("output_path")
-        file_store[file_id]["entity_map"] = result.get("entity_map", {})
-        file_store[file_id]["redacted_count"] = int(result.get("redacted_count", 0))
-        if request.bounding_boxes:
-            file_store[file_id]["bounding_boxes"] = {1: to_jsonable(request.bounding_boxes)}
-        if request.entities:
-            file_store[file_id]["entities"] = to_jsonable(request.entities)
-        # 版本历史追踪
-        version_entry = {
-            "version": len(file_store[file_id].get("redaction_history", [])) + 1,
-            "output_file_id": result["output_file_id"],
-            "output_path": result.get("output_path"),
-            "redacted_count": result["redacted_count"],
-            "entity_map": result.get("entity_map", {}),
-            "mode": request.config.replacement_mode.value if hasattr(request.config.replacement_mode, 'value') else str(request.config.replacement_mode),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        if "redaction_history" not in file_store[file_id]:
-            file_store[file_id]["redaction_history"] = []
-        file_store[file_id]["redaction_history"].append(version_entry)
-        persist_file_store()
+        info = file_store.get(file_id)
+        if info is None:
+            # 文件已被删除，不复活记录
+            logger.warning("file %s was deleted during redaction, skipping store update", file_id)
+        else:
+            info["output_path"] = result.get("output_path")
+            info["entity_map"] = result.get("entity_map", {})
+            info["redacted_count"] = int(result.get("redacted_count", 0))
+            if request.bounding_boxes:
+                info["bounding_boxes"] = {1: to_jsonable(request.bounding_boxes)}
+            if request.entities:
+                info["entities"] = to_jsonable(request.entities)
+            # 版本历史追踪
+            version_entry = {
+                "version": len(info.get("redaction_history", [])) + 1,
+                "output_file_id": result["output_file_id"],
+                "output_path": result.get("output_path"),
+                "redacted_count": result["redacted_count"],
+                "entity_map": result.get("entity_map", {}),
+                "mode": request.config.replacement_mode.value if hasattr(request.config.replacement_mode, 'value') else str(request.config.replacement_mode),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if "redaction_history" not in info:
+                info["redaction_history"] = []
+            info["redaction_history"].append(version_entry)
+            file_store.set(file_id, info)
     audit_log("redact", "file", file_id, detail={"mode": request.config.replacement_mode})
 
     response = RedactionResult(
@@ -105,8 +113,17 @@ async def execute_redaction(
         redacted_count=result["redacted_count"],
         entity_map=result.get("entity_map", {}),
         download_url=f"/api/v1/files/{file_id}/download?redacted=true",
+        output_path=result.get("output_path"),
     )
     save_idempotency(x_idempotency_key, response)
+
+    # Prometheus: 脱敏延迟 + 计数
+    from app.core.metrics import REDACTION_DURATION, REDACTION_COUNT
+    ft = (file_store.get(file_id) or {}).get("file_type", "unknown")
+    REDACTION_DURATION.labels(file_type=str(ft)).observe(_time.perf_counter() - _t0)
+    mode_val = request.config.replacement_mode.value if hasattr(request.config.replacement_mode, 'value') else str(request.config.replacement_mode)
+    REDACTION_COUNT.labels(replacement_mode=mode_val).inc()
+
     return response
 
 
@@ -190,14 +207,16 @@ async def detect_sensitive_regions(
     
     并行：OCR + HaS（文字）与 HaS Image（8081 YOLO，21 类隐私区域），合并去重。
     """
-    if file_id not in file_store:
-        raise HTTPException(status_code=404, detail="文件不存在")
-    
-    file_info = file_store[file_id]
-    
+    # Read snapshot under lock
+    async with _file_store_lock:
+        file_info = file_store.get(file_id)
+        if not file_info:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        snapshot = dict(file_info)
+
     # 获取两个 Pipeline 的类型配置
     from app.api.vision_pipeline import get_pipeline_types_for_mode, pipelines_db
-    
+
     # 获取系统配置中启用的类型
     all_ocr_has_types = get_pipeline_types_for_mode("ocr_has")
     all_has_image_types = get_pipeline_types_for_mode("has_image")
@@ -240,22 +259,25 @@ async def detect_sensitive_regions(
     logger.info("OCR+HaS selected: %s", [t.id for t in ocr_has_types] if ocr_has_types else [])
     logger.info("HaS Image selected: %s", [t.id for t in has_image_types] if has_image_types else [])
 
+    # Long-running vision detection outside lock
     vision_service = VisionService()
     bounding_boxes, result_image = await vision_service.detect_with_dual_pipeline(
-        file_path=file_info["file_path"],
-        file_type=file_info["file_type"],
+        file_path=snapshot["file_path"],
+        file_type=snapshot["file_type"],
         page=page,
         ocr_has_types=ocr_has_types if ocr_has_enabled else None,
         has_image_types=has_image_types if has_image_enabled else None,
     )
-    
-    # 存储识别结果
+
+    # Write back under lock
     async with _file_store_lock:
-        if "bounding_boxes" not in file_store[file_id]:
-            file_store[file_id]["bounding_boxes"] = {}
-        file_store[file_id]["bounding_boxes"][page] = bounding_boxes
-        persist_file_store()
-    
+        if file_id in file_store:
+            info = file_store.get(file_id)
+            if "bounding_boxes" not in info:
+                info["bounding_boxes"] = {}
+            info["bounding_boxes"][page] = bounding_boxes
+            file_store.set(file_id, info)
+
     return VisionResult(
         file_id=file_id,
         page=page,

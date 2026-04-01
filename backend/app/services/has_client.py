@@ -22,6 +22,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
 from app.core.retry import retry_sync, RETRYABLE_HTTPX
+from app.core.circuit_breaker import ner_breaker
 
 
 @dataclass
@@ -52,14 +53,20 @@ class HaSClient:
     ]
     
     def __init__(
-        self, 
+        self,
         base_url: str = None,
         timeout: float = None
     ):
         from app.core.config import settings
         self._base_url_override = base_url.rstrip("/") if base_url else None
         self.timeout = httpx.Timeout(timeout or settings.HAS_TIMEOUT)
-        self._history_mapping: Dict[str, List[str]] = {}  # 历史映射记录
+        # 复用 httpx 连接池，避免每次请求创建新连接
+        self._http_client = httpx.Client(timeout=self.timeout, trust_env=False)
+        # 注意：_history_mapping 不再作为实例级共享状态
+        # 每次 hide() 调用应显式传入或创建新的 mapping，避免并发请求互相污染
+        import threading
+        self._history_lock = threading.Lock()
+        self._history_mapping: Dict[str, List[str]] = {}  # 仅用于单请求内的映射
 
     def _effective_base_url(self) -> str:
         from app.core.config import get_has_chat_base_url
@@ -68,11 +75,12 @@ class HaSClient:
         return get_has_chat_base_url().rstrip("/")
     
     def _do_chat_request(self, base: str, payload: Dict[str, Any]) -> httpx.Response:
-        """Execute a single chat completions HTTP request (retryable)."""
-        with httpx.Client(timeout=self.timeout, trust_env=False) as client:
-            resp = client.post(f"{base}/chat/completions", json=payload)
+        """Execute a single chat completions HTTP request (retryable, uses pooled client)."""
+        def _request():
+            resp = self._http_client.post(f"{base}/chat/completions", json=payload)
             resp.raise_for_status()
             return resp
+        return ner_breaker.call_sync(_request)
 
     def _call_model(self, messages: List[Dict]) -> str:
         """调用 OpenAI 兼容接口（llama.cpp HaS 或 Ollama）。"""
@@ -87,11 +95,23 @@ class HaSClient:
             max_retries=2, base_delay=1.0,
             retryable_exceptions=RETRYABLE_HTTPX,
         )
-        return response.json()["choices"][0]["message"]["content"]
+        data = response.json()
+        # 安全访问嵌套结构，避免 KeyError/IndexError
+        choices = data.get("choices")
+        if not choices or not isinstance(choices, list) or len(choices) == 0:
+            logger.error("HaS 模型返回无 choices: %.200s", str(data))
+            return ""
+        message = choices[0].get("message", {})
+        return message.get("content", "")
     
     def reset_history(self):
         """重置历史映射"""
-        self._history_mapping = {}
+        with self._history_lock:
+            self._history_mapping = {}
+
+    def create_session_mapping(self) -> Dict[str, List[str]]:
+        """创建一个独立的会话映射（用于并发安全的批处理）"""
+        return {}
     
     def ner(
         self, 
@@ -127,15 +147,21 @@ Specified types:{types_str}
             response = self._call_model(messages)
             # 解析JSON响应
             result = json.loads(response)
+            if not isinstance(result, dict):
+                logger.warning("HaS NER 返回非字典类型: %s", type(result).__name__)
+                return {}
             return result
         except json.JSONDecodeError:
             # 尝试从响应中提取JSON
             match = re.search(r'\{.*\}', response, re.DOTALL)
             if match:
                 try:
-                    return json.loads(match.group())
-                except:
+                    parsed = json.loads(match.group())
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
                     pass
+            logger.warning("HaS NER 响应无法解析为 JSON: %.200s", response)
             return {}
         except Exception as e:
             logger.error("HaS NER 失败: %s", e)
@@ -177,9 +203,12 @@ Specified types:{types_str}
 Specified types:{types_str}
 <text>{text}</text>"""
         
-        if use_history and self._history_mapping:
+        # 使用线程锁安全读取历史映射
+        with self._history_lock:
+            history_snapshot = dict(self._history_mapping) if use_history else {}
+        if use_history and history_snapshot:
             # 带历史映射
-            history_json = json.dumps(self._history_mapping, ensure_ascii=False)
+            history_json = json.dumps(history_snapshot, ensure_ascii=False)
             messages = [
                 {
                     "role": "user",
@@ -217,13 +246,14 @@ Specified types:{types_str}
             # Step 3: 提取映射
             mapping = self.pair(text, masked_text)
             
-            # 更新历史映射
-            for tag, values in mapping.items():
-                if tag not in self._history_mapping:
-                    self._history_mapping[tag] = []
-                for v in values:
-                    if v not in self._history_mapping[tag]:
-                        self._history_mapping[tag].append(v)
+            # 线程安全更新历史映射
+            with self._history_lock:
+                for tag, values in mapping.items():
+                    if tag not in self._history_mapping:
+                        self._history_mapping[tag] = []
+                    for v in values:
+                        if v not in self._history_mapping[tag]:
+                            self._history_mapping[tag].append(v)
             
             return masked_text, mapping
             
@@ -260,7 +290,7 @@ Extract the mapping from anonymized entities to original entities."""
             if match:
                 try:
                     return json.loads(match.group())
-                except:
+                except (json.JSONDecodeError, ValueError):
                     pass
             return {}
         except Exception as e:
@@ -341,34 +371,18 @@ Restore the original text based on the above mapping:
         return entities
     
     def _map_type_to_english(self, chinese_type: str) -> str:
-        """中文类型映射到英文"""
-        mapping = {
-            "人名": "PERSON",
-            "组织": "ORG",
-            "地址": "ADDRESS",
-            "职务": "TITLE",
-            "联系方式": "PHONE",
-            "身份证号": "ID_CARD",
-            "银行卡号": "BANK_CARD",
-            "案件编号": "CASE_NUMBER",
-            "金额": "MONEY",
-            "日期": "DATE",
-            "合同编号": "CONTRACT_NO",
-            "邮箱": "EMAIL",
-            "文件": "DOCUMENT",
-            "账号": "ACCOUNT",
-            "密码": "PASSWORD",
-        }
-        return mapping.get(chinese_type, chinese_type.upper())
+        """中文类型映射到英文（使用统一数据源）"""
+        from app.models.type_mapping import cn_to_id
+        return cn_to_id(chinese_type)
     
     def is_available(self) -> bool:
         """检查 NER 后端是否可用（llama.cpp /v1/models 或 Ollama /api/tags）。"""
         from app.core.config import get_has_health_check_url
         url = get_has_health_check_url()
+        import httpx
         try:
-            with httpx.Client(timeout=5.0, trust_env=False) as client:
-                response = client.get(url)
-                return response.status_code == 200
+            response = httpx.get(url, timeout=5.0)
+            return response.status_code == 200
         except Exception:
             return False
 
