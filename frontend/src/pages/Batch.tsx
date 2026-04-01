@@ -2313,7 +2313,7 @@ export const Batch: React.FC = () => {
         /* 网络抖动不中断轮询 */
       }
     };
-    const timer = setInterval(poll, 3000);
+    const timer = setInterval(poll, 1000);
     poll(); // 立即执行一次
     return () => {
       cancelled = true;

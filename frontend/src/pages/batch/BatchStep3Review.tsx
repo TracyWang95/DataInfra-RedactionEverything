@@ -31,7 +31,7 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
     await submitQueueToWorker();
     // 不在 finally 里清 submitting — 让轮询接管后再由 hasStarted 的第二个条件维持
     // 延迟清除，确保第一次轮询已返回状态更新
-    setTimeout(() => setSubmitting(false), 5000);
+    setTimeout(() => setSubmitting(false), 2000);
   };
 
   // 进度文案
