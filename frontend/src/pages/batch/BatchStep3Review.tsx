@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import type { Step, BatchRow } from './batchTypes';
 import { ANALYZE_STATUS_LABEL, RECOGNITION_DONE_STATUSES } from './batchTypes';
 
@@ -19,29 +19,38 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
   submitQueueToWorker,
   requeueFailedItems,
 }) => {
-  // 直接从 rows 计算，不依赖外部 analyzeDoneCount
   const doneCount = rows.filter(r => RECOGNITION_DONE_STATUSES.has(r.analyzeStatus)).length;
   const allDone = rows.length > 0 && doneCount === rows.length;
+  // 记住"已提交过"，即使 submitting 结束也保持 true
+  const [everSubmitted, setEverSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // 点击提交后立即算"已开始"，不等轮询返回
-  const hasStarted = submitting || rows.some(r => r.analyzeStatus !== 'pending' && r.analyzeStatus !== 'failed');
+  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const isProcessing = everSubmitted && !allDone;
 
   const handleSubmit = async () => {
     setSubmitting(true);
+    setEverSubmitted(true);
     await submitQueueToWorker();
-    // 不在 finally 里清 submitting — 让轮询接管后再由 hasStarted 的第二个条件维持
-    // 延迟清除，确保第一次轮询已返回状态更新
-    setTimeout(() => setSubmitting(false), 2000);
+    // 延迟清 submitting，让第一次轮询有时间返回
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setSubmitting(false), 2000);
   };
 
   // 进度文案
   const progressLabel = allDone
     ? '✓ 全部完成'
-    : submitting && doneCount === 0
+    : submitting
       ? '正在启动批量任务…'
-      : hasStarted
+      : isProcessing
         ? `正在处理 ${doneCount}/${rows.length}…`
         : `${rows.length} 个文件待提交`;
+
+  // 进度百分比：处理中但还没有完成的给一个最小值，让进度条可见
+  const pct = rows.length > 0
+    ? Math.min(100, (doneCount / rows.length) * 100)
+    : 0;
+  const displayPct = isProcessing && pct === 0 ? 3 : pct; // 最小 3% 可见
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-4">
@@ -54,7 +63,7 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
       {rows.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs">
-            <span className={allDone ? 'text-green-600 font-medium' : 'text-gray-600'}>
+            <span className={allDone ? 'text-green-600 font-medium' : isProcessing ? 'text-blue-600' : 'text-gray-500'}>
               {progressLabel}
             </span>
             <span className="tabular-nums font-medium text-gray-800">
@@ -64,55 +73,44 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
           <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
             <div
               className={`h-full rounded-full transition-[width] duration-700 ease-out ${
-                allDone ? 'bg-green-500' : hasStarted ? 'bg-[#007AFF] animate-pulse' : 'bg-gray-300'
+                allDone
+                  ? 'bg-green-500'
+                  : isProcessing
+                    ? 'bg-[#007AFF] animate-pulse'
+                    : 'bg-gray-300'
               }`}
-              style={{
-                width: `${rows.length ? Math.min(100, (doneCount / rows.length) * 100) : 0}%`,
-              }}
+              style={{ width: `${displayPct}%` }}
             />
           </div>
         </div>
       )}
 
-      {/* 三个固定按钮：上一步 | 提交后台队列 | 下一步 */}
+      {/* 三个固定按钮 */}
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => goStep(2)}
-          className="px-4 py-2 text-sm border border-gray-200 rounded-lg bg-white"
-        >
+        <button type="button" onClick={() => goStep(2)}
+          className="px-4 py-2 text-sm border border-gray-200 rounded-lg bg-white">
           上一步
         </button>
 
-        <button
-          type="button"
-          onClick={() => void handleSubmit()}
-          disabled={!activeJobId || !rows.length || allDone || submitting}
-          className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-40"
-        >
-          {submitting ? '提交中…' : '提交后台队列'}
+        <button type="button" onClick={() => void handleSubmit()}
+          disabled={!activeJobId || !rows.length || allDone || isProcessing || submitting}
+          className="px-4 py-2 text-sm font-medium rounded-lg bg-[#1d1d1f] text-white disabled:opacity-40">
+          提交后台队列
         </button>
 
         {failedRows.length > 0 && (
-          <button
-            type="button"
-            onClick={() => void requeueFailedItems()}
-            className="px-4 py-2 text-sm font-medium rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50"
-          >
+          <button type="button" onClick={() => void requeueFailedItems()}
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50">
             重新处理失败项（{failedRows.length}）
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={() => goStep(4)}
-          disabled={!allDone}
+        <button type="button" onClick={() => goStep(4)} disabled={!allDone}
           className={`px-4 py-2 text-sm font-medium rounded-lg disabled:opacity-40 ${
             allDone
               ? 'bg-green-600 text-white hover:bg-green-700'
               : 'border border-gray-200 bg-white text-gray-400 cursor-not-allowed'
-          }`}
-        >
+          }`}>
           {allDone ? '下一步：进入核对 →' : `下一步（${doneCount}/${rows.length}）`}
         </button>
       </div>
