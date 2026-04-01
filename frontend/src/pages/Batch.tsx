@@ -3089,23 +3089,30 @@ export const Batch: React.FC = () => {
                   </div>
                 </div>
 
-                {/* ── 三列主体 ── */}
-                <div className="flex-1 min-h-0 flex gap-0 overflow-hidden">
-                  {/* 列 1：原图 + 标注框（~45%） */}
-                  <div className="flex-[45] min-w-0 min-h-0 border-r border-gray-100">
-                    <ImageBBoxEditor
-                      imageSrc={reviewOrigImageBlobUrl}
-                      boxes={reviewBoxes}
-                      onBoxesChange={setReviewBoxes}
-                      onBoxesCommit={handleReviewBoxesCommit}
-                      getTypeConfig={getVisionTypeMeta}
-                      availableTypes={pipelines.flatMap(p => p.types.filter(t => t.enabled))}
-                      defaultType="CUSTOM"
-                    />
+                {/* ── 三列主体（等宽） ── */}
+                <div className="flex-1 min-h-0 grid grid-cols-3 overflow-hidden">
+                  {/* 列 1：原图 + 标注框 */}
+                  <div className="min-w-0 min-h-0 border-r border-gray-100 relative">
+                    <div className="absolute inset-0">
+                      <ImageBBoxEditor
+                        imageSrc={reviewOrigImageBlobUrl}
+                        boxes={reviewBoxes}
+                        onBoxesChange={setReviewBoxes}
+                        onBoxesCommit={handleReviewBoxesCommit}
+                        getTypeConfig={getVisionTypeMeta}
+                        availableTypes={pipelines.flatMap(p => p.types.filter(t => t.enabled))}
+                        defaultType="CUSTOM"
+                        viewportTopSlot={
+                          <span className="text-2xs font-medium text-white bg-black/50 px-2 py-0.5 rounded backdrop-blur-sm">
+                            原图 + 标注
+                          </span>
+                        }
+                      />
+                    </div>
                   </div>
 
-                  {/* 列 2：脱敏后预览（~30%） */}
-                  <div className="flex-[30] min-w-0 min-h-0 border-r border-gray-100 flex flex-col bg-[#fafafa]">
+                  {/* 列 2：脱敏后预览 */}
+                  <div className="min-w-0 min-h-0 border-r border-gray-100 flex flex-col bg-[#fafafa]">
                     <div className="shrink-0 px-3 py-2 border-b border-gray-100 bg-white">
                       <p className="text-xs font-semibold text-gray-800">脱敏预览</p>
                       <p className="text-2xs text-gray-400">
@@ -3124,8 +3131,8 @@ export const Batch: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* 列 3：检测标签列表（~25%） */}
-                  <div className="flex-[25] min-w-0 min-h-0 flex flex-col bg-white">
+                  {/* 列 3：检测标签列表 */}
+                  <div className="min-w-0 min-h-0 flex flex-col bg-white">
                     <div className="shrink-0 px-3 py-2 border-b border-gray-100 flex items-center justify-between">
                       <span className="text-xs font-semibold text-gray-800">检测区域</span>
                       <span className="text-2xs text-gray-400 tabular-nums">{selectedReviewBoxCount}/{reviewBoxes.length}</span>
