@@ -3,10 +3,14 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Optional
+import logging
+from typing import Any
 
-from fastapi import HTTPException
+log = logging.getLogger("legal_redaction.job_runner")
+
+from fastapi import HTTPException  # caught from API-layer delegates
 
 from app.services.job_store import JobItemStatus, JobStatus, JobStore
 
@@ -52,13 +56,14 @@ def _walk_job_to(store: JobStore, job_id: str, target: JobStatus) -> None:
             return
         try:
             store.update_job_status(job_id, step)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("_walk_job_to: skip %s→%s for job %s: %s", current, step.value, job_id, e)
         if step == target:
             return
 
 
 def _refresh_job_status(store: JobStore, job_id: str) -> None:
+    """Sync job-level status from item statuses (high-water-mark: only walks forward)."""
     job = store.get_job(job_id)
     if not job or job["status"] == JobStatus.CANCELLED.value:
         return
@@ -66,44 +71,37 @@ def _refresh_job_status(store: JobStore, job_id: str) -> None:
     if not items:
         return
     sts = [i["status"] for i in items]
-    if all(s == JobItemStatus.COMPLETED.value for s in sts):
-        _walk_job_to(store, job_id, JobStatus.COMPLETED)
-    elif any(s == JobItemStatus.FAILED.value for s in sts):
-        store.update_job_status(job_id, JobStatus.FAILED)
-    elif any(s in ACTIVE_ITEM_STATUSES for s in sts):
-        _walk_job_to(store, job_id, JobStatus.RUNNING)
-    elif any(s == JobItemStatus.AWAITING_REVIEW.value for s in sts):
-        _walk_job_to(store, job_id, JobStatus.AWAITING_REVIEW)
-    elif any(s == JobItemStatus.REVIEW_APPROVED.value for s in sts):
-        _walk_job_to(store, job_id, JobStatus.REDACTING)
-    else:
-        _walk_job_to(store, job_id, JobStatus.RUNNING)
+    if not sts:
+        return
+    try:
+        if all(s == JobItemStatus.COMPLETED.value for s in sts):
+            _walk_job_to(store, job_id, JobStatus.COMPLETED)
+        elif all(s == JobItemStatus.CANCELLED.value for s in sts):
+            store.update_job_status(job_id, JobStatus.CANCELLED)
+        elif any(s in ACTIVE_ITEM_STATUSES for s in sts):
+            _walk_job_to(store, job_id, JobStatus.RUNNING)
+        elif any(s == JobItemStatus.AWAITING_REVIEW.value for s in sts):
+            _walk_job_to(store, job_id, JobStatus.AWAITING_REVIEW)
+        elif any(s == JobItemStatus.REVIEW_APPROVED.value for s in sts):
+            _walk_job_to(store, job_id, JobStatus.REDACTING)
+        elif any(s == JobItemStatus.FAILED.value for s in sts):
+            active = {JobItemStatus.PENDING.value, JobItemStatus.PROCESSING.value,
+                      JobItemStatus.QUEUED.value, JobItemStatus.PARSING.value,
+                      JobItemStatus.NER.value, JobItemStatus.VISION.value}
+            if any(s in active for s in sts):
+                # 还有 item 在跑，不标 FAILED
+                pass
+            elif all(s == JobItemStatus.FAILED.value for s in sts):
+                store.update_job_status(job_id, JobStatus.FAILED)
+            else:
+                # 混合终态（failed + completed/awaiting_review）
+                _walk_job_to(store, job_id, JobStatus.AWAITING_REVIEW)
+        else:
+            log.warning("_refresh_job_status: job %s has unhandled item statuses %s, not changing status", job_id, sts)
+    except Exception:
+        log.warning("_refresh_job_status: failed to update job %s status (items: %s)", job_id, sts, exc_info=True)
 
 
-def _pick_next_item(store: JobStore) -> Optional[tuple[dict[str, Any], dict[str, Any]]]:
-    jobs = store.list_schedulable_jobs()
-    jobs.sort(key=lambda j: -(j.get("priority", 0)))  # Higher priority first
-
-    def items_for_job(jid: str) -> list[dict[str, Any]]:
-        return store.list_items(jid)
-
-    for job in jobs:
-        st = job["status"]
-        if st in (JobStatus.DRAFT.value, JobStatus.CANCELLED.value, JobStatus.COMPLETED.value, JobStatus.FAILED.value):
-            continue
-        jid = job["id"]
-        for it in items_for_job(jid):
-            if it["status"] == JobItemStatus.QUEUED.value:
-                return job, it
-    for job in jobs:
-        st = job["status"]
-        if st in (JobStatus.DRAFT.value, JobStatus.CANCELLED.value, JobStatus.COMPLETED.value, JobStatus.FAILED.value):
-            continue
-        jid = job["id"]
-        for it in items_for_job(jid):
-            if it["status"] == JobItemStatus.REVIEW_APPROVED.value:
-                return job, it
-    return None
 
 
 def _job_config_dict(job_row: dict[str, Any]) -> dict[str, Any]:
@@ -111,6 +109,9 @@ def _job_config_dict(job_row: dict[str, Any]) -> dict[str, Any]:
         return json.loads(job_row.get("config_json") or "{}")
     except json.JSONDecodeError:
         return {}
+
+
+MAX_ITEM_RETRIES = 3
 
 
 async def _run_recognition(
@@ -124,34 +125,56 @@ async def _run_recognition(
     skip = bool(job_row.get("skip_item_review"))
     entity_type_ids = list(cfg.get("entity_type_ids") or [])
 
-    try:
-        store.update_item_status(item_id, JobItemStatus.PARSING)
-        store.update_job_status(job_row["id"], JobStatus.RUNNING)
-        await ports.parse_file(file_id)
+    for attempt in range(1, MAX_ITEM_RETRIES + 1):
+        try:
+            store.update_item_status(item_id, JobItemStatus.PARSING)
+            try:
+                store.update_job_status(job_row["id"], JobStatus.RUNNING)
+            except Exception:
+                log.debug("job %s already in non-DRAFT state, skip RUNNING transition", job_row["id"][:8])
+            log.info("[worker] item=%s file=%s → parse_file", item_id[:8], file_id[:8])
+            await ports.parse_file(file_id)
 
-        from app.api.files import file_store as fs
-        fi = fs.get(file_id) or {}
-        ft = str(fi.get("file_type", ""))
-        is_img = ft == "image" or bool(fi.get("is_scanned"))
-        if is_img:
-            store.update_item_status(item_id, JobItemStatus.VISION)
-            await ports.vision_pages(file_id, cfg)
-        else:
-            store.update_item_status(item_id, JobItemStatus.NER)
-            await ports.hybrid_ner(file_id, entity_type_ids)
+            from app.services.file_operations import get_file_info
+            fi = get_file_info(file_id) or {}
+            ft = str(fi.get("file_type", ""))
+            is_img = ft == "image" or bool(fi.get("is_scanned"))
+            log.info("[worker] item=%s file=%s → file_type=%s is_img=%s", item_id[:8], file_id[:8], ft, is_img)
+            if is_img:
+                store.update_item_status(item_id, JobItemStatus.VISION)
+                log.info("[worker] item=%s file=%s → vision_pages START", item_id[:8], file_id[:8])
+                await ports.vision_pages(file_id, cfg)
+            else:
+                store.update_item_status(item_id, JobItemStatus.NER)
+                await ports.hybrid_ner(file_id, entity_type_ids)
 
-        if skip:
-            store.update_item_status(item_id, JobItemStatus.REVIEW_APPROVED)
-            await _run_redaction(store, ports, job_row, item_id, file_id)
-        else:
-            store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW)
-    except HTTPException as e:
-        store.update_item_status(item_id, JobItemStatus.FAILED, str(e.detail))
-    except Exception as e:
-        store.update_item_status(item_id, JobItemStatus.FAILED, str(e))
-    finally:
-        store.touch_job_updated(job_row["id"])
-        _refresh_job_status(store, job_row["id"])
+            if skip:
+                store.update_item_status(item_id, JobItemStatus.REVIEW_APPROVED)
+                await _run_redaction(store, ports, job_row, item_id, file_id)
+            else:
+                store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW)
+            break  # success
+        except HTTPException as e:
+            err_msg = str(e.detail)[:500]
+            if attempt == MAX_ITEM_RETRIES:
+                log.exception("worker item failed (recognition): %s", err_msg)
+                store.update_item_status(item_id, JobItemStatus.FAILED, error_message=err_msg)
+            else:
+                delay = 2 ** (attempt - 1)
+                log.warning("Item %s attempt %d/%d failed: %s, retrying in %ds", item_id, attempt, MAX_ITEM_RETRIES, err_msg, delay)
+                await asyncio.sleep(delay)
+        except Exception as e:
+            err_msg = str(e)[:500]
+            if attempt == MAX_ITEM_RETRIES:
+                log.exception("worker item failed (recognition): %s", err_msg)
+                store.update_item_status(item_id, JobItemStatus.FAILED, error_message=err_msg)
+            else:
+                delay = 2 ** (attempt - 1)
+                log.warning("Item %s attempt %d/%d failed: %s, retrying in %ds", item_id, attempt, MAX_ITEM_RETRIES, err_msg, delay)
+                await asyncio.sleep(delay)
+
+    store.touch_job_updated(job_row["id"])
+    _refresh_job_status(store, job_row["id"])
 
 
 async def _run_redaction(
@@ -165,71 +188,59 @@ async def _run_redaction(
     try:
         store.update_item_status(item_id, JobItemStatus.REDACTING)
         await ports.execute_redaction(file_id, cfg)
+        # 验证脱敏产物：output_path 必须存在才标记完成
+        from app.services.file_operations import get_file_info as _get_fi
+        _fi = _get_fi(file_id) or {}
+        if not _fi.get("output_path"):
+            raise RuntimeError(f"redaction returned normally but output_path not set for {file_id}")
         store.update_item_status(item_id, JobItemStatus.COMPLETED)
     except HTTPException as e:
-        store.update_item_status(item_id, JobItemStatus.FAILED, str(e.detail))
+        err_msg = str(e.detail)[:500]
+        log.exception("worker item failed (redaction): %s", err_msg)
+        store.update_item_status(item_id, JobItemStatus.FAILED, error_message=err_msg)
     except Exception as e:
-        store.update_item_status(item_id, JobItemStatus.FAILED, str(e))
+        err_msg = str(e)[:500]
+        log.exception("worker item failed (redaction): %s", err_msg)
+        store.update_item_status(item_id, JobItemStatus.FAILED, error_message=err_msg)
     finally:
         store.touch_job_updated(job_row["id"])
         _refresh_job_status(store, job_row["id"])
 
 
-async def process_next_queue_item(
-    store: JobStore,
-    ports: Optional[JobRunnerPorts] = None,
-) -> bool:
-    """
-    处理队列中下一个 JobItem（单次调用最多推进一条 item 的一条主链路）。
-    返回是否发生了实际工作。
-    """
-    ports = ports or default_job_runner_ports()
-    picked = _pick_next_item(store)
-    if not picked:
-        return False
-    job_row, item_row = picked
-    item_id = item_row["id"]
-    file_id = item_row["file_id"]
-    if item_row["status"] == JobItemStatus.QUEUED.value:
-        await _run_recognition(store, ports, job_row, item_id, file_id)
-        return True
-    if item_row["status"] == JobItemStatus.REVIEW_APPROVED.value:
-        await _run_redaction(store, ports, job_row, item_id, file_id)
-        return True
-    return False
 
 
 class DefaultJobRunnerPorts(JobRunnerPorts):
-    async def parse_file(self, file_id: str) -> None:
-        from app.api.files import parse_file
+    """Default ports that delegate to the service layer (file_operations).
 
-        await parse_file(file_id)
+    All imports go through ``app.services.file_operations`` so that this
+    module never imports directly from ``app.api.*``.
+    """
+
+    async def parse_file(self, file_id: str) -> None:
+        from app.services.file_operations import parse_file as _parse
+        await _parse(file_id)
 
     async def hybrid_ner(self, file_id: str, entity_type_ids: list[str]) -> None:
-        from app.api.files import HybridNERRequest, hybrid_ner_extract
-
-        await hybrid_ner_extract(file_id, HybridNERRequest(entity_type_ids=entity_type_ids))
+        from app.services.file_operations import hybrid_ner as _ner
+        await _ner(file_id, entity_type_ids)
 
     async def vision_pages(self, file_id: str, job_config: dict[str, Any]) -> None:
-        from app.api.files import file_store as fs
-        from app.api.redaction import VisionDetectRequest, detect_sensitive_regions
+        from app.services.file_operations import get_file_info, vision_detect
 
         ocr_types = list(job_config.get("ocr_has_types") or job_config.get("selected_ocr_has_types") or [])
         has_img = list(job_config.get("has_image_types") or job_config.get("selected_has_image_types") or [])
-        fi = fs.get(file_id) or {}
+        fi = get_file_info(file_id) or {}
         pages = int(fi.get("page_count") or 1)
-        req = VisionDetectRequest(selected_ocr_has_types=ocr_types or None, selected_has_image_types=has_img or None)
         for p in range(1, max(1, pages) + 1):
-            await detect_sensitive_regions(file_id, p, req)
+            await vision_detect(file_id, p, ocr_types or None, has_img or None)
 
     async def execute_redaction(self, file_id: str, job_config: dict[str, Any]) -> None:
-        from app.api.redaction import execute_redaction
-        from app.api.files import file_store as fs
-        from app.models.schemas import BoundingBox, Entity, RedactionConfig, RedactionRequest, ReplacementMode
+        from app.services.file_operations import get_file_info, execute_redaction_request
+        from app.models.schemas import BoundingBox, Entity, RedactionConfig, ReplacementMode
 
-        fi = fs.get(file_id)
+        fi = get_file_info(file_id)
         if not fi:
-            raise HTTPException(status_code=404, detail="文件不存在")
+            raise RuntimeError(f"文件不存在: {file_id}")
         # 前端已执行脱敏时跳过，避免重复写文件；仍由 _run_redaction 将 item 标为完成
         if fi.get("output_path"):
             return
@@ -271,46 +282,10 @@ class DefaultJobRunnerPorts(JobRunnerPorts):
             image_redaction_strength=int(job_config.get("image_redaction_strength") or 25),
             image_fill_color=str(job_config.get("image_fill_color") or "#000000"),
         )
-        req = RedactionRequest(file_id=file_id, entities=entities, bounding_boxes=boxes_flat, config=cfg)
-        await execute_redaction(req)
+        await execute_redaction_request(file_id, entities, boxes_flat, cfg)
 
 
 def default_job_runner_ports() -> JobRunnerPorts:
     return DefaultJobRunnerPorts()
 
 
-async def worker_loop_forever(store: JobStore, interval_sec: float = 1.5) -> None:
-    """后台协程：定时拉取队列（单进程 Worker）。支持 JOB_CONCURRENCY 并发。"""
-    import asyncio
-    import logging
-
-    from app.core.config import settings
-
-    log = logging.getLogger("legal_redaction.job_worker")
-    ports = default_job_runner_ports()
-    active_tasks: set[asyncio.Task[bool]] = set()
-
-    while True:
-        try:
-            concurrency = max(1, settings.JOB_CONCURRENCY)
-            # Clean up finished tasks
-            done = {t for t in active_tasks if t.done()}
-            for t in done:
-                try:
-                    t.result()
-                except Exception:
-                    log.exception("job worker task failed")
-            active_tasks -= done
-
-            # Fill up to concurrency limit
-            for _ in range(8):
-                if len(active_tasks) >= concurrency:
-                    break
-                picked = _pick_next_item(store)
-                if not picked:
-                    break
-                task = asyncio.create_task(process_next_queue_item(store, ports))
-                active_tasks.add(task)
-        except Exception:
-            log.exception("job worker tick failed")
-        await asyncio.sleep(interval_sec)

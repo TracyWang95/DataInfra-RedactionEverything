@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from app.models.schemas import Entity
 from app.services.has_service import has_service, HaSService
+from app.services.regex_service import regex_service as _regex_svc
 from typing import Any
 
 # 类型别名，兼容 EntityTypeConfig 和 CustomEntityType
@@ -40,34 +41,12 @@ class HybridEntity:
 
 class HybridNERService:
     """混合NER识别服务 - HaS + 正则"""
-    
-    # 正则模式（高置信度）
-    REGEX_PATTERNS = {
-        "ID_CARD": [
-            (r'[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]', 0.99),
-        ],
-        "PHONE": [
-            (r'(?<!\d)1[3-9]\d{9}(?!\d)', 0.99),
-            (r'(?<!\d)(?:0\d{2,3}[-\s]?)?\d{7,8}(?!\d)', 0.9),
-        ],
-        "BANK_CARD": [
-            (r'(?<!\d)(?:62|4|5)\d{14,17}(?!\d)', 0.95),
-        ],
-        "EMAIL": [
-            (r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}', 0.99),
-        ],
-        "CASE_NUMBER": [
-            (r'[\(（]\d{4}[\)）][京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领A-Za-z]{1,4}\d{0,4}[民刑行执破知赔财商劳仲][初终复再抗申裁监督撤]?\d+号', 0.98),
-        ],
-        "DATE": [
-            (r'\d{4}年\d{1,2}月(?:\d{1,2}日)?', 0.95),
-            (r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', 0.95),
-        ],
-        "LICENSE_PLATE": [
-            (r'[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-Z][A-Z0-9]{5,6}', 0.98),
-        ],
-    }
-    
+
+    # 正则模式已统一到 regex_service.py（单一数据源）
+
+    # NER 文本长度上限，超过此值截断以防止内存/时间爆炸
+    MAX_TEXT_LENGTH = 500_000
+
     def __init__(self, has_service_instance: HaSService = None):
         self.has_service = has_service_instance or has_service
     
@@ -79,8 +58,21 @@ class HybridNERService:
         """
         混合识别主入口（HaS 仅使用 NER 单次推理；Hide 模式已移除）
         """
+        import time as _time
+        _t0 = _time.perf_counter()
         all_entities: List[Entity] = []
-        
+
+        # 文本长度保护 — truncate to prevent OOM/timeout but warn clearly
+        truncated = False
+        original_length = len(text)
+        if original_length > self.MAX_TEXT_LENGTH:
+            logger.warning(
+                "文本过长 (%d chars / %.1f MB)，截断至 %d chars。部分内容可能未被识别。",
+                original_length, original_length / 1_048_576, self.MAX_TEXT_LENGTH,
+            )
+            text = text[:self.MAX_TEXT_LENGTH]
+            truncated = True
+
         # Stage 1: HaS 本地模型 NER
         logger.info("Stage 1: HaS 本地模型 NER...")
         if self.has_service.is_available():
@@ -104,7 +96,12 @@ class HybridNERService:
         logger.info("Stage 3: 交叉验证与指代消解...")
         validated_entities = self._cross_validate(all_entities, text)
         logger.info("  验证后保留 %d 个实体", len(validated_entities))
-        
+
+        # Prometheus: NER 延迟 + 实体数
+        from app.core.metrics import NER_DURATION, NER_ENTITY_COUNT
+        NER_DURATION.labels(backend="hybrid").observe(_time.perf_counter() - _t0)
+        NER_ENTITY_COUNT.observe(len(validated_entities))
+
         return validated_entities
     
     def _regex_extract(
@@ -112,33 +109,22 @@ class HybridNERService:
         text: str,
         enabled_type_ids: set,
     ) -> List[Entity]:
-        """正则识别"""
+        """正则识别 — 委托给 regex_service（单一数据源，避免重复维护模式）"""
+        if not enabled_type_ids:
+            return []
+        raw = _regex_svc.extract(text, entity_types=list(enabled_type_ids))
         entities = []
-        entity_counter = 0
-        
-        for entity_type, patterns in self.REGEX_PATTERNS.items():
-            if entity_type not in enabled_type_ids:
-                continue
-            
-            for pattern, confidence in patterns:
-                try:
-                    for match in re.finditer(pattern, text, re.IGNORECASE):
-                        start, end = match.start(), match.end()
-                        
-                        entities.append(Entity(
-                            id=f"regex_{entity_type}_{entity_counter}",
-                            text=match.group(),
-                            type=entity_type,
-                            start=start,
-                            end=end,
-                            page=1,
-                            confidence=confidence,
-                            source="regex",
-                        ))
-                        entity_counter += 1
-                except re.error as e:
-                    logger.error("正则错误 (%s): %s", entity_type, e)
-        
+        for i, item in enumerate(raw):
+            entities.append(Entity(
+                id=f"regex_{item['type']}_{i}",
+                text=item["text"],
+                type=item["type"],
+                start=item["start"],
+                end=item["end"],
+                page=1,
+                confidence=item.get("confidence", 0.99),
+                source="regex",
+            ))
         return entities
     
     def _cross_validate(
