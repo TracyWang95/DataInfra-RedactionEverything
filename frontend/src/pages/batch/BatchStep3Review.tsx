@@ -40,11 +40,9 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
   // 进度文案
   const progressLabel = allDone
     ? '✓ 全部完成'
-    : submitting
-      ? '正在启动批量任务…'
-      : isProcessing
-        ? `正在处理 ${doneCount}/${rows.length}…`
-        : `${rows.length} 个文件待提交`;
+    : isProcessing
+      ? `批量任务进行中 ${doneCount}/${rows.length}`
+      : `${rows.length} 个文件待提交`;
 
   // 进度百分比：处理中但还没有完成的给一个最小值，让进度条可见
   const pct = rows.length > 0
