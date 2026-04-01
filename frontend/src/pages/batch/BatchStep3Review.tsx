@@ -56,7 +56,7 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
           </div>
           <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
             <div
-              className="h-full rounded-full bg-[#007AFF] transition-[width] duration-300 ease-out"
+              className={`h-full rounded-full bg-[#007AFF] transition-[width] duration-700 ease-out ${!allDone ? 'animate-pulse' : ''}`}
               style={{
                 width: `${rows.length ? Math.min(100, (analyzeDoneCount / rows.length) * 100) : 0}%`,
               }}

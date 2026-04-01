@@ -2248,25 +2248,25 @@ export const Batch: React.FC = () => {
       setMsg({ text: '请先在「任务与配置」完成步骤 1 并进入上传，以创建或绑定任务工单', tone: 'warn' });
       return;
     }
-    setMsg(null);
+    // ① 立即更新 UI — 不等网络请求
+    setMsg({ text: '正在启动批量任务…', tone: 'ok' });
+    setRows(prev => prev.map(r =>
+      !RECOGNITION_DONE_STATUSES.has(r.analyzeStatus) && r.analyzeStatus !== 'failed'
+        ? { ...r, analyzeStatus: 'pending' as const }
+        : r
+    ));
+    setAnalyzeDoneCount(0);
+
+    // ② 后台提交
     try {
       const jobCfg = buildJobConfigForWorker(cfg, mode, furthestStep);
-      // 尝试更新配置（非 draft 也允许更新，只有终态才拒绝）
       try {
         await updateJobDraft(activeJobId, { config: jobCfg });
         lastSavedJobConfigJson.current = JSON.stringify(jobCfg);
-      } catch {
-        /* 终态任务无法更新配置，继续提交 */
-      }
+      } catch { /* 终态任务无法更新配置 */ }
       await apiSubmitJob(activeJobId);
       clearLocalWizardMaxStep(activeJobId);
-      // 提交后将所有未完成项标记为 pending，触发轮询
-      setRows(prev => prev.map(r =>
-        !RECOGNITION_DONE_STATUSES.has(r.analyzeStatus) && r.analyzeStatus !== 'failed'
-          ? { ...r, analyzeStatus: 'pending' as const }
-          : r
-      ));
-      setMsg({ text: '已提交后台队列，正在轮询处理进度…', tone: 'ok' });
+      setMsg({ text: '已提交后台队列，正在处理…', tone: 'ok' });
     } catch (e) {
       setMsg({ text: e instanceof Error ? e.message : '提交队列失败', tone: 'err' });
     }

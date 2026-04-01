@@ -7,10 +7,8 @@ export type PrimaryNavAction =
   | { kind: 'link'; label: string; to: string }
   | { kind: 'none'; reason?: string };
 
-function batchBasePath(jobType: JobTypeForNav): string {
-  if (jobType === 'image_batch') return '/batch/image';
-  if (jobType === 'smart_batch') return '/batch/smart';
-  return '/batch/text';
+function batchBasePath(_jobType: JobTypeForNav): string {
+  return '/batch/smart';
 }
 
 export function buildBatchWorkbenchUrl(
@@ -35,6 +33,10 @@ export type JobNavHints = {
   wizard_furthest_step?: number | null;
   /** 与后端 infer_batch_step1_configured 一致：已选识别项则视为可进上传步 */
   batch_step1_configured?: boolean | null;
+  /** 三态计数：已脱敏数 */
+  redacted_count?: number | null;
+  /** 三态计数：待审核数（无 output 的 awaiting_review/review_approved/completed） */
+  awaiting_review_count?: number | null;
 };
 
 /** config / nav_hints 里可能是 number、字符串或 JSON 数字 */
@@ -180,23 +182,20 @@ export function resolveJobPrimaryNavigation(input: {
       break;
     }
     case 'queued':
+    case 'processing':
     case 'running':
     case 'redacting':
-      if (currentPage === 'job_detail') {
-        action = { kind: 'link', label: '打开工作台', to: buildBatchWorkbenchUrl(jobId, jobType, 3) };
-      } else {
-        action = { kind: 'link', label: '查看任务进度', to: `/jobs/${encodeURIComponent(jobId)}` };
-      }
+      action = { kind: 'link', label: '查看进度', to: buildBatchWorkbenchUrl(jobId, jobType, 3) };
       break;
     case 'awaiting_review':
       action = {
         kind: 'link',
-        label: '去审核',
+        label: '继续审核',
         to: buildBatchWorkbenchUrl(jobId, jobType, 4, firstAwaiting),
       };
       break;
     case 'completed':
-      action = { kind: 'link', label: '查看结果与下载', to: `/history?source=batch&jobId=${encodeURIComponent(jobId)}` };
+      action = { kind: 'link', label: '下载脱敏结果', to: `/history?source=batch&jobId=${encodeURIComponent(jobId)}` };
       break;
     case 'failed':
       if (currentPage === 'job_detail') {
