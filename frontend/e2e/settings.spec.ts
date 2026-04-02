@@ -74,6 +74,18 @@ test.describe('脱敏清单', () => {
     await expect(page.getByText('默认图像脱敏配置清单')).toBeVisible({ timeout: 10_000 });
   });
 
+  test('默认项初始收起，点击预览后再展开', async ({ page }) => {
+    await page.goto('/settings/redaction');
+    await dismissOnboarding(page);
+    await waitForPageReady(page);
+
+    await expect(page.getByText('系统内置项全选，不包含用户自定义项。')).toHaveCount(0);
+    await page.getByRole('button', { name: '预览' }).first().click();
+    await expect(page.getByText('系统内置项全选，不包含用户自定义项。').first()).toBeVisible({
+      timeout: 10_000,
+    });
+  });
+
   test('新建弹窗始终显示创建按钮', async ({ page, request }) => {
     test.skip(!(await isBackendUp(request)), '后端未启动');
 
@@ -82,7 +94,11 @@ test.describe('脱敏清单', () => {
     await waitForPageReady(page);
 
     await page.getByRole('button', { name: /新建文本配置清单/ }).click();
-    await expect(page.getByRole('button', { name: '创建' })).toBeVisible({ timeout: 10_000 });
+    const createButton = page.getByRole('button', { name: '创建' });
+    await expect(createButton).toBeVisible({ timeout: 10_000 });
+    await expect(createButton).toBeEnabled();
+    const backgroundColor = await createButton.evaluate(el => getComputedStyle(el).backgroundColor);
+    expect(backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
   });
 
   test('后端可用时：预设列表或空状态', async ({ page, request }) => {

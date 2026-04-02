@@ -70,19 +70,25 @@ const previewChipClass =
   'inline-flex min-h-[1.625rem] items-center justify-center rounded-lg border px-2.5 py-1 text-center text-2xs font-medium leading-snug shadow-sm';
 
 const redactionOutlineButtonClass =
-  'redaction-btn-outline inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 text-caption font-medium';
+  'redaction-btn-outline inline-flex items-center justify-center rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-caption font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50';
 
 const redactionPrimaryButtonClass =
-  'redaction-btn-primary inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50';
+  'redaction-btn-primary inline-flex min-w-[5.5rem] items-center justify-center rounded-lg border border-gray-900 bg-gray-900 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-black disabled:border-gray-200 disabled:bg-gray-200 disabled:text-gray-500 disabled:shadow-none';
 
 const redactionDangerButtonClass =
-  'redaction-btn-danger inline-flex items-center justify-center rounded-md border px-2.5 py-1.5 text-xs font-medium';
+  'redaction-btn-danger inline-flex items-center justify-center rounded-md border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-medium text-rose-600 shadow-sm transition-colors hover:bg-rose-50';
 
 const redactionFieldClass =
   'redaction-field w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-800';
 
-const defaultPresetCardClass =
-  'rounded-lg border border-dashed border-gray-300 bg-[#fcfcfc] px-3 py-3 shadow-sm';
+function getPresetCreatedAtValue(preset: RecognitionPreset): number {
+  const ts = preset.created_at ? Date.parse(preset.created_at) : Number.NaN;
+  return Number.isFinite(ts) ? ts : Number.MAX_SAFE_INTEGER;
+}
+
+function sortPresetsByCreatedAt(presets: RecognitionPreset[]): RecognitionPreset[] {
+  return [...presets].sort((a, b) => getPresetCreatedAtValue(a) - getPresetCreatedAtValue(b));
+}
 
 function PresetPreviewExpandBody({
   p,
@@ -331,6 +337,14 @@ export const RedactionListSettings: React.FC = () => {
     () => recognitionPresets.filter(presetAppliesVision),
     [recognitionPresets]
   );
+  const orderedTextPresetsList = useMemo(
+    () => sortPresetsByCreatedAt(textPresetsList),
+    [textPresetsList]
+  );
+  const orderedVisionPresetsList = useMemo(
+    () => sortPresetsByCreatedAt(visionPresetsList),
+    [visionPresetsList]
+  );
 
   /** 与「识别项配置」文本 Tab 一致：正则 / 语义 分栏勾选 */
   const textRegexTypesForModal = useMemo(
@@ -371,6 +385,8 @@ export const RedactionListSettings: React.FC = () => {
     }),
     [pipelines]
   );
+  const defaultTextRowKey = 'text:__default__';
+  const defaultVisionRowKey = 'vision:__default__';
 
   const summaryTextLabel = useMemo(() => {
     if (!bridgeText) return '默认';
@@ -555,7 +571,7 @@ export const RedactionListSettings: React.FC = () => {
                   }}
                 >
                   <option value="">默认（系统预设全选，不含自定义）</option>
-                  {textPresetsList.map(p => (
+                  {orderedTextPresetsList.map(p => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                       {p.kind === 'full' ? '（组合）' : ''}
@@ -575,7 +591,7 @@ export const RedactionListSettings: React.FC = () => {
                   }}
                 >
                   <option value="">默认（系统预设全选，不含自定义）</option>
-                  {visionPresetsList.map(p => (
+                  {orderedVisionPresetsList.map(p => (
                     <option key={p.id} value={p.id}>
                       {p.name}
                       {p.kind === 'full' ? '（组合）' : ''}
@@ -587,18 +603,50 @@ export const RedactionListSettings: React.FC = () => {
             <div className="grid gap-2 md:grid-cols-2">
               <div className="min-h-0 flex flex-col">
                 <h4 className="text-2xs font-semibold text-gray-500 uppercase tracking-wide mb-1">文本脱敏配置清单</h4>
-                {textPresetsList.length > 0 ? (
-                  <ul className="divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-100 text-caption max-h-[min(55vh,520px)]">
-                    {textPresetsList.map(p => {
-                      const rowKey = `text:${p.id}`;
-                      const rxN = p.selectedEntityTypeIds.filter(
-                        id => !!entityTypes.find(t => t.id === id)?.regex_pattern
-                      ).length;
-                      const semN = p.selectedEntityTypeIds.filter(id => {
-                        const t = entityTypes.find(x => x.id === id);
-                        return !!(t?.use_llm && !t.regex_pattern);
-                      }).length;
-                      return (
+                <ul className="divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-100 text-caption max-h-[min(55vh,520px)]">
+                  <li className="bg-[#fafafa]">
+                    <div className="flex flex-wrap items-center justify-between gap-1 px-2 py-1.5">
+                      <div>
+                        <span className="font-medium text-gray-900">{defaultTextPreset.name}</span>
+                        <span className="ml-2 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[0.65rem] text-gray-500">
+                          系统默认
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedPresetKey(cur => (cur === defaultTextRowKey ? null : defaultTextRowKey))
+                          }
+                          className={redactionOutlineButtonClass}
+                        >
+                          {expandedPresetKey === defaultTextRowKey ? '收起' : '预览'}
+                        </button>
+                      </div>
+                    </div>
+                    {expandedPresetKey === defaultTextRowKey && (
+                      <div className="border-t border-gray-100/80 bg-white px-2 pb-3 pt-2">
+                        <div className="rounded-lg border border-gray-200/90 bg-white px-3 py-3 shadow-sm">
+                          <p className="mb-3 text-2xs text-gray-500">系统内置项全选，不包含用户自定义项。</p>
+                          <PresetPreviewExpandBody
+                            p={defaultTextPreset}
+                            entityTypes={entityTypes}
+                            pipelines={pipelines}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                  {orderedTextPresetsList.map(p => {
+                    const rowKey = `text:${p.id}`;
+                    const rxN = p.selectedEntityTypeIds.filter(
+                      id => !!entityTypes.find(t => t.id === id)?.regex_pattern
+                    ).length;
+                    const semN = p.selectedEntityTypeIds.filter(id => {
+                      const t = entityTypes.find(x => x.id === id);
+                      return !!(t?.use_llm && !t.regex_pattern);
+                    }).length;
+                    return (
                       <li key={p.id} className="bg-[#fafafa]">
                         <div className="flex flex-wrap items-center justify-between gap-1 px-2 py-1.5">
                           <div>
@@ -642,33 +690,51 @@ export const RedactionListSettings: React.FC = () => {
                         )}
                       </li>
                     );
-                    })}
-                  </ul>
-                ) : (
-                  <div className="rounded-md border border-gray-100 bg-[#fafafa] px-3 py-2 text-2xs text-gray-500">
-                    还没有保存的文本配置清单。
-                  </div>
+                  })}
+                </ul>
+                {orderedTextPresetsList.length === 0 && (
+                  <p className="mt-2 text-2xs text-gray-500">还没有自定义文本脱敏配置清单。</p>
                 )}
-                <div className={`${defaultPresetCardClass} mt-2`}>
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-semibold text-gray-900">默认文本脱敏配置清单</p>
-                      <p className="text-2xs text-gray-500">系统内置项全选，不包含用户自定义项。</p>
-                    </div>
-                    <span className="rounded-full bg-white px-2 py-1 text-[0.65rem] font-medium text-gray-500 shadow-sm">
-                      固定展示
-                    </span>
-                  </div>
-                  <PresetPreviewExpandBody p={defaultTextPreset} entityTypes={entityTypes} pipelines={pipelines} />
-                </div>
               </div>
               <div className="min-h-0 flex flex-col">
                 <h4 className="text-2xs font-semibold text-gray-500 uppercase tracking-wide mb-1">图像脱敏配置清单</h4>
-                {visionPresetsList.length > 0 ? (
-                  <ul className="divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-100 text-caption max-h-[min(55vh,520px)]">
-                    {visionPresetsList.map(p => {
-                      const rowKey = `vision:${p.id}`;
-                      return (
+                <ul className="divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-100 text-caption max-h-[min(55vh,520px)]">
+                  <li className="bg-[#fafafa]">
+                    <div className="flex flex-wrap items-center justify-between gap-1 px-2 py-1.5">
+                      <div>
+                        <span className="font-medium text-gray-900">{defaultVisionPreset.name}</span>
+                        <span className="ml-2 inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-[0.65rem] text-gray-500">
+                          系统默认
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedPresetKey(cur => (cur === defaultVisionRowKey ? null : defaultVisionRowKey))
+                          }
+                          className={redactionOutlineButtonClass}
+                        >
+                          {expandedPresetKey === defaultVisionRowKey ? '收起' : '预览'}
+                        </button>
+                      </div>
+                    </div>
+                    {expandedPresetKey === defaultVisionRowKey && (
+                      <div className="border-t border-gray-100/80 bg-white px-2 pb-3 pt-2">
+                        <div className="rounded-lg border border-gray-200/90 bg-white px-3 py-3 shadow-sm">
+                          <p className="mb-3 text-2xs text-gray-500">系统内置项全选，不包含用户自定义项。</p>
+                          <PresetPreviewExpandBody
+                            p={defaultVisionPreset}
+                            entityTypes={entityTypes}
+                            pipelines={pipelines}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </li>
+                  {orderedVisionPresetsList.map(p => {
+                    const rowKey = `vision:${p.id}`;
+                    return (
                       <li key={p.id} className="bg-[#fafafa]">
                         <div className="flex flex-wrap items-center justify-between gap-1 px-2 py-1.5">
                           <div>
@@ -711,25 +777,11 @@ export const RedactionListSettings: React.FC = () => {
                         )}
                       </li>
                     );
-                    })}
-                  </ul>
-                ) : (
-                  <div className="rounded-md border border-gray-100 bg-[#fafafa] px-3 py-2 text-2xs text-gray-500">
-                    还没有保存的图像配置清单。
-                  </div>
+                  })}
+                </ul>
+                {orderedVisionPresetsList.length === 0 && (
+                  <p className="mt-2 text-2xs text-gray-500">还没有自定义图像脱敏配置清单。</p>
                 )}
-                <div className={`${defaultPresetCardClass} mt-2`}>
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-semibold text-gray-900">默认图像脱敏配置清单</p>
-                      <p className="text-2xs text-gray-500">系统内置项全选，不包含用户自定义项。</p>
-                    </div>
-                    <span className="rounded-full bg-white px-2 py-1 text-[0.65rem] font-medium text-gray-500 shadow-sm">
-                      固定展示
-                    </span>
-                  </div>
-                  <PresetPreviewExpandBody p={defaultVisionPreset} entityTypes={entityTypes} pipelines={pipelines} />
-                </div>
               </div>
             </div>
           </div>
