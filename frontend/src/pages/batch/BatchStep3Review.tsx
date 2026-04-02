@@ -24,7 +24,7 @@ export const BatchStep3Review: React.FC<BatchStep3ReviewProps> = ({
   // 记住"已提交过"，即使 submitting 结束也保持 true
   const [everSubmitted, setEverSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const isProcessing = everSubmitted && !allDone;
 

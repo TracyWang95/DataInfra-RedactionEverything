@@ -138,7 +138,7 @@ export const BatchStep1Config: React.FC<BatchStep1ConfigProps> = ({
                     value={cfg.presetTextId ?? ''}
                     onChange={onBatchTextPresetChange}
                   >
-                    <option value="">默认（全选）</option>
+                    <option value="">默认（系统预设全选）</option>
                     {textPresets.map(p => (
                       <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>
                     ))}
@@ -156,7 +156,7 @@ export const BatchStep1Config: React.FC<BatchStep1ConfigProps> = ({
                     value={cfg.presetVisionId ?? ''}
                     onChange={onBatchVisionPresetChange}
                   >
-                    <option value="">默认（全选）</option>
+                    <option value="">默认（系统预设全选）</option>
                     {visionPresets.map(p => (
                       <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>
                     ))}
@@ -211,14 +211,14 @@ export const BatchStep1Config: React.FC<BatchStep1ConfigProps> = ({
             /* ====== 旧模式（text / image）：原有单栏布局 ====== */
             <div className="rounded-lg border border-gray-100 bg-[#fafafa] dark:bg-gray-900 flex flex-col flex-1 min-h-0 overflow-hidden p-2 space-y-2">
               <div className="text-2xs text-gray-500 leading-snug space-y-0.5">
-                <p><span className="text-gray-600">「默认」</span>与「识别项配置」中当前启用的类型一致。</p>
+                <p><span className="text-gray-600">「默认」</span>为系统预设全选，不包含用户自定义项。</p>
               </div>
               <div className="max-w-xl">
                 {mode === 'text' && (
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-medium text-gray-800">文本脱敏配置清单</label>
                     <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white w-full" value={cfg.presetTextId ?? ''} onChange={onBatchTextPresetChange}>
-                      <option value="">默认</option>
+                      <option value="">默认（系统预设全选）</option>
                       {textPresets.map(p => <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>)}
                     </select>
                   </div>
@@ -227,7 +227,7 @@ export const BatchStep1Config: React.FC<BatchStep1ConfigProps> = ({
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-medium text-gray-800">图像脱敏配置清单</label>
                     <select className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white w-full" value={cfg.presetVisionId ?? ''} onChange={onBatchVisionPresetChange}>
-                      <option value="">默认</option>
+                      <option value="">默认（系统预设全选）</option>
                       {visionPresets.map(p => <option key={p.id} value={p.id}>{p.name}{p.kind === 'full' ? '（组合）' : ''}</option>)}
                     </select>
                   </div>

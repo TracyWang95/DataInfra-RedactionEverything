@@ -123,7 +123,7 @@ export const PlaygroundUpload: React.FC<PlaygroundUploadProps> = ({
                       value={playgroundPresetTextId ?? ''}
                       onChange={e => selectPlaygroundTextPresetById(e.target.value)}
                     >
-                      <option value="">默认</option>
+                      <option value="">默认（系统预设全选）</option>
                       {textPresetsPg.map(p => (
                         <option key={p.id} value={p.id}>
                           {p.name}
@@ -148,7 +148,7 @@ export const PlaygroundUpload: React.FC<PlaygroundUploadProps> = ({
                       value={playgroundPresetVisionId ?? ''}
                       onChange={e => selectPlaygroundVisionPresetById(e.target.value)}
                     >
-                      <option value="">默认</option>
+                      <option value="">默认（系统预设全选）</option>
                       {visionPresetsPg.map(p => (
                         <option key={p.id} value={p.id}>
                           {p.name}

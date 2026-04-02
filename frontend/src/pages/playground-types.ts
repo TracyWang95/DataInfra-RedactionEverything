@@ -42,6 +42,7 @@ export interface EntityTypeConfig {
   regex_pattern?: string | null;
   use_llm?: boolean;
   enabled?: boolean;
+  order?: number;
 }
 
 export interface VisionTypeConfig {
@@ -50,6 +51,7 @@ export interface VisionTypeConfig {
   color: string;
   description?: string;
   enabled?: boolean;
+  order?: number;
 }
 
 export interface PipelineConfig {

@@ -34,6 +34,10 @@ import {
   type RecognitionPreset,
 } from '../services/presetsApi';
 import {
+  buildDefaultPipelineTypeIds,
+  buildDefaultTextTypeIds,
+} from '../services/defaultRedactionPreset';
+import {
   formCheckboxClass,
   selectableCardClassCompact,
   textGroupKeyToVariant,
@@ -78,7 +82,7 @@ interface PipelineCfg {
   name: string;
   description: string;
   enabled: boolean;
-  types: { id: string; name: string; color: string; enabled: boolean }[];
+  types: { id: string; name: string; color: string; enabled: boolean; order?: number }[];
 }
 
 interface TextEntityType {
@@ -87,6 +91,7 @@ interface TextEntityType {
   color: string;
   regex_pattern?: string | null;
   use_llm?: boolean;
+  order?: number;
 }
 
 interface BatchRow extends FileListItem {
@@ -778,8 +783,6 @@ export const Batch: React.FC = () => {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [analyzeRunning, setAnalyzeRunning] = useState(false);
-  /** 批量识别已完成文件数（用于进度条，0 … rows.length） */
-  const [analyzeDoneCount, setAnalyzeDoneCount] = useState(0);
   const [zipLoading, setZipLoading] = useState(false);
   const [msg, setMsg] = useState<{ text: string; tone: 'neutral' | 'ok' | 'warn' | 'err' } | null>(null);
 
@@ -910,6 +913,7 @@ export const Batch: React.FC = () => {
           color: t.color,
           regex_pattern: t.regex_pattern,
           use_llm: t.use_llm,
+          order: t.order,
         }));
         setTextTypes(types);
         setPipelines(pipes);
@@ -922,20 +926,23 @@ export const Batch: React.FC = () => {
         const hiIds = pipes
           .filter(p => p.mode === 'has_image' && p.enabled)
           .flatMap(p => p.types.filter(t => t.enabled).map(t => t.id));
+        const defaultTextTypeIds = buildDefaultTextTypeIds(types);
+        const defaultOcrHasTypeIds = buildDefaultPipelineTypeIds(pipes, 'ocr_has');
+        const defaultHasImageTypeIds = buildDefaultPipelineTypeIds(pipes, 'has_image');
 
         const presetList: RecognitionPreset[] = Array.isArray(presetRes) ? presetRes : [];
 
         const selectedEntityTypeIds =
           persisted?.selectedEntityTypeIds?.length
             ? persisted.selectedEntityTypeIds.filter(id => types.some(t => t.id === id))
-            : types.map(t => t.id);
+            : defaultTextTypeIds;
         const ocrHas = persisted?.ocrHasTypes?.length
           ? persisted.ocrHasTypes.filter(id => ocrIds.includes(id))
-          : ocrIds;
+          : defaultOcrHasTypeIds;
         /** 与 ocrHas 一致：session 中未保存或非空列表时才用持久化值；空数组表示旧版/损坏默认，回退为管线全选 */
         const hasImg = persisted?.hasImageTypes?.length
           ? persisted.hasImageTypes.filter(id => hiIds.includes(id))
-          : hiIds;
+          : defaultHasImageTypeIds;
 
         let next: BatchWizardPersistedConfig = {
           selectedEntityTypeIds,
@@ -1251,20 +1258,14 @@ export const Batch: React.FC = () => {
   const textPresets = useMemo(() => presets.filter(presetAppliesText), [presets]);
   const visionPresets = useMemo(() => presets.filter(presetAppliesVision), [presets]);
 
-  /** 下拉「默认」：与「识别项配置」当前启用的文本类型一致（全选） */
-  const batchDefaultTextTypeIds = useMemo(() => textTypes.map(t => t.id), [textTypes]);
+  /** 下拉「默认」：系统预设全选，不含用户自定义项 */
+  const batchDefaultTextTypeIds = useMemo(() => buildDefaultTextTypeIds(textTypes), [textTypes]);
   const batchDefaultOcrHasTypeIds = useMemo(
-    () =>
-      pipelines
-        .filter(pl => pl.mode === 'ocr_has' && pl.enabled)
-        .flatMap(pl => pl.types.filter(t => t.enabled).map(t => t.id)),
+    () => buildDefaultPipelineTypeIds(pipelines, 'ocr_has'),
     [pipelines]
   );
   const batchDefaultHasImageTypeIds = useMemo(
-    () =>
-      pipelines
-        .filter(pl => pl.mode === 'has_image' && pl.enabled)
-        .flatMap(pl => pl.types.filter(t => t.enabled).map(t => t.id)),
+    () => buildDefaultPipelineTypeIds(pipelines, 'has_image'),
     [pipelines]
   );
 
@@ -2254,7 +2255,6 @@ export const Batch: React.FC = () => {
         ? { ...r, analyzeStatus: 'pending' as const }
         : r
     ));
-    setAnalyzeDoneCount(0);
 
     try {
       const jobCfg = buildJobConfigForWorker(cfg, mode, furthestStep);
@@ -2283,13 +2283,11 @@ export const Batch: React.FC = () => {
         const detail = await getJob(activeJobId);
         if (cancelled) return;
         const itemMap = new Map(detail.items.map(it => [it.file_id, it]));
-        let doneCount = 0;
         setRows(prev =>
           prev.map(r => {
             const item = itemMap.get(r.file_id);
             if (!item) return r;
             const newStatus = mapBackendStatus(item.status);
-            if (RECOGNITION_DONE_STATUSES.has(newStatus) || newStatus === 'failed') doneCount++;
             const itemFt = String(item.file_type ?? '').toLowerCase();
             const isImg = r.isImageMode ?? (itemFt === 'image' || itemFt === 'jpg' || itemFt === 'jpeg' || itemFt === 'png' || itemFt === 'pdf_scanned');
             return {
@@ -2305,7 +2303,6 @@ export const Batch: React.FC = () => {
             };
           })
         );
-        setAnalyzeDoneCount(doneCount);
       } catch {
         /* 网络抖动不中断轮询 */
       }
@@ -2325,8 +2322,6 @@ export const Batch: React.FC = () => {
   });
 
   const selectedIds = rows.filter(r => selected.has(r.file_id)).map(r => r.file_id);
-
-  const anyAnalyzeDone = doneRows.length > 0;
 
   const canGoStep = (target: Step): boolean => {
     if (target <= 1) return true;
@@ -2656,92 +2651,6 @@ export const Batch: React.FC = () => {
         ? `${successCount} 个失败项全部重跑成功`
         : `重跑完成：${successCount} 成功，${failedIndices.length - successCount} 仍失败`,
       tone: successCount === failedIndices.length ? 'ok' : 'warn',
-    });
-  };
-
-  const runBatchAnalyze = async (opts?: { advanceToReview?: boolean }) => {
-    if (!rows.length) return;
-    setAnalyzeRunning(true);
-    setAnalyzeDoneCount(0);
-    setMsg(null);
-    let successCount = 0;
-    const entityIds = cfg.selectedEntityTypeIds;
-    const bodyNer = {
-      entity_type_ids: entityIds,
-    };
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      setRows(prev =>
-        prev.map((r, j) => (j === i ? { ...r, analyzeStatus: 'parsing', analyzeError: undefined } : r))
-      );
-      try {
-        const parseRes = await batchParse(row.file_id);
-        const isImage = parseRes.file_type === 'image' || parseRes.is_scanned;
-        setRows(prev =>
-          prev.map((r, j) =>
-            j === i ? { ...r, isImageMode: isImage, analyzeStatus: 'analyzing' } : r
-          )
-        );
-
-        if (isImage) {
-          await batchVision(row.file_id, 1, cfg.ocrHasTypes, cfg.hasImageTypes);
-          const info = await batchGetFileRaw(row.file_id);
-          const boxCount = flattenBoundingBoxesFromStore(info.bounding_boxes).length;
-          setRows(prev =>
-            prev.map((r, j) =>
-              j === i
-                ? {
-                    ...r,
-                    analyzeStatus: 'awaiting_review',
-                    entity_count: boxCount,
-                  }
-                : r
-            )
-          );
-        } else {
-          const ner = await batchHybridNer(row.file_id, bodyNer);
-          setRows(prev =>
-            prev.map((r, j) =>
-              j === i
-                ? {
-                    ...r,
-                    analyzeStatus: 'awaiting_review',
-                    entity_count: ner.entity_count,
-                  }
-                : r
-            )
-          );
-        }
-        successCount += 1;
-      } catch (e) {
-        const err = e instanceof Error ? e.message : String(e);
-        setRows(prev =>
-          prev.map((r, j) => (j === i ? { ...r, analyzeStatus: 'failed', analyzeError: err } : r))
-        );
-      } finally {
-        setAnalyzeDoneCount(i + 1);
-      }
-    }
-
-    setAnalyzeRunning(false);
-    if (successCount > 0) {
-      setFurthestStep(prev => Math.max(prev, 4) as Step);
-      if (opts?.advanceToReview) {
-        internalStepNavRef.current = true;
-        setStep(4);
-        const firstPending = doneRows.findIndex(r => !r.has_output);
-        setReviewIndex(firstPending >= 0 ? firstPending : 0);
-      }
-    }
-    setMsg({
-      text:
-        successCount > 0
-          ? opts?.advanceToReview
-            ? '识别完成，已进入审阅。'
-            : '识别已完成。'
-          : '没有文件识别成功，请检查文件或配置后重试。',
-      tone: successCount > 0 ? 'ok' : 'warn',
     });
   };
 

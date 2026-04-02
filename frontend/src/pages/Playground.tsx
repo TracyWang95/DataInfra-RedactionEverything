@@ -10,6 +10,10 @@ import {
   type RecognitionPreset,
 } from '../services/presetsApi';
 import {
+  buildDefaultPipelineTypeIds,
+  buildDefaultTextTypeIds,
+} from '../services/defaultRedactionPreset';
+import {
   setActivePresetTextId,
   setActivePresetVisionId,
   getActivePresetTextId,
@@ -101,22 +105,16 @@ export const Playground: React.FC = () => {
 
   /** 下拉「默认」：当前启用文本类型全选（与首次加载一致） */
   const playgroundDefaultTextTypeIds = useMemo(
-    () => entityTypes.filter(t => t.enabled !== false).map(t => t.id),
+    () => buildDefaultTextTypeIds(entityTypes),
     [entityTypes]
   );
-  /** 下拉「默认」：OCR+HaS 与 HaS 图像（YOLO）均为当前启用类型全选 */
+  /** 下拉「默认」：系统预设全选，不含用户自定义项 */
   const playgroundDefaultOcrHasTypeIds = useMemo(
-    () =>
-      pipelines
-        .filter(pl => pl.mode === 'ocr_has' && pl.enabled)
-        .flatMap(pl => pl.types.filter(t => t.enabled).map(t => t.id)),
+    () => buildDefaultPipelineTypeIds(pipelines, 'ocr_has'),
     [pipelines]
   );
   const playgroundDefaultHasImageTypeIds = useMemo(
-    () =>
-      pipelines
-        .filter(pl => pl.mode === 'has_image' && pl.enabled)
-        .flatMap(pl => pl.types.filter(t => t.enabled).map(t => t.id)),
+    () => buildDefaultPipelineTypeIds(pipelines, 'has_image'),
     [pipelines]
   );
 
@@ -339,7 +337,7 @@ export const Playground: React.FC = () => {
       const data = await safeJson(res);
       const types = data.custom_types || [];
       setEntityTypes(types);
-      setSelectedTypes(types.map((t: EntityTypeConfig) => t.id));
+      setSelectedTypes(buildDefaultTextTypeIds(types));
     } catch (err) {
       if (import.meta.env.DEV) {
         console.error('获取实体类型失败', err);
@@ -389,6 +387,7 @@ export const Playground: React.FC = () => {
       });
       
       setVisionTypes(allTypes);
+      const defaultOcrHasTypeIds = buildDefaultPipelineTypeIds(normalizedPipelines, 'ocr_has');
       const savedOcrHasTypes = localStorage.getItem('ocrHasTypes');
       if (savedOcrHasTypes) {
         try {
@@ -399,14 +398,15 @@ export const Playground: React.FC = () => {
           // [] 表示用户显式不跑 OCR+HaS（仅 HaS 图像等场景），不得回退成全选
           updateOcrHasTypes(filtered);
         } catch {
-          updateOcrHasTypes(ocrHasTypeIds);
+          updateOcrHasTypes(defaultOcrHasTypeIds);
         }
       } else {
-        updateOcrHasTypes(ocrHasTypeIds);
+        updateOcrHasTypes(defaultOcrHasTypeIds);
       }
       const hasImageTypeIds = normalizedPipelines
         .filter(p => p.mode === 'has_image' && p.enabled)
         .flatMap(p => p.types.filter(t => t.enabled).map(t => t.id));
+      const defaultHasImageTypeIds = buildDefaultPipelineTypeIds(normalizedPipelines, 'has_image');
       const savedHasImageTypes =
         localStorage.getItem('hasImageTypes') || localStorage.getItem('glmVisionTypes');
       if (savedHasImageTypes) {
@@ -414,10 +414,10 @@ export const Playground: React.FC = () => {
           const parsed = JSON.parse(savedHasImageTypes);
           updateHasImageTypes(parsed.filter((id: string) => hasImageTypeIds.includes(id)));
         } catch {
-          updateHasImageTypes(hasImageTypeIds);
+          updateHasImageTypes(defaultHasImageTypeIds);
         }
       } else {
-        updateHasImageTypes(hasImageTypeIds);
+        updateHasImageTypes(defaultHasImageTypeIds);
       }
     } catch (err) {
       if (import.meta.env.DEV) {
