@@ -1,12 +1,10 @@
 /**
- * Playground page — single-file redaction workflow.
- * Bridge: re-exports from pages/Playground.tsx until full migration completes.
+ * Playground feature — single-file redaction workflow.
  *
- * Migration progress:
- * - hooks/use-playground-recognition.ts ✅ (recognition logic extracted)
- * - types.ts + utils.ts ✅ (preserved helpers)
- * - Remaining: use-playground.ts, all components, this index.tsx
+ * Fully rebuilt with ShadCN components:
+ * - playground-page.tsx — page orchestrator
+ * - hooks/use-playground.ts — main orchestration hook
+ * - hooks/use-playground-recognition.ts — NER+vision logic
+ * - components/ — 6 ShadCN components
  */
-
-// Re-export as a bridge during migration
-export { Playground } from '@/pages/Playground';
+export { Playground } from './playground-page';
