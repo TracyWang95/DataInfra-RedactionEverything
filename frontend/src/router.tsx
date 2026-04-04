@@ -5,7 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 
 const Playground = React.lazy(() => import('./pages/Playground').then(m => ({ default: m.Playground })));
 const Batch = React.lazy(() => import('./pages/Batch').then(m => ({ default: m.Batch })));
-const History = React.lazy(() => import('./pages/History').then(m => ({ default: m.History })));
+const History = React.lazy(() => import('./features/history').then(m => ({ default: m.History })));
 const Settings = React.lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
 const RedactionListSettings = React.lazy(() => import('./pages/RedactionListSettings').then(m => ({ default: m.RedactionListSettings })));
 const TextModelSettings = React.lazy(() => import('./pages/TextModelSettings').then(m => ({ default: m.TextModelSettings })));
