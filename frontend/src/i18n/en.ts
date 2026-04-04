@@ -116,6 +116,16 @@ export const en: Record<string, string> = {
   'onboarding.prev': 'Previous',
   'onboarding.next': 'Next',
   'onboarding.start': 'Get Started',
+  'onboarding.step1.title': 'Welcome to the Redaction Console',
+  'onboarding.step1.desc': 'Handle upload, review, and export from one clean workspace. Everything stays local to your environment.',
+  'onboarding.step2.title': 'Drop In Your Documents',
+  'onboarding.step2.desc': 'Start with Word, PDF, or image files. The workspace is designed for quick intake without extra setup.',
+  'onboarding.step3.title': 'Let Recognition Do The First Pass',
+  'onboarding.step3.desc': 'The system finds names, IDs, phone numbers, addresses, and other sensitive content before you touch a single file.',
+  'onboarding.step4.title': 'Review Before You Ship',
+  'onboarding.step4.desc': 'Adjust labels, keep or remove detections, and pick the redaction style that matches your delivery standard.',
+  'onboarding.step5.title': 'Scale To Batch Work',
+  'onboarding.step5.desc': 'When one file becomes many, move into batch jobs and keep the same review quality across the whole queue.',
 
   // Page headers
   'page.batch.title': 'Batch',
@@ -306,7 +316,7 @@ export const en: Record<string, string> = {
   'history.downloadOriginalZip': 'Download Original ZIP',
   'history.downloadRedactedZip': 'Download Redacted ZIP',
   'history.perPage': 'Per page',
-  'history.itemsUnit': '',
+  'history.itemsUnit': 'items',
   'history.totalFiles': 'Total Files',
   'history.redactedFiles': 'Redacted',
   'history.recognizedEntities': 'Entities',
@@ -587,8 +597,11 @@ export const en: Record<string, string> = {
   // EmptyState
   'emptyState.history': 'No processing records',
   'emptyState.historyDesc': 'Records will appear here after you upload and process files',
+  'emptyState.noFiles': 'No files yet',
+  'emptyState.noFilesDesc': 'Processed files will appear here after upload and review.',
   'emptyState.noActiveJobs': 'No active tasks to resume',
   'emptyState.noActiveJobsDesc': 'Create a new batch job to get started',
+  'playground.loading': 'Loading...',
 
   // Data Safety
   'safety.badge': '🔒 All processing runs locally — no data is uploaded',

@@ -1,6 +1,6 @@
 /**
  * Service health status panel for the sidebar footer.
- * Shows OCR, NER, Vision service status + probe timing + GPU memory.
+ * Styled for dark sidebar context — uses opacity-based coloring.
  */
 import { RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -18,24 +18,24 @@ export function HealthPanel({ health, checking, roundTripMs, onRefresh }: Health
   const t = useT();
 
   return (
-    <div className="px-3 py-2.5 rounded-xl bg-white/80 dark:bg-gray-800/80 border shadow-sm" data-testid="health-panel">
+    <div className="rounded-[18px] border border-white/[0.08] bg-white/[0.04] px-3 py-3 backdrop-blur-xl" data-testid="health-panel">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
+      <div className="mb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span
-            className={cn('w-1.5 h-1.5 rounded-full', {
-              'bg-gray-300 animate-pulse': checking,
-              'bg-emerald-500': !checking && health?.all_online,
+            className={cn('h-1.5 w-1.5 rounded-full', {
+              'bg-white/30 animate-pulse': checking,
+              'bg-emerald-400': !checking && health?.all_online,
               'bg-amber-400': !checking && health && !health.all_online,
-              'bg-red-500': !checking && !health,
+              'bg-red-400': !checking && !health,
             })}
           />
-          <span className="text-[10px] font-semibold tracking-wide">{t('health.title')}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] opacity-60">{t('health.title')}</span>
         </div>
         <button
           type="button"
           onClick={onRefresh}
-          className="text-muted-foreground hover:text-foreground p-0.5"
+          className="rounded-full p-1 opacity-40 transition-opacity hover:bg-white/[0.05] hover:opacity-80"
           title={t('health.refreshTitle')}
           data-testid="health-refresh"
         >
@@ -44,12 +44,12 @@ export function HealthPanel({ health, checking, roundTripMs, onRefresh }: Health
       </div>
 
       {health ? (
-        <div className="space-y-1.5 text-[10px]">
+        <div className="space-y-2 text-[10px]">
           <ServiceRow name={health.services.paddle_ocr.name} status={health.services.paddle_ocr.status} t={t} />
           <ServiceRow name={health.services.has_ner.name} status={health.services.has_ner.status} t={t} />
           <ServiceRow name={health.services.has_image.name} status={health.services.has_image.status} t={t} />
 
-          <div className="text-[9px] text-muted-foreground pt-1.5 mt-0.5 border-t space-y-0.5 leading-snug pl-0.5">
+          <div className="mt-1 space-y-0.5 border-t border-white/[0.06] pt-2 pl-0.5 text-[9px] leading-snug opacity-30">
             {typeof health.probe_ms === 'number' && (
               <p className="truncate">{t('health.backendProbe')} {health.probe_ms} ms</p>
             )}
@@ -60,17 +60,17 @@ export function HealthPanel({ health, checking, roundTripMs, onRefresh }: Health
               {t('health.gpuMemory')}{' '}
               {health.gpu_memory
                 ? `${health.gpu_memory.used_mb} / ${health.gpu_memory.total_mb} MiB`
-                : <span className="text-muted-foreground/50">{t('health.gpuNotDetected')}</span>}
+                : <span className="opacity-50">{t('health.gpuNotDetected')}</span>}
             </p>
             {health.checked_at && (
-              <p className="text-muted-foreground/60 break-all">
+              <p className="opacity-50 break-all">
                 {t('health.probeTime')} {new Date(health.checked_at).toLocaleString()}
               </p>
             )}
           </div>
         </div>
       ) : (
-        <div className="text-[10px] text-destructive">
+        <div className="text-[10px] text-red-400">
           {checking ? t('health.detecting') : t('health.backendDown')}
         </div>
       )}
@@ -80,9 +80,9 @@ export function HealthPanel({ health, checking, roundTripMs, onRefresh }: Health
 
 function ServiceRow({ name, status, t }: { name: string; status: string; t: (key: string) => string }) {
   return (
-    <div className="flex justify-between items-center">
-      <span className="text-muted-foreground truncate mr-2" title={name}>{name}</span>
-      <span className={cn('font-medium flex-shrink-0', status === 'online' ? 'text-emerald-500' : 'text-destructive')}>
+    <div className="flex items-center justify-between gap-2">
+      <span className="truncate opacity-50" title={name}>{name}</span>
+      <span className={cn('shrink-0 rounded-full px-2 py-0.5 font-medium', status === 'online' ? 'bg-emerald-500/12 text-emerald-300' : 'bg-red-500/12 text-red-300')}>
         {status === 'online' ? t('health.online') : t('health.offline')}
       </span>
     </div>

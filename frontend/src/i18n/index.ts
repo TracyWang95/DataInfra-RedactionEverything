@@ -10,7 +10,7 @@ interface I18nStore {
 }
 
 export const useI18n = create<I18nStore>((set) => ({
-  locale: (localStorage.getItem('locale') as Locale) || 'zh',
+  locale: (localStorage.getItem('locale') as Locale) || 'en',
   setLocale: (locale) => {
     localStorage.setItem('locale', locale);
     set({ locale });

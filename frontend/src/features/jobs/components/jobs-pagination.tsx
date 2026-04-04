@@ -1,5 +1,6 @@
 import { t } from '@/i18n';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -7,7 +8,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
 import { PAGE_SIZE_OPTIONS } from '../hooks/use-jobs';
 
 type JobsPaginationProps = {
@@ -21,7 +21,7 @@ type JobsPaginationProps = {
   tableBusy: boolean;
   onGoPage: (page: number) => void;
   onChangePageSize: (size: number) => void;
-  onJumpPageChange: (val: string) => void;
+  onJumpPageChange: (value: string) => void;
 };
 
 export function JobsPagination({
@@ -40,7 +40,7 @@ export function JobsPagination({
   if (total <= 0) return null;
 
   return (
-    <div className="px-4 py-2.5 border-t border-gray-100 dark:border-gray-700 flex flex-wrap items-center justify-between gap-2 bg-[#fafafa] dark:bg-gray-900 flex-shrink-0">
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border/70 bg-muted/25 px-4 py-3">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <span>
           {t('jobs.showRange')
@@ -48,17 +48,14 @@ export function JobsPagination({
             .replace('{end}', String(rangeEnd))
             .replace('{total}', String(total))}
         </span>
-        <span className="text-gray-300">|</span>
+        <span className="text-border">|</span>
         <span>{t('jobs.perPage')}</span>
-        <Select
-          value={String(pageSize)}
-          onValueChange={(v) => onChangePageSize(Number(v))}
-        >
-          <SelectTrigger className="h-7 w-auto text-xs" data-testid="jobs-page-size-select">
+        <Select value={String(pageSize)} onValueChange={(value) => onChangePageSize(Number(value))}>
+          <SelectTrigger className="h-8 min-w-[86px] rounded-xl text-xs" data-testid="jobs-page-size-select">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PAGE_SIZE_OPTIONS.map(size => (
+            {PAGE_SIZE_OPTIONS.map((size) => (
               <SelectItem key={size} value={String(size)}>
                 {size} {t('jobs.itemsUnit')}
               </SelectItem>
@@ -66,6 +63,7 @@ export function JobsPagination({
           </SelectContent>
         </Select>
       </div>
+
       <div className="flex items-center gap-1.5">
         <Button
           variant="outline"
@@ -74,29 +72,31 @@ export function JobsPagination({
           onClick={() => onGoPage(1)}
           title={t('jobs.firstPage')}
           data-testid="jobs-first-page"
-          className="h-7 px-2"
+          className="h-8 rounded-xl px-2.5"
         >
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
           </svg>
         </Button>
+
         <Button
           variant="outline"
           size="sm"
           disabled={page <= 1 || tableBusy}
           onClick={() => onGoPage(page - 1)}
           data-testid="jobs-prev-page"
-          className="h-7"
+          className="h-8 rounded-xl"
         >
           {t('jobs.prevPage')}
         </Button>
+
         <div className="flex items-center gap-1 px-1">
           <Input
             type="text"
             value={jumpPage}
-            onChange={e => onJumpPageChange(e.target.value.replace(/\D/g, ''))}
-            onKeyDown={e => {
-              if (e.key !== 'Enter') return;
+            onChange={(event) => onJumpPageChange(event.target.value.replace(/\D/g, ''))}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
               const next = Number.parseInt(jumpPage, 10);
               if (next >= 1 && next <= totalPages) {
                 onGoPage(next);
@@ -104,21 +104,23 @@ export function JobsPagination({
               }
             }}
             placeholder={String(page)}
-            className="w-10 h-7 text-center text-xs"
+            className="h-8 w-11 rounded-xl text-center text-xs"
             data-testid="jobs-jump-page"
           />
           <span className="text-xs text-muted-foreground">/ {totalPages}</span>
         </div>
+
         <Button
           variant="outline"
           size="sm"
           disabled={page >= totalPages || tableBusy}
           onClick={() => onGoPage(page + 1)}
           data-testid="jobs-next-page"
-          className="h-7"
+          className="h-8 rounded-xl"
         >
           {t('jobs.nextPage')}
         </Button>
+
         <Button
           variant="outline"
           size="sm"
@@ -126,9 +128,9 @@ export function JobsPagination({
           onClick={() => onGoPage(totalPages)}
           title={t('jobs.lastPage')}
           data-testid="jobs-last-page"
-          className="h-7 px-2"
+          className="h-8 rounded-xl px-2.5"
         >
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
           </svg>
         </Button>

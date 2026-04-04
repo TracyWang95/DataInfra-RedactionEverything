@@ -1,3 +1,4 @@
+@import "@fontsource-variable/geist";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -8,35 +9,68 @@
    ============================================ */
 
 :root {
-  /* 核心色板 - 黑白灰为主 */
-  --background: #ffffff;
-  --background-secondary: #fafafa;
-  --background-tertiary: #f5f5f7;
-  --foreground: #1d1d1f;
-  --foreground-secondary: #424245;
-  --foreground-muted: #6e6e73;
-  --foreground-subtle: #a1a1a6;
-  --border: #d2d2d7;
-  --border-light: #e8e8ed;
-  --accent: #1d1d1f;
-  --accent-light: rgba(0, 0, 0, 0.04);
+  /* 核心色板 — Slate neutrals + Indigo accent */
+  --background: #fbfbf8;
+  --background-secondary: #f4f4ef;
+  --background-tertiary: #ecece5;
+  --foreground: #171717;
+  --foreground-secondary: #262626;
+  --foreground-muted: #6b7280;
+  --foreground-subtle: #9ca3af;
+  --border: rgba(23, 23, 23, 0.10);
+  --border-light: rgba(23, 23, 23, 0.06);
+  --input: rgba(23, 23, 23, 0.12);
+  --ring: rgba(16, 163, 127, 0.18);
+  --card: rgba(255, 255, 255, 0.84);
+  --card-foreground: #171717;
+  --popover: rgba(255, 255, 255, 0.96);
+  --popover-foreground: #171717;
+  --primary: #10a37f;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f1ea;
+  --secondary-foreground: #1f2937;
+  --muted: rgba(23, 23, 23, 0.045);
+  --muted-foreground: #6b7280;
+  --accent: #edf2f7;
+  --accent-foreground: #171717;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --accent-light: rgba(16, 163, 127, 0.07);
+  --accent-hover: #0d8a6b;
+  --panel: rgba(255, 255, 255, 0.72);
+  --panel-strong: rgba(255, 255, 255, 0.92);
 
-  /* 勾选语义（与 selectionClasses 一致，供原生控件 fallback） */
-  --select-regex: #007aff;
-  --select-ner: #34c759;
-  --select-yolo: #af52de;
+  /* 勾选语义 */
+  --select-regex: #7288ad;
+  --select-ner: #10a37f;
+  --select-yolo: #6d7c93;
 
   /* 语义色 */
-  --success: #34c759;
-  --warning: #ff9500;
-  --error: #ff3b30;
-  --info: #007aff;
+  --success: #10a37f;
+  --warning: #d97706;
+  --error: #dc2626;
+  --info: #7288ad;
+
+  /* Depth system */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 24px -18px rgba(15, 23, 42, 0.12);
+  --shadow-md: 0 18px 40px -28px rgba(15, 23, 42, 0.18);
+  --shadow-lg: 0 28px 80px -32px rgba(15, 23, 42, 0.22);
+  --shadow-glow: 0 0 0 1px rgba(16, 163, 127, 0.08), 0 18px 38px -28px rgba(16, 163, 127, 0.18);
+
+  /* Radius system */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
 }
 
 /* 字体渲染优化 */
 * {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  box-sizing: border-box;
 }
 
 html {
@@ -50,12 +84,16 @@ body {
   margin: 0;
   overflow: hidden;
   overscroll-behavior: none;
-  background: var(--background);
+  background:
+    radial-gradient(circle at top, rgba(16, 163, 127, 0.08), transparent 28%),
+    radial-gradient(circle at 85% 0%, rgba(114, 136, 173, 0.10), transparent 24%),
+    linear-gradient(180deg, #fbfbf8 0%, #f5f5f0 100%);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+  font-family: 'Geist Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text',
                'Helvetica Neue', 'Segoe UI', system-ui, sans-serif;
   line-height: 1.5;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.014em;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
 #root {
@@ -79,17 +117,99 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d4d4d4;
-  border-radius: 3px;
+  background: rgba(17, 24, 39, 0.18);
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a3a3a3;
+  background: rgba(17, 24, 39, 0.28);
 }
 
 /* 选中文本（与系统蓝协调） */
 ::selection {
-  background: rgba(0, 122, 255, 0.18);
+  background: rgba(16, 163, 127, 0.16);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.saas-page {
+  position: relative;
+  isolation: isolate;
+}
+
+.saas-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(16, 163, 127, 0.05), transparent 24%),
+    radial-gradient(circle at 100% 0%, rgba(114, 136, 173, 0.08), transparent 26%);
+}
+
+.saas-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(20px);
+}
+
+.saas-hero {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.68)),
+    linear-gradient(135deg, rgba(16, 163, 127, 0.06), rgba(114, 136, 173, 0.06));
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: calc(var(--radius-xl) + 2px);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(20px);
+}
+
+.saas-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--foreground-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 /* ============================================
@@ -137,9 +257,31 @@ body {
    ============================================ */
 
 .glass {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+
+/* Premium surface — subtle gradient card */
+.surface-elevated {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.surface-interactive {
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.surface-interactive:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
 }
 
 /* ============================================
@@ -163,31 +305,35 @@ body {
    按钮组件
    ============================================ */
 
-/* 主按钮 - 黑色实心 */
+/* 主按钮 - Indigo gradient */
 .btn-primary {
-  background: var(--foreground);
-  color: var(--background);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: var(--accent-foreground);
   font-weight: 500;
   font-size: 13px;
-  padding: 8px 16px;
-  border-radius: 8px;
-  transition: all 0.15s ease;
+  padding: 8px 18px;
+  border-radius: var(--radius-md);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   border: none;
   cursor: pointer;
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .btn-primary:hover {
-  background: var(--foreground-secondary);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transform: translateY(-0.5px);
 }
 
 .btn-primary:active {
-  transform: scale(0.98);
+  transform: scale(0.98) translateY(0);
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.2);
 }
 
 .btn-primary:disabled {
-  opacity: 0.35;
+  opacity: 0.4;
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 
 /* 次要按钮 */
@@ -254,8 +400,8 @@ body {
 
 .input:focus {
   outline: none;
-  border-color: var(--foreground);
-  box-shadow: 0 0 0 3px rgba(10, 10, 10, 0.05);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
 .input::placeholder {
@@ -357,18 +503,20 @@ body {
 
 .drop-zone {
   border: 2px dashed var(--border);
-  border-radius: 16px;
-  transition: all 0.2s ease;
+  border-radius: var(--radius-xl);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   background: var(--background-secondary);
 }
 
 .drop-zone:hover {
-  border-color: #a3a3a3;
+  border-color: var(--accent);
+  background: var(--accent-light);
 }
 
 .drop-zone.drag-over {
-  border-color: var(--foreground);
+  border-color: var(--accent);
   background: var(--accent-light);
+  box-shadow: var(--shadow-glow);
 }
 
 /* ============================================
@@ -379,7 +527,7 @@ body {
   width: 18px;
   height: 18px;
   border: 2px solid var(--border);
-  border-top-color: var(--foreground);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -459,7 +607,7 @@ code {
 
 .focus-ring:focus {
   outline: none;
-  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--foreground);
+  box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--accent);
 }
 
 /* ============================================
@@ -697,62 +845,113 @@ input[type="checkbox"]:focus-visible {
   :root.dark {
     color-scheme: dark;
 
-    /* 核心色板 - 贴近主流 Agent 软件的蓝灰黑层级 */
-    --background: #141414;
-    --background-secondary: #1b1b1b;
-    --background-tertiary: #101010;
-    --foreground: #f5f5f5;
-    --foreground-secondary: #dddddd;
-    --foreground-muted: #a3a3a3;
-    --foreground-subtle: #737373;
-    --border: rgba(255, 255, 255, 0.08);
-    --border-light: rgba(255, 255, 255, 0.05);
-    --accent: #e5e5e5;
-    --accent-light: rgba(255, 255, 255, 0.08);
+    /* 核心色板 — Rich dark with blue undertone */
+    --background: #111110;
+    --background-secondary: #1a1a18;
+    --background-tertiary: #222220;
+    --foreground: #f5f5f4;
+    --foreground-secondary: #e7e5e4;
+    --foreground-muted: #a8a29e;
+    --foreground-subtle: #78716c;
+    --border: rgba(255, 255, 255, 0.09);
+    --border-light: rgba(255, 255, 255, 0.06);
+    --input: rgba(255, 255, 255, 0.12);
+    --ring: rgba(16, 163, 127, 0.22);
+    --card: rgba(23, 23, 21, 0.88);
+    --card-foreground: #f5f5f4;
+    --popover: rgba(24, 24, 22, 0.96);
+    --popover-foreground: #f5f5f4;
+    --primary: #19c29a;
+    --primary-foreground: #05251d;
+    --secondary: rgba(255, 255, 255, 0.06);
+    --secondary-foreground: #f5f5f4;
+    --muted: rgba(255, 255, 255, 0.05);
+    --muted-foreground: #a8a29e;
+    --accent: rgba(255, 255, 255, 0.06);
+    --accent-foreground: #f5f5f4;
+    --destructive: #f87171;
+    --destructive-foreground: #170809;
+    --accent-light: rgba(16, 163, 127, 0.12);
+    --accent-hover: #14b18d;
+    --panel: rgba(25, 25, 23, 0.78);
+    --panel-strong: rgba(24, 24, 22, 0.94);
 
     /* 语义色 */
-    --success: #35d07f;
-    --warning: #f4b14b;
-    --error: #ff6b6b;
-    --info: #6ea8ff;
+    --success: #19c29a;
+    --warning: #fbbf24;
+    --error: #f87171;
+    --info: #9fb5d3;
+
+    /* Depth system */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.28);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24), 0 10px 24px -18px rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 22px 48px -28px rgba(0, 0, 0, 0.55);
+    --shadow-lg: 0 32px 80px -36px rgba(0, 0, 0, 0.65);
+    --shadow-glow: 0 0 0 1px rgba(16, 163, 127, 0.14), 0 24px 48px -30px rgba(16, 163, 127, 0.20);
   }
   :root {
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: rgba(17, 24, 39, 0.94);
+    --sidebar-foreground: rgba(255, 255, 255, 0.86);
+    --sidebar-primary: rgba(255, 255, 255, 0.08);
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: rgba(255, 255, 255, 0.07);
+    --sidebar-accent-foreground: #ffffff;
+    --sidebar-border: rgba(255, 255, 255, 0.08);
+    --sidebar-ring: rgba(16, 163, 127, 0.35);
+    --sidebar: var(--sidebar-background);
+    --sidebar-foreground-strong: #ffffff;
   }
   .dark {
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-background: rgba(14, 14, 13, 0.94);
+    --sidebar-foreground: rgba(255, 255, 255, 0.82);
+    --sidebar-primary: rgba(255, 255, 255, 0.08);
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: rgba(255, 255, 255, 0.07);
+    --sidebar-accent-foreground: #ffffff;
+    --sidebar-border: rgba(255, 255, 255, 0.08);
+    --sidebar-ring: rgba(25, 194, 154, 0.35);
+    --sidebar: var(--sidebar-background);
+    --sidebar-foreground-strong: #ffffff;
   }
 }
 
 /* body / scrollbar 跟随变量自动切换 */
 .dark body {
-  background: var(--background);
+  background:
+    radial-gradient(circle at top, rgba(25, 194, 154, 0.10), transparent 24%),
+    radial-gradient(circle at 85% 0%, rgba(114, 136, 173, 0.12), transparent 20%),
+    linear-gradient(180deg, #111110 0%, #171715 100%);
   color: var(--foreground);
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #3a3c42;
+  background: rgba(255, 255, 255, 0.14);
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: #53555c;
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .dark ::selection {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(25, 194, 154, 0.18);
+}
+
+.dark .saas-panel {
+  background: var(--card);
+  border-color: var(--border);
+  box-shadow: var(--shadow-md);
+}
+
+.dark .saas-hero {
+  background:
+    linear-gradient(135deg, rgba(28, 28, 26, 0.92), rgba(20, 20, 19, 0.82)),
+    linear-gradient(135deg, rgba(25, 194, 154, 0.10), rgba(114, 136, 173, 0.10));
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.dark .saas-kicker {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--foreground-muted);
 }
 
 /* Glass 效果 */
@@ -794,8 +993,8 @@ input[type="checkbox"]:focus-visible {
 .dark input:not([type="checkbox"]):not([type="radio"]):focus,
 .dark textarea:focus,
 .dark select:focus {
-  border-color: var(--foreground-muted);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.15);
 }
 .dark input::placeholder,
 .dark textarea::placeholder {

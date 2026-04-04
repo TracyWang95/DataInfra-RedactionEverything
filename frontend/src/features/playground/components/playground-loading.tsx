@@ -16,42 +16,41 @@ export const PlaygroundLoading: FC<PlaygroundLoadingProps> = ({
   isImageMode,
   elapsedSec,
 }) => {
-  // Indeterminate progress: oscillate between 10-90 based on elapsed time
   const progressValue = Math.min(90, 10 + (elapsedSec % 60) * 1.3);
 
   return (
     <div
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       role="alertdialog"
       aria-busy="true"
-      aria-label={loadingMessage || t('playground.processing') || '处理中'}
+      aria-label={loadingMessage || t('playground.processing') || 'Processing'}
       data-testid="playground-loading"
     >
-      <div className="bg-background rounded-2xl shadow-2xl px-8 py-6 text-center max-w-sm">
-        <div className="w-12 h-12 border-[3px] border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-base font-medium mb-2">
-          {loadingMessage || t('playground.processing') || '处理中...'}
+      <div className="max-w-sm animate-scale-in rounded-[28px] border border-border/50 bg-background px-8 py-8 text-center shadow-[0_34px_80px_-40px_rgba(15,23,42,0.5)]">
+        <div className="mx-auto mb-5 h-12 w-12 animate-spin rounded-full border-[3px] border-primary/30 border-t-primary" />
+        <p className="mb-2 text-base font-medium text-foreground">
+          {loadingMessage || t('playground.processing') || 'Processing...'}
         </p>
         <Progress value={progressValue} className="mb-3" />
+
         {isImageMode ? (
           <>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              {t('playground.imageHint') || '仅勾选「文字 OCR+HaS」时才会跑 Paddle；只勾选「HaS Image」则不走 OCR。'}
-              {' '}
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t('playground.imageHint') || 'OCR and image analysis can take longer on larger files.'}{' '}
               <strong className="font-medium text-foreground">
-                {t('playground.cpuWarning') || 'CPU 跑 Paddle 时常需 30-90 秒甚至更久'}
-              </strong>
-              {t('playground.waitHint') || '，等待较久为正常现象，请勿刷新。'}
+                {t('playground.cpuWarning') || 'CPU-only runs may take 30 to 90 seconds.'}
+              </strong>{' '}
+              {t('playground.waitHint') || 'That is expected. Keep this window open while processing completes.'}
             </p>
             {elapsedSec > 0 && (
-              <p className="text-xs text-muted-foreground mt-2 tabular-nums" data-testid="playground-loading-timer">
-                {t('playground.waited') || '已等待'} {elapsedSec} {t('playground.seconds') || '秒'}...
+              <p className="mt-2 text-xs tabular-nums text-muted-foreground" data-testid="playground-loading-timer">
+                {t('playground.waited') || 'Waiting'} {elapsedSec} {t('playground.seconds') || 'seconds'}...
               </p>
             )}
           </>
         ) : (
           <p className="text-xs text-muted-foreground">
-            {t('playground.processingHint') || '处理中，请稍候'}
+            {t('playground.processingHint') || 'Processing your file. This usually finishes quickly.'}
           </p>
         )}
       </div>

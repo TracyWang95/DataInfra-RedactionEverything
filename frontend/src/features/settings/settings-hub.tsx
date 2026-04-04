@@ -86,8 +86,8 @@ export function SettingsHub() {
   }
 
   return (
-    <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden bg-background">
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden px-3 py-2 sm:px-4 sm:py-3 w-full max-w-[min(100%,1920px)] mx-auto">
+    <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className="mx-auto flex w-full max-w-[min(100%,1920px)] flex-1 min-h-0 flex-col overflow-hidden px-3 py-4 sm:px-4 sm:py-5">
         <Tabs defaultValue="text" className="flex-1 min-h-0 flex flex-col overflow-hidden gap-2">
           <div className="shrink-0 flex flex-wrap items-center justify-between gap-2">
             <TabsList data-testid="settings-tabs">

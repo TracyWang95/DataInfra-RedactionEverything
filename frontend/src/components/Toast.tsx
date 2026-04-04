@@ -31,20 +31,20 @@ export function showToast(message: string, type: 'success' | 'error' | 'info' = 
 }
 
 const typeStyles = {
-  success: 'bg-green-600 dark:bg-green-700',
-  error: 'bg-red-600 dark:bg-red-700',
-  info: 'bg-gray-800 dark:bg-gray-700',
+  success: 'border-emerald-500/20 bg-[#0f172a] text-white',
+  error: 'border-red-500/20 bg-[#1f1113] text-white',
+  info: 'border-border/70 bg-popover text-foreground',
 };
 
 export function ToastContainer() {
   const toasts = useToastStore((s) => s.toasts);
   if (!toasts.length) return null;
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none" role="alert" aria-live="assertive">
+    <div className="pointer-events-none fixed bottom-4 right-4 z-[9999] flex flex-col gap-2" role="alert" aria-live="assertive">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`${typeStyles[t.type]} text-white px-4 py-2.5 rounded-lg shadow-lg text-sm max-w-sm animate-fade-in pointer-events-auto`}
+          className={`${typeStyles[t.type]} pointer-events-auto max-w-sm rounded-2xl border px-4 py-3 text-sm shadow-[0_28px_70px_-36px_rgba(15,23,42,0.45)] backdrop-blur-xl animate-fade-in`}
         >
           {t.message}
         </div>

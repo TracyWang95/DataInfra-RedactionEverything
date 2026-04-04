@@ -16,7 +16,7 @@ function executionLabel(config: Record<string, unknown>): string {
 function formatUpdatedAt(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return t('jobs.updatedAtUnknown');
-  const locale = (typeof window !== 'undefined' && localStorage.getItem('locale')) || 'zh';
+  const locale = (typeof window !== 'undefined' && localStorage.getItem('locale')) || 'en';
   return date.toLocaleString(locale === 'en' ? 'en-US' : 'zh-CN');
 }
 
@@ -47,25 +47,25 @@ export function JobsTable({
   const stopEvent = (event: React.MouseEvent) => { event.stopPropagation(); };
 
   return (
-    <div className="jobs-surface w-full flex flex-col flex-1 min-h-0 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm dark:shadow-gray-900/30 overflow-hidden overflow-x-auto">
+    <div className="jobs-surface w-full flex flex-col flex-1 min-h-0 bg-background rounded-xl border shadow-sm overflow-hidden overflow-x-auto">
       {/* Header */}
-      <div className="px-4 py-2.5 border-b border-gray-100 dark:border-gray-700 flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
+      <div className="px-5 py-3 border-b flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
         <div>
-          <h3 className="font-semibold text-gray-900 dark:text-gray-100 text-sm">{t('jobs.taskRecords')}</h3>
+          <h3 className="font-semibold text-sm">{t('jobs.taskRecords')}</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
             {t('jobs.totalAndPage').replace('{total}', String(total)).replace('{page}', String(page)).replace('{totalPages}', String(totalPages))}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-2xs text-muted-foreground">
           <span>{t('jobs.expandHint')}</span>
-          <span className="text-gray-300">|</span>
+          <span className="text-border">|</span>
           <span className="text-amber-700">{t('jobs.cancelBeforeDelete')}</span>
         </div>
       </div>
 
       {/* Column header */}
       {rows.length > 0 && (
-        <div className="jobs-table-head px-4 py-2 border-b border-gray-50 dark:border-gray-700 bg-[#fafafa] dark:bg-gray-900 text-xs text-muted-foreground font-medium flex-shrink-0">
+        <div className="jobs-table-head px-4 py-2 border-b bg-muted/40 text-xs text-muted-foreground font-medium flex-shrink-0">
           <span className="jobs-tree-cell" />
           <span className="jobs-task-cell">{t('jobs.task')}</span>
           <span className="jobs-exec-cell">{t('jobs.execMethod')}</span>
@@ -83,8 +83,8 @@ export function JobsTable({
       {/* Body */}
       <div className="relative flex-1 min-h-0 overflow-y-auto flex flex-col">
         {refreshing && rows.length > 0 && (
-          <div className="absolute inset-0 bg-white/60 dark:bg-gray-800/60 flex items-center justify-center z-10 backdrop-blur-[1px]">
-            <div className="w-7 h-7 border-2 border-[#e5e5e5] border-t-[#1d1d1f] rounded-full animate-spin" />
+          <div className="absolute inset-0 bg-background/60 flex items-center justify-center z-10 backdrop-blur-[1px]">
+            <div className="w-7 h-7 border-2 border-border border-t-primary rounded-full animate-spin" />
           </div>
         )}
 
@@ -122,8 +122,8 @@ export function JobsTable({
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-20 gap-4">
-      <div className="w-16 h-16 rounded-2xl bg-gray-100 flex items-center justify-center">
-        <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
+        <svg className="w-8 h-8 text-muted-foreground/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
         </svg>
@@ -166,7 +166,7 @@ function JobRow({
   const showPrimaryAction = primary.kind === 'link' && primary.to !== detailHref;
   const showWorkbenchShortcut = ACTIVE_STATUSES.has(job.status);
   const deleteBlocked = !canDeleteJob(job.status);
-  const stripe = index % 2 === 1 ? 'bg-[#fafafa] dark:bg-gray-900' : 'bg-white dark:bg-gray-800';
+  const stripe = index % 2 === 1 ? 'bg-muted/30' : 'bg-background';
   const itemCount = job.nav_hints?.item_count ?? job.progress.total_items;
   const finishedCount = job.progress.completed + job.progress.failed + (job.progress.cancelled ?? 0);
   const progressPercent = itemCount > 0 ? Math.min(100, Math.round((finishedCount / itemCount) * 100)) : 0;
@@ -186,7 +186,7 @@ function JobRow({
   return (
     <li>
       <div
-        className={cn(stripe, 'transition-colors', expandable ? 'cursor-pointer hover:bg-gray-50/90 dark:hover:bg-gray-700/50' : 'hover:bg-gray-50/70 dark:hover:bg-gray-700/30')}
+        className={cn(stripe, 'transition-colors', expandable ? 'cursor-pointer hover:bg-muted/50' : 'hover:bg-muted/30')}
         onClick={expandable ? () => void onToggleExpand(job) : undefined}
         data-testid={`job-row-${job.id}`}
       >
@@ -196,7 +196,7 @@ function JobRow({
             {itemCount > 0 ? (
               <button type="button"
                 onClick={e => { e.stopPropagation(); void onToggleExpand(job); }}
-                className="w-6 h-6 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center"
+                className="w-6 h-6 rounded-md border bg-background text-muted-foreground hover:bg-muted transition-colors flex items-center justify-center"
                 title={expanded ? t('jobs.collapseFiles') : t('jobs.expandFiles')}
                 aria-expanded={expanded}
                 data-testid={`job-expand-${job.id}`}
@@ -206,7 +206,7 @@ function JobRow({
                 </svg>
               </button>
             ) : (
-              <span className="w-6 h-6 rounded-md bg-gray-100 text-gray-300 flex items-center justify-center text-xs">{'\u00b7'}</span>
+              <span className="w-6 h-6 rounded-md bg-muted text-muted-foreground/30 flex items-center justify-center text-xs">{'\u00b7'}</span>
             )}
           </div>
 
@@ -214,7 +214,7 @@ function JobRow({
           <div className="jobs-task-cell min-w-0">
             <div className="flex flex-nowrap items-center gap-2 min-w-0">
               <JobTypeBadge jobType={job.job_type} />
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate" title={job.title || t('jobs.unnamedTask')}>
+              <p className="text-sm font-medium truncate" title={job.title || t('jobs.unnamedTask')}>
                 {job.title || t('jobs.unnamedTask')}
               </p>
             </div>
@@ -225,7 +225,7 @@ function JobRow({
           {/* Execution */}
           <div className="jobs-exec-cell flex items-center gap-2">
             <span className="text-xs text-muted-foreground md:hidden">{t('jobs.execMethod')}</span>
-            <span className="inline-flex px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-2xs whitespace-nowrap">
+            <span className="inline-flex px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-2xs whitespace-nowrap">
               {executionLabel(job.config)}
             </span>
           </div>
@@ -234,12 +234,12 @@ function JobRow({
           <div className="jobs-progress-cell min-w-0">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-gray-700 tabular-nums truncate">{progressHeadline}</span>
+                <span className="text-xs font-medium tabular-nums truncate">{progressHeadline}</span>
                 <span className="text-caption text-muted-foreground tabular-nums shrink-0">{progressPercent}%</span>
               </div>
-              <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+              <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
-                  className={cn('h-full rounded-full', job.status === 'failed' ? 'bg-red-400' : job.status === 'completed' ? 'bg-emerald-500' : 'bg-[#1d1d1f]')}
+                  className={cn('h-full rounded-full transition-all', job.status === 'failed' ? 'bg-red-400' : job.status === 'completed' ? 'bg-emerald-500' : 'bg-primary')}
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
@@ -262,13 +262,13 @@ function JobRow({
           <div className="jobs-actions-cell" onClick={stopEvent}>
             {showPrimaryAction ? (
               <Link to={primary.to} onClick={stopEvent}
-                className={`${actionBtnBase} w-full whitespace-nowrap border border-[#007AFF]/30 bg-[#007AFF]/[0.08] text-[#0a4a8c] dark:text-[#5aafff] dark:border-[#5aafff]/30 dark:bg-[#5aafff]/[0.08] hover:bg-[#007AFF]/[0.14] dark:hover:bg-[#5aafff]/[0.14]`}
+                className={`${actionBtnBase} w-full whitespace-nowrap border border-primary/30 bg-primary/[0.08] text-primary hover:bg-primary/[0.14]`}
                 data-testid={`job-primary-action-${job.id}`}>
                 {primary.label}
               </Link>
             ) : showWorkbenchShortcut ? (
               <Link to={buildBatchWorkbenchUrl(job.id, job.job_type, 3)} onClick={stopEvent}
-                className={`${actionBtnBase} w-full whitespace-nowrap border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-[#1d1d1f] dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700`}
+                className={`${actionBtnBase} w-full whitespace-nowrap border bg-background hover:bg-muted`}
                 data-testid={`job-workbench-${job.id}`}>
                 {t('jobs.openWorkbench')}
               </Link>
@@ -281,14 +281,14 @@ function JobRow({
               </button>
             ) : <span className="jobs-action-placeholder" />}
             <Link to={detailHref} onClick={stopEvent}
-              className={`${actionBtnBase} w-full whitespace-nowrap border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 text-[#1d1d1f] dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-700`}
+              className={`${actionBtnBase} w-full whitespace-nowrap border bg-background hover:bg-muted`}
               data-testid={`job-detail-link-${job.id}`}>
               {job.status === 'completed' ? '\u8be6\u60c5' : t('jobs.viewDetail')}
             </Link>
             {!deleteBlocked ? (
               <button type="button" disabled={deletingJobId === job.id}
                 onClick={e => { e.stopPropagation(); void onDelete(job); }}
-                className={`${actionBtnBase} w-full whitespace-nowrap border border-gray-200 dark:border-gray-600 text-gray-400 dark:text-gray-500 hover:border-red-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50`}
+                className={`${actionBtnBase} w-full whitespace-nowrap border text-muted-foreground hover:border-red-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50`}
                 data-testid={`job-delete-${job.id}`}>
                 {deletingJobId === job.id ? t('jobs.deletingEllipsis') : t('jobs.deleteTask')}
               </button>
@@ -313,10 +313,10 @@ function ExpandedDetail({
   stopEvent: (e: React.MouseEvent) => void;
 }) {
   return (
-    <div className="border-t border-gray-100 dark:border-gray-700" onClick={stopEvent}>
+    <div className="border-t" onClick={stopEvent}>
       {detailLoading ? (
         <div className="px-3 sm:px-4 py-4 text-xs text-muted-foreground flex items-center gap-2">
-          <div className="w-4 h-4 border-2 border-[#e5e5e5] border-t-[#1d1d1f] rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-border border-t-primary rounded-full animate-spin" />
           {t('jobs.loadingFileDetail')}
         </div>
       ) : detail && detail.items.length > 0 ? (
@@ -326,12 +326,12 @@ function ExpandedDetail({
             const isLast = itemIndex === detail.items.length - 1;
             return (
               <div key={item.id}
-                className={cn('jobs-row-main jobs-child-row px-3 sm:px-4 py-1.5', !isLast && 'border-b border-gray-50 dark:border-gray-800')}>
-                <span className="text-gray-300 dark:text-gray-600 text-xs text-center select-none" aria-hidden>
+                className={cn('jobs-row-main jobs-child-row px-3 sm:px-4 py-1.5', !isLast && 'border-b border-border/50')}>
+                <span className="text-muted-foreground/30 text-xs text-center select-none" aria-hidden>
                   {isLast ? '\u2514' : '\u251c'}
                 </span>
                 <div className="jobs-task-cell jobs-child-task min-w-0">
-                  <p className="text-xs text-gray-600 dark:text-gray-300 truncate" title={item.filename || item.file_id}>
+                  <p className="text-xs truncate" title={item.filename || item.file_id}>
                     {item.filename || item.file_id}
                   </p>
                   <p className="text-2xs text-muted-foreground">

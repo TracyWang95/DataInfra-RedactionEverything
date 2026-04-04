@@ -1,5 +1,5 @@
 /**
- * History page — file processing history and comparison.
+ * History page: file processing history and comparison.
  */
 import { t } from '@/i18n';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -18,15 +18,15 @@ export function History() {
 
   const handleDownload = (row: FileListItem) => {
     const url = `/api/v1/files/${row.file_id}/download?redacted=${row.has_output}`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = row.original_filename;
-    a.click();
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = row.original_filename;
+    link.click();
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-muted/30 overflow-hidden" data-testid="history-page">
-      <div className="flex-1 flex flex-col min-h-0 px-3 py-3 sm:px-5 sm:py-4 w-full max-w-[min(100%,1920px)] mx-auto">
+    <div className="saas-page flex min-h-0 flex-1 flex-col overflow-hidden bg-background" data-testid="history-page">
+      <div className="mx-auto flex w-full max-w-[min(100%,1920px)] flex-1 min-h-0 flex-col px-3 py-4 sm:px-5 sm:py-5">
         <HistoryFilters
           sourceTab={s.sourceTab}
           onSourceTabChange={s.changeSourceTab}
@@ -65,7 +65,7 @@ export function History() {
               onToggle={s.toggle}
               allSelected={s.allSelected}
               onSelectAll={(checked) => {
-                if (checked) s.setSelected(new Set(s.filteredRows.map(r => r.file_id)));
+                if (checked) s.setSelected(new Set(s.filteredRows.map((row) => row.file_id)));
                 else s.setSelected(new Set());
               }}
               onDownload={handleDownload}
@@ -76,42 +76,42 @@ export function History() {
         </Card>
 
         {s.totalPages > 1 && (
-          <div className="flex items-center justify-between mt-3 text-sm text-muted-foreground">
+          <div className="mt-3 flex items-center justify-between rounded-2xl border border-border/70 bg-muted/25 px-4 py-3 text-sm text-muted-foreground">
             <span>
-              {(s.page - 1) * s.pageSize + 1}–{Math.min(s.page * s.pageSize, s.total)} / {s.total}
+              {(s.page - 1) * s.pageSize + 1} - {Math.min(s.page * s.pageSize, s.total)} / {s.total}
             </span>
-            <div className="flex gap-1">
+            <div className="flex gap-2">
               <Button variant="outline" size="sm" disabled={s.page <= 1} onClick={() => s.goPage(s.page - 1)}>
-                ←
+                Previous
               </Button>
               <Button variant="outline" size="sm" disabled={s.page >= s.totalPages} onClick={() => s.goPage(s.page + 1)}>
-                →
+                Next
               </Button>
             </div>
           </div>
         )}
       </div>
 
-      <Dialog open={s.compareOpen} onOpenChange={(v) => { if (!v) s.closeCompareModal(); }}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+      <Dialog open={s.compareOpen} onOpenChange={(open) => { if (!open) s.closeCompareModal(); }}>
+        <DialogContent className="max-h-[80vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('history.compareTitle')}</DialogTitle>
           </DialogHeader>
           {s.compareLoading ? (
             <Skeleton className="h-40 w-full" />
           ) : s.compareErr ? (
-            <p className="text-destructive text-sm">{s.compareErr}</p>
+            <p className="text-sm text-destructive">{s.compareErr}</p>
           ) : s.compareData ? (
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <h4 className="font-medium mb-2">{t('history.original')}</h4>
-                <pre className="bg-muted p-3 rounded-lg whitespace-pre-wrap text-xs max-h-[50vh] overflow-y-auto">
+                <h4 className="mb-2 font-medium">{t('history.original')}</h4>
+                <pre className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted p-3 text-xs">
                   {s.compareData.original_content}
                 </pre>
               </div>
               <div>
-                <h4 className="font-medium mb-2">{t('history.redacted')}</h4>
-                <pre className="bg-muted p-3 rounded-lg whitespace-pre-wrap text-xs max-h-[50vh] overflow-y-auto">
+                <h4 className="mb-2 font-medium">{t('history.redacted')}</h4>
+                <pre className="max-h-[50vh] overflow-y-auto whitespace-pre-wrap rounded-lg bg-muted p-3 text-xs">
                   {s.compareData.redacted_content}
                 </pre>
               </div>

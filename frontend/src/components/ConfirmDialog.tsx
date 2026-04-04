@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   open: boolean;
@@ -39,33 +40,27 @@ export const ConfirmDialog: React.FC<Props> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center">
-      {/* backdrop */}
-      <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
-      {/* dialog */}
-      <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full mx-4 p-5 space-y-4">
-        <h3 className="text-base font-semibold text-[#1d1d1f]">{title}</h3>
-        <p className="text-sm text-gray-600 whitespace-pre-line">{message}</p>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative w-full max-w-md space-y-5 rounded-[24px] border border-border/80 bg-popover p-6 shadow-[0_32px_90px_-40px_rgba(15,23,42,0.45)] backdrop-blur-2xl animate-scale-in">
+        <h3 className="text-base font-semibold tracking-[-0.02em]">{title}</h3>
+        <p className="text-sm text-muted-foreground whitespace-pre-line">{message}</p>
         <div className="flex justify-end gap-2 pt-1">
-          <button
+          <Button
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="text-sm font-medium rounded-lg border border-gray-200 bg-white px-4 py-2 text-gray-700 hover:bg-gray-50 transition-colors"
+            variant="outline"
           >
             {cancelText}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={onConfirm}
-            className={
-              danger
-                ? 'text-sm font-medium rounded-lg px-4 py-2 text-white bg-red-600 hover:bg-red-700 transition-colors'
-                : 'text-sm font-medium rounded-lg px-4 py-2 text-white bg-[#007AFF] hover:bg-[#0063d1] transition-colors'
-            }
+            variant={danger ? 'destructive' : 'default'}
           >
             {confirmText}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
