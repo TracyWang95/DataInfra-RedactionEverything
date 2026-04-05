@@ -5,7 +5,7 @@ import { type FC, type MouseEvent as ReactMouseEvent, type ReactNode, useCallbac
 import { Button } from '@/components/ui/button';
 import { showToast } from '@/components/Toast';
 import { useT } from '@/i18n';
-import { getEntityGroup, getEntityTypeName } from '@/config/entityTypes';
+import { getEntityGroup, getEntityGroupLabel, getEntityTypeName } from '@/config/entityTypes';
 import ImageBBoxEditor from '@/components/ImageBBoxEditor';
 import { EntityTypeGroupPicker } from '@/components/EntityTypeGroupPicker';
 import { PlaygroundUpload } from './components/playground-upload';
@@ -452,7 +452,9 @@ export const Playground: FC = () => {
                   <div className="mb-3">
                     <div className="mb-2 flex items-center gap-2">
                       <span className="rounded-full border border-border/70 bg-muted/35 px-2.5 py-1 text-[11px] text-muted-foreground">
-                        {getEntityGroup(clickedEntity.type)?.label} / {getEntityTypeName(clickedEntity.type)}
+                        {getEntityGroupLabel(getEntityGroup(clickedEntity.type)?.id ?? 'other')}
+                        {' / '}
+                        {getEntityTypeName(clickedEntity.type)}
                       </span>
                     </div>
                     <div className="break-all rounded-2xl border border-border/70 bg-muted/35 px-3 py-3 text-sm text-foreground">
