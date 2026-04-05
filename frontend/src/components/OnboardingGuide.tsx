@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { Sparkles, Upload, ScanText, ShieldCheck, Layers3 } from 'lucide-react';
 import { useT } from '../i18n';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
 type Step = {
   title: string;
@@ -56,6 +56,7 @@ export function OnboardingGuide() {
         className="w-full max-w-lg overflow-hidden rounded-[28px] border border-border/80 bg-background p-0 shadow-[0_48px_120px_-56px_rgba(15,23,42,0.6)] [&>button]:hidden"
         aria-labelledby="onboarding-title"
       >
+        <DialogTitle className="sr-only">{current.title}</DialogTitle>
         <div className="h-1.5 bg-muted">
           <div
             className="h-full bg-gradient-to-r from-primary to-accent-500 transition-all duration-500 ease-out"

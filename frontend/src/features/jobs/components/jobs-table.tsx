@@ -73,9 +73,9 @@ export function JobsTable({
           <span className="jobs-status-cell">{t('jobs.currentStatus')}</span>
           <span className="jobs-updated-cell">{t('jobs.updatedAt')}</span>
           <span className="jobs-actions-cell jobs-head-actions">
-            <span className="jobs-action-head">{'\u4e3b\u64cd\u4f5c'}</span>
-            <span className="jobs-action-head">{'\u8be6\u60c5'}</span>
-            <span className="jobs-action-head">{'\u5220\u9664'}</span>
+            <span className="jobs-action-head">{t('jobs.primaryAction')}</span>
+            <span className="jobs-action-head">{t('jobs.detailAction')}</span>
+            <span className="jobs-action-head">{t('jobs.deleteAction')}</span>
           </span>
         </div>
       )}
@@ -283,7 +283,7 @@ function JobRow({
             <Link to={detailHref} onClick={stopEvent}
               className={`${actionBtnBase} w-full whitespace-nowrap border bg-background hover:bg-muted`}
               data-testid={`job-detail-link-${job.id}`}>
-              {job.status === 'completed' ? '\u8be6\u60c5' : t('jobs.viewDetail')}
+              {job.status === 'completed' ? t('jobs.detailAction') : t('jobs.viewDetail')}
             </Link>
             {!deleteBlocked ? (
               <button type="button" disabled={deletingJobId === job.id}

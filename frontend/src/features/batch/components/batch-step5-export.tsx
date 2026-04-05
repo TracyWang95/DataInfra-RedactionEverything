@@ -9,8 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import {
+  getRedactionStateLabel,
   resolveRedactionState,
-  REDACTION_STATE_LABEL,
 } from '@/utils/redactionState';
 import type { Step, BatchRow } from '../hooks/use-batch-wizard';
 
@@ -89,7 +89,7 @@ export function BatchStep5Export({
                   variant={rs === 'redacted' ? 'default' : rs === 'unredacted' ? 'outline' : 'secondary'}
                   className="text-xs"
                 >
-                  {REDACTION_STATE_LABEL[rs]}
+                  {getRedactionStateLabel(rs)}
                 </Badge>
               </div>
             );

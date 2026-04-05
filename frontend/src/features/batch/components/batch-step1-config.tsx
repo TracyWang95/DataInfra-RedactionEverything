@@ -19,6 +19,8 @@ import {
 import type { RecognitionPreset } from '@/services/presetsApi';
 import type { BatchWizardPersistedConfig } from '@/services/batchPipeline';
 
+const DEFAULT_PRESET_VALUE = '__default__';
+
 interface BatchStep1ConfigProps {
   cfg: BatchWizardPersistedConfig;
   setCfg: React.Dispatch<React.SetStateAction<BatchWizardPersistedConfig>>;
@@ -132,18 +134,18 @@ export function BatchStep1Config({
                   {t('batchWizard.step1.textPresetDesc')}
                 </p>
                 <Select
-                  value={cfg.presetTextId ?? ''}
-                  onValueChange={onBatchTextPresetChange}
+                  value={cfg.presetTextId || DEFAULT_PRESET_VALUE}
+                  onValueChange={value => onBatchTextPresetChange(value === DEFAULT_PRESET_VALUE ? '' : value)}
                 >
                   <SelectTrigger className="text-xs" data-testid="text-preset-select">
                     <SelectValue placeholder={t('batchWizard.step1.defaultPreset')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">{t('batchWizard.step1.defaultPreset')}</SelectItem>
+                    <SelectItem value={DEFAULT_PRESET_VALUE}>{t('batchWizard.step1.defaultPreset')}</SelectItem>
                     {textPresets.map(p => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name}
-                        {p.kind === 'full' ? ' (combo)' : ''}
+                        {p.kind === 'full' ? ` (${t('batchWizard.step1.comboPreset')})` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -164,18 +166,18 @@ export function BatchStep1Config({
                   {t('batchWizard.step1.imagePresetDesc')}
                 </p>
                 <Select
-                  value={cfg.presetVisionId ?? ''}
-                  onValueChange={onBatchVisionPresetChange}
+                  value={cfg.presetVisionId || DEFAULT_PRESET_VALUE}
+                  onValueChange={value => onBatchVisionPresetChange(value === DEFAULT_PRESET_VALUE ? '' : value)}
                 >
                   <SelectTrigger className="text-xs" data-testid="vision-preset-select">
                     <SelectValue placeholder={t('batchWizard.step1.defaultPreset')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">{t('batchWizard.step1.defaultPreset')}</SelectItem>
+                    <SelectItem value={DEFAULT_PRESET_VALUE}>{t('batchWizard.step1.defaultPreset')}</SelectItem>
                     {visionPresets.map(p => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name}
-                        {p.kind === 'full' ? ' (combo)' : ''}
+                        {p.kind === 'full' ? ` (${t('batchWizard.step1.comboPreset')})` : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>

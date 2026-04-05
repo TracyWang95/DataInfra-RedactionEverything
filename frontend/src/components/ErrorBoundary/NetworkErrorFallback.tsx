@@ -1,110 +1,114 @@
 import React from 'react';
+import { AlertTriangle, ShieldAlert, WifiOff } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { t } from '@/i18n';
 
 export interface NetworkErrorFallbackProps {
   error: Error;
   onRetry?: () => void;
 }
 
-/** Returns true when the error looks like a network / fetch failure. */
 export function isNetworkError(error: Error): boolean {
-  const msg = error.message.toLowerCase();
+  const message = error.message.toLowerCase();
   return (
-    error.name === 'TypeError' && msg.includes('fetch') ||
-    msg.includes('network') ||
-    msg.includes('failed to fetch') ||
-    msg.includes('networkerror') ||
-    msg.includes('net::')
+    (error.name === 'TypeError' && message.includes('fetch')) ||
+    message.includes('network') ||
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('net::')
   );
 }
 
-/** Returns true when the error indicates an authentication / authorisation failure. */
 export function isAuthError(error: Error): boolean {
-  const msg = error.message.toLowerCase();
+  const message = error.message.toLowerCase();
   return (
-    msg.includes('401') ||
-    msg.includes('403') ||
-    msg.includes('unauthorized') ||
-    msg.includes('unauthenticated') ||
-    msg.includes('token') && msg.includes('expired')
+    message.includes('401') ||
+    message.includes('403') ||
+    message.includes('unauthorized') ||
+    message.includes('unauthenticated') ||
+    (message.includes('token') && message.includes('expired'))
   );
 }
 
-/**
- * A fallback UI that distinguishes network errors from auth errors.
- *
- * - Network errors: shows a "网络连接失败" message with a retry button.
- * - Auth errors:    shows a "认证已过期" message with a login redirect button.
- * - Other errors:   falls back to a generic message.
- */
 export const NetworkErrorFallback: React.FC<NetworkErrorFallbackProps> = ({
   error,
   onRetry,
 }) => {
   if (isAuthError(error)) {
     return (
-      <div
-        role="alert"
-        aria-live="assertive"
-        className="flex flex-col items-center justify-center p-12 text-center"
-      >
-        <p className="text-sm font-medium text-red-700 mb-2">认证已过期</p>
-        <p className="text-xs text-gray-500 mb-4 max-w-md">
-          您的登录凭证已失效，请重新登录。
-        </p>
-        <button
-          onClick={() => {
-            window.location.href = '/login';
-          }}
-          className="px-4 py-2 text-sm rounded-lg bg-[#1d1d1f] text-white hover:bg-[#333]"
-        >
-          前往登录
-        </button>
-      </div>
+      <FallbackShell
+        icon={<ShieldAlert className="h-5 w-5" />}
+        title={t('networkFallback.authTitle')}
+        description={t('networkFallback.authDesc')}
+        action={(
+          <Button
+            onClick={() => {
+              window.location.href = '/login';
+            }}
+            variant="outline"
+            className="rounded-full px-4"
+          >
+            {t('networkFallback.login')}
+          </Button>
+        )}
+      />
     );
   }
 
   if (isNetworkError(error)) {
     return (
-      <div
-        role="alert"
-        aria-live="assertive"
-        className="flex flex-col items-center justify-center p-12 text-center"
-      >
-        <p className="text-sm font-medium text-red-700 mb-2">网络连接失败</p>
-        <p className="text-xs text-gray-500 mb-4 max-w-md">
-          无法连接到服务器，请检查您的网络后重试。
-        </p>
-        {onRetry && (
-          <button
-            onClick={onRetry}
-            className="px-4 py-2 text-sm rounded-lg bg-[#1d1d1f] text-white hover:bg-[#333]"
-          >
-            重试
-          </button>
-        )}
-      </div>
+      <FallbackShell
+        icon={<WifiOff className="h-5 w-5" />}
+        title={t('networkFallback.networkTitle')}
+        description={t('networkFallback.networkDesc')}
+        action={onRetry ? (
+          <Button onClick={onRetry} variant="outline" className="rounded-full px-4">
+            {t('common.retry')}
+          </Button>
+        ) : null}
+      />
     );
   }
 
-  // Generic fallback for unrecognised error types
+  return (
+    <FallbackShell
+      icon={<AlertTriangle className="h-5 w-5" />}
+      title={t('errorBoundary.title')}
+      description={error.message}
+      action={onRetry ? (
+        <Button onClick={onRetry} variant="outline" className="rounded-full px-4">
+          {t('common.retry')}
+        </Button>
+      ) : null}
+    />
+  );
+};
+
+function FallbackShell({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div
       role="alert"
       aria-live="assertive"
-      className="flex flex-col items-center justify-center p-12 text-center"
+      className="flex min-h-[320px] flex-col items-center justify-center gap-4 rounded-2xl border border-border/70 bg-card px-6 py-12 text-center shadow-[0_24px_60px_-36px_rgba(15,23,42,0.28)]"
     >
-      <p className="text-sm font-medium text-red-700 mb-2">页面出现异常</p>
-      <p className="text-xs text-gray-500 mb-4 max-w-md break-all">
-        {error.message}
-      </p>
-      {onRetry && (
-        <button
-          onClick={onRetry}
-          className="px-4 py-2 text-sm rounded-lg bg-[#1d1d1f] text-white hover:bg-[#333]"
-        >
-          重试
-        </button>
-      )}
+      <div className="flex size-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+        {icon}
+      </div>
+      <div className="space-y-2">
+        <p className="text-base font-semibold text-foreground">{title}</p>
+        <p className="max-w-md break-all text-xs text-muted-foreground">{description}</p>
+      </div>
+      {action}
     </div>
   );
-};
+}

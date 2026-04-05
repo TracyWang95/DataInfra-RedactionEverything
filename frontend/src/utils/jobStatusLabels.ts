@@ -1,6 +1,4 @@
-/**
- * 任务中心的状态文案面向产品语义，而不是直接暴露底层流水线名词。
- */
+import { t } from '@/i18n';
 
 export type JobStatusTone = 'neutral' | 'brand' | 'warning' | 'review' | 'success' | 'danger' | 'muted';
 
@@ -10,109 +8,118 @@ export type JobStatusMeta = {
   tone: JobStatusTone;
 };
 
-const AGGREGATE_JOB_STATUS_META: Record<string, JobStatusMeta> = {
+type StatusConfig = {
+  labelKey: string;
+  descriptionKey: string;
+  tone: JobStatusTone;
+};
+
+const AGGREGATE_JOB_STATUS_CONFIG: Record<string, StatusConfig> = {
   draft: {
-    label: '待配置',
-    description: '配置阶段',
+    labelKey: 'job.status.draft',
+    descriptionKey: 'job.statusDesc.draft',
     tone: 'neutral',
   },
   queued: {
-    label: '等待执行',
-    description: '队列调度',
+    labelKey: 'job.status.queued',
+    descriptionKey: 'job.statusDesc.queued',
     tone: 'brand',
   },
   processing: {
-    label: '处理中',
-    description: '系统处理中',
+    labelKey: 'job.status.processing',
+    descriptionKey: 'job.statusDesc.processing',
     tone: 'warning',
   },
   running: {
-    label: '处理中',
-    description: '系统处理中',
+    labelKey: 'job.status.running',
+    descriptionKey: 'job.statusDesc.running',
     tone: 'warning',
   },
   awaiting_review: {
-    label: '待复核',
-    description: '人工介入',
+    labelKey: 'job.status.awaiting_review',
+    descriptionKey: 'job.statusDesc.awaiting_review',
     tone: 'review',
   },
   redacting: {
-    label: '生成结果中',
-    description: '结果生成',
+    labelKey: 'job.status.redacting',
+    descriptionKey: 'job.statusDesc.redacting',
     tone: 'brand',
   },
   completed: {
-    label: '已完成',
-    description: '结果可用',
+    labelKey: 'job.status.completed',
+    descriptionKey: 'job.statusDesc.completed',
     tone: 'success',
   },
   failed: {
-    label: '处理异常',
-    description: '需重试',
+    labelKey: 'job.status.failed',
+    descriptionKey: 'job.statusDesc.failed',
     tone: 'danger',
   },
   cancelled: {
-    label: '已取消',
-    description: '已终止',
+    labelKey: 'job.status.cancelled',
+    descriptionKey: 'job.statusDesc.cancelled',
     tone: 'muted',
   },
 };
 
-const JOB_ITEM_ONLY_META: Record<string, JobStatusMeta> = {
+const JOB_ITEM_ONLY_CONFIG: Record<string, StatusConfig> = {
   pending: {
-    label: '待纳入处理',
-    description: '等待执行',
+    labelKey: 'job.status.pending',
+    descriptionKey: 'job.statusDesc.pending',
     tone: 'neutral',
   },
-  processing: {
-    label: '处理中',
-    description: '识别/脱敏中',
-    tone: 'warning',
-  },
   parsing: {
-    label: '解析版面中',
-    description: '读取内容',
+    labelKey: 'job.status.parsing',
+    descriptionKey: 'job.statusDesc.parsing',
     tone: 'warning',
   },
   ner: {
-    label: '识别实体中',
-    description: '抽取实体',
+    labelKey: 'job.status.ner',
+    descriptionKey: 'job.statusDesc.ner',
     tone: 'warning',
   },
   vision: {
-    label: '图像识别中',
-    description: '识别图像',
+    labelKey: 'job.status.vision',
+    descriptionKey: 'job.statusDesc.vision',
     tone: 'warning',
   },
   review_approved: {
-    label: '待生成结果',
-    description: '等待输出',
+    labelKey: 'job.status.review_approved',
+    descriptionKey: 'job.statusDesc.review_approved',
     tone: 'review',
   },
 };
 
+function buildStatusMeta(config: StatusConfig): JobStatusMeta {
+  return {
+    label: t(config.labelKey),
+    description: t(config.descriptionKey),
+    tone: config.tone,
+  };
+}
+
 function fallbackStatusMeta(status: string): JobStatusMeta {
   return {
     label: status,
-    description: '状态已更新，请刷新列表查看最新进度',
+    description: t('job.statusDesc.unknown'),
     tone: 'neutral',
   };
 }
 
 export function getAggregateJobStatusMeta(status: string): JobStatusMeta {
-  return AGGREGATE_JOB_STATUS_META[status] ?? fallbackStatusMeta(status);
+  const config = AGGREGATE_JOB_STATUS_CONFIG[status];
+  return config ? buildStatusMeta(config) : fallbackStatusMeta(status);
 }
 
 export function getJobItemStatusMeta(status: string): JobStatusMeta {
-  return AGGREGATE_JOB_STATUS_META[status] ?? JOB_ITEM_ONLY_META[status] ?? fallbackStatusMeta(status);
+  const config = AGGREGATE_JOB_STATUS_CONFIG[status] ?? JOB_ITEM_ONLY_CONFIG[status];
+  return config ? buildStatusMeta(config) : fallbackStatusMeta(status);
 }
 
-/** Job 行 / 详情页头部：仅聚合状态（与 Jobs、BatchHub 一致） */
 export function formatAggregateJobStatus(status: string): string {
   return getAggregateJobStatusMeta(status).label;
 }
 
-/** 文件明细行：聚合状态 + 子项专有状态 */
 export function formatJobItemStatus(status: string): string {
   return getJobItemStatusMeta(status).label;
 }

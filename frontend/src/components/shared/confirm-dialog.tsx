@@ -1,7 +1,3 @@
-/**
- * Confirmation dialog built on ShadCN AlertDialog.
- * Drop-in replacement for the old components/ConfirmDialog.tsx.
- */
 import {
   AlertDialog,
   AlertDialogAction,
@@ -12,6 +8,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 
 interface ConfirmDialogProps {
@@ -29,14 +26,16 @@ export function ConfirmDialog({
   open,
   title,
   message,
-  confirmText = '确认',
-  cancelText = '取消',
+  confirmText,
+  cancelText,
   danger = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const t = useT();
+
   return (
-    <AlertDialog open={open} onOpenChange={(v) => { if (!v) onCancel(); }}>
+    <AlertDialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel(); }}>
       <AlertDialogContent data-testid="confirm-dialog">
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
@@ -46,14 +45,14 @@ export function ConfirmDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onCancel} data-testid="confirm-cancel">
-            {cancelText}
+            {cancelText ?? t('common.cancel')}
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
             className={cn(danger && 'bg-destructive text-destructive-foreground hover:bg-destructive/90')}
             data-testid="confirm-action"
           >
-            {confirmText}
+            {confirmText ?? t('common.confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

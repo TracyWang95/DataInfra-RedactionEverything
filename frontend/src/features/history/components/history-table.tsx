@@ -10,7 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import type { FileListItem } from '@/types';
-import { BADGE_BASE, REDACTION_STATE_CLASS, REDACTION_STATE_LABEL, resolveRedactionState } from '@/utils/redactionState';
+import { BADGE_BASE, getRedactionStateLabel, REDACTION_STATE_CLASS, resolveRedactionState } from '@/utils/redactionState';
 
 interface HistoryTableProps {
   rows: FileListItem[];
@@ -97,7 +97,7 @@ export function HistoryTable({
                 <td className="hidden p-3 tabular-nums md:table-cell">{row.entity_count}</td>
                 <td className="hidden p-3 md:table-cell">
                   <Badge className={cn(BADGE_BASE, REDACTION_STATE_CLASS[state])}>
-                    {REDACTION_STATE_LABEL[state]}
+                    {getRedactionStateLabel(state)}
                   </Badge>
                 </td>
                 <td className="hidden p-3 text-xs text-muted-foreground lg:table-cell">

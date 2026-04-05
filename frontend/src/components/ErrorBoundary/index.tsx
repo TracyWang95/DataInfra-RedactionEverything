@@ -1,4 +1,7 @@
 import React from 'react';
+import { AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { t } from '@/i18n';
 
 interface Props {
   children: React.ReactNode;
@@ -33,21 +36,24 @@ export class ErrorBoundary extends React.Component<Props, State> {
         <div
           role="alert"
           aria-live="assertive"
-          className="flex flex-col items-center justify-center p-12 text-center"
+          className="flex min-h-[320px] flex-col items-center justify-center gap-4 rounded-2xl border border-border/70 bg-card px-6 py-12 text-center shadow-[0_24px_60px_-36px_rgba(15,23,42,0.28)]"
         >
-          <p className="text-sm font-medium text-red-700 mb-2">页面出现异常</p>
-          <p className="text-xs text-gray-500 mb-4 max-w-md break-all">
-            {this.state.error?.message}
-          </p>
-          <button
-            onClick={this.handleReset}
-            className="px-4 py-2 text-sm rounded-lg bg-[#1d1d1f] text-white hover:bg-[#333]"
-          >
-            重试
-          </button>
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <div className="space-y-2">
+            <p className="text-base font-semibold text-foreground">{t('errorBoundary.title')}</p>
+            <p className="max-w-md break-all text-xs text-muted-foreground">
+              {this.state.error?.message}
+            </p>
+          </div>
+          <Button onClick={this.handleReset} variant="outline" className="rounded-full px-4">
+            {t('common.retry')}
+          </Button>
         </div>
       );
     }
+
     return this.props.children;
   }
 }

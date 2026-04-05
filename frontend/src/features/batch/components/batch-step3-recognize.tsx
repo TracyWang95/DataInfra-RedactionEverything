@@ -13,7 +13,6 @@ import {
   type Step,
   type BatchRow,
   RECOGNITION_DONE_STATUSES,
-  ANALYZE_STATUS_LABEL,
 } from '../hooks/use-batch-wizard';
 
 interface BatchStep3RecognizeProps {
@@ -55,6 +54,28 @@ export function BatchStep3Recognize({
     : isProcessing
       ? `${t('batchWizard.step3.processing')} ${doneCount}/${rows.length}`
       : `${rows.length} ${t('batchWizard.step3.pending')}`;
+  const statusLabel = (status: BatchRow['analyzeStatus']) => {
+    switch (status) {
+      case 'pending':
+        return t('batchWizard.status.pending');
+      case 'parsing':
+        return t('batchWizard.status.parsing');
+      case 'analyzing':
+        return t('batchWizard.status.analyzing');
+      case 'awaiting_review':
+        return t('batchWizard.status.awaitingReview');
+      case 'review_approved':
+        return t('batchWizard.status.reviewApproved');
+      case 'redacting':
+        return t('batchWizard.status.redacting');
+      case 'completed':
+        return t('batchWizard.status.completed');
+      case 'failed':
+        return t('batchWizard.status.failed');
+      default:
+        return status;
+    }
+  };
 
   const pct = rows.length > 0 ? Math.min(100, (doneCount / rows.length) * 100) : 0;
   const displayPct = isProcessing && pct === 0 ? 3 : pct;
@@ -159,7 +180,7 @@ export function BatchStep3Recognize({
                 }
                 className="text-xs"
               >
-                {ANALYZE_STATUS_LABEL[r.analyzeStatus] ?? r.analyzeStatus}
+                {statusLabel(r.analyzeStatus)}
               </Badge>
               {r.analyzeError && (
                 <span className="text-xs text-destructive">{r.analyzeError}</span>
