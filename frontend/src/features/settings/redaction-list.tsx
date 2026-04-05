@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
   SelectContent,
@@ -55,6 +57,80 @@ import type { EntityTypeConfig, PipelineConfig } from './hooks/use-entity-types'
 
 const DEFAULT_PRESET_OPTION = '__default__';
 
+function buildPreviewEntityTypes(): EntityTypeConfig[] {
+  return [
+    { id: 'person_name', name: '姓名', color: '#0f766e', regex_pattern: '[\\u4e00-\\u9fa5]{2,4}', enabled: true },
+    { id: 'id_card', name: '身份证号', color: '#0f766e', regex_pattern: '\\b\\d{17}[\\dXx]\\b', enabled: true },
+    { id: 'bank_card', name: '银行卡号', color: '#0f766e', regex_pattern: '\\b\\d{12,19}\\b', enabled: true },
+    { id: 'company_name', name: '公司名称', color: '#2563eb', use_llm: true, enabled: true },
+    { id: 'project_name', name: '项目名称', color: '#2563eb', use_llm: true, enabled: true },
+  ];
+}
+
+function buildPreviewPipelines(t: (key: string) => string): PipelineConfig[] {
+  return [
+    {
+      mode: 'ocr_has',
+      name: t('settings.redaction.ocrGroup'),
+      description: '',
+      enabled: true,
+      types: [
+        { id: 'seal_text', name: '公章文字', color: '#2563eb', enabled: true, order: 1 },
+        { id: 'handwritten_name', name: '手写姓名', color: '#2563eb', enabled: true, order: 2 },
+      ],
+    },
+    {
+      mode: 'has_image',
+      name: t('settings.pipelineDisplayName.image'),
+      description: '',
+      enabled: true,
+      types: [
+        { id: 'signature_region', name: '签名区域', color: '#dc2626', enabled: true, order: 1 },
+        { id: 'portrait_face', name: '人像头像', color: '#dc2626', enabled: true, order: 2 },
+      ],
+    },
+  ];
+}
+
+function buildPreviewPresets(): RecognitionPreset[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: 'preview-contract-text',
+      name: '合同默认清单',
+      kind: 'text',
+      selectedEntityTypeIds: ['person_name', 'id_card', 'company_name'],
+      ocrHasTypes: [],
+      hasImageTypes: [],
+      replacementMode: 'structured',
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: 'preview-scan-vision',
+      name: '扫描件识别清单',
+      kind: 'vision',
+      selectedEntityTypeIds: [],
+      ocrHasTypes: ['seal_text', 'handwritten_name'],
+      hasImageTypes: ['signature_region', 'portrait_face'],
+      replacementMode: 'structured',
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: 'preview-mixed-full',
+      name: '混合批次交付清单',
+      kind: 'full',
+      selectedEntityTypeIds: ['person_name', 'project_name'],
+      ocrHasTypes: ['seal_text'],
+      hasImageTypes: ['signature_region'],
+      replacementMode: 'structured',
+      created_at: now,
+      updated_at: now,
+    },
+  ];
+}
+
 function sortPresets(presets: RecognitionPreset[]): RecognitionPreset[] {
   return [...presets].sort((left, right) => {
     const leftTime = left.created_at ? Date.parse(left.created_at) : Number.MAX_SAFE_INTEGER;
@@ -66,10 +142,16 @@ function sortPresets(presets: RecognitionPreset[]): RecognitionPreset[] {
 
 export function RedactionList() {
   const t = useT();
+  const previewEntityTypes = useMemo(() => buildPreviewEntityTypes(), []);
+  const previewPipelines = useMemo(() => buildPreviewPipelines(t), [t]);
+  const previewPresets = useMemo(() => buildPreviewPresets(), []);
   const [entityTypes, setEntityTypes] = useState<EntityTypeConfig[]>([]);
   const [pipelines, setPipelines] = useState<PipelineConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [presets, setPresets] = useState<RecognitionPreset[]>([]);
+  const [entityTypesUnavailable, setEntityTypesUnavailable] = useState(false);
+  const [pipelinesUnavailable, setPipelinesUnavailable] = useState(false);
+  const [presetsUnavailable, setPresetsUnavailable] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const [presetForm, setPresetForm] = useState<PresetPayload>({
@@ -100,20 +182,24 @@ export function RedactionList() {
   const reloadPresets = useCallback(async () => {
     try {
       setPresets(await fetchPresets());
+      setPresetsUnavailable(false);
     } catch {
-      setPresets([]);
+      setPresetsUnavailable(true);
+      setPresets((current) => (current.length ? current : []));
     }
   }, []);
 
   const fetchEntityTypes = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetchWithTimeout('/api/v1/custom-types?enabled_only=false', { timeoutMs: 25000 });
+      const res = await fetchWithTimeout('/api/v1/custom-types?enabled_only=false', { timeoutMs: 3500 });
       if (!res.ok) throw new Error('fetch failed');
       const data = await res.json();
       setEntityTypes(data.custom_types || []);
+      setEntityTypesUnavailable(false);
     } catch {
-      setEntityTypes([]);
+      setEntityTypesUnavailable(true);
+      setEntityTypes((current) => (current.length ? current : []));
     } finally {
       setLoading(false);
     }
@@ -121,15 +207,17 @@ export function RedactionList() {
 
   const fetchPipelines = useCallback(async () => {
     try {
-      const res = await fetchWithTimeout('/api/v1/vision-pipelines', { timeoutMs: 25000 });
+      const res = await fetchWithTimeout('/api/v1/vision-pipelines', { timeoutMs: 3500 });
       if (!res.ok) throw new Error('fetch failed');
       const data = await res.json();
       setPipelines((data || []).map((pipeline: PipelineConfig) =>
         pipeline.mode === 'has_image'
           ? { ...pipeline, name: t('settings.pipelineDisplayName.image') }
           : pipeline));
+      setPipelinesUnavailable(false);
     } catch {
-      setPipelines([]);
+      setPipelinesUnavailable(true);
+      setPipelines((current) => (current.length ? current : []));
     }
   }, [t]);
 
@@ -138,6 +226,14 @@ export function RedactionList() {
     void fetchPipelines();
     void reloadPresets();
   }, [fetchEntityTypes, fetchPipelines, reloadPresets]);
+
+  const usePreviewEntityTypes = entityTypesUnavailable && entityTypes.length === 0;
+  const usePreviewPipelines = pipelinesUnavailable && pipelines.length === 0;
+  const usePreviewPresets = presetsUnavailable && presets.length === 0;
+  const previewMode = usePreviewEntityTypes || usePreviewPipelines || usePreviewPresets;
+  const effectiveEntityTypes = usePreviewEntityTypes ? previewEntityTypes : entityTypes;
+  const effectivePipelines = usePreviewPipelines ? previewPipelines : pipelines;
+  const effectivePresets = usePreviewPresets ? previewPresets : presets;
 
   useEffect(() => {
     const syncActivePreset = () => {
@@ -148,50 +244,56 @@ export function RedactionList() {
     return () => window.removeEventListener('datainfra-redaction-active-preset', syncActivePreset);
   }, []);
 
-  const textPresets = useMemo(() => sortPresets(presets.filter(presetAppliesText)), [presets]);
-  const visionPresets = useMemo(() => sortPresets(presets.filter(presetAppliesVision)), [presets]);
+  const textPresets = useMemo(() => sortPresets(effectivePresets.filter(presetAppliesText)), [effectivePresets]);
+  const visionPresets = useMemo(() => sortPresets(effectivePresets.filter(presetAppliesVision)), [effectivePresets]);
   const regexTypes = useMemo(
-    () => entityTypes.filter(type => type.enabled !== false && type.regex_pattern),
-    [entityTypes],
+    () => effectiveEntityTypes.filter(type => type.enabled !== false && type.regex_pattern),
+    [effectiveEntityTypes],
   );
   const semanticTypes = useMemo(
-    () => entityTypes.filter(type => type.enabled !== false && type.use_llm && !type.regex_pattern),
-    [entityTypes],
+    () => effectiveEntityTypes.filter(type => type.enabled !== false && type.use_llm && !type.regex_pattern),
+    [effectiveEntityTypes],
   );
 
   const defaultTextPreset = useMemo<RecognitionPreset>(() => ({
     id: '__default_text__',
     name: t('settings.redaction.defaultNameText'),
     kind: 'text',
-    selectedEntityTypeIds: buildDefaultTextTypeIds(entityTypes),
+    selectedEntityTypeIds: buildDefaultTextTypeIds(effectiveEntityTypes),
     ocrHasTypes: [],
     hasImageTypes: [],
     replacementMode: 'structured',
     created_at: '',
     updated_at: '',
-  }), [entityTypes, t]);
+  }), [effectiveEntityTypes, t]);
 
   const defaultVisionPreset = useMemo<RecognitionPreset>(() => ({
     id: '__default_vision__',
     name: t('settings.redaction.defaultNameVision'),
     kind: 'vision',
     selectedEntityTypeIds: [],
-    ocrHasTypes: buildDefaultPipelineTypeIds(pipelines, 'ocr_has'),
-    hasImageTypes: buildDefaultPipelineTypeIds(pipelines, 'has_image'),
+    ocrHasTypes: buildDefaultPipelineTypeIds(effectivePipelines, 'ocr_has'),
+    hasImageTypes: buildDefaultPipelineTypeIds(effectivePipelines, 'has_image'),
     replacementMode: 'structured',
     created_at: '',
     updated_at: '',
-  }), [pipelines, t]);
+  }), [effectivePipelines, t]);
 
   const summaryTextLabel = useMemo(() => {
+    if (previewMode && !bridgeText) {
+      return textPresets[0]?.name ?? t('settings.redaction.defaultShort');
+    }
     if (!bridgeText) return t('settings.redaction.defaultShort');
     return textPresets.find(preset => preset.id === bridgeText)?.name ?? t('settings.redaction.defaultShort');
-  }, [bridgeText, textPresets, t]);
+  }, [bridgeText, previewMode, textPresets, t]);
 
   const summaryVisionLabel = useMemo(() => {
+    if (previewMode && !bridgeVision) {
+      return visionPresets[0]?.name ?? t('settings.redaction.defaultShort');
+    }
     if (!bridgeVision) return t('settings.redaction.defaultShort');
     return visionPresets.find(preset => preset.id === bridgeVision)?.name ?? t('settings.redaction.defaultShort');
-  }, [bridgeVision, t, visionPresets]);
+  }, [bridgeVision, previewMode, t, visionPresets]);
 
   useEffect(() => {
     if (bridgeText && !textPresets.some(preset => preset.id === bridgeText)) {
@@ -208,9 +310,9 @@ export function RedactionList() {
   }, [bridgeVision, visionPresets]);
 
   const buildDefaultForm = useCallback((kind: PresetKind = 'full'): PresetPayload => {
-    const textIds = buildDefaultTextTypeIds(entityTypes);
-    const ocrIds = buildDefaultPipelineTypeIds(pipelines, 'ocr_has');
-    const imageIds = buildDefaultPipelineTypeIds(pipelines, 'has_image');
+    const textIds = buildDefaultTextTypeIds(effectiveEntityTypes);
+    const ocrIds = buildDefaultPipelineTypeIds(effectivePipelines, 'ocr_has');
+    const imageIds = buildDefaultPipelineTypeIds(effectivePipelines, 'has_image');
 
     if (kind === 'text') {
       return {
@@ -242,9 +344,10 @@ export function RedactionList() {
       hasImageTypes: imageIds,
       replacementMode: 'structured',
     };
-  }, [entityTypes, pipelines]);
+  }, [effectiveEntityTypes, effectivePipelines]);
 
   const openNew = (kind: PresetKind) => {
+    if (previewMode) return;
     setExpanded(null);
     setEditingPresetId(null);
     setPresetForm(buildDefaultForm(kind));
@@ -252,6 +355,7 @@ export function RedactionList() {
   };
 
   const openEdit = (preset: RecognitionPreset) => {
+    if (previewMode) return;
     setExpanded(null);
     setEditingPresetId(preset.id);
     setPresetForm({
@@ -319,10 +423,28 @@ export function RedactionList() {
     }
   };
 
-  if (loading) {
+  if (loading && !previewMode) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-foreground" />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <div className="mx-auto flex w-full max-w-[min(100%,1920px)] flex-1 min-h-0 flex-col gap-3 overflow-hidden px-3 py-2 sm:px-4 sm:py-3">
+          <Card>
+            <CardHeader className="pb-3">
+              <Skeleton className="h-5 w-40" />
+              <Skeleton className="h-4 w-80 max-w-full" />
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <Skeleton className="h-20 w-full rounded-xl" />
+              <div className="grid gap-2 md:grid-cols-2">
+                <Skeleton className="h-16 w-full rounded-xl" />
+                <Skeleton className="h-16 w-full rounded-xl" />
+              </div>
+              <div className="grid gap-2 md:grid-cols-2">
+                <Skeleton className="h-[22rem] w-full rounded-xl" />
+                <Skeleton className="h-[22rem] w-full rounded-xl" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -330,6 +452,12 @@ export function RedactionList() {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="mx-auto flex w-full max-w-[min(100%,1920px)] flex-1 min-h-0 flex-col gap-3 overflow-hidden px-3 py-2 sm:px-4 sm:py-3">
+        {previewMode && (
+          <Alert>
+            <AlertDescription>{t('settings.redaction.previewBanner')}</AlertDescription>
+          </Alert>
+        )}
+
         <Card>
           <CardHeader className="pb-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -340,10 +468,10 @@ export function RedactionList() {
                 </CardDescription>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                <Button size="sm" variant="outline" onClick={() => openNew('text')} data-testid="new-text-preset">
+                <Button size="sm" variant="outline" onClick={() => openNew('text')} data-testid="new-text-preset" disabled={previewMode}>
                   {t('settings.redaction.newText')}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => openNew('vision')} data-testid="new-vision-preset">
+                <Button size="sm" variant="outline" onClick={() => openNew('vision')} data-testid="new-vision-preset" disabled={previewMode}>
                   {t('settings.redaction.newVision')}
                 </Button>
               </div>
@@ -370,6 +498,7 @@ export function RedactionList() {
                 <Label className="text-xs">{t('settings.redaction.linkText')}</Label>
                 <Select
                   value={bridgeText || DEFAULT_PRESET_OPTION}
+                  disabled={previewMode}
                   onValueChange={(value) => {
                     const nextValue = value === DEFAULT_PRESET_OPTION ? '' : value;
                     setBridgeText(nextValue);
@@ -397,6 +526,7 @@ export function RedactionList() {
                 <Label className="text-xs">{t('settings.redaction.linkVision')}</Label>
                 <Select
                   value={bridgeVision || DEFAULT_PRESET_OPTION}
+                  disabled={previewMode}
                   onValueChange={(value) => {
                     const nextValue = value === DEFAULT_PRESET_OPTION ? '' : value;
                     setBridgeVision(nextValue);
@@ -426,10 +556,11 @@ export function RedactionList() {
                 title={t('settings.redaction.textColumn')}
                 defaultPreset={defaultTextPreset}
                 presets={textPresets}
-                entityTypes={entityTypes}
-                pipelines={pipelines}
+                entityTypes={effectiveEntityTypes}
+                pipelines={effectivePipelines}
                 expanded={expanded}
                 setExpanded={setExpanded}
+                previewMode={previewMode}
                 colPrefix="text"
                 onEdit={openEdit}
                     onDelete={(id) => setConfirmState({
@@ -443,10 +574,11 @@ export function RedactionList() {
                 title={t('settings.redaction.visionColumn')}
                 defaultPreset={defaultVisionPreset}
                 presets={visionPresets}
-                entityTypes={entityTypes}
-                pipelines={pipelines}
+                entityTypes={effectiveEntityTypes}
+                pipelines={effectivePipelines}
                 expanded={expanded}
                 setExpanded={setExpanded}
+                previewMode={previewMode}
                 colPrefix="vision"
                 onEdit={openEdit}
                     onDelete={(id) => setConfirmState({
@@ -515,7 +647,7 @@ export function RedactionList() {
                 )}
 
                 {(presetForm.kind === 'vision' || presetForm.kind === 'full') &&
-                  pipelines.filter(pipeline => pipeline.enabled).map(pipeline => (
+                  effectivePipelines.filter(pipeline => pipeline.enabled).map(pipeline => (
                     <PipelineCheckboxGrid
                       key={pipeline.mode}
                       pipeline={pipeline}
@@ -575,6 +707,7 @@ function PresetColumn({
   pipelines,
   expanded,
   setExpanded,
+  previewMode,
   colPrefix,
   onEdit,
   onDelete,
@@ -586,6 +719,7 @@ function PresetColumn({
   pipelines: PipelineConfig[];
   expanded: string | null;
   setExpanded: React.Dispatch<React.SetStateAction<string | null>>;
+  previewMode: boolean;
   colPrefix: string;
   onEdit: (preset: RecognitionPreset) => void;
   onDelete: (id: string) => void;
@@ -636,13 +770,14 @@ function PresetColumn({
                   >
                     {expanded === rowKey ? t('settings.redaction.collapse') : t('settings.redaction.preview')}
                   </Button>
-                  <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => onEdit(preset)}>
+                  <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => onEdit(preset)} disabled={previewMode}>
                     {t('settings.redaction.edit')}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-6 text-xs text-destructive"
+                    disabled={previewMode}
                     onClick={() => void onDelete(preset.id)}
                   >
                     {t('settings.redaction.delete')}

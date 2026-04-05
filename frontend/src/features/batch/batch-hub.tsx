@@ -1,24 +1,55 @@
 
 import { Link } from 'react-router-dom';
-import { ArrowRight, Plus } from 'lucide-react';
 import { useT } from '@/i18n';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { BatchHubJobList } from './components/batch-hub-job-list';
+import { BatchLaunchGrid, batchLaunchIcons } from './components/batch-launch-grid';
 import { useBatchHub } from './hooks/use-batch-hub';
 
 export function BatchHub() {
   const t = useT();
   const {
-    busy,
-    error,
     loading,
     jobsUnavailable,
     activeJobs,
-    startNewJob,
+    openMode,
     continueJob,
     openPreview,
   } = useBatchHub();
+
+  const launchCards = [
+    {
+      mode: 'text' as const,
+      icon: batchLaunchIcons.text,
+      dotClassName: 'bg-[var(--selection-regex-accent)]',
+      title: t('batchHub.mode.text.title'),
+      description: t('batchHub.mode.text.desc'),
+      tags: [t('batchHub.mode.text.tag1'), t('batchHub.mode.text.tag2')] as [string, string],
+      summaryLabel: t('batchHub.mode.text.summaryLabel'),
+      summaryValue: t('batchHub.mode.text.summaryValue'),
+    },
+    {
+      mode: 'image' as const,
+      icon: batchLaunchIcons.image,
+      dotClassName: 'bg-[var(--selection-visual-accent)]',
+      title: t('batchHub.mode.image.title'),
+      description: t('batchHub.mode.image.desc'),
+      tags: [t('batchHub.mode.image.tag1'), t('batchHub.mode.image.tag2')] as [string, string],
+      summaryLabel: t('batchHub.mode.image.summaryLabel'),
+      summaryValue: t('batchHub.mode.image.summaryValue'),
+    },
+    {
+      mode: 'smart' as const,
+      icon: batchLaunchIcons.smart,
+      dotClassName: 'bg-[var(--selection-semantic-accent)]',
+      title: t('batchHub.mode.smart.title'),
+      description: t('batchHub.mode.smart.desc'),
+      tags: [t('batchHub.mode.smart.tag1'), t('batchHub.mode.smart.tag2')] as [string, string],
+      summaryLabel: t('batchHub.mode.smart.summaryLabel'),
+      summaryValue: t('batchHub.mode.smart.summaryValue'),
+    },
+  ];
 
   return (
     <div className="saas-page flex h-full min-h-0 overflow-y-auto bg-background">
@@ -38,52 +69,35 @@ export function BatchHub() {
             </div>
           </section>
 
-          {error && (
-            <Alert variant="destructive" data-testid="batch-hub-error">
-              <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-                <span>{error}</span>
-                <Button variant="outline" size="sm" onClick={openPreview}>
-                  {t('batchHub.previewCta')}
-                </Button>
-              </AlertDescription>
-            </Alert>
-          )}
-
           {jobsUnavailable && (
             <Alert data-testid="batch-hub-preview-alert">
               <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
                 <span>{t('batchHub.previewDesc')}</span>
-                <Button variant="outline" size="sm" onClick={openPreview}>
+                <Button variant="outline" size="sm" onClick={() => openPreview()}>
                   {t('batchHub.previewCta')}
                 </Button>
               </AlertDescription>
             </Alert>
           )}
 
-          <button
-            type="button"
-            className="saas-panel group relative w-full p-6 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/15 sm:p-7"
-            onClick={() => void startNewJob()}
-            data-testid="new-batch-btn"
-            disabled={busy}
-          >
-            <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="flex size-11 shrink-0 items-center justify-center rounded-[18px] bg-foreground text-background">
-                  <Plus className="h-5 w-5" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold tracking-[-0.01em]">
-                    {t('batchHub.newTask')}
-                  </div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {t('batchHub.newTaskDesc')}
-                  </p>
-                </div>
-              </div>
-              <ArrowRight className="h-4 w-4 shrink-0 -translate-x-2 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
+          <section className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <h3 className="text-sm font-semibold tracking-[-0.02em] text-foreground">
+                {t('batchHub.modeSectionTitle')}
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                {t('batchHub.modeSectionDesc')}
+              </p>
             </div>
-          </button>
+            <BatchLaunchGrid
+              jobsUnavailable={jobsUnavailable}
+              liveLabel={t('batchHub.liveBadge')}
+              previewLabel={t('batchHub.previewBadge')}
+              actionLabel={jobsUnavailable ? t('batchHub.previewCta') : t('batchHub.enterConfig')}
+              onOpenMode={openMode}
+              cards={launchCards}
+            />
+          </section>
 
           <BatchHubJobList
             jobs={activeJobs}
@@ -92,7 +106,6 @@ export function BatchHub() {
           />
 
           <div className="flex items-center gap-3 pt-2 text-xs text-muted-foreground">
-            {busy && <span>{t('batchHub.creating')}</span>}
             <Button variant="link" size="sm" className="h-auto px-0 text-xs" asChild>
               <Link to="/jobs">{t('batchHub.jobCenter')}</Link>
             </Button>

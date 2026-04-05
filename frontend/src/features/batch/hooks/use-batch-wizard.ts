@@ -91,6 +91,12 @@ function isBatchWizardMode(value: string | null | undefined): value is BatchWiza
   return value === 'text' || value === 'image' || value === 'smart';
 }
 
+function toBatchJobType(mode: BatchWizardMode): 'text_batch' | 'image_batch' | 'smart_batch' {
+  if (mode === 'text') return 'text_batch';
+  if (mode === 'image') return 'image_batch';
+  return 'smart_batch';
+}
+
 function mapBackendStatus(status: string): BatchRow['analyzeStatus'] {
   switch (status) {
     case 'failed':
@@ -1379,7 +1385,12 @@ export function useBatchWizard() {
       const payload = buildJobConfigForWorker(cfg, mode, nextFurthest);
       let jid = activeJobId;
       if (!jid) {
-        const j = await createJob({ job_type: 'smart_batch', title: `${t('batchHub.batch')} ${new Date().toLocaleString()}`, config: payload, priority: jobPriority });
+        const j = await createJob({
+          job_type: toBatchJobType(mode),
+          title: `${t('batchHub.batch')} ${new Date().toLocaleString()}`,
+          config: payload,
+          priority: jobPriority,
+        });
         jid = j.id;
         writeLocalWizardMaxStep(jid, nextFurthest);
         setActiveJobId(jid);

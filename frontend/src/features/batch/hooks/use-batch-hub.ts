@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { t } from '@/i18n';
 import {
-  createJob,
   listJobs,
   type JobSummary,
 } from '@/services/jobsApi';
-import { localizeErrorMessage } from '@/utils/localizeError';
 import { resolveJobPrimaryNavigation } from '@/utils/jobPrimaryNavigation';
 import {
   buildPreviewBatchRoute,
 } from '../lib/batch-preview-fixtures';
+
+export type BatchLaunchMode = 'text' | 'image' | 'smart';
 
 function isActiveJob(status: string): boolean {
   return ['draft', 'queued', 'processing', 'running', 'awaiting_review', 'redacting'].includes(status);
@@ -18,8 +17,6 @@ function isActiveJob(status: string): boolean {
 
 export function useBatchHub() {
   const nav = useNavigate();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [recentJobs, setRecentJobs] = useState<JobSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [jobsUnavailable, setJobsUnavailable] = useState(false);
@@ -56,26 +53,17 @@ export function useBatchHub() {
 
   const activeJobs = useMemo(() => recentJobs, [recentJobs]);
 
-  const openPreview = useCallback(() => {
-    nav(buildPreviewBatchRoute('smart', 1));
+  const openPreview = useCallback((mode: BatchLaunchMode = 'smart') => {
+    nav(buildPreviewBatchRoute(mode, 1));
   }, [nav]);
 
-  const startNewJob = useCallback(async () => {
-    setError(null);
-    setBusy(true);
-    try {
-      const j = await createJob({
-        job_type: 'smart_batch',
-        title: t('batchHub.batchTaskTitle').replace('{time}', new Date().toLocaleString()),
-        config: {},
-      });
-      nav(`/batch/smart?jobId=${encodeURIComponent(j.id)}&step=1&new=1`);
-    } catch (e) {
-      setError(localizeErrorMessage(e, 'batchHub.createFailed'));
-    } finally {
-      setBusy(false);
+  const openMode = useCallback((mode: BatchLaunchMode) => {
+    if (jobsUnavailable) {
+      nav(buildPreviewBatchRoute(mode, 1));
+      return;
     }
-  }, [nav]);
+    nav(`/batch/${mode}`);
+  }, [jobsUnavailable, nav]);
 
   const continueJob = useCallback((job: JobSummary) => {
     const navTarget = resolveJobPrimaryNavigation({
@@ -95,12 +83,10 @@ export function useBatchHub() {
   }, [nav]);
 
   return {
-    busy,
-    error,
     loading,
     jobsUnavailable,
     activeJobs,
-    startNewJob,
+    openMode,
     continueJob,
     openPreview,
   };

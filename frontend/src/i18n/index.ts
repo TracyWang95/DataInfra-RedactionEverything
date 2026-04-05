@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { create } from 'zustand';
 import { zh } from './zh';
 import { en } from './en';
@@ -54,5 +55,5 @@ export function t(key: string): string {
 
 export function useT() {
   const locale = useI18n((s) => s.locale);
-  return (key: string): string => translate(locale, key);
+  return useCallback((key: string): string => translate(locale, key), [locale]);
 }
