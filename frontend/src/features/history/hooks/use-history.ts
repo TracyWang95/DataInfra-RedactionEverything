@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authFetch } from '@/services/api-client';
 import { t } from '@/i18n';
 import { fileApi, redactionApi } from '@/services/api';
@@ -7,7 +7,7 @@ import { localizeErrorMessage } from '@/utils/localizeError';
 import { resolveRedactionState } from '@/utils/redactionState';
 import type { CompareData, FileListItem } from '@/types';
 
-/* ─── Constants ─── */
+/* Constants */
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
 export type SourceTab = 'all' | 'playground' | 'batch';
@@ -27,7 +27,7 @@ export type HistoryPreviewItem = {
   meta: string;
 };
 
-/* ─── Helpers ─── */
+/* Helpers */
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -71,7 +71,7 @@ function normalizeHistoryPreviewItems(fileInfo: Record<string, unknown> | null):
     const entry = entity as Record<string, unknown>;
     if (entry.selected === false) continue;
     const type = typeof entry.type === 'string' && entry.type.trim() ? entry.type.trim() : 'TEXT';
-    const text = typeof entry.text === 'string' && entry.text.trim() ? entry.text.trim() : '未命名内容';
+    const text = typeof entry.text === 'string' && entry.text.trim() ? entry.text.trim() : t('history.unnamedContent');
     items.push({ id: String(entry.id ?? `entity-${items.length}`), label: type, value: text, meta: t('history.previewItemText') });
   }
 
@@ -118,7 +118,7 @@ export function buildHistoryGroups(rows: FileListItem[], sourceTab: SourceTab): 
   return out;
 }
 
-/* ─── Hook ─── */
+/* Hook */
 
 export function useHistory() {
   const [urlParams] = useState(() => new URLSearchParams(window.location.search));
@@ -158,7 +158,7 @@ export function useHistory() {
   /* Confirm dialog */
   const [confirmDlg, setConfirmDlg] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
 
-  /* ─── Compare helpers ─���─ */
+  /* Compare helpers */
 
   const revokeCompareBlobs = useCallback(() => {
     setCompareBlobUrls(prev => {
@@ -219,7 +219,7 @@ export function useHistory() {
 
   useEffect(() => () => revokeCompareBlobs(), [revokeCompareBlobs]);
 
-  /* ─── Data loading ─── */
+  /* Data loading */
 
   const load = useCallback(
     async (isRefresh = false, targetPage?: number, targetSize?: number, targetSource?: SourceTab) => {
@@ -255,7 +255,7 @@ export function useHistory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ─── Filter / page actions ─── */
+  /* Filter / page actions */
 
   const changeSourceTab = useCallback((tab: SourceTab) => {
     setSourceTab(tab);
@@ -327,7 +327,7 @@ export function useHistory() {
   const clearFilters = useCallback(() => { setDateFilter('all'); setFileTypeFilter('all'); setStatusFilter('all'); }, []);
   const allSelected = filteredRows.length > 0 && selectedIds.length === filteredRows.length;
 
-  /* ─── Batch zip download ─── */
+  /* Batch zip download */
 
   const downloadZipByIds = useCallback(async (ids: string[], redacted: boolean, filename: string) => {
     if (!ids.length) { setMsg({ text: t('history.noDownloadable'), tone: 'warn' }); return; }
@@ -351,7 +351,7 @@ export function useHistory() {
     await downloadZipByIds(selectedIds, redacted, redacted ? 'history_redacted.zip' : 'history_original.zip');
   }, [selectedIds, downloadZipByIds]);
 
-  /* ─── Tree collapse ─── */
+  /* Tree collapse */
 
   const toggleBatchCollapse = useCallback((batchGroupId: string) => {
     setCollapsedBatchIds(prev => {
@@ -361,7 +361,7 @@ export function useHistory() {
     });
   }, []);
 
-  /* ─── Delete ─── */
+  /* Delete */
 
   const remove = useCallback((id: string) => {
     setConfirmDlg({
@@ -394,17 +394,24 @@ export function useHistory() {
     });
   }, [load, page, pageSize]);
 
-  /* ─── Cleanup ─── */
+  /* Cleanup */
 
   const handleCleanup = useCallback(async () => {
     setCleanupConfirmOpen(false);
     try {
       const res = await authFetch('/api/v1/safety/cleanup', { method: 'POST' });
-      if (!res.ok) throw new Error('清空失败');
+      if (!res.ok) throw new Error(t('safety.cleanup.failed'));
       const data = await res.json();
-      showToast(`已清空 ${data.files_removed} 个文件、${data.jobs_removed} 条任务`, 'success');
+      showToast(
+        t('safety.cleanup.success')
+          .replace('{files}', String(data.files_removed))
+          .replace('{jobs}', String(data.jobs_removed)),
+        'success',
+      );
       load(true, 1, pageSize);
-    } catch { showToast('清空失败', 'error'); }
+    } catch {
+      showToast(t('safety.cleanup.failed'), 'error');
+    }
   }, [load, pageSize]);
 
   return {

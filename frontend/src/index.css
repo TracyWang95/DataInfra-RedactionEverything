@@ -1588,39 +1588,39 @@ input[type="checkbox"]:focus-visible {
 :root {
   color-scheme: light;
   --background: #ffffff;
-  --background-secondary: #f8fafc;
-  --background-tertiary: #f1f5f9;
-  --foreground: #0f172a;
-  --foreground-secondary: #1e293b;
-  --foreground-muted: #475569;
-  --foreground-subtle: #64748b;
+  --background-secondary: #f6f7f9;
+  --background-tertiary: #eef1f4;
+  --foreground: #0a0a0a;
+  --foreground-secondary: #171717;
+  --foreground-muted: #52525b;
+  --foreground-subtle: #71717a;
   --border: rgba(15, 23, 42, 0.10);
   --border-light: rgba(15, 23, 42, 0.06);
   --input: rgba(15, 23, 42, 0.10);
   --ring: rgba(16, 163, 127, 0.22);
   --card: #ffffff;
-  --card-foreground: #0f172a;
+  --card-foreground: #0a0a0a;
   --popover: #ffffff;
-  --popover-foreground: #0f172a;
-  --secondary: #f8fafc;
-  --secondary-foreground: #0f172a;
-  --muted: #f8fafc;
-  --muted-foreground: #475569;
-  --accent: #eef2f7;
-  --accent-foreground: #0f172a;
+  --popover-foreground: #0a0a0a;
+  --secondary: #f6f7f9;
+  --secondary-foreground: #0a0a0a;
+  --muted: #f6f7f9;
+  --muted-foreground: #52525b;
+  --accent: #eef4f2;
+  --accent-foreground: #0a0a0a;
   --panel: rgba(255, 255, 255, 0.96);
   --panel-strong: #ffffff;
   --surface-control: #ffffff;
-  --surface-control-muted: #f8fafc;
+  --surface-control-muted: #f6f7f9;
   --surface-overlay: rgba(255, 255, 255, 0.98);
-  --surface-canvas: #f3f6fb;
+  --surface-canvas: #f4f6f8;
   --overlay-backdrop: rgba(15, 23, 42, 0.46);
   --sidebar-background: #ffffff;
-  --sidebar-foreground: #0f172a;
-  --sidebar-primary: #eef2f7;
-  --sidebar-primary-foreground: #0f172a;
-  --sidebar-accent: #f8fafc;
-  --sidebar-accent-foreground: #0f172a;
+  --sidebar-foreground: #0a0a0a;
+  --sidebar-primary: #eef4f2;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #f6f7f9;
+  --sidebar-accent-foreground: #0a0a0a;
   --sidebar-border: rgba(15, 23, 42, 0.08);
   --sidebar-ring: rgba(16, 163, 127, 0.28);
   --sidebar: var(--sidebar-background);
@@ -1667,49 +1667,49 @@ input[type="checkbox"]:focus-visible {
 
 :root.dark {
   color-scheme: dark;
-  --background: #0f1115;
-  --background-secondary: #131722;
-  --background-tertiary: #181d2a;
-  --foreground: #f8fafc;
-  --foreground-secondary: #e2e8f0;
-  --foreground-muted: #94a3b8;
-  --foreground-subtle: #64748b;
-  --border: rgba(148, 163, 184, 0.16);
-  --border-light: rgba(148, 163, 184, 0.10);
-  --input: rgba(148, 163, 184, 0.18);
+  --background: #000000;
+  --background-secondary: #09090b;
+  --background-tertiary: #111113;
+  --foreground: #ffffff;
+  --foreground-secondary: #f4f4f5;
+  --foreground-muted: #a1a1aa;
+  --foreground-subtle: #71717a;
+  --border: rgba(255, 255, 255, 0.14);
+  --border-light: rgba(255, 255, 255, 0.09);
+  --input: rgba(255, 255, 255, 0.16);
   --ring: rgba(16, 163, 127, 0.30);
-  --card: #131722;
-  --card-foreground: #f8fafc;
-  --popover: #131722;
-  --popover-foreground: #f8fafc;
-  --secondary: #181d2a;
-  --secondary-foreground: #f8fafc;
-  --muted: #181d2a;
-  --muted-foreground: #94a3b8;
-  --accent: #1d2433;
-  --accent-foreground: #f8fafc;
-  --panel: rgba(19, 23, 34, 0.92);
-  --panel-strong: rgba(19, 23, 34, 0.98);
-  --surface-control: #131722;
-  --surface-control-muted: #181d2a;
-  --surface-overlay: rgba(19, 23, 34, 0.98);
-  --surface-canvas: #0b1018;
+  --card: #09090b;
+  --card-foreground: #ffffff;
+  --popover: #09090b;
+  --popover-foreground: #ffffff;
+  --secondary: #111113;
+  --secondary-foreground: #ffffff;
+  --muted: #111113;
+  --muted-foreground: #a1a1aa;
+  --accent: #111617;
+  --accent-foreground: #ffffff;
+  --panel: rgba(9, 9, 11, 0.94);
+  --panel-strong: rgba(9, 9, 11, 0.98);
+  --surface-control: #09090b;
+  --surface-control-muted: #111113;
+  --surface-overlay: rgba(9, 9, 11, 0.98);
+  --surface-canvas: #050506;
   --overlay-backdrop: rgba(2, 6, 23, 0.64);
-  --sidebar-background: #11151d;
-  --sidebar-foreground: #f8fafc;
-  --sidebar-primary: #1b2433;
-  --sidebar-primary-foreground: #f8fafc;
-  --sidebar-accent: #161e2c;
-  --sidebar-accent-foreground: #f8fafc;
-  --sidebar-border: rgba(148, 163, 184, 0.14);
+  --sidebar-background: #050506;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #111617;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #0d1014;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.12);
   --sidebar-ring: rgba(16, 163, 127, 0.34);
   --sidebar: var(--sidebar-background);
   --sidebar-foreground-strong: #ffffff;
-  --shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.24), 0 16px 36px -26px rgba(2, 6, 23, 0.44);
-  --shadow-md: 0 24px 54px -34px rgba(2, 6, 23, 0.54);
-  --shadow-lg: 0 34px 80px -42px rgba(2, 6, 23, 0.64);
-  --shadow-control: 0 14px 32px -24px rgba(2, 6, 23, 0.52);
-  --shadow-floating: 0 40px 110px -54px rgba(2, 6, 23, 0.76);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32), 0 18px 40px -30px rgba(0, 0, 0, 0.62);
+  --shadow-md: 0 28px 64px -38px rgba(0, 0, 0, 0.72);
+  --shadow-lg: 0 36px 92px -46px rgba(0, 0, 0, 0.82);
+  --shadow-control: 0 16px 36px -26px rgba(0, 0, 0, 0.68);
+  --shadow-floating: 0 42px 120px -58px rgba(0, 0, 0, 0.88);
   --warning-surface: rgba(245, 158, 11, 0.16);
   --warning-border: rgba(245, 158, 11, 0.28);
   --warning-foreground: #fde68a;
@@ -1749,6 +1749,10 @@ body,
 .dark body {
   background: var(--background);
   color: var(--foreground);
+}
+
+body {
+  background-image: none;
 }
 
 :root:not(.dark) .saas-page::before {
@@ -1792,4 +1796,101 @@ body,
   border-color: var(--border) !important;
   color: var(--foreground) !important;
   box-shadow: none !important;
+}
+
+.tone-badge-neutral,
+.tone-badge-brand,
+.tone-badge-review,
+.tone-badge-warning,
+.tone-badge-success,
+.tone-badge-danger,
+.tone-badge-muted,
+.tone-panel-neutral,
+.tone-panel-brand,
+.tone-panel-review,
+.tone-panel-warning,
+.tone-panel-success,
+.tone-panel-danger,
+.tone-panel-muted {
+  border-width: 1px;
+  border-style: solid;
+}
+
+.tone-badge-neutral,
+.tone-panel-neutral {
+  background: var(--info-surface);
+  border-color: var(--info-border);
+  color: var(--info-foreground);
+}
+
+.tone-badge-brand,
+.tone-panel-brand {
+  background: rgba(16, 163, 127, 0.12);
+  border-color: rgba(16, 163, 127, 0.24);
+  color: var(--primary);
+}
+
+.tone-badge-review,
+.tone-panel-review {
+  background: var(--selection-regex-surface);
+  border-color: var(--selection-regex-border);
+  color: var(--selection-regex-text);
+}
+
+.tone-badge-warning,
+.tone-panel-warning {
+  background: var(--warning-surface);
+  border-color: var(--warning-border);
+  color: var(--warning-foreground);
+}
+
+.tone-badge-success,
+.tone-panel-success {
+  background: var(--success-surface);
+  border-color: var(--success-border);
+  color: var(--success-foreground);
+}
+
+.tone-badge-danger,
+.tone-panel-danger {
+  background: var(--error-surface);
+  border-color: var(--error-border);
+  color: var(--error-foreground);
+}
+
+.tone-badge-muted,
+.tone-panel-muted {
+  background: var(--muted);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+}
+
+.tone-surface-success {
+  background: var(--success-surface);
+  border-color: var(--success-border);
+  color: var(--success-foreground);
+}
+
+.tone-surface-danger {
+  background: var(--error-surface);
+  border-color: var(--error-border);
+  color: var(--error-foreground);
+}
+
+.tone-surface-warning {
+  background: var(--warning-surface);
+  border-color: var(--warning-border);
+  color: var(--warning-foreground);
+}
+
+.tone-progress-success {
+  background: var(--success-foreground);
+}
+
+.tone-progress-danger {
+  background: var(--error-foreground);
+}
+
+.tone-progress-brand {
+  background: var(--primary);
 }

@@ -6,6 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { JobDetail, JobItemRow, JobSummary } from '@/services/jobsApi';
 import { resolveJobPrimaryNavigation, buildBatchWorkbenchUrl } from '@/utils/jobPrimaryNavigation';
 import { resolveRedactionState } from '@/utils/redactionState';
+import { tonePanelClass } from '@/utils/toneClasses';
 import { JobStatusBadge, JobTypeBadge, RedactionStateBadge } from './jobs-status-badge';
 import { ACTIVE_STATUSES, buildProgressHeadline, buildProgressSummary, canDeleteJob } from '../hooks/use-jobs';
 
@@ -59,7 +60,7 @@ export function JobsTable({
         <div className="flex flex-wrap items-center gap-3 text-2xs text-muted-foreground">
           <span>{t('jobs.expandHint')}</span>
           <span className="text-border">|</span>
-          <span className="text-amber-700">{t('jobs.cancelBeforeDelete')}</span>
+          <span className="text-[var(--warning-foreground)]">{t('jobs.cancelBeforeDelete')}</span>
         </div>
       </div>
 
@@ -95,7 +96,7 @@ export function JobsTable({
         ) : rows.length === 0 ? (
           <EmptyState />
         ) : (
-          <ul className="flex w-full flex-col divide-y divide-gray-100 dark:divide-gray-700">
+          <ul className="flex w-full flex-col divide-y divide-border/70">
             {rows.map((job, index) => (
               <JobRow
                 key={job.id}
@@ -239,7 +240,14 @@ function JobRow({
               </div>
               <div className="h-1.5 rounded-full bg-muted overflow-hidden">
                 <div
-                  className={cn('h-full rounded-full transition-all', job.status === 'failed' ? 'bg-red-400' : job.status === 'completed' ? 'bg-emerald-500' : 'bg-primary')}
+                  className={cn(
+                    'h-full rounded-full transition-all',
+                    job.status === 'failed'
+                      ? 'tone-progress-danger'
+                      : job.status === 'completed'
+                        ? 'tone-progress-success'
+                        : 'tone-progress-brand',
+                  )}
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
@@ -275,7 +283,7 @@ function JobRow({
             ) : job.progress.failed > 0 ? (
               <button type="button" disabled={requeueingJobId === job.id}
                 onClick={e => { e.stopPropagation(); void onRequeueFailed(job); }}
-                className={`${actionBtnBase} w-full whitespace-nowrap border border-amber-200 dark:border-amber-700 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50`}
+                className={cn(actionBtnBase, 'w-full whitespace-nowrap', tonePanelClass.warning, 'hover:opacity-90 disabled:opacity-50')}
                 data-testid={`job-requeue-${job.id}`}>
                 {requeueingJobId === job.id ? t('jobs.processingEllipsis') : t('jobs.requeueBtn').replace('{n}', String(job.progress.failed))}
               </button>
@@ -288,7 +296,10 @@ function JobRow({
             {!deleteBlocked ? (
               <button type="button" disabled={deletingJobId === job.id}
                 onClick={e => { e.stopPropagation(); void onDelete(job); }}
-                className={`${actionBtnBase} w-full whitespace-nowrap border text-muted-foreground hover:border-red-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50`}
+                className={cn(
+                  actionBtnBase,
+                  'w-full whitespace-nowrap border text-muted-foreground hover:border-[var(--error-border)] hover:bg-[var(--error-surface)] hover:text-[var(--error-foreground)] disabled:opacity-50',
+                )}
                 data-testid={`job-delete-${job.id}`}>
                 {deletingJobId === job.id ? t('jobs.deletingEllipsis') : t('jobs.deleteTask')}
               </button>

@@ -1,4 +1,4 @@
-const enBase: Record<string, string> = {
+﻿const enBase: Record<string, string> = {
   // Navigation
   'nav.playground': 'Playground',
   'nav.batch': 'Batch',

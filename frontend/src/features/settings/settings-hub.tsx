@@ -14,7 +14,7 @@ import { PipelineConfigPanel } from './components/pipeline-config';
 
 export function SettingsHub() {
   const t = useT();
-  const panelIntroClass = 'rounded-2xl border border-border/70 bg-card/70 px-4 py-3 text-sm text-muted-foreground shadow-[0_18px_50px_-38px_rgba(15,23,42,0.25)]';
+  const panelIntroClass = 'rounded-2xl border border-border/70 bg-card/70 px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-control)]';
   const {
     entityTypes, pipelines, loading, regexTypes, llmTypes,
     importFileRef, createType, updateType, deleteType, resetToDefault,

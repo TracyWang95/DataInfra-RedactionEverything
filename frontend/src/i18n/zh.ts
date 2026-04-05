@@ -1,4 +1,4 @@
-const zhBase: Record<string, string> = {
+﻿const zhBase: Record<string, string> = {
   // Navigation
   'nav.playground': 'Playground',
   'nav.batch': '批量任务',

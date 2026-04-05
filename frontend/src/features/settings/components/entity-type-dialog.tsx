@@ -16,6 +16,7 @@ import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { getRegexModalCheck } from '../hooks/use-entity-types';
+import { tonePanelClass } from '@/utils/toneClasses';
 
 interface EntityTypeForm {
   name: string;
@@ -175,7 +176,7 @@ export function EntityTypeDialog({
                   <span className="text-sm text-muted-foreground">{t('settings.regexReady')}</span>
                 )}
                 {regexCheck === 'pass' && (
-                  <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                  <span className="text-sm font-medium text-[var(--success-foreground)]">
                     {t('settings.regexPass')}
                   </span>
                 )}
@@ -199,7 +200,7 @@ export function EntityTypeDialog({
                   <div className="rounded-lg border border-border/70 bg-muted/20 px-3 py-2 text-sm">
                     {serverResult.valid ? (
                       <div>
-                        <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                        <span className="font-medium text-[var(--success-foreground)]">
                           {t('settings.matchCount').replace('{n}', String(serverResult.matches.length))}
                         </span>
                         {serverResult.matches.length > 0 && (
@@ -207,7 +208,7 @@ export function EntityTypeDialog({
                             {serverResult.matches.map((match, index) => (
                               <span
                                 key={`${match.text}-${index}`}
-                                className="inline-block rounded border border-yellow-200 bg-yellow-100 px-1.5 py-0.5 font-mono text-xs text-yellow-900 dark:border-yellow-900/60 dark:bg-yellow-950/60 dark:text-yellow-200"
+                                className={`inline-block rounded px-1.5 py-0.5 font-mono text-xs ${tonePanelClass.warning}`}
                               >
                                 {match.text}
                               </span>

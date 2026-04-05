@@ -25,15 +25,15 @@ export function getRedactionStateLabel(state: RedactionState): string {
 }
 
 export const REDACTION_STATE_CLASS: Record<RedactionState, string> = {
-  redacted: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/10',
-  awaiting_review: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/10',
-  unredacted: 'bg-gray-50 text-gray-500 ring-1 ring-inset ring-gray-500/10',
+  redacted: 'tone-badge-success',
+  awaiting_review: 'tone-badge-warning',
+  unredacted: 'tone-badge-muted',
 };
 
 export const BADGE_BASE = 'inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-medium whitespace-nowrap';
 
 export const REDACTION_STATE_RING: Record<RedactionState, string> = {
-  redacted: 'ring-emerald-200',
-  awaiting_review: 'ring-amber-200',
-  unredacted: 'ring-gray-200',
+  redacted: 'ring-[var(--success-border)]',
+  awaiting_review: 'ring-[var(--warning-border)]',
+  unredacted: 'ring-border',
 };

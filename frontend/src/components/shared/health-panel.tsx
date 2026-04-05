@@ -25,9 +25,9 @@ export function HealthPanel({ health, checking, roundTripMs, onRefresh }: Health
           <span
             className={cn('h-1.5 w-1.5 rounded-full', {
               'animate-pulse bg-sidebar-foreground/30': checking,
-              'bg-emerald-400': !checking && health?.all_online,
-              'bg-amber-400': !checking && health && !health.all_online,
-              'bg-red-400': !checking && !health,
+              'bg-[var(--success-foreground)]': !checking && health?.all_online,
+              'bg-[var(--warning-foreground)]': !checking && health && !health.all_online,
+              'bg-[var(--error-foreground)]': !checking && !health,
             })}
           />
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/65">{t('health.title')}</span>
@@ -70,7 +70,7 @@ export function HealthPanel({ health, checking, roundTripMs, onRefresh }: Health
           </div>
         </div>
       ) : (
-        <div className="text-[10px] text-red-400">
+        <div className="text-[10px] text-[var(--error-foreground)]">
           {checking ? t('health.detecting') : t('health.backendDown')}
         </div>
       )}
@@ -82,7 +82,14 @@ function ServiceRow({ name, status, t }: { name: string; status: string; t: (key
   return (
     <div className="flex items-center justify-between gap-2">
       <span className="truncate text-sidebar-foreground/55" title={name}>{name}</span>
-      <span className={cn('shrink-0 rounded-full px-2 py-0.5 font-medium', status === 'online' ? 'bg-emerald-500/12 text-emerald-300' : 'bg-red-500/12 text-red-300')}>
+      <span
+        className={cn(
+          'shrink-0 rounded-full border px-2 py-0.5 font-medium',
+          status === 'online'
+            ? 'border-[var(--success-border)] bg-[var(--success-surface)] text-[var(--success-foreground)]'
+            : 'border-[var(--error-border)] bg-[var(--error-surface)] text-[var(--error-foreground)]',
+        )}
+      >
         {status === 'online' ? t('health.online') : t('health.offline')}
       </span>
     </div>

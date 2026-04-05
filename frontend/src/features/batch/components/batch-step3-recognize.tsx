@@ -95,8 +95,8 @@ export function BatchStep3Recognize({
             <div className="flex justify-between text-xs">
               <span
                 className={cn(
-                  allDone && 'text-green-600 font-medium',
-                  isProcessing && !allDone && 'text-blue-600',
+                  allDone && 'font-medium text-[var(--success-foreground)]',
+                  isProcessing && !allDone && 'text-primary',
                   !isProcessing && !allDone && 'text-muted-foreground',
                 )}
               >
@@ -108,10 +108,10 @@ export function BatchStep3Recognize({
             </div>
             <Progress
               value={displayPct}
-              className={cn(
-                'h-2.5',
-                allDone && '[&>[role=progressbar]]:bg-green-500',
-                isProcessing && !allDone && '[&>[role=progressbar]]:bg-blue-500 [&>[role=progressbar]]:animate-pulse',
+              className="h-2.5"
+              indicatorClassName={cn(
+                allDone && 'tone-progress-success',
+                isProcessing && !allDone && 'tone-progress-brand animate-pulse',
               )}
               data-testid="recognition-progress"
             />
@@ -151,7 +151,7 @@ export function BatchStep3Recognize({
             variant={allDone ? 'default' : 'outline'}
             onClick={() => goStep(4)}
             disabled={!allDone}
-            className={cn(allDone && 'bg-green-600 hover:bg-green-700')}
+            className={cn(allDone && 'bg-primary hover:bg-primary/90')}
             data-testid="step3-next"
           >
             {allDone

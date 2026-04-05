@@ -48,7 +48,7 @@ export const PlaygroundToolbar: FC<PlaygroundToolbarProps> = ({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1 rounded-2xl border border-border/70 bg-card/80 p-1 shadow-[0_18px_32px_-28px_rgba(15,23,42,0.35)]">
+      <div className="flex shrink-0 items-center gap-1 rounded-2xl border border-border/70 bg-[var(--surface-control)] p-1 shadow-[var(--shadow-control)]">
         {isImageMode && onPopout && (
           <Button
             variant="outline"

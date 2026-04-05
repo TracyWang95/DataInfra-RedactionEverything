@@ -5,7 +5,7 @@ import { useT } from '@/i18n';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useHistory } from './hooks/use-history';
@@ -97,6 +97,9 @@ export function History() {
         <DialogContent className="max-h-[80vh] max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('history.compareTitle')}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {t('history.beforeRedaction')} / {t('history.afterRedaction')}
+            </DialogDescription>
           </DialogHeader>
           {s.compareLoading ? (
             <Skeleton className="h-40 w-full" />

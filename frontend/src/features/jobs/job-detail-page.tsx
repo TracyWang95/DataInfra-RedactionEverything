@@ -228,8 +228,8 @@ export function JobDetailPage() {
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{t('jobDetail.type')}{t('jobDetail.batchTask')}</span>
               <span>{t('jobDetail.progressTotal').replace('{n}', String(j.progress.total_items))}</span>
-              <span className="text-emerald-700">{t('jobDetail.progressRedacted').replace('{n}', String(redactedCount))}</span>
-              <span className="text-amber-700">{t('jobDetail.progressAwaiting').replace('{n}', String(awaitingCount))}</span>
+              <span className="text-[var(--success-foreground)]">{t('jobDetail.progressRedacted').replace('{n}', String(redactedCount))}</span>
+              <span className="text-[var(--warning-foreground)]">{t('jobDetail.progressAwaiting').replace('{n}', String(awaitingCount))}</span>
               {j.progress.failed > 0 && (
                 <span className="text-destructive">{t('jobDetail.progressFailed').replace('{n}', String(j.progress.failed))}</span>
               )}

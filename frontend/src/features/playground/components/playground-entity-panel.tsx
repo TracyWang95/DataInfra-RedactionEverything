@@ -178,7 +178,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = ({
       <Button
         onClick={onRedact}
         disabled={selectedCount === 0 || isLoading}
-        className={cn('h-12 rounded-2xl text-sm font-semibold shadow-[0_22px_44px_-28px_rgba(15,23,42,0.45)]', selectedCount === 0 && 'opacity-50')}
+        className={cn('h-12 rounded-2xl text-sm font-semibold shadow-[var(--shadow-control)]', selectedCount === 0 && 'opacity-50')}
         data-testid="playground-redact-btn"
       >
         {isLoading

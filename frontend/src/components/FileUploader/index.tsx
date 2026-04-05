@@ -112,7 +112,7 @@ export const FileUploader: React.FC = () => {
           isDragReject && 'border-red-500 bg-red-50'
         )}
       >
-        <input {...getInputProps()} />
+              <input {...getInputProps()} className="hidden" />
         
         <div className="flex flex-col items-center gap-4">
           <div className={clsx(

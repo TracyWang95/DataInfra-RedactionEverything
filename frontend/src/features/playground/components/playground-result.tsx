@@ -165,7 +165,7 @@ export const PlaygroundResult: FC<PlaygroundResultProps> = ({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-testid="playground-result">
       <div className="mx-3 mb-3 mt-3 flex-shrink-0 sm:mx-4 sm:mt-4">
-        <Card className="border-0 bg-foreground text-background shadow-[0_28px_60px_-32px_rgba(15,23,42,0.55)]">
+        <Card className="border-0 bg-foreground text-background shadow-[var(--shadow-floating)]">
           <CardContent className="flex flex-wrap items-center justify-between gap-4 px-6 py-5">
             <div className="flex items-center gap-4">
               <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-background/10 backdrop-blur-sm">

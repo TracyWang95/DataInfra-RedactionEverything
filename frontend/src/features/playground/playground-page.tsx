@@ -397,7 +397,7 @@ export const Playground: FC = () => {
 
               {!isImageMode && selectedText && selectionPos && (
                 <div
-                  className="fixed z-50 min-w-[320px] max-w-[420px] animate-scale-in rounded-[24px] border border-border/70 bg-background p-4 shadow-[0_28px_60px_-30px_rgba(15,23,42,0.5)]"
+                  className="fixed z-50 min-w-[320px] max-w-[420px] animate-scale-in rounded-[24px] border border-border/70 bg-[var(--surface-overlay)] p-4 shadow-[var(--shadow-floating)]"
                   style={{ left: selectionPos.left, top: selectionPos.top }}
                   onMouseDown={(event) => event.stopPropagation()}
                   onMouseUp={(event) => event.stopPropagation()}
@@ -444,7 +444,7 @@ export const Playground: FC = () => {
 
               {!isImageMode && clickedEntity && entityPopupPos && (
                 <div
-                  className="fixed z-50 min-w-[220px] animate-scale-in rounded-[22px] border border-border/70 bg-background p-4 shadow-[0_28px_60px_-30px_rgba(15,23,42,0.5)]"
+                  className="fixed z-50 min-w-[220px] animate-scale-in rounded-[22px] border border-border/70 bg-[var(--surface-overlay)] p-4 shadow-[var(--shadow-floating)]"
                   style={{ left: entityPopupPos.left, top: entityPopupPos.top }}
                   onMouseDown={(event) => event.stopPropagation()}
                   onMouseUp={(event) => event.stopPropagation()}

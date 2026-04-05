@@ -57,12 +57,12 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
             className={cn(
               'saas-hero group relative cursor-pointer border-2 border-dashed p-12 text-center transition-all duration-300 ease-out',
               isDragActive
-                ? 'border-primary bg-primary/[0.04] shadow-[0_0_0_4px_rgba(16,163,127,0.08)]'
+                ? 'border-primary bg-primary/[0.04] ring-4 ring-primary/10'
                 : 'border-border hover:border-foreground/15 hover:shadow-lg',
             )}
             data-testid="playground-dropzone"
           >
-            <input {...getInputProps()} />
+            <input {...getInputProps()} className="hidden" />
             <div className="flex flex-col items-center">
               <div
                 className={cn(
@@ -230,7 +230,11 @@ const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
       {rec.playgroundTextGroups.map((group) => {
         const ids = group.types.map((type) => type.id);
         const allOn = ids.length > 0 && ids.every((id) => rec.selectedTypes.includes(id));
-        const borderColor = group.key === 'regex' ? 'border-blue-500' : group.key === 'llm' ? 'border-green-500' : 'border-violet-300';
+        const borderColor = group.key === 'regex'
+          ? 'border-[var(--selection-regex-accent)]'
+          : group.key === 'llm'
+            ? 'border-primary'
+            : 'border-[var(--selection-yolo-accent)]';
 
         return (
           <div key={group.key} data-testid={`playground-text-group-${group.key}`}>
@@ -288,7 +292,7 @@ const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
         const types = pipeline.types.filter((type) => type.enabled);
         const selectedSet = isHasImage ? rec.selectedHasImageTypes : rec.selectedOcrHasTypes;
         const allSelected = types.length > 0 && types.every((type) => selectedSet.includes(type.id));
-        const borderColor = isHasImage ? 'border-purple-500' : 'border-green-500';
+        const borderColor = isHasImage ? 'border-[var(--selection-yolo-accent)]' : 'border-primary';
 
         return (
           <div key={pipeline.mode} data-testid={`playground-pipeline-${pipeline.mode}`}>

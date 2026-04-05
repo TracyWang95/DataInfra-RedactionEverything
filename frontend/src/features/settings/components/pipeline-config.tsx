@@ -129,14 +129,14 @@ export function PipelineConfigPanel({
         </div>
       ) : (
         <div
-          className={cn('flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card shadow-sm', toneClasses.headerSurface)}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-border/70 bg-card shadow-[var(--shadow-control)]"
           data-testid="vision-pipeline-panel"
         >
-          <div className={cn('flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3', toneClasses.headerSurface)}>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/20 px-4 py-3">
             <div className="flex min-w-0 items-center gap-2">
               <span className={cn('size-2 shrink-0 rounded-full', toneClasses.dot)} />
               <span className="truncate text-sm font-semibold">{displayName}</span>
-              <Badge variant="secondary" className={cn('text-xs', toneClasses.badgeText)}>
+              <Badge variant="secondary" className={cn('border border-border/70 bg-background text-xs shadow-sm', toneClasses.badgeText)}>
                 {activePipeline.types.length}
               </Badge>
             </div>
@@ -152,26 +152,26 @@ export function PipelineConfigPanel({
 
           <div className="flex min-h-0 flex-1 overflow-y-auto p-3">
             {activePipeline.types.length === 0 ? (
-              <div className="flex min-h-[240px] flex-1 items-center justify-center rounded-lg border border-dashed border-border/70 bg-background/70 px-6 text-center">
+              <div className="flex min-h-[240px] flex-1 items-center justify-center rounded-[20px] border border-dashed border-border/70 bg-muted/15 px-6 text-center">
                 <p className="text-sm text-muted-foreground">
                   {t('settings.noTypeConfig')}
                 </p>
               </div>
             ) : (
-              <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="grid w-full auto-rows-max content-start grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {activePipeline.types.map(type => (
                   <div
                     key={type.id}
-                    className={cn('flex min-h-[88px] items-start gap-2 rounded-lg border px-3 py-2 shadow-sm', toneClasses.tileSurface)}
+                    className="flex min-h-[132px] self-start rounded-[20px] border border-border/70 bg-[var(--surface-control)] px-3 py-3 shadow-[var(--shadow-sm)] transition-colors hover:border-border"
                   >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-1">
+                    <div className="flex min-w-0 flex-1 flex-col gap-3">
+                      <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <span className={cn('block truncate text-xs font-medium leading-tight', toneClasses.titleText)}>
+                          <span className="block truncate text-xs font-semibold leading-tight text-foreground">
                             {type.name}
                           </span>
-                          <span className={cn('block truncate text-[10px]', toneClasses.metaText)}>
-                            {type.id}
+                          <span className={cn('mt-1 inline-flex max-w-full items-center rounded-full border px-2 py-0.5 text-[10px]', toneClasses.cardSelectedCompact)}>
+                            <span className="truncate">{type.id}</span>
                           </span>
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
@@ -195,11 +195,17 @@ export function PipelineConfigPanel({
                           </Button>
                         </div>
                       </div>
-                      {type.description && (
-                        <p className={cn('mt-0.5 line-clamp-2 text-[10px] leading-snug', toneClasses.descriptionText)}>
-                          {type.description}
-                        </p>
-                      )}
+                      <div className="mt-auto space-y-2">
+                        {type.description && (
+                          <p className="line-clamp-2 text-[11px] leading-5 text-muted-foreground">
+                            {type.description}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          <span className={cn('size-1.5 rounded-full', toneClasses.dot)} />
+                          <span>{displayName}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}

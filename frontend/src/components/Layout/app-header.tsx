@@ -41,9 +41,9 @@ export function AppHeader() {
           <span
             className={cn('h-[6px] w-[6px] rounded-full transition-colors', {
               'animate-pulse bg-muted-foreground/35': checking,
-              'bg-emerald-500': !checking && health?.all_online,
-              'bg-amber-400': !checking && health && !health.all_online,
-              'bg-red-500': !checking && !health,
+              'bg-[var(--success-foreground)]': !checking && health?.all_online,
+              'bg-[var(--warning-foreground)]': !checking && health && !health.all_online,
+              'bg-[var(--error-foreground)]': !checking && !health,
             })}
           />
           <span className="hidden text-[11px] text-muted-foreground sm:inline">
@@ -64,7 +64,7 @@ export function AppHeader() {
           size="sm"
           className="h-8 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
           onClick={() => setLocale(locale === 'zh' ? 'en' : 'zh')}
-          aria-label="Switch language"
+          aria-label={locale === 'zh' ? '切换语言' : 'Switch language'}
           data-testid="lang-toggle"
         >
           <Globe className="h-3.5 w-3.5" />

@@ -14,6 +14,7 @@ import { getEntityRiskConfig, getEntityTypeName } from '@/config/entityTypes';
 import ImageBBoxEditor from '@/components/ImageBBoxEditor';
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
 import type { TextSegment } from '@/utils/textRedactionSegments';
+import { tonePanelClass } from '@/utils/toneClasses';
 import type {
   BatchRow,
   ReviewEntity,
@@ -119,7 +120,7 @@ export function BatchStep4Review(props: BatchStep4ReviewProps) {
     >
       {/* Read-only banner */}
       {reviewFileReadOnly && (
-        <div className="shrink-0 bg-green-50 border-b border-green-200 px-4 py-2 text-sm text-green-800">
+        <div className={`shrink-0 border-b px-4 py-2 text-sm ${tonePanelClass.success}`}>
           {t('batchWizard.step4.readOnlyHint')}
         </div>
       )}
@@ -164,7 +165,7 @@ export function BatchStep4Review(props: BatchStep4ReviewProps) {
             onClick={isImage ? props.undoReviewImage : props.undoReviewText}
             disabled={isImage ? !props.reviewImageUndoStack.length : !props.reviewTextUndoStack.length}
           >
-            Undo
+            {t('playground.undo')}
           </Button>
           <Button
             variant="outline"
@@ -172,7 +173,7 @@ export function BatchStep4Review(props: BatchStep4ReviewProps) {
             onClick={isImage ? props.redoReviewImage : props.redoReviewText}
             disabled={isImage ? !props.reviewImageRedoStack.length : !props.reviewTextRedoStack.length}
           >
-            Redo
+            {t('playground.redo')}
           </Button>
         </div>
 
@@ -184,7 +185,7 @@ export function BatchStep4Review(props: BatchStep4ReviewProps) {
           <span className="text-xs text-destructive truncate max-w-[10rem]">{reviewDraftError}</span>
         )}
         {!reviewDraftSaving && !reviewDraftError && (
-          <span className="text-xs text-green-600">{t('batchWizard.step4.draftSynced')}</span>
+          <span className="text-xs text-[var(--success-foreground)]">{t('batchWizard.step4.draftSynced')}</span>
         )}
 
         {/* Right actions */}
@@ -209,7 +210,7 @@ export function BatchStep4Review(props: BatchStep4ReviewProps) {
             variant={allReviewConfirmed ? 'default' : 'outline'}
             disabled={!allReviewConfirmed || reviewExecuteLoading}
             onClick={() => void advanceToExportStep()}
-            className={cn(allReviewConfirmed && 'bg-green-600 hover:bg-green-700')}
+            className={cn(allReviewConfirmed && 'bg-primary hover:bg-primary/90')}
             data-testid="go-export"
           >
             {t('batchWizard.step4.goExport')}

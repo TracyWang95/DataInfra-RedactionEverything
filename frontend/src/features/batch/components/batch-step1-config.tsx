@@ -125,7 +125,7 @@ export function BatchStep1Config({
             <Card>
               <CardContent className="p-3 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                   <span className="text-xs font-semibold">
                     {t('batchWizard.step1.textPreset')}
                   </span>
@@ -157,7 +157,7 @@ export function BatchStep1Config({
             <Card>
               <CardContent className="p-3 space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--selection-yolo-accent)]" />
                   <span className="text-xs font-semibold">
                     {t('batchWizard.step1.imagePreset')}
                   </span>

@@ -92,7 +92,7 @@ export const router = createBrowserRouter([
 function NotFound() {
   return (
     <div className="flex h-full min-h-0 items-center justify-center px-6">
-      <div className="flex min-h-[320px] w-full max-w-xl flex-col items-center justify-center gap-4 rounded-[28px] border border-border/70 bg-card px-8 py-12 text-center shadow-[0_28px_80px_-44px_rgba(15,23,42,0.24)]">
+      <div className="flex min-h-[320px] w-full max-w-xl flex-col items-center justify-center gap-4 rounded-[28px] border border-border/70 bg-card px-8 py-12 text-center shadow-[var(--shadow-floating)]">
         <span className="text-6xl font-semibold tracking-[-0.06em] text-foreground/15">404</span>
         <div className="space-y-2">
           <p className="text-lg font-semibold text-foreground">{t('notFound.title')}</p>

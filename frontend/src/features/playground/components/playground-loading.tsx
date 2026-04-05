@@ -21,13 +21,13 @@ export const PlaygroundLoading: FC<PlaygroundLoadingProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-backdrop)] backdrop-blur-sm"
       role="alertdialog"
       aria-busy="true"
       aria-label={loadingMessage || t('playground.processing')}
       data-testid="playground-loading"
     >
-      <div className="max-w-sm animate-scale-in rounded-[28px] border border-border/50 bg-background px-8 py-8 text-center shadow-[0_34px_80px_-40px_rgba(15,23,42,0.5)]">
+      <div className="max-w-sm animate-scale-in rounded-[28px] border border-border/50 bg-[var(--surface-overlay)] px-8 py-8 text-center shadow-[var(--shadow-floating)]">
         <div className="mx-auto mb-5 h-12 w-12 animate-spin rounded-full border-[3px] border-primary/30 border-t-primary" />
         <p className="mb-2 text-base font-medium text-foreground">
           {loadingMessage || t('playground.processing')}

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { tonePanelClass } from '@/utils/toneClasses';
 
 interface ModelEndpointCardProps {
   title: string;
@@ -62,7 +63,7 @@ export function ModelEndpointCard({
             {t('common.enabled')}
           </Badge>
           {liveStatus === 'online' && (
-            <Badge className="border-emerald-200 bg-emerald-50 text-xs text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/60 dark:text-emerald-300">
+            <Badge className={`text-xs ${tonePanelClass.success}`}>
               {t('common.online')}
             </Badge>
           )}
@@ -105,8 +106,8 @@ export function ModelEndpointCard({
             className={cn(
               'rounded-lg border p-3 text-sm',
               testResult.success
-                ? 'border-green-100 bg-green-50 text-green-800 dark:border-green-900/60 dark:bg-green-950/60 dark:text-green-300'
-                : 'border-red-100 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/60 dark:text-red-300',
+                ? tonePanelClass.success
+                : tonePanelClass.danger,
             )}
           >
             {testResult.success ? '\u2713 ' : '\u2717 '}
