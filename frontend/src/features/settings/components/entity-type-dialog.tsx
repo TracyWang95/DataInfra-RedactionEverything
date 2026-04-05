@@ -12,7 +12,6 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -144,24 +143,56 @@ export function EntityTypeDialog({
 
           {mode === 'create' && (
             <div className="rounded-2xl border border-border/70 bg-muted/20 px-3.5 py-3">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-3">
                 <div>
                   <p className="text-sm font-medium text-foreground">{t('settings.modeLabel')}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {form.use_llm ? t('settings.addSemanticDesc') : t('settings.addRegexDesc')}
+                    {t('settings.modeHelp')}
                   </p>
                 </div>
-                <Switch
-                  checked={form.use_llm}
-                  onCheckedChange={checked => setForm(current => ({
-                    ...current,
-                    use_llm: checked,
-                    color: getToneColor(getEntityTypeTone(checked)),
-                    regex_pattern: checked ? '' : current.regex_pattern,
-                    description: checked ? current.description : '',
-                  }))}
-                  data-testid="entity-type-llm-toggle"
-                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                      !form.use_llm
+                        ? 'border-[var(--selection-regex-border)] bg-[var(--selection-regex-surface)] text-[var(--selection-regex-text)]'
+                        : 'border-border/70 bg-background text-foreground'
+                    }`}
+                    onClick={() => setForm(current => ({
+                      ...current,
+                      use_llm: false,
+                      color: getToneColor(getEntityTypeTone(false)),
+                    }))}
+                    data-testid="entity-type-mode-regex"
+                  >
+                    <p className="text-sm font-medium">{t('settings.regex')}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('settings.modeOption.regex')}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-xl border px-3 py-2 text-left transition-colors ${
+                      form.use_llm
+                        ? 'border-[var(--selection-semantic-border)] bg-[var(--selection-semantic-surface)] text-[var(--selection-semantic-text)]'
+                        : 'border-border/70 bg-background text-foreground'
+                    }`}
+                    onClick={() => setForm(current => ({
+                      ...current,
+                      use_llm: true,
+                      color: getToneColor(getEntityTypeTone(true)),
+                    }))}
+                    data-testid="entity-type-mode-semantic"
+                  >
+                    <p className="text-sm font-medium">{t('settings.semantic')}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('settings.modeOption.semantic')}
+                    </p>
+                  </button>
+                </div>
+                <div className="rounded-xl border border-border/70 bg-background px-3 py-2 text-xs text-muted-foreground">
+                  {form.use_llm ? t('settings.addSemanticDesc') : t('settings.addRegexDesc')}
+                </div>
               </div>
             </div>
           )}
