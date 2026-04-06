@@ -355,13 +355,33 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
     return Array.from(map.values());
   }, [reviewEntities]);
 
-  // ── Scroll to entity in text panel (Issue 3) ──
-  const scrollToEntity = useCallback((entityId: string) => {
-    const el = reviewTextContentRef.current?.querySelector(`[data-review-entity-id="${CSS.escape(entityId)}"]`);
+  // ── Scroll to entity in text panel — cycles through occurrences ──
+  const scrollIndexRef = useRef<Map<string, number>>(new Map());
+  const previewScrollRef = useRef<HTMLDivElement>(null);
+
+  const scrollToEntityGroup = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    const key = ids.join(',');
+    const prevIdx = scrollIndexRef.current.get(key) ?? -1;
+    const nextIdx = (prevIdx + 1) % ids.length;
+    scrollIndexRef.current.set(key, nextIdx);
+
+    const targetId = ids[nextIdx];
+    const el = reviewTextContentRef.current?.querySelector(`[data-review-entity-id="${CSS.escape(targetId)}"]`) as HTMLElement | null;
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.classList.add('ring-2', 'ring-primary');
       setTimeout(() => el.classList.remove('ring-2', 'ring-primary'), 1500);
+
+      // Sync redacted preview scroll to same ratio
+      const origScroll = reviewTextScrollRef.current;
+      const prevScroll = previewScrollRef.current;
+      if (origScroll && prevScroll) {
+        const ratio = origScroll.scrollHeight > origScroll.clientHeight
+          ? origScroll.scrollTop / (origScroll.scrollHeight - origScroll.clientHeight)
+          : 0;
+        prevScroll.scrollTop = ratio * (prevScroll.scrollHeight - prevScroll.clientHeight);
+      }
     }
   }, [reviewTextContentRef]);
 
@@ -537,7 +557,18 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
             {t('batchWizard.step4.selected')} {selectedReviewEntityCount}/{reviewEntities.length}
           </span>
         </div>
-        <div ref={reviewTextScrollRef} className="flex-1 overflow-auto p-4">
+        <div
+          ref={reviewTextScrollRef}
+          className="flex-1 overflow-auto p-4"
+          onScroll={() => {
+            const orig = reviewTextScrollRef.current;
+            const prev = previewScrollRef.current;
+            if (orig && prev && orig.scrollHeight > orig.clientHeight) {
+              const ratio = orig.scrollTop / (orig.scrollHeight - orig.clientHeight);
+              prev.scrollTop = ratio * (prev.scrollHeight - prev.clientHeight);
+            }
+          }}
+        >
           <div
             ref={reviewTextContentRef}
             className="text-sm leading-relaxed whitespace-pre-wrap select-text font-[system-ui]"
@@ -623,7 +654,7 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
         <div className="shrink-0 px-4 py-2 border-b">
           <span className="text-xs font-semibold">{t('batchWizard.step4.redactedPreview')}</span>
         </div>
-        <div className="flex-1 overflow-auto p-4">
+        <div ref={previewScrollRef} className="flex-1 overflow-auto p-4">
           <div className="text-sm leading-relaxed whitespace-pre-wrap font-[system-ui]">
             {textPreviewSegments.map((seg, i) =>
               seg.isMatch ? (
@@ -683,7 +714,7 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
                   backgroundColor: noneSelected ? undefined : risk.bgColor,
                   borderLeft: `3px solid ${risk.color}`,
                 }}
-                onClick={() => scrollToEntity(g.ids[0])}
+                onClick={() => scrollToEntityGroup(g.ids)}
               >
                 <div className="flex items-start gap-2">
                   <Checkbox
