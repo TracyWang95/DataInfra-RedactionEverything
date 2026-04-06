@@ -1,33 +1,43 @@
-# 安全策略
+# Security Policy
 
-## 支持的版本
+## Supported Versions
 
-| 版本 | 支持状态 |
-|------|----------|
-| main | ✅ 支持 |
+| Version | Status |
+|---|---|
+| `main` branch | :white_check_mark: Supported |
 
-## 报告漏洞
+## Reporting a Vulnerability
 
-如果你发现安全漏洞，请通过以下方式报告：
+If you discover a security vulnerability in **DataInfra-RedactionEverything**, please follow responsible disclosure:
 
-1. **不要** 在公开 Issue 中披露漏洞细节
-2. 请通过项目维护者的联系方式私下报告
-3. 或者提交一个不包含敏感细节的 Issue，说明你发现了安全问题
+1. **Do not** open a public GitHub Issue with vulnerability details.
+2. Instead, use [GitHub Security Advisories](https://github.com/TracyWang95/DataInfra-RedactionEverything/security/advisories/new) to report privately.
+3. Alternatively, contact the maintainer directly via the email listed on the [GitHub profile](https://github.com/TracyWang95).
 
-我们会尽快回复并协调修复。
+We will acknowledge receipt within **48 hours** and aim to provide a fix or mitigation plan within **7 days**.
 
-## 安全最佳实践
+## Security Design Principles
 
-使用本项目时，请注意：
+DataInfra-RedactionEverything is built with a **security-first, on-premise architecture**:
 
-1. **本地部署**：本项目设计为全链路本地推理，请勿将服务暴露在公网
-2. **敏感文件**：处理的业务文档与图像常含个人信息或商业秘密，请确保服务器与存储安全
-3. **模型文件**：模型权重应从官方渠道下载，避免使用不明来源的文件
-4. **网络隔离**：建议在内网或 VPN 环境中使用
+| Principle | Implementation |
+|---|---|
+| **No cloud dependencies** | All AI inference (OCR, NER, Vision) runs locally. Zero external API calls. |
+| **Data isolation** | Uploaded files are stored in `backend/uploads/` on your local filesystem only. |
+| **Network boundary** | Services are designed for internal network deployment. Do not expose to the public internet without additional hardening. |
+| **Model provenance** | Model weights should only be downloaded from official sources ([Hugging Face Hub](https://huggingface.co/xuanwulab), [PaddlePaddle](https://www.paddlepaddle.org.cn/)). |
 
-## 数据处理
+## Best Practices for Deployment
 
-- 本项目不会将任何数据上传到云端
-- 所有推理均在本地完成
-- 上传的文件存储在本地 `backend/uploads/` 目录
-- 用户应自行管理和清理敏感文件
+- Deploy behind a **VPN or firewall** — do not expose ports 3000, 8000, 8080-8082 to untrusted networks.
+- Enable **`AUTH_ENABLED=true`** in production to require JWT authentication.
+- Regularly **clean up** processed files from `backend/uploads/` and `backend/outputs/` after export.
+- Keep dependencies updated — run `pip install --upgrade` and `npm audit` periodically.
+- Use **encrypted storage** for the host filesystem where sensitive documents reside.
+
+## Data Handling
+
+- No telemetry, analytics, or usage data is collected or transmitted.
+- All processing happens in-memory and on local disk.
+- The job queue database (`data/jobs.sqlite3`) stores task metadata only, not document contents.
+- Users are responsible for managing and purging sensitive files after processing.

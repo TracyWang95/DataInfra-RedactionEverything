@@ -83,3 +83,21 @@ data/*.migrated
 .claude/review-loop-prompt.md
 .claude/review-loop.log
 reviews/
+
+# Claude Code / AI assistant artifacts
+.claude/skills/
+.mcp.json
+OPTIMIZATION_PLAN.md
+
+# Playwright screenshots and test artifacts
+output/
+frontend/output/
+frontend/playwright-report/
+
+# Temporary test scripts
+backend/test_*.py
+
+# Runtime data
+*.db
+*.db-journal
+*.db-wal

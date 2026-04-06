@@ -2,15 +2,12 @@
 
 ## Project Overview
 Legal document redaction platform with AI-powered PII detection.
-Monorepo: frontend (React 19 + Vite + TypeScript + Tailwind CSS) + backend (FastAPI) + 3 AI microservices.
-
-**Current work**: Frontend refactoring on `refactor/frontend-v2` branch.
-Migrating from @headlessui/react to ShadCN UI. Backend and algorithm are stable — DO NOT MODIFY.
+Monorepo: frontend (React 19 + Vite + TypeScript + Tailwind CSS) + backend (FastAPI) + AI microservices.
 
 ## Architecture
 - **Frontend**: `frontend/` — React 19, Vite 6, TypeScript strict, Tailwind CSS 3.4, Zustand 5, React Router 7
-- **Backend**: `backend/` — FastAPI + Python 3.10+, SQLite WAL, async task queue (70+ API endpoints)
-- **AI Services**: PaddleOCR (port 8082), HaS NER/llama-server (port 8080), YOLO11 (port 8081)
+- **Backend**: `backend/` — FastAPI + Python 3.10+, SQLite WAL, async task queue
+- **AI Services**: PaddleOCR (port 8082), NER (port 8080), YOLO11 Vision (port 8081)
 
 ## Build & Run
 ```bash
@@ -27,9 +24,7 @@ cd frontend && npx playwright test # E2E tests
 cd backend && uvicorn app.main:app --reload --port 8000
 ```
 
-## Frontend Conventions (refactor/frontend-v2)
-
-### Directory Structure
+## Frontend Directory Structure
 ```
 src/
   app/              # App shell (layout, router, providers)
@@ -45,7 +40,7 @@ src/
   lib/              # Utilities (cn() etc.)
 ```
 
-### Coding Rules
+## Frontend Coding Rules
 1. Named exports only (no default exports)
 2. Components under 150 lines; decompose if larger
 3. One Zustand store per feature domain
@@ -56,23 +51,23 @@ src/
 8. All interactive elements need `data-testid` attributes
 9. Path alias: `@/*` maps to `src/*`
 
-### Git Conventions
+## Git Conventions
 ```
 <type>(<scope>): <description>
 Types: feat, fix, chore, docs, test, refactor, ui, perf
 Scopes: playground, batch, jobs, history, settings, dashboard, audit, layout, api, i18n, e2e
 ```
 
-## API Contract (DO NOT CHANGE without backend team)
+## API Overview
 - Base URL: `/api/v1`
 - Auth: Bearer JWT + CSRF double-submit cookie
 - File upload: multipart/form-data to `/files/upload`
 - Jobs: REST at `/jobs/`
-- Vite proxies `/api`, `/health`, `/uploads`, `/outputs` to localhost:8000
+- Vite proxies `/api`, `/health`, `/uploads`, `/outputs` to backend
 
 ## Ports (local dev)
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - PaddleOCR: http://localhost:8082
-- HaS NER: http://localhost:8080
+- NER Service: http://localhost:8080
 - YOLO11 Vision: http://localhost:8081
