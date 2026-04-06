@@ -4,7 +4,9 @@
 
 **Open-source anonymization infrastructure for unstructured data**
 
-Detect and redact PII in Word, PDF, and images — fully on-premise, powered by dual AI pipelines.
+Not just PII — **Redaction _Everything_**.<br/>
+Define your own sensitive content. Anonymize anything: PII, trade secrets, medical records, classified IDs…<br/>
+Word, PDF, scans, images — dual AI pipelines, 100% on-premise.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
@@ -34,9 +36,13 @@ English &nbsp;|&nbsp; **[中文](./README.md)**
 
 ## What is this?
 
-Organizations handle sensitive documents every day — contracts, medical forms, identity papers, scanned archives. Before these can be shared, published, or used for ML training, personally identifiable information (PII) must be removed.
+It's called **Redaction _Everything_** because we anonymize more than just PII.
 
-**RedactionEverything** is a self-hosted platform that automatically detects and anonymizes PII across unstructured documents. It runs a **dual-pipeline architecture** — combining OCR + NER for text-based entities and YOLO11 instance segmentation for visual elements — then fuses results for comprehensive coverage. Everything runs locally: **your data never leaves your network**.
+Every industry has its own sensitive data — case numbers and party names in legal contracts, diagnoses in medical records, account numbers in financial documents, classified designators in defense files. Legacy tools only handle PII and fall flat on domain-specific fields.
+
+**RedactionEverything** is built around **full customizability**: you define what's sensitive, the system detects and anonymizes it. 60+ entity types work out of the box, plus custom regex rules, AI semantic rules, and tag templates to fit any industry or compliance requirement.
+
+Under the hood, a **dual-pipeline architecture** — OCR + NER for text entities, YOLO11 instance segmentation for 21 visual target categories (faces, seals, ID cards, QR codes…) — fuses results for comprehensive coverage. Everything runs locally: **your data never leaves your network**.
 
 ---
 
@@ -44,15 +50,15 @@ Organizations handle sensitive documents every day — contracts, medical forms,
 
 | | Feature | Description |
 |---|---|---|
-| :mag: | **Hybrid NER** | Regex rules + AI semantic recognition via llama.cpp (HaS Text, Qwen3-0.6B) |
-| :framed_picture: | **Visual PII Detection** | YOLO11 instance segmentation for seals, signatures, faces, ID cards, QR codes — **21 categories** |
-| :page_facing_up: | **Multi-format Support** | DOCX, PDF, scanned PDF, JPG, PNG |
-| :zap: | **Batch Processing** | 5-step wizard: configure, upload, queue, review, export (ZIP) |
-| :shield: | **100% On-premise** | All inference runs locally — zero cloud dependencies |
-| :dart: | **Standards-compliant** | GDPR, China PIPL, GB/T 37964-2019 |
+| :wrench: | **Fully Customizable** | Custom entity types, regex rules, AI semantic rules, tag templates — not just PII, **define and detect anything sensitive** |
+| :brain: | **AI Semantic Recognition** | LLM-powered NER (Qwen3-0.6B via llama.cpp) that understands context, not just pattern matching |
+| :eyes: | **Visual Feature Detection** | YOLO11 instance segmentation — faces, fingerprints, seals, signatures, ID cards, bank cards, QR codes, license plates — **21 categories** |
+| :page_facing_up: | **Multi-format** | DOCX, PDF, scanned PDF, JPG, PNG |
+| :zap: | **Batch Processing** | 5-step wizard: configure → upload → queue → review → export |
+| :shield: | **100% On-premise** | All inference runs locally, zero cloud dependencies, data stays in your network |
+| :dart: | **Multi-industry Compliance** | Legal, medical, finance, government — GDPR, PIPL, GB/T 37964-2019 |
 | :globe_with_meridians: | **Bilingual UI** | Chinese / English — switch in one click |
 | :gear: | **REST API** | 85+ endpoints, SSE real-time progress, Swagger / ReDoc docs |
-| :test_tube: | **Tested** | 76 Playwright E2E tests covering the full pipeline |
 
 ---
 
