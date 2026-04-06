@@ -270,7 +270,7 @@ const PresetRow: FC<{
 const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   const t = useT();
   const [groupPages, setGroupPages] = useState<Record<string, number>>({});
-  const pageSize = 8;
+  const pageSize = 9;
 
   useEffect(() => {
     setGroupPages((current) => {
@@ -399,7 +399,7 @@ const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
 const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   const t = useT();
   const [pipelinePages, setPipelinePages] = useState<Record<string, number>>({});
-  const pageSize = 8;
+  const pageSize = 9;
 
   useEffect(() => {
     setPipelinePages((current) => {
