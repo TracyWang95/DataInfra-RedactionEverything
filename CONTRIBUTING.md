@@ -1,69 +1,106 @@
-# 贡献指南
+# Contributing / 贡献指南
 
-感谢你愿意贡献这个项目！请遵循以下规范，以保持代码质量和可维护性。
+Thanks for your interest in contributing! 感谢你对本项目的关注！
 
 ---
 
-## 开发环境
+## Getting Started / 开发环境
 
-- **操作系统**：Windows 10/11 或 Linux
-- **Python**：3.10+
-- **Node.js**：18+
-- **GPU**：NVIDIA（建议 8GB+ 显存）
-
-建议先运行环境检查脚本：
+| Requirement | Version |
+|---|---|
+| Python | 3.10+ |
+| Node.js | 18+ |
+| GPU | NVIDIA 8 GB+ VRAM (recommended) |
 
 ```bash
-# Windows
-.\scripts\check_env.ps1
+# Clone
+git clone https://github.com/TracyWang95/DataInfra-RedactionEverything.git
+cd DataInfra-RedactionEverything
+
+# Backend
+cd backend && pip install -r requirements.txt
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Frontend
+cd frontend && npm install && npm run dev
+```
+
+Verify services: `curl http://localhost:8000/health/services`
+
+---
+
+## Branch & Commit Convention / 分支与提交
+
+Branch names:
+
+```
+feature/<name>    — new capability
+fix/<name>        — bug fix
+refactor/<name>   — restructuring without behavior change
+```
+
+Commit messages — **[Conventional Commits](https://www.conventionalcommits.org/)**:
+
+```
+feat: add batch re-run recognition button
+fix: popover overflows canvas in step4 review
+refactor: extract shared domSelection utils
+docs: update quickstart for Docker Compose
+chore: clean repo for release
 ```
 
 ---
 
-## 分支与提交
+## Code Style / 代码规范
 
-- 使用 `feature/<name>` 或 `fix/<name>` 分支
-- 提交信息建议使用「动词 + 简述」：
-  - `fix: 修复图像撤销功能`
-  - `feat: 增加缩放标注`
-  - `docs: 更新部署说明`
+**Frontend (TypeScript + React)**
+
+- Named exports only — no `export default`
+- Components ≤ 150 lines; extract hooks / utils when larger
+- Tailwind for styling — no inline `style` except dynamic values
+- All user-facing strings via `@/i18n` — no hardcoded text
+- ShadCN components for UI primitives
+
+**Backend (Python + FastAPI)**
+
+- Thin API routers — business logic in `services/`
+- Pydantic models in `models/` (domain-split schema files)
+- All file paths resolved via `core/config.py` settings
+- No cloud API calls — all inference must run locally
 
 ---
 
-## 代码规范
+## Testing / 测试
 
-- 仅使用英文文件名和路径
-- 避免引入不必要依赖
-- 前端组件保持小而清晰
-- 后端接口需保持幂等与可追踪日志
-- **禁止引入云端 API 调用**（本项目坚持全链路本地推理）
+```bash
+# TypeScript type check
+cd frontend && npx tsc --noEmit
 
----
+# Playwright E2E tests (requires backend running)
+cd frontend && npx playwright test
 
-## 测试
-
-提交前至少完成一次本地冒烟测试：
-
+# Single test
+npx playwright test e2e/click-upload.spec.ts
 ```
-tests/smoke_test.md
-```
 
 ---
 
-## PR 清单
+## Pull Request Checklist / PR 清单
 
-- [ ] 是否仅本地推理，未引入云端调用
-- [ ] 是否添加或更新了文档
-- [ ] 是否通过冒烟测试
-- [ ] 是否更新了 CHANGELOG（如适用）
-
----
-
-## Issue 规范
-
-- **Bug 报告**：请提供复现步骤、环境信息、错误日志
-- **功能建议**：请说明使用场景和预期行为
+- [ ] All inference runs locally — no cloud API calls
+- [ ] `npx tsc --noEmit` passes with zero errors
+- [ ] Playwright tests pass (or new tests added for new features)
+- [ ] User-facing strings use i18n keys
+- [ ] Documentation updated if applicable
 
 ---
 
-欢迎提交 Issue 与 PR！
+## Reporting Issues / 提交 Issue
+
+- **Bug**: reproduction steps + environment info + error log
+- **Feature request**: use case + expected behavior
+- **Security**: see [SECURITY.md](./SECURITY.md) for responsible disclosure
+
+---
+
+We welcome Issues and PRs! 欢迎提交 Issue 与 PR！
