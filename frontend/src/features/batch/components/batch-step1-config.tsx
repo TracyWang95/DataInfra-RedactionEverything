@@ -120,6 +120,24 @@ export function BatchStep1Config({
           `${t('batchWizard.step1.currentImageMethod')}${imageMethodLabel}`,
           `${t('batchWizard.step1.currentImageStrength')}${imageRedactionStrength}%`,
         ];
+  const textModeNotes =
+    textRedactionMode === 'smart'
+      ? [
+          t('batchWizard.step1.textModeSmartLine1'),
+          t('batchWizard.step1.textModeSmartLine2'),
+          t('batchWizard.step1.textModeSmartLine3'),
+        ]
+      : textRedactionMode === 'mask'
+        ? [
+            t('batchWizard.step1.textModeMaskLine1'),
+            t('batchWizard.step1.textModeMaskLine2'),
+            t('batchWizard.step1.textModeMaskLine3'),
+          ]
+        : [
+            t('batchWizard.step1.textModeStructuredLine1'),
+            t('batchWizard.step1.textModeStructuredLine2'),
+            t('batchWizard.step1.textModeStructuredLine3'),
+          ];
   const textPreviewGroups = [
     {
       title: t('settings.regex'),
@@ -292,6 +310,13 @@ export function BatchStep1Config({
                     <SelectItem value="mask">{t('mode.mask')}</SelectItem>
                   </SelectContent>
                 </Select>
+                <div className="space-y-1 pt-1">
+                  {textModeNotes.map((line) => (
+                    <p key={line} className="text-[11px] leading-5 text-muted-foreground">
+                      {line}
+                    </p>
+                  ))}
+                </div>
               </div>
             </CardContent>
           </Card>
