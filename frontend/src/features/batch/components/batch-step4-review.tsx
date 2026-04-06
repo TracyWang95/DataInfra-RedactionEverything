@@ -428,7 +428,7 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
       }
 
       if (rect.width === 0 && rect.height === 0) return;
-      setSelectionPos(clampPopoverInCanvas(rect, root.getBoundingClientRect(), 320, 280));
+      setSelectionPos(clampPopoverInCanvas(rect, root.getBoundingClientRect(), 240, 240));
     };
 
     update();
@@ -519,7 +519,7 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
         {/* Text selection annotation popover */}
         {selectedText && selectionPos && (
           <div
-            className="fixed z-50 w-[320px] animate-in fade-in zoom-in-95 rounded-xl border border-border bg-popover shadow-lg"
+            className="fixed z-50 w-[220px] animate-in fade-in zoom-in-95 rounded-xl border border-border bg-popover shadow-lg"
             style={{ left: selectionPos.left, top: selectionPos.top }}
             onMouseDown={(e) => e.stopPropagation()}
             onMouseUp={(e) => e.stopPropagation()}
@@ -539,8 +539,8 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
             </div>
 
             {/* Type pills grid */}
-            <div className="max-h-[240px] overflow-y-auto overscroll-contain px-2 py-2">
-              <div className="grid grid-cols-3 gap-1">
+            <div className="max-h-[180px] overflow-y-auto overscroll-contain px-1.5 py-1.5">
+              <div className="grid grid-cols-2 gap-1">
                 {textTypes.map((et) => {
                   const risk = getEntityRiskConfig(et.id);
                   const active = selectedTypeId === et.id;
