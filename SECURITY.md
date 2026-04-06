@@ -1,43 +1,45 @@
-# Security Policy
+# Security Policy / 安全策略
 
-## Supported Versions
+## Supported Versions / 支持版本
 
 | Version | Status |
 |---|---|
-| `main` branch | :white_check_mark: Supported |
+| `main` branch | :white_check_mark: Supported / 支持中 |
 
-## Reporting a Vulnerability
+## Reporting a Vulnerability / 报告漏洞
 
-If you discover a security vulnerability in **DataInfra-RedactionEverything**, please follow responsible disclosure:
+If you discover a security vulnerability, please follow responsible disclosure:
 
-1. **Do not** open a public GitHub Issue with vulnerability details.
-2. Instead, use [GitHub Security Advisories](https://github.com/TracyWang95/DataInfra-RedactionEverything/security/advisories/new) to report privately.
-3. Alternatively, contact the maintainer directly via the email listed on the [GitHub profile](https://github.com/TracyWang95).
+如果你发现安全漏洞，请遵循负责任的披露流程：
 
-We will acknowledge receipt within **48 hours** and aim to provide a fix or mitigation plan within **7 days**.
+1. **Do not** open a public Issue. / **不要**在公开 Issue 中描述漏洞细节。
+2. Use [GitHub Security Advisories](https://github.com/TracyWang95/DataInfra-RedactionEverything/security/advisories/new) to report privately. / 使用 GitHub Security Advisories 私下报告。
+3. Or contact the maintainer directly via [GitHub profile](https://github.com/TracyWang95). / 或通过 GitHub 主页联系维护者。
 
-## Security Design Principles
+We will acknowledge receipt within **48 hours** and aim to provide a fix within **7 days**.
 
-DataInfra-RedactionEverything is built with a **security-first, on-premise architecture**:
+我们会在 **48 小时**内确认收到，并在 **7 天**内提供修复方案。
 
-| Principle | Implementation |
+## Security Design / 安全设计原则
+
+| Principle / 原则 | Implementation / 实现 |
 |---|---|
-| **No cloud dependencies** | All AI inference (OCR, NER, Vision) runs locally. Zero external API calls. |
-| **Data isolation** | Uploaded files are stored in `backend/uploads/` on your local filesystem only. |
-| **Network boundary** | Services are designed for internal network deployment. Do not expose to the public internet without additional hardening. |
-| **Model provenance** | Model weights should only be downloaded from official sources ([Hugging Face Hub](https://huggingface.co/xuanwulab), [PaddlePaddle](https://www.paddlepaddle.org.cn/)). |
+| **无云端依赖** | 所有 AI 推理（OCR、NER、Vision）本地运行，零外部 API 调用 |
+| **数据隔离** | 上传文件仅存储在本地文件系统 `backend/uploads/` |
+| **网络边界** | 服务设计为内网部署，请勿暴露到公网 |
+| **模型来源** | 模型权重仅从官方渠道下载（[Hugging Face](https://huggingface.co/xuanwulab)、[PaddlePaddle](https://www.paddlepaddle.org.cn/)） |
 
-## Best Practices for Deployment
+## Deployment Best Practices / 部署建议
 
-- Deploy behind a **VPN or firewall** — do not expose ports 3000, 8000, 8080-8082 to untrusted networks.
-- Enable **`AUTH_ENABLED=true`** in production to require JWT authentication.
-- Regularly **clean up** processed files from `backend/uploads/` and `backend/outputs/` after export.
-- Keep dependencies updated — run `pip install --upgrade` and `npm audit` periodically.
-- Use **encrypted storage** for the host filesystem where sensitive documents reside.
+- 部署在 **VPN 或防火墙**后，不要将 3000、8000、8080-8082 端口暴露到不信任的网络
+- 生产环境启用 **`AUTH_ENABLED=true`** 开启 JWT 认证
+- 定期清理 `backend/uploads/` 和 `backend/outputs/` 中的已处理文件
+- 保持依赖更新：`pip install --upgrade` + `npm audit`
+- 使用**加密存储**保护存放敏感文档的主机文件系统
 
-## Data Handling
+## Data Handling / 数据处理
 
-- No telemetry, analytics, or usage data is collected or transmitted.
-- All processing happens in-memory and on local disk.
-- The job queue database (`data/jobs.sqlite3`) stores task metadata only, not document contents.
-- Users are responsible for managing and purging sensitive files after processing.
+- 不收集、不传输任何遥测数据或使用分析
+- 所有处理在内存和本地磁盘完成
+- 任务队列数据库仅存储任务元数据，不包含文档内容
+- 用户负责处理完成后的敏感文件管理和清除

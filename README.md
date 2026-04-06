@@ -2,25 +2,28 @@
 
 # DataInfra &middot; RedactionEverything
 
-**Open-source anonymization infrastructure for unstructured data**
+**非结构化数据匿名化基础设施 &mdash; 开源**
 
-Detect and redact PII in Word, PDF, and images — fully on-premise, powered by dual AI pipelines.
+自动检测并匿名化 Word、PDF、图片中的个人敏感信息，全流程本地部署，双 AI 流水线驱动。
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#贡献)
 [![GitHub Stars](https://img.shields.io/github/stars/TracyWang95/DataInfra-RedactionEverything?style=social)](https://github.com/TracyWang95/DataInfra-RedactionEverything)
 
-English &nbsp;|&nbsp; **[中文](./README_zh.md)**
+中文 &nbsp;|&nbsp; **[English](./README_en.md)**
+
+> **开源协议：[Apache License 2.0](./LICENSE)** &mdash; 免费用于学术、研究和非商业场景。<br/>
+> **商业使用（SaaS / OEM / 企业部署 50 人以上）需要获得商业授权。** 详见 **[商业授权说明](./COMMERCIAL_LICENSE.md)**。
 
 <p>
-  <a href="#what-is-this">What is this?</a> &middot;
-  <a href="#features">Features</a> &middot;
-  <a href="#quickstart">Quickstart</a> &middot;
-  <a href="#architecture">Architecture</a> &middot;
-  <a href="#tech-stack">Tech Stack</a> &middot;
-  <a href="#deployment">Deployment</a> &middot;
-  <a href="#contributing">Contributing</a> &middot;
-  <a href="#license">License</a>
+  <a href="#项目简介">项目简介</a> &middot;
+  <a href="#核心能力">核心能力</a> &middot;
+  <a href="#快速开始">快速开始</a> &middot;
+  <a href="#系统架构">系统架构</a> &middot;
+  <a href="#技术栈">技术栈</a> &middot;
+  <a href="#部署指南">部署指南</a> &middot;
+  <a href="#贡献">贡献</a> &middot;
+  <a href="#许可证">许可证</a>
 </p>
 
 <!-- screenshot: hero -->
@@ -29,98 +32,100 @@ English &nbsp;|&nbsp; **[中文](./README_zh.md)**
 
 ---
 
-## What is this?
+## 项目简介
 
-Organizations handle sensitive documents every day — contracts, medical forms, identity papers, scanned archives. Before these can be shared, published, or used for ML training, personally identifiable information (PII) must be removed.
+每个组织每天都在处理大量敏感文档 — 合同、医疗单据、身份证件、扫描档案。这些文档在共享、发布或用于模型训练之前，必须移除其中的个人可标识信息（PII）。
 
-**RedactionEverything** is a self-hosted platform that automatically detects and anonymizes PII across unstructured documents. It runs a **dual-pipeline architecture** — combining OCR + NER for text-based entities and YOLO11 instance segmentation for visual elements — then fuses results for comprehensive coverage. Everything runs locally: **your data never leaves your network**.
+**RedactionEverything** 是一套自托管的匿名化平台，自动完成非结构化文档中 PII 的识别与处理。系统采用**双流水线架构** — OCR + NER 处理文本实体，YOLO11 实例分割检测视觉元素 — 再进行结果融合，实现全面覆盖。全部推理在本地完成：**数据不会离开你的网络**。
 
----
-
-## Features
-
-| | Feature | Description |
-|---|---|---|
-| :mag: | **Hybrid NER** | Regex rules + AI semantic recognition via llama.cpp (HaS Text, Qwen3-0.6B) |
-| :framed_picture: | **Visual PII Detection** | YOLO11 instance segmentation for seals, signatures, faces, ID cards, QR codes — **21 categories** |
-| :page_facing_up: | **Multi-format Support** | DOCX, PDF, scanned PDF, JPG, PNG |
-| :zap: | **Batch Processing** | 5-step wizard: configure, upload, queue, review, export (ZIP) |
-| :shield: | **100% On-premise** | All inference runs locally — zero cloud dependencies |
-| :dart: | **Standards-compliant** | GDPR, China PIPL, GB/T 37964-2019 |
-| :globe_with_meridians: | **Bilingual UI** | Chinese / English — switch in one click |
-| :gear: | **REST API** | 85+ endpoints, SSE real-time progress, Swagger / ReDoc docs |
-| :test_tube: | **Tested** | 76 Playwright E2E tests covering the full pipeline |
+**参考标准：** GDPR &middot; 《个人信息保护法》 &middot; GB/T 37964-2019 &middot; 《面向数据流通的匿名化处理实施指南》 &middot; 《面向数据流通的匿名化效果评估方法》
 
 ---
 
-## Screenshots
+## 核心能力
 
-<!-- screenshot: playground single-file flow -->
-
-<!-- screenshot: batch review three-column layout -->
-
-<!-- screenshot: detection results with dual-pipeline overlay -->
+| &nbsp; | 能力 | 说明 |
+|:---:|---|---|
+| :mag: | **混合 NER** | 正则规则 + AI 语义识别（llama.cpp / Qwen3-0.6B） |
+| :framed_picture: | **视觉 PII 检测** | YOLO11 实例分割，覆盖印章、签名、人脸、证件等 **21 类**目标 |
+| :page_facing_up: | **多格式支持** | Word (.docx)、PDF、扫描件 PDF、JPG、PNG |
+| :zap: | **批量处理** | 五步向导：配置 → 上传 → 队列识别 → 审阅确认 → 打包导出 |
+| :shield: | **100% 本地部署** | 全部推理在本地运行，零云端依赖 |
+| :dart: | **标准合规** | GDPR、个保法、GB/T 37964-2019 |
+| :globe_with_meridians: | **中英文双语** | 一键切换中英文界面 |
+| :gear: | **REST API** | 85+ 端点，SSE 实时进度，Swagger / ReDoc 文档 |
+| :test_tube: | **端到端测试** | 76 条 Playwright 测试覆盖完整流水线 |
 
 ---
 
-## Quickstart
+## 截图
 
-### Docker Compose (recommended)
+<!-- screenshot: 工作台单文件流程 -->
+
+<!-- screenshot: 批量审阅三栏布局 -->
+
+<!-- screenshot: 双流水线检测结果叠加 -->
+
+---
+
+## 快速开始
+
+### Docker Compose（推荐）
 
 ```bash
 git clone https://github.com/TracyWang95/DataInfra-RedactionEverything.git
 cd DataInfra-RedactionEverything
 
-# CPU-only (no GPU services)
+# 仅 CPU（不启动 GPU 服务）
 docker compose up -d
 
-# With GPU services (OCR, NER, Vision)
+# 启用 GPU 服务（OCR、NER、Vision）
 docker compose --profile gpu up -d
 ```
 
-Then open **http://localhost:3000**.
+打开 **http://localhost:3000** 即可使用。
 
-### Manual Setup
+### 手动部署
 
 <details>
-<summary><strong>Prerequisites</strong></summary>
+<summary><strong>环境要求</strong></summary>
 
-| Requirement | Version |
+| 依赖 | 版本 |
 |---|---|
 | Python | 3.10+ |
 | Node.js | 18+ |
-| GPU | NVIDIA with 8 GB+ VRAM (RTX 4060 or above recommended) |
-| llama.cpp | Latest release (for NER service) |
+| GPU | NVIDIA 8 GB+ 显存（推荐 RTX 4060 及以上） |
+| llama.cpp | 最新版本（NER 服务） |
 
 </details>
 
-#### 1. Clone and prepare models
+#### 1. 克隆仓库 & 准备模型
 
 ```bash
 git clone https://github.com/TracyWang95/DataInfra-RedactionEverything.git
 cd DataInfra-RedactionEverything
 
-# Download model weights
+# 下载模型权重
 # - HaS Text NER:  huggingface.co/xuanwulab/HaS_Text_0209_0.6B_Q4
 # - HaS Image:     sensitive_seg_best.pt (YOLO11)
-# - PaddleOCR-VL:  auto-downloaded on first run (~2 GB)
+# - PaddleOCR-VL:  首次运行自动下载（约 2 GB）
 ```
 
-#### 2. Start AI services
+#### 2. 启动 AI 服务
 
 ```bash
-# HaS NER (port 8080)
+# HaS NER（端口 8080）
 llama-server -hf xuanwulab/HaS_Text_0209_0.6B_Q4 \
   --port 8080 -ngl 99 --host 0.0.0.0 -c 8192 -np 1
 
-# HaS Image — YOLO11 (port 8081)
+# HaS Image — YOLO11（端口 8081）
 cd backend && python has_image_server.py
 
-# PaddleOCR-VL (port 8082)
+# PaddleOCR-VL（端口 8082）
 cd backend && python ocr_server.py
 ```
 
-#### 3. Start the backend
+#### 3. 启动后端
 
 ```bash
 cd backend
@@ -128,14 +133,14 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-#### 4. Start the frontend
+#### 4. 启动前端
 
 ```bash
 cd frontend
 npm install && npm run dev
 ```
 
-Open **http://localhost:3000** and verify all services are green:
+验证服务状态：
 
 ```bash
 curl http://127.0.0.1:8000/health/services
@@ -143,221 +148,181 @@ curl http://127.0.0.1:8000/health/services
 
 ---
 
-## Architecture
+## 系统架构
 
 ```
                           +------------------+
-                          |   User uploads   |
+                          |    用户上传      |
                           | DOCX / PDF / IMG |
                           +--------+---------+
                                    |
                           +--------v---------+
-                          |   File parsing   |
-                          |  & page imaging  |
+                          |   文件解析 &     |
+                          |   页面图像化     |
                           +--------+---------+
                                    |
                     +--------------+--------------+
                     |                              |
           +---------v----------+       +----------v---------+
-          |  Pipeline 1: Text  |       | Pipeline 2: Vision |
+          | 流水线 1：文本     |       | 流水线 2：视觉     |
           +---------+----------+       +----------+---------+
                     |                              |
           +---------v----------+       +----------v---------+
-          |   PaddleOCR-VL-1.5 |       |   YOLO11 (21-class |
-          |   text detection   |       |   instance segment) |
+          |  PaddleOCR-VL-1.5  |       |   YOLO11（21类    |
+          |  文字检测           |       |   实例分割）       |
           +---------+----------+       +----------+---------+
                     |                              |
           +---------v----------+                   |
           |   HaS NER (Q4)    |                   |
-          |   entity recog.   |                   |
+          |   实体识别         |                   |
           +---------+----------+                   |
-                    |                              |
-          +---------v----------+       +----------v---------+
-          |  Entity-to-coord   |       |  Normalize coords  |
-          |  matching          |       |  (0-1 relative)    |
-          +---------+----------+       +----------+---------+
                     |                              |
                     +--------------+--------------+
                                    |
                           +--------v---------+
-                          |   IoU dedup &    |
-                          |   result fusion  |
+                          |   IoU 去重 &     |
+                          |   结果融合       |
                           +--------+---------+
                                    |
                           +--------v---------+
-                          | Interactive edit |
-                          | & redaction      |
+                          |   交互式编辑 &   |
+                          |   匿名化处理     |
                           +------------------+
 ```
 
-**Five services** work together:
+**五个服务协同工作：**
 
-| Service | Port | Role |
+| 服务 | 端口 | 职责 |
 |---|---|---|
-| **Frontend** | 3000 | React UI — upload, annotate, review, export |
-| **Backend API** | 8000 | FastAPI — orchestration, job queue, file I/O |
-| **HaS NER** | 8080 | llama.cpp — named entity recognition |
-| **HaS Image** | 8081 | YOLO11 — 21-class visual PII segmentation |
-| **PaddleOCR** | 8082 | PaddleOCR-VL-1.5 — text detection & layout |
+| **前端** | 3000 | React UI — 上传、标注、审阅、导出 |
+| **后端 API** | 8000 | FastAPI — 编排、任务队列、文件 I/O |
+| **HaS NER** | 8080 | llama.cpp — 命名实体识别 |
+| **HaS Image** | 8081 | YOLO11 — 21 类视觉 PII 分割 |
+| **PaddleOCR** | 8082 | PaddleOCR-VL-1.5 — 文字检测与版面分析 |
 
 ---
 
-## Tech Stack
+## 技术栈
 
-| Layer | Technology | Version |
+| 层级 | 技术 | 版本 |
 |---|---|---|
-| **Frontend** | React | 19 |
+| **前端** | React | 19 |
 | | TypeScript | 5.7 |
 | | Vite | 6.1 |
 | | Tailwind CSS | 3.4 |
 | | Radix UI (ShadCN) | latest |
 | | Zustand | 5.0 |
 | | Playwright | 1.58 |
-| **Backend** | FastAPI | 0.115+ |
+| **后端** | FastAPI | 0.115+ |
 | | Python | 3.10+ |
-| | SQLite | (via job queue) |
-| | Celery + Redis | 5.4+ |
+| | SQLite | （任务队列） |
 | **AI / ML** | PaddleOCR-VL-1.5 | 2.7+ |
-| | HaS Text (Qwen3-0.6B Q4) | via llama.cpp |
-| | YOLO11 (Ultralytics) | 8.3+ |
+| | HaS Text（Qwen3-0.6B Q4） | via llama.cpp |
+| | YOLO11（Ultralytics） | 8.3+ |
 
 ---
 
-## API
+## 部署指南
 
-The backend exposes **85+ REST endpoints** across 13 route modules:
+### 环境变量
 
-- **Vision Pipeline** — detect, redact, preview
-- **Jobs** — batch task CRUD, queue management, review/approve workflow
-- **Files** — upload, download, format conversion
-- **Entity Types** — custom entity type management
-- **Redaction** — apply anonymization with multiple strategies
-- **Model Config** — switch models, adjust parameters at runtime
-- **Auth** — JWT-based authentication (optional)
-- **Safety** — file scanning and validation
-
-Interactive docs available at:
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
-
----
-
-## Deployment
-
-### Docker Compose
-
-```yaml
-# docker-compose.yml ships with 5 services:
-# backend, frontend, ocr, ner, vision
-# GPU services use the "gpu" profile
-
-docker compose --profile gpu up -d
-```
-
-### Environment Variables
-
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DEBUG` | `false` | Enable debug logging |
-| `AUTH_ENABLED` | `false` | Enable JWT authentication |
-| `OCR_BASE_URL` | `http://localhost:8082` | PaddleOCR service URL |
-| `HAS_LLAMACPP_BASE_URL` | `http://localhost:8080/v1` | HaS NER service URL |
-| `HAS_IMAGE_BASE_URL` | `http://localhost:8081` | HaS Image service URL |
-| `HAS_IMAGE_WEIGHTS` | auto-detect | Path to YOLO11 weights file |
-| `HAS_MODELS_DIR` | auto-detect | Root directory for model files |
-| `JOB_DB_PATH` | `data/jobs.sqlite3` | SQLite database path for job queue |
-| `HAS_NER_DISPLAY_NAME` | `HaS-Text-0209-Q4` | Display name shown in sidebar |
+| `DEBUG` | `false` | 启用调试日志 |
+| `AUTH_ENABLED` | `false` | 启用 JWT 认证 |
+| `OCR_BASE_URL` | `http://localhost:8082` | PaddleOCR 服务地址 |
+| `HAS_LLAMACPP_BASE_URL` | `http://localhost:8080/v1` | HaS NER 服务地址 |
+| `HAS_IMAGE_BASE_URL` | `http://localhost:8081` | HaS Image 服务地址 |
+| `HAS_IMAGE_WEIGHTS` | 自动检测 | YOLO11 权重文件路径 |
+| `JOB_DB_PATH` | `data/jobs.sqlite3` | SQLite 任务数据库路径 |
 
-### GPU Setup
-
-For optimal OCR performance, install the GPU build of PaddlePaddle **before** installing backend dependencies:
+### GPU 加速
 
 ```bash
 pip install paddlepaddle-gpu          # CUDA 12.6
 pip install -r backend/requirements.txt
 
-# Verify
+# 验证
 python -c "import paddle; print(paddle.is_compiled_with_cuda(), paddle.get_device())"
-# Expected: True gpu:0
+# 预期输出: True gpu:0
 ```
 
 ---
 
-## Visual PII Categories (HaS Image)
+## 视觉 PII 类别（HaS Image）
 
-YOLO11 detects **21 categories** of visual PII, covering documents, biometrics, devices, and codes:
+YOLO11 检测 **21 类**视觉敏感信息：
 
-| ID | Slug | Category |
+| ID | 标识符 | 类别 |
 |:---:|---|---|
-| 0 | `face` | Human face |
-| 1 | `fingerprint` | Fingerprint |
-| 2 | `palmprint` | Palmprint |
-| 3 | `id_card` | ID card |
-| 4 | `hk_macau_permit` | HK/Macau travel permit |
-| 5 | `passport` | Passport |
-| 6 | `employee_badge` | Employee badge |
-| 7 | `license_plate` | License plate |
-| 8 | `bank_card` | Bank card |
-| 9 | `physical_key` | Physical key |
-| 10 | `receipt` | Receipt |
-| 11 | `shipping_label` | Shipping label |
-| 12 | `official_seal` | Official seal |
-| 13 | `whiteboard` | Whiteboard |
-| 14 | `sticky_note` | Sticky note |
-| 15 | `mobile_screen` | Mobile screen |
-| 16 | `monitor_screen` | Monitor screen |
-| 17 | `medical_wristband` | Medical wristband |
-| 18 | `qr_code` | QR code |
-| 19 | `barcode` | Barcode |
-| 20 | `paper` | Paper document |
+| 0 | `face` | 人脸 |
+| 1 | `fingerprint` | 指纹 |
+| 2 | `palmprint` | 掌纹 |
+| 3 | `id_card` | 身份证 |
+| 4 | `hk_macau_permit` | 港澳通行证 |
+| 5 | `passport` | 护照 |
+| 6 | `employee_badge` | 工牌 |
+| 7 | `license_plate` | 车牌 |
+| 8 | `bank_card` | 银行卡 |
+| 9 | `physical_key` | 实体钥匙 |
+| 10 | `receipt` | 收据 |
+| 11 | `shipping_label` | 快递面单 |
+| 12 | `official_seal` | 公章 |
+| 13 | `whiteboard` | 白板 |
+| 14 | `sticky_note` | 便签 |
+| 15 | `mobile_screen` | 手机屏幕 |
+| 16 | `monitor_screen` | 显示器屏幕 |
+| 17 | `medical_wristband` | 医疗腕带 |
+| 18 | `qr_code` | 二维码 |
+| 19 | `barcode` | 条形码 |
+| 20 | `paper` | 纸质文档 |
 
 ---
 
-## Compliance
+## 合规标准
 
-This project references the following data protection standards:
-
-| Standard | Scope |
+| 标准 | 适用范围 |
 |---|---|
-| **GDPR** (EU) | General Data Protection Regulation |
-| **PIPL** (China) | Personal Information Protection Law |
-| **GB/T 37964-2019** | Information security — Guide for de-identification of personal information |
+| **GDPR**（欧盟） | 通用数据保护条例 |
+| **《个人信息保护法》**（中国） | 个人信息保护法 |
+| **GB/T 37964-2019** | 信息安全技术 — 个人信息去标识化指南 |
+| **《面向数据流通的匿名化处理实施指南》** | 匿名化处理实施 |
+| **《面向数据流通的匿名化效果评估方法》** | 匿名化效果评估 |
 
-The entity taxonomy is built on GB/T 37964-2019, classifying PII into **direct identifiers** (name, ID number, phone), **quasi-identifiers** (company, address, date), and **visual elements** (seals, faces, documents).
+实体分类体系基于 GB/T 37964-2019，将 PII 划分为**直接标识符**（姓名、证件号、手机号）、**准标识符**（单位、地址、日期）和**视觉元素**（印章、人脸、证件照）。
 
 ---
 
-## Contributing
+## 贡献
 
-We welcome contributions! Please read **[CONTRIBUTING.md](./CONTRIBUTING.md)** before submitting a PR.
+欢迎贡献！请先阅读 **[CONTRIBUTING.md](./CONTRIBUTING.md)**。
 
 ```bash
-# Run E2E tests
+# 端到端测试
 cd frontend && npm run test:e2e
 
-# Run unit tests
+# 单元测试
 cd frontend && npm run test
 ```
 
-PR checklist:
-- [ ] All inference runs locally — no cloud API calls
-- [ ] Smoke test passes
-- [ ] Documentation updated (if applicable)
+PR 检查清单：
+- [ ] 所有推理在本地运行 — 不调用云端 API
+- [ ] 冒烟测试通过
+- [ ] 文档已更新（如适用）
 
 ---
 
-## License
+## 许可证
 
-This project is licensed under the **[Apache License 2.0](./LICENSE)**.
+本项目基于 **[Apache License 2.0](./LICENSE)** 开源。
 
-For commercial deployment, OEM, or managed-service use, a separate commercial license is required.
-See **[COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)** for details.
+商业部署、OEM 或托管服务需要单独的商业许可证。详见 **[COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)**。
 
 ---
 
-## Security
+## 安全
 
-Please see **[SECURITY.md](./SECURITY.md)** for our security policy and responsible disclosure process. Key principle: this platform is designed for **on-premise deployment** — no data is transmitted externally.
+请参阅 **[SECURITY.md](./SECURITY.md)** 了解安全策略和漏洞披露流程。核心原则：本平台专为**本地部署**设计 — 不向外部传输任何数据。
 
 ---
 
@@ -367,6 +332,6 @@ Please see **[SECURITY.md](./SECURITY.md)** for our security policy and responsi
 
 [![Star History Chart](https://api.star-history.com/svg?repos=TracyWang95/DataInfra-RedactionEverything&type=Date)](https://star-history.com/#TracyWang95/DataInfra-RedactionEverything&Date)
 
-If this project helps you, please consider giving it a star.
+如果这个项目对你有帮助，请给一个 Star ⭐
 
 </div>
