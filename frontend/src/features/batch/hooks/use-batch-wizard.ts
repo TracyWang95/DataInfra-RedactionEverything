@@ -1384,6 +1384,16 @@ export function useBatchWizard() {
       const nextFurthest = Math.max(furthestStep, 2) as Step;
       const payload = buildJobConfigForWorker(cfg, mode, nextFurthest);
       let jid = activeJobId;
+      if (jid) {
+        try {
+          writeLocalWizardMaxStep(jid, nextFurthest);
+          await updateJobDraft(jid, { config: payload });
+        } catch {
+          // Stale/deleted job — clear and fall through to create a new one
+          jid = null;
+          setActiveJobId(null);
+        }
+      }
       if (!jid) {
         const j = await createJob({
           job_type: toBatchJobType(mode),
@@ -1394,9 +1404,6 @@ export function useBatchWizard() {
         jid = j.id;
         writeLocalWizardMaxStep(jid, nextFurthest);
         setActiveJobId(jid);
-      } else {
-        writeLocalWizardMaxStep(jid, nextFurthest);
-        await updateJobDraft(jid, { config: payload });
       }
       lastSavedJobConfigJson.current = JSON.stringify(payload);
       internalStepNavRef.current = true;

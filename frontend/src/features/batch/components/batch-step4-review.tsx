@@ -1,5 +1,6 @@
 
 import type React from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,53 @@ import type {
   ReviewEntity,
   TextEntityType,
 } from '../types';
+
+/** Calculate character offsets of a Range relative to a root element. */
+function getSelectionOffsets(range: Range, root: HTMLElement): { start: number; end: number } | null {
+  let start = -1;
+  let end = -1;
+  let offset = 0;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    const textLength = node.textContent?.length || 0;
+    if (node === range.startContainer) start = offset + range.startOffset;
+    if (node === range.endContainer) {
+      end = offset + range.endOffset;
+      break;
+    }
+    offset += textLength;
+  }
+
+  if (start === -1 || end === -1 || end <= start) return null;
+  return { start, end };
+}
+
+/** Clamp popover position so it stays within the canvas area. */
+function clampPopoverPosition(
+  anchorRect: DOMRect,
+  canvasRect: DOMRect,
+  popoverWidth: number,
+  popoverHeight: number,
+): { left: number; top: number } {
+  const margin = 8;
+  const maxW = Math.max(120, Math.min(popoverWidth, canvasRect.width - 2 * margin));
+  const maxH = Math.max(80, Math.min(popoverHeight, canvasRect.height - 2 * margin));
+  const cx = anchorRect.left + anchorRect.width / 2;
+  let left = cx - maxW / 2;
+  left = Math.max(canvasRect.left + margin, Math.min(left, canvasRect.right - margin - maxW));
+
+  let top = anchorRect.top - margin - maxH;
+  if (top < canvasRect.top + margin) {
+    top = anchorRect.bottom + margin;
+  }
+  if (top + maxH > canvasRect.bottom - margin) {
+    top = Math.max(canvasRect.top + margin, canvasRect.bottom - margin - maxH);
+  }
+
+  return { left, top };
+}
 
 interface BatchStep4ReviewProps {
 
@@ -334,7 +382,129 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
     reviewEntities, reviewTextContent, reviewTextContentRef, reviewTextScrollRef,
     selectedReviewEntityCount, displayPreviewMap, textPreviewSegments,
     applyReviewEntities, toggleReviewEntitySelected, textTypes,
+    reviewFileReadOnly,
   } = props;
+
+  // ── Text selection annotation state ──
+  const [selectedText, setSelectedText] = useState<{ text: string; start: number; end: number } | null>(null);
+  const [selectionPos, setSelectionPos] = useState<{ left: number; top: number } | null>(null);
+  const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
+  const selectionRangeRef = useRef<Range | null>(null);
+
+  const clearTextSelection = useCallback(() => {
+    setSelectedText(null);
+    setSelectionPos(null);
+    selectionRangeRef.current = null;
+  }, []);
+
+  const handleTextSelect = useCallback(() => {
+    if (reviewFileReadOnly) return;
+
+    const selection = window.getSelection();
+    if (!selection || !reviewTextContentRef.current) {
+      clearTextSelection();
+      return;
+    }
+
+    if (selection.isCollapsed) {
+      if (!selectedText || !selectionPos) clearTextSelection();
+      return;
+    }
+
+    const text = selection.toString().trim();
+    if (!text || text.length < 2) {
+      clearTextSelection();
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!reviewTextContentRef.current.contains(range.commonAncestorContainer)) {
+      clearTextSelection();
+      return;
+    }
+
+    const offsets = getSelectionOffsets(range, reviewTextContentRef.current);
+    const start = offsets?.start ?? reviewTextContent.indexOf(text);
+    const end = offsets?.end ?? (start + text.length);
+    if (start < 0 || end < 0) {
+      clearTextSelection();
+      return;
+    }
+
+    try {
+      selectionRangeRef.current = range.cloneRange();
+    } catch {
+      clearTextSelection();
+      return;
+    }
+
+    if (!selectedTypeId) {
+      const fallbackType = textTypes[0]?.id;
+      if (fallbackType) setSelectedTypeId(fallbackType);
+    }
+
+    setSelectionPos(null);
+    setSelectedText({ text, start, end });
+  }, [clearTextSelection, reviewFileReadOnly, reviewTextContent, reviewTextContentRef, selectedText, selectedTypeId, selectionPos, textTypes]);
+
+  // Position the popover after selectedText changes
+  useLayoutEffect(() => {
+    if (!selectedText) {
+      selectionRangeRef.current = null;
+      setSelectionPos(null);
+      return;
+    }
+
+    const root = reviewTextContentRef.current;
+    if (!root) return;
+
+    const update = () => {
+      const range = selectionRangeRef.current;
+      if (!range || range.collapsed) {
+        setSelectionPos(null);
+        return;
+      }
+
+      let rect: DOMRect;
+      try {
+        rect = range.getBoundingClientRect();
+      } catch {
+        setSelectionPos(null);
+        return;
+      }
+
+      if (rect.width === 0 && rect.height === 0) return;
+      setSelectionPos(clampPopoverPosition(rect, root.getBoundingClientRect(), 320, 280));
+    };
+
+    update();
+
+    const scrollEl = reviewTextScrollRef.current;
+    window.addEventListener('resize', update);
+    scrollEl?.addEventListener('scroll', update, { passive: true });
+    return () => {
+      window.removeEventListener('resize', update);
+      scrollEl?.removeEventListener('scroll', update);
+    };
+  }, [selectedText, reviewTextContentRef, reviewTextScrollRef]);
+
+  const addManualAnnotation = useCallback(() => {
+    if (!selectedText || !selectedTypeId) return;
+    const newEntity: ReviewEntity = {
+      id: `manual_${Date.now()}`,
+      text: selectedText.text,
+      type: selectedTypeId,
+      start: selectedText.start,
+      end: selectedText.end,
+      selected: true,
+      source: 'manual',
+      page: 0,
+      confidence: 1,
+    };
+    applyReviewEntities(prev => [...prev, newEntity]);
+    clearTextSelection();
+    window.getSelection()?.removeAllRanges();
+  }, [selectedText, selectedTypeId, applyReviewEntities, clearTextSelection]);
 
   const renderMarkedContent = () => {
     if (!reviewTextContent) return <p className="text-muted-foreground">-</p>;
@@ -385,11 +555,82 @@ function TextReviewContent(props: BatchStep4ReviewProps) {
         <div ref={reviewTextScrollRef} className="flex-1 overflow-auto p-4">
           <div
             ref={reviewTextContentRef}
-            className="text-sm leading-relaxed whitespace-pre-wrap font-[system-ui]"
+            className="text-sm leading-relaxed whitespace-pre-wrap select-text font-[system-ui]"
+            onMouseUp={handleTextSelect}
           >
             {renderMarkedContent()}
           </div>
         </div>
+
+        {/* Text selection annotation popover */}
+        {selectedText && selectionPos && (
+          <div
+            className="fixed z-50 w-[320px] animate-in fade-in zoom-in-95 rounded-xl border border-border bg-popover shadow-lg"
+            style={{ left: selectionPos.left, top: selectionPos.top }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseUp={(e) => e.stopPropagation()}
+          >
+            {/* Header: selected text + close */}
+            <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
+              <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                &ldquo;{selectedText.text}&rdquo;
+              </p>
+              <button
+                type="button"
+                onClick={clearTextSelection}
+                className="ml-2 shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.782 4.032a.575.575 0 10-.813-.814L7.5 6.687 4.032 3.218a.575.575 0 00-.814.814L6.687 7.5l-3.469 3.468a.575.575 0 00.814.814L7.5 8.313l3.469 3.469a.575.575 0 00.813-.814L8.313 7.5l3.469-3.468z" fill="currentColor"/></svg>
+              </button>
+            </div>
+
+            {/* Type pills grid */}
+            <div className="max-h-[240px] overflow-y-auto overscroll-contain px-2 py-2">
+              <div className="grid grid-cols-3 gap-1">
+                {textTypes.map((et) => {
+                  const risk = getEntityRiskConfig(et.id);
+                  const active = selectedTypeId === et.id;
+                  return (
+                    <button
+                      key={et.id}
+                      type="button"
+                      onClick={() => setSelectedTypeId(et.id)}
+                      className={cn(
+                        'truncate rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors',
+                        active ? 'font-medium shadow-sm ring-1 ring-inset' : 'hover:bg-accent',
+                      )}
+                      style={active ? { backgroundColor: risk.bgColor, color: risk.textColor, '--tw-ring-color': risk.color } as React.CSSProperties : undefined}
+                    >
+                      {et.name ?? getEntityTypeName(et.id)}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setSelectedTypeId('CUSTOM')}
+                  className={cn(
+                    'truncate rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors',
+                    selectedTypeId === 'CUSTOM' ? 'bg-muted font-medium shadow-sm ring-1 ring-inset ring-border' : 'hover:bg-accent',
+                  )}
+                >
+                  {t('playground.customType')}
+                </button>
+              </div>
+            </div>
+
+            {/* Add button */}
+            <div className="flex items-center gap-1.5 border-t border-border/60 px-3 py-2">
+              <Button
+                size="sm"
+                onClick={addManualAnnotation}
+                disabled={!selectedTypeId}
+                className="h-7 flex-1 text-xs"
+              >
+                {t('playground.addAnnotation')}
+              </Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Redacted preview */}
