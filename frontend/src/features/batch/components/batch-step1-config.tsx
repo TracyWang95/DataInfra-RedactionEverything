@@ -54,6 +54,8 @@ export function BatchStep1Config({
   advanceToUploadStep,
 }: BatchStep1ConfigProps) {
   const t = useT();
+  const textRedactionMode = cfg.replacementMode ?? 'structured';
+  const imageRedactionMethod = cfg.imageRedactionMethod ?? 'mosaic';
   const textPresetName =
     textPresets.find((preset) => preset.id === cfg.presetTextId)?.name ??
     t('batchWizard.step1.defaultPreset');
@@ -171,6 +173,26 @@ export function BatchStep1Config({
                   ))}
                 </SelectContent>
               </Select>
+              <div className="pt-2">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  {t('batchWizard.step1.textRedactionMode')}
+                </p>
+                <Select
+                  value={textRedactionMode}
+                  onValueChange={(value: 'structured' | 'smart' | 'mask') =>
+                    setCfg((current) => ({ ...current, replacementMode: value }))
+                  }
+                >
+                  <SelectTrigger className="text-xs" data-testid="text-redaction-mode-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="structured">{t('mode.structured')}</SelectItem>
+                    <SelectItem value="smart">{t('mode.smart')}</SelectItem>
+                    <SelectItem value="mask">{t('mode.mask')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardContent>
           </Card>
 
@@ -202,6 +224,26 @@ export function BatchStep1Config({
                   ))}
                 </SelectContent>
               </Select>
+              <div className="pt-2">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  {t('batchWizard.step1.imageRedactionMode')}
+                </p>
+                <Select
+                  value={imageRedactionMethod}
+                  onValueChange={(value: 'mosaic' | 'blur' | 'fill') =>
+                    setCfg((current) => ({ ...current, imageRedactionMethod: value }))
+                  }
+                >
+                  <SelectTrigger className="text-xs" data-testid="image-redaction-mode-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mosaic">{t('batchWizard.step1.imageMethodMosaic')}</SelectItem>
+                    <SelectItem value="blur">{t('batchWizard.step1.imageMethodBlur')}</SelectItem>
+                    <SelectItem value="fill">{t('batchWizard.step1.imageMethodFill')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardContent>
           </Card>
         </div>
