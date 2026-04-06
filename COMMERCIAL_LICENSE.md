@@ -37,7 +37,7 @@ DataInfra-RedactionEverything is available under the Apache License 2.0 for open
 
 商业授权咨询请联系 / For commercial licensing inquiries:
 
-📧 **tracy.wang@example.com**（请替换为实际邮箱）
+📧 **wwang11@alumni.nd.edu**
 
 ---
 
