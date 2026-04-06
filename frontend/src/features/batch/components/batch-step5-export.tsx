@@ -32,14 +32,14 @@ export function BatchStep5Export({
   const t = useT();
 
   return (
-    <Card data-testid="batch-step5-export">
-      <CardHeader>
+    <Card className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="batch-step5-export">
+      <CardHeader className="shrink-0">
         <CardTitle className="text-sm">{t('batchWizard.step5.title')}</CardTitle>
         <p className="text-xs text-muted-foreground">
           {t('batchWizard.step5.desc')}
         </p>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain">
         {}
         <div className="flex flex-wrap gap-2">
           <Button

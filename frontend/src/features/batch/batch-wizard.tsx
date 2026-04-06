@@ -36,7 +36,7 @@ export function BatchWizard() {
             ? 'page-shell-narrow !max-w-[108rem] 2xl:!max-w-[118rem] overflow-hidden'
             : w.step === 4
               ? 'page-shell overflow-hidden'
-              : 'page-shell-narrow !max-w-[112rem] 2xl:!max-w-[122rem] overflow-y-auto overscroll-contain',
+              : 'page-shell-narrow !max-w-[112rem] 2xl:!max-w-[122rem] overflow-hidden',
         )}
       >
         {w.previewMode && (

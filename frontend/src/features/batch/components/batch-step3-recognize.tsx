@@ -78,14 +78,14 @@ export function BatchStep3Recognize({
   const displayPct = isProcessing && pct === 0 ? 3 : pct;
 
   return (
-    <Card data-testid="batch-step3-recognize">
-      <CardHeader>
+    <Card className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="batch-step3-recognize">
+      <CardHeader className="shrink-0">
         <CardTitle className="text-sm">{t('batchWizard.step3.title')}</CardTitle>
         <p className="text-xs text-muted-foreground">
           {t('batchWizard.step3.desc')}
         </p>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain">
         {/* Progress */}
         {rows.length > 0 && (
           <div className="flex flex-col gap-1.5">

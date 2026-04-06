@@ -344,7 +344,7 @@ export const Playground: FC = () => {
       )}
 
       {stage === 'preview' && (
-        <div className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-auto p-3 sm:p-5 lg:flex-row lg:overflow-hidden">
+        <div className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-hidden p-3 sm:p-5 lg:flex-row">
           <div className="saas-panel flex min-w-0 flex-1 flex-col overflow-hidden">
             <PlaygroundToolbar
               filename={fileInfo?.filename}

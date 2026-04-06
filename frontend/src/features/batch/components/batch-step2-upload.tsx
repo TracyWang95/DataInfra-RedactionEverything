@@ -41,7 +41,8 @@ export function BatchStep2Upload({
         : t('batchWizard.step2.dropHintText');
 
   return (
-    <div className="grid gap-4 xl:grid-cols-[minmax(0,1.14fr)_minmax(23rem,0.86fr)]" data-testid="batch-step2-upload">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="batch-step2-upload">
+      <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto overscroll-contain xl:grid-cols-[minmax(0,1.14fr)_minmax(23rem,0.86fr)]">
       <div className="flex flex-col gap-4">
         {activeJobId && (
           <Card className="rounded-[20px] border-border/70 shadow-[var(--shadow-control)]">
@@ -77,7 +78,7 @@ export function BatchStep2Upload({
           )}
           data-testid="drop-zone"
         >
-          <input {...getInputProps()} className="hidden" />
+          <input {...getInputProps()} className="sr-only" />
           <p className="text-base font-medium">{t('batchWizard.step2.dropHint')}</p>
           <p className="text-xs text-muted-foreground mt-2">{dropHint}</p>
         </Card>
@@ -128,6 +129,7 @@ export function BatchStep2Upload({
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

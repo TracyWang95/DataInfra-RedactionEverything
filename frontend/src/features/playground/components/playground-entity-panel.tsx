@@ -52,7 +52,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = ({
 
   return (
     <div
-      className="flex w-full flex-shrink-0 flex-col gap-3 self-stretch overflow-x-hidden overflow-y-auto pr-1 lg:w-[320px] lg:max-w-[340px]"
+      className="flex min-h-0 w-full flex-shrink-0 flex-col gap-3 self-stretch overflow-x-hidden overflow-y-auto pr-1 lg:w-[320px] lg:max-w-[340px]"
       data-testid="playground-entity-panel"
     >
       <Card className="overflow-hidden">
