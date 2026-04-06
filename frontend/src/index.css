@@ -750,20 +750,31 @@ input[type="checkbox"]:focus-visible {
 }
 
 .jobs-actions-cell {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
 .jobs-actions-cell > * {
-  flex: 1 1 0;
   min-width: 0;
 }
 
 
 .jobs-action-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+}
+
+.jobs-action-placeholder {
+  display: block;
+  width: 100%;
+  min-height: 2.25rem;
+  border-radius: 0.75rem;
+  visibility: hidden;
 }
 
 .jobs-child-row {
@@ -1038,7 +1049,7 @@ body {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  padding: 0.875rem 1rem 0.75rem;
+  padding: 0.875rem 1rem 0;
 }
 
 .page-shell-narrow {
@@ -1051,7 +1062,7 @@ body {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  padding: 0.875rem 1.125rem 0.75rem;
+  padding: 0.875rem 1.125rem 0;
 }
 
 .page-stack {
@@ -1242,11 +1253,11 @@ body {
   }
 
   .page-shell {
-    padding: 1rem 1.25rem 0.75rem;
+    padding: 1rem 1.25rem 0;
   }
 
   .page-shell-narrow {
-    padding: 1rem 1.375rem 0.75rem;
+    padding: 1rem 1.375rem 0;
   }
 }
 
@@ -1256,11 +1267,11 @@ body {
   }
 
   .page-shell {
-    padding: 1.125rem 1.5rem 0.75rem;
+    padding: 1.125rem 1.5rem 0;
   }
 
   .page-shell-narrow {
-    padding: 1.125rem 1.625rem 0.75rem;
+    padding: 1.125rem 1.625rem 0;
   }
 }
 

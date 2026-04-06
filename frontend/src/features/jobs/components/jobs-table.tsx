@@ -172,7 +172,7 @@ function JobRow({
   const progressSummary = buildProgressSummary(job.progress, itemCount, finishedCount);
   const expandable = itemCount > 0;
 
-  const actionBtnBase = 'inline-flex items-center justify-center text-xs font-medium rounded-lg px-3 py-1.5 min-w-[60px] text-center transition-colors';
+  const actionBtnBase = 'inline-flex h-9 min-w-0 items-center justify-center rounded-xl px-3 py-1.5 text-center text-xs font-medium transition-colors';
 
   return (
     <li>
