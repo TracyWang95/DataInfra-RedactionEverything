@@ -75,11 +75,12 @@ export function RedactionList() {
   const t = useT();
   const previewEntityTypes = useMemo(() => buildPreviewEntityTypes(t) as EntityTypeConfig[], [t]);
   const previewPipelines = useMemo(() => buildPreviewPipelines(t) as PipelineConfig[], [t]);
-  const previewPresets = useMemo(() => buildPreviewPresets(t), [t]);
+  const previewPresetsSeed = useMemo(() => buildPreviewPresets(t), [t]);
   const [entityTypes, setEntityTypes] = useState<EntityTypeConfig[]>([]);
   const [pipelines, setPipelines] = useState<PipelineConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [presets, setPresets] = useState<RecognitionPreset[]>([]);
+  const [previewPresets, setPreviewPresets] = useState<RecognitionPreset[]>([]);
   const [entityTypesUnavailable, setEntityTypesUnavailable] = useState(false);
   const [pipelinesUnavailable, setPipelinesUnavailable] = useState(false);
   const [presetsUnavailable, setPresetsUnavailable] = useState(false);
@@ -157,6 +158,10 @@ export function RedactionList() {
     void fetchPipelines();
     void reloadPresets();
   }, [fetchEntityTypes, fetchPipelines, reloadPresets]);
+
+  useEffect(() => {
+    setPreviewPresets(previewPresetsSeed);
+  }, [previewPresetsSeed]);
 
   const usePreviewEntityTypes = entityTypesUnavailable && entityTypes.length === 0;
   const usePreviewPipelines = pipelinesUnavailable && pipelines.length === 0;
@@ -278,7 +283,6 @@ export function RedactionList() {
   }, [effectiveEntityTypes, effectivePipelines]);
 
   const openNew = (kind: PresetKind) => {
-    if (previewMode) return;
     setExpanded(null);
     setEditingPresetId(null);
     setPresetForm(buildDefaultForm(kind));
@@ -286,7 +290,6 @@ export function RedactionList() {
   };
 
   const openEdit = (preset: RecognitionPreset) => {
-    if (previewMode) return;
     setExpanded(null);
     setEditingPresetId(preset.id);
     setPresetForm({
@@ -314,6 +317,39 @@ export function RedactionList() {
 
     setSaving(true);
     try {
+      if (previewMode) {
+        if (editingPresetId) {
+          setPreviewPresets((current) => current.map((preset) => (
+            preset.id === editingPresetId
+              ? {
+                ...preset,
+                ...normalized,
+                updated_at: new Date().toISOString(),
+              }
+              : preset
+          )));
+        } else {
+          const createdId = `preview-${Date.now()}`;
+          const created: RecognitionPreset = {
+            id: createdId,
+            ...normalized,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          setPreviewPresets((current) => [...current, created]);
+          if (normalized.kind === 'text' || normalized.kind === 'full') {
+            setActivePresetTextId(created.id);
+            setBridgeText(created.id);
+          }
+          if (normalized.kind === 'vision' || normalized.kind === 'full') {
+            setActivePresetVisionId(created.id);
+            setBridgeVision(created.id);
+          }
+        }
+        setModalOpen(false);
+        return;
+      }
+
       if (editingPresetId) {
         await updatePreset(editingPresetId, normalized);
       } else {
@@ -337,6 +373,20 @@ export function RedactionList() {
   };
 
   const removePreset = async (id: string) => {
+    if (previewMode) {
+      setPreviewPresets((current) => current.filter((preset) => preset.id !== id));
+      setExpanded(current => (current === `text:${id}` || current === `vision:${id}` ? null : current));
+      if (bridgeText === id) {
+        setBridgeText('');
+        setActivePresetTextId(null);
+      }
+      if (bridgeVision === id) {
+        setBridgeVision('');
+        setActivePresetVisionId(null);
+      }
+      return;
+    }
+
     try {
       await deletePreset(id);
       setExpanded(current => (current === `text:${id}` || current === `vision:${id}` ? null : current));
@@ -399,10 +449,10 @@ export function RedactionList() {
                 </CardDescription>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                <Button size="sm" variant="outline" onClick={() => openNew('text')} data-testid="new-text-preset" disabled={previewMode}>
+                <Button size="sm" variant="outline" onClick={() => openNew('text')} data-testid="new-text-preset">
                   {t('settings.redaction.newText')}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => openNew('vision')} data-testid="new-vision-preset" disabled={previewMode}>
+                <Button size="sm" variant="outline" onClick={() => openNew('vision')} data-testid="new-vision-preset">
                   {t('settings.redaction.newVision')}
                 </Button>
               </div>
@@ -429,7 +479,6 @@ export function RedactionList() {
                 <Label className="text-xs">{t('settings.redaction.linkText')}</Label>
                 <Select
                   value={bridgeText || DEFAULT_PRESET_OPTION}
-                  disabled={previewMode}
                   onValueChange={(value) => {
                     const nextValue = value === DEFAULT_PRESET_OPTION ? '' : value;
                     setBridgeText(nextValue);
@@ -457,7 +506,6 @@ export function RedactionList() {
                 <Label className="text-xs">{t('settings.redaction.linkVision')}</Label>
                 <Select
                   value={bridgeVision || DEFAULT_PRESET_OPTION}
-                  disabled={previewMode}
                   onValueChange={(value) => {
                     const nextValue = value === DEFAULT_PRESET_OPTION ? '' : value;
                     setBridgeVision(nextValue);
@@ -491,7 +539,6 @@ export function RedactionList() {
                 pipelines={effectivePipelines}
                 expanded={expanded}
                 setExpanded={setExpanded}
-                previewMode={previewMode}
                 colPrefix="text"
                 onEdit={openEdit}
                     onDelete={(id) => setConfirmState({
@@ -509,7 +556,6 @@ export function RedactionList() {
                 pipelines={effectivePipelines}
                 expanded={expanded}
                 setExpanded={setExpanded}
-                previewMode={previewMode}
                 colPrefix="vision"
                 onEdit={openEdit}
                     onDelete={(id) => setConfirmState({
@@ -638,7 +684,6 @@ function PresetColumn({
   pipelines,
   expanded,
   setExpanded,
-  previewMode,
   colPrefix,
   onEdit,
   onDelete,
@@ -650,7 +695,6 @@ function PresetColumn({
   pipelines: PipelineConfig[];
   expanded: string | null;
   setExpanded: React.Dispatch<React.SetStateAction<string | null>>;
-  previewMode: boolean;
   colPrefix: string;
   onEdit: (preset: RecognitionPreset) => void;
   onDelete: (id: string) => void;
@@ -701,14 +745,13 @@ function PresetColumn({
                   >
                     {expanded === rowKey ? t('settings.redaction.collapse') : t('settings.redaction.preview')}
                   </Button>
-                  <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => onEdit(preset)} disabled={previewMode}>
+                  <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => onEdit(preset)}>
                     {t('settings.redaction.edit')}
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 text-xs text-destructive"
-                    disabled={previewMode}
+                    className="h-6 border-destructive/25 text-xs text-destructive hover:bg-destructive/8"
                     onClick={() => void onDelete(preset.id)}
                   >
                     {t('settings.redaction.delete')}
