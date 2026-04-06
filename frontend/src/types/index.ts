@@ -86,7 +86,7 @@ export type ImageRedactionMethod = 'mosaic' | 'blur' | 'fill';
 export interface Entity {
   id: string;
   text: string;
-  type: EntityType;
+  type: string;
   start: number;
   end: number;
   page: number;
@@ -103,9 +103,10 @@ export interface BoundingBox {
   width: number;
   height: number;
   page: number;
-  type: EntityType;
+  type: string;
   text?: string;
   selected: boolean;
+  source?: 'ocr_has' | 'has_image' | 'manual';
 }
 
 
@@ -201,6 +202,7 @@ export interface NERResult {
   entities: Entity[];
   entity_count: number;
   entity_summary: Record<string, number>;
+  warnings?: string[];
 }
 
 
@@ -208,6 +210,7 @@ export interface VisionResult {
   file_id: string;
   page: number;
   bounding_boxes: BoundingBox[];
+  result_image?: string;
 }
 
 
@@ -215,7 +218,8 @@ export interface RedactionConfig {
   replacement_mode: ReplacementMode;
   entity_types: EntityType[];
   custom_replacements: Record<string, string>;
-  
+  custom_entity_types?: string[];
+
   image_redaction_method?: ImageRedactionMethod;
   image_redaction_strength?: number;
   image_fill_color?: string;
