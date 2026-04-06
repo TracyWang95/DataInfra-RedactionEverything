@@ -237,7 +237,6 @@ export const PlaygroundResult: FC<PlaygroundResultProps> = ({
           visibleBoxes={visibleBoxes}
           visionTypes={visionTypes}
           getVisionTypeConfig={getVisionTypeConfig}
-          entities={entities}
           entityMap={entityMap}
           origToTypeId={origToTypeId}
           scrollToMatch={scrollToMatch}
@@ -251,7 +250,6 @@ export const PlaygroundResult: FC<PlaygroundResultProps> = ({
           renderOriginal={renderOriginal}
           renderRedacted={renderRedacted}
           content={content}
-          entities={entities}
           entityMap={entityMap}
           origToTypeId={origToTypeId}
           scrollToMatch={scrollToMatch}
@@ -302,7 +300,6 @@ const RedactionReportSection: FC<{ report: Record<string, unknown>; open: boolea
 const MappingColumn: FC<{
   entityMap: Record<string, string>;
   origToTypeId: Map<string, string>;
-  entities: Entity[];
   scrollToMatch: (orig: string) => void;
   content?: string;
   versionHistory: VersionHistoryEntry[];
@@ -412,7 +409,6 @@ const TextResultView: FC<{
   renderOriginal: () => ReactNode[];
   renderRedacted: () => ReactNode[];
   content: string;
-  entities: Entity[];
   entityMap: Record<string, string>;
   origToTypeId: Map<string, string>;
   scrollToMatch: (orig: string) => void;
@@ -424,7 +420,6 @@ const TextResultView: FC<{
   renderOriginal,
   renderRedacted,
   content,
-  entities,
   entityMap,
   origToTypeId,
   scrollToMatch,
@@ -458,7 +453,6 @@ const TextResultView: FC<{
     <MappingColumn
       entityMap={entityMap}
       origToTypeId={origToTypeId}
-      entities={entities}
       scrollToMatch={scrollToMatch}
       content={content}
       className="w-full md:w-64 md:flex-shrink-0"
@@ -478,7 +472,6 @@ const ImageResultView: FC<{
   visibleBoxes: BoundingBox[];
   visionTypes: VisionTypeConfig[];
   getVisionTypeConfig: (typeId: string) => { name: string; color: string };
-  entities: Entity[];
   entityMap: Record<string, string>;
   origToTypeId: Map<string, string>;
   scrollToMatch: (orig: string) => void;
@@ -493,7 +486,6 @@ const ImageResultView: FC<{
   visibleBoxes,
   visionTypes,
   getVisionTypeConfig,
-  entities,
   entityMap,
   origToTypeId,
   scrollToMatch,
@@ -547,7 +539,6 @@ const ImageResultView: FC<{
     <MappingColumn
       entityMap={entityMap}
       origToTypeId={origToTypeId}
-      entities={entities}
       scrollToMatch={scrollToMatch}
       className="w-full md:w-52 md:flex-shrink-0"
       mobileTab={mobileTab}
