@@ -1,5 +1,6 @@
 
 import { type FC } from 'react';
+import { createPortal } from 'react-dom';
 import { Progress } from '@/components/ui/progress';
 import { useT } from '@/i18n';
 
@@ -17,7 +18,7 @@ export const PlaygroundLoading: FC<PlaygroundLoadingProps> = ({
   const t = useT();
   const progressValue = Math.min(90, 10 + (elapsedSec % 60) * 1.3);
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay-backdrop)] backdrop-blur-sm"
       role="alertdialog"
@@ -53,6 +54,7 @@ export const PlaygroundLoading: FC<PlaygroundLoadingProps> = ({
           </p>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };
