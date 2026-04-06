@@ -60,6 +60,9 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
               <p className="mt-1.5 max-w-2xl text-sm leading-6 text-muted-foreground">
                 {t('playground.upload.desc')}
               </p>
+              <p className="mt-2 max-w-2xl text-center text-[11px] leading-4 text-muted-foreground/60">
+                {t('playground.upload.standards')}
+              </p>
             </div>
           </div>
 

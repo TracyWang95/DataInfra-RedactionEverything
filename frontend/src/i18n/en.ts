@@ -845,6 +845,7 @@ const enOverrides: Record<string, string> = {
   'playground.upload.kicker': 'Workspace intake',
   'playground.upload.title': 'Upload unstructured data, anonymize instantly',
   'playground.upload.desc': 'Upload a file, select detection scope, preview anonymization results, then export.',
+  'playground.upload.standards': 'Standards: GDPR · PIPL · GB/T 37964-2019 · Anonymization Processing Guide for Data Circulation · Anonymization Effectiveness Assessment',
   'playground.upload.configDesc': 'Presets, text rules, and vision rules are selected here in one place.',
   'playground.upload.offlineHint': 'The backend is offline. Preview data is shown here so you can keep checking text rules, vision rules, and the overall layout.',
   'playground.dropHere': 'Drop a file here to upload',

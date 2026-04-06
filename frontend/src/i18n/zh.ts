@@ -872,6 +872,7 @@ const zhOverrides: Record<string, string> = {
   'playground.upload.kicker': '工作区入口',
   'playground.upload.title': '上传非结构化数据，即时匿名化',
   'playground.upload.desc': '上传文件，选择识别范围，预览匿名化效果后导出。',
+  'playground.upload.standards': '参考标准：GDPR · 《个人信息保护法》 · GB/T 37964-2019 · 《面向数据流通的匿名化处理实施指南》 · 《面向数据流通的匿名化效果评估方法》',
   'playground.upload.configDesc': '预设、文本规则和图像规则都在这里统一选择。',
   'playground.upload.offlineHint': '当前后端未连接，这里展示的是界面预览数据，方便继续检查文本、图像配置和整体排版。',
   'playground.dropHere': '把文件拖到这里上传',
