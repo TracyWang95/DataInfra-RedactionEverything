@@ -1,0 +1,50 @@
+# Runtime data (user downloads, not baked into image)
+models/
+uploads/
+outputs/
+data/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Environment & secrets
+.env
+.env.*
+
+# Tests & dev tools
+tests/
+test_*.py
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.cursor/
+
+# Git
+.git/
+.gitignore
+
+# Large model files (mounted at runtime via volume)
+*.gguf
+*.bin
+*.safetensors
+
+# Logs
+*.log
+logs/
+debug.log
+
+# Playwright
+.playwright-cli/
