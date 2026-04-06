@@ -648,7 +648,7 @@ class JobStore:
     def repair_stuck_in_flight_items(self) -> list[dict]:
         """
         崩溃恢复：将上次进程异常退出时卡在中间识别状态的 item 重置，
-        并返回需要重新分发给 Celery 的 item 信息列表。
+        并返回需要重新投递到任务队列的 item 信息列表。
 
         - PARSING / NER / VISION  → QUEUED  （重新识别）
         - REDACTING               → AWAITING_REVIEW  （交还人工复核，避免重复覆盖输出）

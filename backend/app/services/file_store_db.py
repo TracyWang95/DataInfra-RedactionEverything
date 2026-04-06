@@ -32,7 +32,6 @@ class FileStoreDB:
     """SQLite-backed file store with dict-like API.
 
     注意：不使用进程内缓存，每次读写均直接访问 SQLite。
-    这样 Celery worker 写入的数据可立即被 FastAPI 进程读到，避免跨进程脏缓存。
     SQLite WAL 模式 + busy_timeout=5000 可满足并发读写需求。
     """
 

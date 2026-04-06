@@ -46,9 +46,6 @@ prometheus-client>=0.20.0
 cryptography>=42.0.0
 # pyclamd>=0.4.0  # 按需安装，需配合 ClamAV daemon
 
-# 任务队列（Celery + Redis broker）
-celery[redis]>=5.4.0
-
 # 开发工具
 python-dotenv>=1.0.1
 pytest>=8.0.0
