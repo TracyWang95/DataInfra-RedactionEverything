@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Eye } from 'lucide-react';
 import { useT } from '@/i18n';
@@ -64,6 +64,13 @@ export function BatchStep1Config({
 }: BatchStep1ConfigProps) {
   const t = useT();
   const [previewDialog, setPreviewDialog] = useState<'text' | 'image' | null>(null);
+
+  useEffect(() => {
+    if (cfg.executionDefault !== 'queue') {
+      setCfg((current) => ({ ...current, executionDefault: 'queue' }));
+    }
+  }, [cfg.executionDefault, setCfg]);
+
   const textRedactionMode = cfg.replacementMode ?? 'structured';
   const imageRedactionMethod = cfg.imageRedactionMethod ?? 'mosaic';
   const imageRedactionStrength = cfg.imageRedactionStrength ?? 25;
@@ -206,51 +213,6 @@ export function BatchStep1Config({
       </CardHeader>
 
       <CardContent className="page-surface-body flex flex-col gap-4 pt-5">
-        <div className="surface-subtle flex flex-col gap-3 px-4 py-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              {t('batchWizard.step1.execPath')}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              {t('batchWizard.step1.execPathHint')}
-            </p>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[36rem]">
-            <label className="surface-muted flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm">
-              <input
-                type="radio"
-                name="batch-exec-path"
-                className="h-3.5 w-3.5 accent-primary"
-                checked={(cfg.executionDefault ?? 'queue') === 'queue'}
-                onChange={() => setCfg(c => ({ ...c, executionDefault: 'queue' }))}
-                data-testid="exec-queue"
-              />
-              <span>
-                <span className="font-medium">{t('batchWizard.step1.execQueue')}</span>
-                <span className="text-muted-foreground ml-1">
-                  {t('batchWizard.step1.execQueueDesc')}
-                </span>
-              </span>
-            </label>
-            <label className="surface-muted flex cursor-pointer items-center gap-2 px-3 py-2.5 text-sm">
-              <input
-                type="radio"
-                name="batch-exec-path"
-                className="h-3.5 w-3.5 accent-primary"
-                checked={cfg.executionDefault === 'local'}
-                onChange={() => setCfg(c => ({ ...c, executionDefault: 'local' }))}
-                data-testid="exec-local"
-              />
-              <span>
-                <span className="font-medium">{t('batchWizard.step1.execLocal')}</span>
-                <span className="text-muted-foreground ml-1">
-                  {t('batchWizard.step1.execLocalDesc')}
-                </span>
-              </span>
-            </label>
-          </div>
-        </div>
-
         <div className="grid gap-3 xl:grid-cols-2">
           <Card className="rounded-[20px] border-border/70 bg-card/90 shadow-[var(--shadow-sm)]">
             <CardContent className="flex h-full flex-col gap-3 p-4">
