@@ -10,6 +10,8 @@ Detect and redact PII in Word, PDF, and images — fully on-premise, powered by 
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
 [![GitHub Stars](https://img.shields.io/github/stars/TracyWang95/DataInfra-RedactionEverything?style=social)](https://github.com/TracyWang95/DataInfra-RedactionEverything)
 
+English &nbsp;|&nbsp; **[中文](./README_zh.md)**
+
 <p>
   <a href="#what-is-this">What is this?</a> &middot;
   <a href="#features">Features</a> &middot;
