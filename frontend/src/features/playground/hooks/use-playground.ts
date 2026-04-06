@@ -92,7 +92,7 @@ export function usePlayground() {
   // --- Auto-switch type tab on file mode ---
   useEffect(() => {
     recognition.setTypeTab(isImageMode ? 'vision' : 'text');
-  }, [isImageMode, recognition]);
+  }, [isImageMode, recognition.setTypeTab]);
 
   // --- Entity / box operations ---
   const applyEntities = useCallback((next: Entity[]) => {

@@ -114,11 +114,25 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
                 </p>
               </div>
               <TabsList className="h-8 rounded-full border border-border/70 bg-muted/35 p-1">
-                <TabsTrigger value="text" className="rounded-full px-3 py-1 text-xs">
+                <TabsTrigger
+                  value="text"
+                  className="rounded-full px-3 py-1 text-xs"
+                  data-testid="playground-tab-text"
+                >
                   {t('playground.text')}
+                  <span className="ml-1 tabular-nums text-[10px] text-muted-foreground">
+                    {rec.entityTypes.length}
+                  </span>
                 </TabsTrigger>
-                <TabsTrigger value="vision" className="rounded-full px-3 py-1 text-xs">
+                <TabsTrigger
+                  value="vision"
+                  className="rounded-full px-3 py-1 text-xs"
+                  data-testid="playground-tab-vision"
+                >
                   {t('playground.vision')}
+                  <span className="ml-1 tabular-nums text-[10px] text-muted-foreground">
+                    {rec.visionTypes.length}
+                  </span>
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -132,9 +146,27 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
 
           <ScrollArea className="min-h-0 flex-1">
             <TabsContent value="text" className="mt-0 space-y-3 p-3 2xl:p-4">
+              <div className="rounded-[20px] border border-border/70 bg-muted/20 px-3.5 py-3">
+                <p className="text-sm font-semibold tracking-[-0.02em] text-foreground">
+                  {t('playground.text')}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {rec.selectedTypes.length} / {rec.entityTypes.length} {t('playground.selected')}
+                </p>
+              </div>
               <TextTypeGroups rec={rec} />
             </TabsContent>
             <TabsContent value="vision" className="mt-0 space-y-3 p-3 2xl:p-4">
+              <div className="rounded-[20px] border border-border/70 bg-muted/20 px-3.5 py-3">
+                <p className="text-sm font-semibold tracking-[-0.02em] text-foreground">
+                  {t('playground.vision')}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t('playground.ocrShort')} {rec.selectedOcrHasTypes.length} / {rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has')?.types.length ?? 0}
+                  <span className="mx-2 text-border">·</span>
+                  {t('playground.imageShort')} {rec.selectedHasImageTypes.length} / {rec.pipelines.find((pipeline) => pipeline.mode === 'has_image')?.types.length ?? 0}
+                </p>
+              </div>
               <VisionPipelines rec={rec} />
             </TabsContent>
           </ScrollArea>

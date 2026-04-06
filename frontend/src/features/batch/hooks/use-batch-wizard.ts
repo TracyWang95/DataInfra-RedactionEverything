@@ -781,6 +781,10 @@ export function useBatchWizard() {
   const reviewedOutputCount = useMemo(() => rows.filter(r => r.reviewConfirmed === true).length, [rows]);
   const pendingReviewCount = Math.max(0, rows.length - reviewedOutputCount);
   const allReviewConfirmed = rows.length > 0 && pendingReviewCount === 0;
+  const allAnalyzeDone = useMemo(
+    () => rows.length > 0 && rows.every(row => RECOGNITION_DONE_STATUSES.has(row.analyzeStatus)),
+    [rows],
+  );
   const reviewItemId = reviewFile ? itemIdByFileIdRef.current[reviewFile.file_id] : undefined;
   const reviewFileReadOnly = reviewFile?.analyzeStatus === 'completed' || reviewFile?.analyzeStatus === 'redacting';
 
@@ -1301,21 +1305,22 @@ export function useBatchWizard() {
   // ── Step navigation ──
   const selectedIds = rows.filter(r => selected.has(r.file_id)).map(r => r.file_id);
 
-  const canGoStep = useCallback((target: Step): boolean => {
-    if (isPreviewMode) return true;
-    if (target <= 1) return true;
-    const allAnalyzeDone = rows.length > 0 && rows.every(r => RECOGNITION_DONE_STATUSES.has(r.analyzeStatus));
+  const canUnlockStep = useCallback((target: Step): boolean => {
+    if (target === 1) return true;
+    if (target === 2) return isStep1Complete;
+    if (target === 3) return rows.length > 0;
     if (target === 4) return allAnalyzeDone;
-    if (target < step) return true;
-    if (!isStep1Complete && target >= 2) return false;
-    if (target === 2) return furthestStep >= 2;
-    if (target === 3) return furthestStep >= 2 && rows.length > 0;
-    if (target === 5) {
-      if (jobSkipItemReview) return furthestStep >= 5 && rows.every(r => r.has_output);
-      return furthestStep >= 5 && allReviewConfirmed;
-    }
-    return false;
-  }, [allReviewConfirmed, furthestStep, isPreviewMode, isStep1Complete, jobSkipItemReview, rows, step]);
+    if (jobSkipItemReview) return rows.length > 0 && rows.every(row => row.has_output);
+    return allReviewConfirmed;
+  }, [allAnalyzeDone, allReviewConfirmed, isStep1Complete, jobSkipItemReview, rows]);
+
+  const canGoStep = useCallback((target: Step): boolean => {
+    if (target === step) return true;
+    if (isPreviewMode) return true;
+    if (target <= furthestStep) return canUnlockStep(target);
+    const nextAvailableStep = Math.min(5, furthestStep + 1) as Step;
+    return target === nextAvailableStep && canUnlockStep(target);
+  }, [canUnlockStep, furthestStep, isPreviewMode, step]);
 
   const flushJobDraftFromStep1 = useCallback(async () => {
     if (isPreviewMode || !activeJobId) return;
@@ -1328,7 +1333,6 @@ export function useBatchWizard() {
 
   const applyStep = useCallback((s: Step) => {
     if (s === step) return;
-    if (s === 1) setConfirmStep1(false);
     if (s >= 2 && !isStep1Complete) {
       setMsg({ text: !configLoaded ? t('batchWizard.waitConfig') : !confirmStep1 ? t('batchWizard.confirmConfigFirst') : t('batchWizard.selectTypesFirst'), tone: 'warn' });
       return;

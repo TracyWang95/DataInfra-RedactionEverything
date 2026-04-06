@@ -68,6 +68,8 @@ export function BatchWizard() {
             cfg={w.cfg}
             setCfg={w.setCfg}
             configLoaded={w.configLoaded}
+            textTypes={w.textTypes}
+            pipelines={w.pipelines}
             textPresets={w.textPresets}
             visionPresets={w.visionPresets}
             onBatchTextPresetChange={w.onBatchTextPresetChange}
