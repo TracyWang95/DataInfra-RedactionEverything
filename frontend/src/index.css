@@ -795,6 +795,7 @@ input[type="checkbox"]:focus-visible {
 
 
 :root {
+  --page-shell-offset: 5.25rem;
   color-scheme: light;
   --background: #ffffff;
   --background-secondary: #f6f7f9;
@@ -1023,7 +1024,8 @@ body {
 }
 
 .saas-page {
-  min-height: calc(100dvh - 4rem);
+  height: 100%;
+  min-height: 0;
 }
 
 .page-shell {
@@ -1031,10 +1033,12 @@ body {
   max-width: min(100%, 2048px);
   margin-inline: auto;
   min-height: 0;
+  height: calc(100dvh - var(--page-shell-offset));
+  max-height: calc(100dvh - var(--page-shell-offset));
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  padding: 0.875rem 1rem 1.375rem;
+  padding: 0.875rem 1rem 0.75rem;
 }
 
 .page-shell-narrow {
@@ -1042,18 +1046,21 @@ body {
   max-width: 112rem;
   margin-inline: auto;
   min-height: 0;
+  height: calc(100dvh - var(--page-shell-offset));
+  max-height: calc(100dvh - var(--page-shell-offset));
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  padding: 0.875rem 1.125rem 1.375rem;
+  padding: 0.875rem 1.125rem 0.75rem;
 }
 
 .page-stack {
   display: flex;
   min-height: 0;
+  height: 100%;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.875rem;
 }
 
 .page-section-heading {
@@ -1107,23 +1114,153 @@ body {
   gap: 0.5rem;
 }
 
+.page-fill {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.page-surface {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-surface-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.page-surface-footer {
+  margin-top: auto;
+  flex-shrink: 0;
+  border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: color-mix(in srgb, var(--background) 96%, transparent);
+  padding: 0.75rem 1rem;
+  backdrop-filter: blur(12px);
+}
+
+.pagination-rail {
+  display: flex;
+  min-height: 3.75rem;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--muted) 68%, var(--card) 32%);
+  padding: 0.625rem 0.875rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.pagination-rail--compact {
+  min-height: 2.625rem;
+  border-radius: 15px;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+}
+
+.pagination-rail__meta {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.pagination-rail__meta-group {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.pagination-rail__pill {
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 999px;
+  background: var(--background);
+  padding: 0.375rem 0.625rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pagination-rail__separator {
+  color: color-mix(in srgb, var(--foreground) 22%, transparent);
+  flex: 0 0 auto;
+}
+
+.pagination-rail__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+}
+
+.pagination-rail__page-size {
+  width: 5.75rem;
+  flex: 0 0 auto;
+}
+
+.pagination-rail--compact .pagination-rail__meta {
+  gap: 0.3125rem;
+  font-size: 0.625rem;
+}
+
+.pagination-rail--compact .pagination-rail__meta-group {
+  gap: 0.3125rem;
+}
+
+.pagination-rail--compact .pagination-rail__pill {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.625rem;
+}
+
+.pagination-rail--compact .pagination-rail__actions {
+  gap: 0.3125rem;
+}
+
 @media (min-width: 640px) {
+  :root {
+    --page-shell-offset: 5.5rem;
+  }
+
   .page-shell {
-    padding: 1rem 1.25rem 1.5rem;
+    padding: 1rem 1.25rem 0.75rem;
   }
 
   .page-shell-narrow {
-    padding: 1rem 1.375rem 1.5rem;
+    padding: 1rem 1.375rem 0.75rem;
   }
 }
 
 @media (min-width: 1536px) {
+  :root {
+    --page-shell-offset: 5.75rem;
+  }
+
   .page-shell {
-    padding: 1.125rem 1.5rem 1.75rem;
+    padding: 1.125rem 1.5rem 0.75rem;
   }
 
   .page-shell-narrow {
-    padding: 1.125rem 1.625rem 1.75rem;
+    padding: 1.125rem 1.625rem 0.75rem;
   }
 }
 

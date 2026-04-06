@@ -337,7 +337,11 @@ export const Playground: FC = () => {
 
   return (
     <div className="playground-root saas-page flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background" data-testid="playground">
-      {stage === 'upload' && <PlaygroundUpload ctx={ctx} />}
+      {stage === 'upload' && (
+        <div className="page-shell !max-w-[min(100%,2048px)] !px-3 !pt-4 sm:!px-5 sm:!pt-5 2xl:!px-8">
+          <PlaygroundUpload ctx={ctx} />
+        </div>
+      )}
 
       {stage === 'preview' && (
         <div className="flex flex-1 min-h-0 min-w-0 flex-col gap-3 overflow-auto p-3 sm:p-5 lg:flex-row lg:overflow-hidden">

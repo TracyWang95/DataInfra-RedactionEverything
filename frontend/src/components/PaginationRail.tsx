@@ -1,6 +1,14 @@
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 type PaginationRailProps = {
   page: number;
@@ -8,6 +16,10 @@ type PaginationRailProps = {
   totalItems: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange?: (size: number) => void;
+  pageSizeOptions?: readonly number[];
+  perPageLabel?: string;
+  itemsUnitLabel?: string;
   className?: string;
   compact?: boolean;
 };
@@ -18,6 +30,10 @@ export function PaginationRail({
   totalItems,
   totalPages,
   onPageChange,
+  onPageSizeChange,
+  pageSizeOptions,
+  perPageLabel,
+  itemsUnitLabel,
   className,
   compact = false,
 }: PaginationRailProps) {
@@ -31,32 +47,59 @@ export function PaginationRail({
   return (
     <div
       className={cn(
-        'surface-muted flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-border/70 px-3.5 py-2.5 shadow-[var(--shadow-sm)]',
-        compact && 'gap-2 rounded-[16px] px-3 py-2',
+        'pagination-rail',
+        compact && 'pagination-rail--compact',
         className,
       )}
     >
-      <div className={cn('flex flex-wrap items-center gap-2 text-xs text-muted-foreground', compact && 'gap-1.5 text-[11px]')}>
-        <span>
-          {t('jobs.showRange')
-            .replace('{start}', String(rangeStart))
-            .replace('{end}', String(rangeEnd))
-            .replace('{total}', String(totalItems))}
-        </span>
-        <span className="text-border">|</span>
-        <span className={cn('rounded-full border border-border/70 bg-background px-2.5 py-1 text-[11px] font-medium text-foreground', compact && 'px-2 py-0.5 text-[10px]')}>
+      <div className="pagination-rail__meta">
+        <div className="pagination-rail__meta-group">
+          <span className="truncate">
+            {t('jobs.showRange')
+              .replace('{start}', String(rangeStart))
+              .replace('{end}', String(rangeEnd))
+              .replace('{total}', String(totalItems))}
+          </span>
+          <span className="pagination-rail__separator">|</span>
+        </div>
+        <span className="pagination-rail__pill">
           {page} / {totalPages}
         </span>
+        {onPageSizeChange && pageSizeOptions && pageSizeOptions.length > 0 && (
+          <div className="pagination-rail__meta-group">
+            <span className="pagination-rail__separator">|</span>
+            <span>{perPageLabel ?? t('jobs.perPage')}</span>
+            <Select value={String(pageSize)} onValueChange={(value) => onPageSizeChange(Number(value))}>
+              <SelectTrigger
+                className={cn(
+                  'pagination-rail__page-size h-9 rounded-xl text-xs',
+                  compact && 'h-8 rounded-lg text-[11px]',
+                )}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {pageSizeOptions.map((size) => (
+                    <SelectItem key={size} value={String(size)}>
+                      {size} {itemsUnitLabel ?? t('jobs.itemsUnit')}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
-      <div className={cn('flex items-center gap-1.5', compact && 'gap-1')}>
+      <div className="pagination-rail__actions">
         <Button
           variant="outline"
           size="sm"
           disabled={page <= 1}
           onClick={() => onPageChange(1)}
           title={t('jobs.firstPage')}
-          className={cn('h-8 rounded-xl px-2.5', compact && 'h-7 rounded-lg px-2')}
+          className={cn('h-8 rounded-xl px-2.5', compact && 'h-6.5 rounded-lg px-2')}
         >
           <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
@@ -67,7 +110,7 @@ export function PaginationRail({
           size="sm"
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
-          className={cn('h-8 rounded-xl', compact && 'h-7 rounded-lg px-2.5 text-[11px]')}
+          className={cn('h-8 rounded-xl whitespace-nowrap', compact && 'h-6.5 rounded-lg px-2 text-[10px]')}
         >
           {t('jobs.prevPage')}
         </Button>
@@ -76,7 +119,7 @@ export function PaginationRail({
           size="sm"
           disabled={page >= totalPages}
           onClick={() => onPageChange(page + 1)}
-          className={cn('h-8 rounded-xl', compact && 'h-7 rounded-lg px-2.5 text-[11px]')}
+          className={cn('h-8 rounded-xl whitespace-nowrap', compact && 'h-6.5 rounded-lg px-2 text-[10px]')}
         >
           {t('jobs.nextPage')}
         </Button>
@@ -86,7 +129,7 @@ export function PaginationRail({
           disabled={page >= totalPages}
           onClick={() => onPageChange(totalPages)}
           title={t('jobs.lastPage')}
-          className={cn('h-8 rounded-xl px-2.5', compact && 'h-7 rounded-lg px-2')}
+          className={cn('h-8 rounded-xl px-2.5', compact && 'h-6.5 rounded-lg px-2')}
         >
           <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />

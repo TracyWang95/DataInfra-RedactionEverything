@@ -93,7 +93,7 @@ export function BatchStep1Config({
 
   return (
     <Card
-      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[24px] border-border/70 shadow-[var(--shadow-control)]"
+      className="page-surface rounded-[24px] border-border/70 shadow-[var(--shadow-control)]"
       data-testid="batch-step1-config"
     >
       <CardHeader className="flex flex-col gap-1.5 border-b border-border/70 pb-4">
@@ -103,7 +103,7 @@ export function BatchStep1Config({
         </p>
       </CardHeader>
 
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pt-5">
+      <CardContent className="page-surface-body flex flex-col gap-4 pt-5">
         <div className="surface-subtle flex flex-col gap-3 px-4 py-4">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{t('batchWizard.step1.execPath')}</p>
           <div className="flex flex-col gap-2 sm:flex-row sm:gap-4">
@@ -242,7 +242,9 @@ export function BatchStep1Config({
             ]}
           />
         </div>
+      </CardContent>
 
+      <div className="page-surface-footer">
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
           <div className="surface-subtle flex items-center justify-between gap-3 px-4 py-3">
             <span className="text-sm text-muted-foreground">
@@ -293,7 +295,7 @@ export function BatchStep1Config({
             {t('batchHub.history')}
           </Link>
         </p>
-      </CardContent>
+      </div>
     </Card>
   );
 }

@@ -74,7 +74,7 @@ export function SettingsHub() {
 
   return (
     <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="page-shell pb-5 sm:pb-6 2xl:pb-8">
+      <div className="page-shell">
         <Tabs defaultValue="text" className="page-stack overflow-hidden gap-3">
           {previewMode && (
             <Alert>
@@ -122,7 +122,7 @@ export function SettingsHub() {
                   </TabsTrigger>
                 </TabsList>
               </div>
-              <TabsContent value="regex" className="mt-0 min-h-0 flex-1 overflow-hidden">
+              <TabsContent value="regex" className="mt-0 flex min-h-0 flex-1 overflow-hidden">
                 <EntityTypeList
                   types={regexTypes}
                   variant="regex"
@@ -142,7 +142,7 @@ export function SettingsHub() {
                   })}
                 />
               </TabsContent>
-              <TabsContent value="llm" className="mt-0 min-h-0 flex-1 overflow-hidden">
+              <TabsContent value="llm" className="mt-0 flex min-h-0 flex-1 overflow-hidden">
                 <EntityTypeList
                   types={llmTypes}
                   variant="llm"

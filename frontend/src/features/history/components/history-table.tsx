@@ -56,8 +56,7 @@ export function HistoryTable({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden" data-testid="history-table">
-      <div className="min-h-0 flex-1 overflow-auto pb-4">
+    <div className="page-surface-body" data-testid="history-table">
       <table className="w-full min-w-[980px] text-sm">
         <thead>
           <tr className="border-b border-border/70 bg-muted/30 text-left text-xs font-medium text-muted-foreground">
@@ -141,7 +140,6 @@ export function HistoryTable({
           })}
         </tbody>
       </table>
-      </div>
     </div>
   );
 }

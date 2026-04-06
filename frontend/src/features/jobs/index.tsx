@@ -16,7 +16,7 @@ export function Jobs() {
 
   return (
     <div className="jobs-root saas-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background" data-testid="jobs-page">
-      <div className="page-shell !max-w-[min(100%,2048px)] !px-3 !py-4 !pb-5 sm:!px-5 sm:!py-5 sm:!pb-6 2xl:!px-8 2xl:!pb-8">
+      <div className="page-shell !max-w-[min(100%,2048px)] !px-3 !pt-4 sm:!px-5 sm:!pt-5 2xl:!px-8">
         <JobsFilters
           tab={s.tab}
           onTabChange={s.changeTab}

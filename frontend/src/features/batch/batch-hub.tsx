@@ -22,8 +22,8 @@ export function BatchHub() {
   return (
     <div className="saas-page flex h-full min-h-0 overflow-y-auto bg-background">
       <div className="page-shell-narrow !max-w-[104rem] 2xl:!max-w-[114rem]">
-        <div className="page-stack gap-4 sm:gap-5">
-          <section className="saas-hero relative overflow-hidden px-5 py-6 sm:px-6 sm:py-6.5">
+        <div className="page-stack gap-3.5 sm:gap-4">
+          <section className="saas-hero relative overflow-hidden px-5 py-5 sm:px-6 sm:py-5.5">
             <div className="flex flex-col gap-4">
               <span className="saas-kicker">{t('batchHub.kicker')}</span>
               <div className="page-section-heading gap-2">
@@ -50,7 +50,7 @@ export function BatchHub() {
 
           <section>
             <Card className="overflow-hidden border-border/70 shadow-[var(--shadow-md)]">
-              <CardHeader className="gap-3 border-b border-border/70 bg-muted/20 px-6 py-5">
+              <CardHeader className="gap-3 border-b border-border/70 bg-muted/20 px-6 py-4.5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
@@ -77,7 +77,7 @@ export function BatchHub() {
                 </div>
               </CardHeader>
 
-              <CardContent className="grid gap-4 p-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(17rem,0.95fr)]">
+              <CardContent className="grid gap-3.5 p-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(17rem,0.95fr)]">
                 <div className="flex flex-col gap-4">
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="outline" className="rounded-full px-3 py-1 text-xs">
@@ -129,20 +129,23 @@ export function BatchHub() {
             </Card>
           </section>
 
-          <BatchHubJobList
-            jobs={activeJobs}
-            loading={loading}
-            onContinue={continueJob}
-          />
-
-          <div className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
-            <Button variant="link" size="sm" className="h-auto px-0 text-xs" asChild>
-              <Link to="/jobs">{t('batchHub.jobCenter')}</Link>
-            </Button>
-            <span className="text-border">&middot;</span>
-            <Button variant="link" size="sm" className="h-auto px-0 text-xs" asChild>
-              <Link to="/history">{t('batchHub.history')}</Link>
-            </Button>
+          <div className="page-fill">
+            <BatchHubJobList
+              jobs={activeJobs}
+              loading={loading}
+              onContinue={continueJob}
+              footer={(
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <Button variant="link" size="sm" className="h-auto px-0 text-xs" asChild>
+                    <Link to="/jobs">{t('batchHub.jobCenter')}</Link>
+                  </Button>
+                  <span className="text-border">&middot;</span>
+                  <Button variant="link" size="sm" className="h-auto px-0 text-xs" asChild>
+                    <Link to="/history">{t('batchHub.history')}</Link>
+                  </Button>
+                </div>
+              )}
+            />
           </div>
         </div>
       </div>

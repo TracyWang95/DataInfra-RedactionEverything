@@ -439,7 +439,7 @@ export function RedactionList() {
           </Alert>
         )}
 
-        <Card className="overflow-hidden">
+        <Card className="page-surface overflow-hidden">
           <CardHeader className="pb-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -459,7 +459,7 @@ export function RedactionList() {
             </div>
           </CardHeader>
 
-          <CardContent className="flex flex-col gap-4">
+          <CardContent className="page-surface-body flex flex-col gap-4 p-6">
             <div className="rounded-lg border bg-muted/30 px-3 py-2 text-xs">
               <p className="mb-1 text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground">
                 {t('settings.redaction.currentSelection')}

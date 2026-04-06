@@ -51,7 +51,7 @@ export function EntityTypeList({
       data-testid={`entity-type-list-${variant}`}
     >
       <div
-        className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[24px] border border-border/70 bg-card shadow-[var(--shadow-control)]"
+        className="page-surface rounded-[24px] border border-border/70 bg-card shadow-[var(--shadow-control)]"
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/20 px-4 py-3.5">
           <div className="flex min-w-0 items-center gap-2">
@@ -85,7 +85,7 @@ export function EntityTypeList({
           </div>
         </div>
 
-        <div className="flex min-h-0 flex-1 overflow-y-auto p-3 pb-6">
+        <div className="page-surface-body p-3">
           {types.length === 0 ? (
             <div className="flex min-h-[240px] flex-1 items-center justify-center rounded-[20px] border border-dashed border-border/70 bg-muted/15 px-6 text-center">
               <p className="text-sm text-muted-foreground">{t('settings.noTypeConfig')}</p>
@@ -169,7 +169,7 @@ export function EntityTypeList({
         </div>
 
         {types.length > 0 && (
-          <div className="shrink-0 border-t border-border/70 bg-background/96 px-4 py-3">
+          <div className="page-surface-footer">
             <PaginationRail
               page={page}
               pageSize={pageSize}

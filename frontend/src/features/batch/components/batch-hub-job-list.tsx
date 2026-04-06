@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useT } from '@/i18n';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -14,17 +15,15 @@ interface BatchHubJobListProps {
   jobs: JobSummary[];
   loading: boolean;
   onContinue: (job: JobSummary) => void;
+  footer?: ReactNode;
 }
 
-export function BatchHubJobList({ jobs, loading, onContinue }: BatchHubJobListProps) {
+export function BatchHubJobList({ jobs, loading, onContinue, footer }: BatchHubJobListProps) {
   const t = useT();
 
   return (
     <Card
-      className={cn(
-        'flex min-h-[12rem] flex-col overflow-hidden',
-        jobs.length > 0 ? 'flex-1' : 'flex-none',
-      )}
+      className={cn('page-surface min-h-[12.5rem] flex-1')}
       data-testid="recent-jobs-card"
     >
       <CardHeader className="flex flex-row items-center justify-between gap-3 pb-2">
@@ -67,6 +66,7 @@ export function BatchHubJobList({ jobs, loading, onContinue }: BatchHubJobListPr
           </ul>
         )}
       </CardContent>
+      {footer ? <div className="page-surface-footer">{footer}</div> : null}
     </Card>
   );
 }
