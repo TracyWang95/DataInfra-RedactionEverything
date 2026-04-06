@@ -68,8 +68,8 @@ const presetActionButtonClass =
 const presetDangerButtonClass =
   'h-7 rounded-full border-destructive/25 bg-background px-3 text-[11px] font-medium leading-none text-destructive hover:bg-destructive/8';
 const presetPreviewChipClass =
-  'inline-flex min-h-7 w-full items-center rounded-full border border-border/70 bg-background px-2.5 py-1 text-[11px] font-medium leading-none';
-const presetPreviewChipGridClass = 'grid grid-cols-2 gap-1.5 md:grid-cols-3';
+  'inline-flex h-7 w-full items-center rounded-[14px] border border-border/70 bg-background px-2 text-[11px] font-medium leading-none';
+const presetPreviewChipGridClass = 'grid grid-cols-3 gap-1.5 xl:grid-cols-4 2xl:grid-cols-5';
 
 function sortPresets(presets: RecognitionPreset[]): RecognitionPreset[] {
   return [...presets].sort((left, right) => {
