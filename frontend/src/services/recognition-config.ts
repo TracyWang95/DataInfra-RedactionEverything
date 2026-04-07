@@ -9,7 +9,10 @@ export async function fetchRecognitionEntityTypes(
   enabledOnly: boolean,
   timeoutMs = 3_500,
 ): Promise<RecognitionEntityType[]> {
-  const res = await fetchWithTimeout(`/api/v1/custom-types?enabled_only=${enabledOnly}`, { timeoutMs });
+  const res = await fetchWithTimeout(
+    `/api/v1/custom-types?enabled_only=${enabledOnly}&page_size=100`,
+    { timeoutMs },
+  );
   if (!res.ok) {
     throw new Error('Failed to load entity types');
   }
