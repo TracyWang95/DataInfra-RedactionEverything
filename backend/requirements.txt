@@ -17,7 +17,7 @@ pywin32==306 ; sys_platform == 'win32'
 # HTTP 客户端
 httpx>=0.28.0,<1.0.0
 
-aiofiles>=24.1.0,<25.0.0
+aiofiles>=24.1.0,<26.0.0
 
 # 智谱AI SDK
 zhipuai>=2.0.0,<3.0.0
