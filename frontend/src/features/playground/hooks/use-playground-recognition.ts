@@ -56,6 +56,7 @@ export function usePlaygroundRecognition() {
   const [presetDialogKind, setPresetDialogKind] = useState<'text' | 'vision' | null>(null);
   const [presetDialogName, setPresetDialogName] = useState('');
   const [presetSaving, setPresetSaving] = useState(false);
+  const [presetApplySeq, setPresetApplySeq] = useState(0);
 
   const textPresetsPg = useMemo(() => playgroundPresets.filter(presetAppliesText), [playgroundPresets]);
   const visionPresetsPg = useMemo(() => playgroundPresets.filter(presetAppliesVision), [playgroundPresets]);
@@ -105,6 +106,7 @@ export function usePlaygroundRecognition() {
       }
       setPlaygroundPresetTextId(preset.id);
       setActivePresetTextId(preset.id);
+      setPresetApplySeq(s => s + 1);
     },
     [entityTypes]
   );
@@ -134,6 +136,7 @@ export function usePlaygroundRecognition() {
         setActivePresetTextId(null);
         setSelectedTypes([...playgroundDefaultTextTypeIds]);
         setReplacementMode('structured');
+        setPresetApplySeq(s => s + 1);
         return;
       }
 
@@ -455,6 +458,7 @@ export function usePlaygroundRecognition() {
     toggleVisionType,
     updateOcrHasTypes,
     updateHasImageTypes,
+    presetApplySeq,
     getTypeConfig: (typeId: string): { name: string; color: string } => {
       const config = entityTypes.find(type => type.id === typeId);
       return config || { name: typeId, color: '#6366F1' };

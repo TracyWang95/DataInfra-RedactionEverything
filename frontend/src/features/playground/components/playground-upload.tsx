@@ -293,6 +293,7 @@ const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   const [groupPages, setGroupPages] = useState<Record<string, number>>({});
   const pageSize = 15;
 
+  // Reset pagination when groups change or preset is applied
   useEffect(() => {
     setGroupPages((current) => {
       const next = { ...current };
@@ -303,6 +304,11 @@ const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
       return next;
     });
   }, [pageSize, rec.playgroundTextGroups]);
+
+  // Jump to page 1 when preset selection changes so user sees the updated checkboxes
+  useEffect(() => {
+    setGroupPages({});
+  }, [rec.playgroundPresetTextId]);
 
   if (rec.textConfigState === 'loading') {
     return <p className="py-10 text-center text-sm text-muted-foreground">{t('playground.loading')}</p>;

@@ -106,6 +106,16 @@ export function usePlayground() {
     }
   }, [fileCtx, entityCtx, imageCtx, recognition]);
 
+  // --- Auto re-run NER when a preset is applied (and a file is loaded) ---
+  const presetSeqRef = useRef(recognition.presetApplySeq);
+  useEffect(() => {
+    if (recognition.presetApplySeq === presetSeqRef.current) return;
+    presetSeqRef.current = recognition.presetApplySeq;
+    if (!fileCtx.fileInfo || fileCtx.isLoading) return;
+    if (fileCtx.stage !== 'preview') return;
+    void handleRerunNer();
+  }, [recognition.presetApplySeq, fileCtx.fileInfo, fileCtx.isLoading, fileCtx.stage, handleRerunNer]);
+
   // --- Execute redaction ---
   const handleRedact = useCallback(async () => {
     if (!fileCtx.fileInfo) return;
