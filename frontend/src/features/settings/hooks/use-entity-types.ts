@@ -89,11 +89,15 @@ export function useEntityTypes() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
 
+  const initialLoadDone = useRef(false);
+
   const fetchEntityTypes = useCallback(async () => {
     try {
-      setLoading(true);
+      // Only show full loading spinner on initial load, not on CRUD refreshes
+      if (!initialLoadDone.current) setLoading(true);
       setLoadError(null);
       setEntityTypes(await fetchRecognitionEntityTypes(false, 1_200) as EntityTypeConfig[]);
+      initialLoadDone.current = true;
     } catch (err) {
       if (import.meta.env.DEV) console.error('fetch entity types failed', err);
       setEntityTypes([]);
