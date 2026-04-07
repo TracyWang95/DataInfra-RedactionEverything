@@ -114,17 +114,15 @@ export function EntityTypeList({
                         >
                           <PencilIcon />
                         </Button>
-                        {type.id.startsWith('custom_') && (
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="size-6 text-destructive hover:text-destructive"
-                            onClick={() => onDelete(type.id)}
-                            data-testid={`delete-type-${type.id}`}
-                          >
-                            <TrashIcon />
-                          </Button>
-                        )}
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-6 text-destructive hover:text-destructive"
+                          onClick={() => onDelete(type.id)}
+                          data-testid={`delete-type-${type.id}`}
+                        >
+                          <TrashIcon />
+                        </Button>
                       </div>
                     </div>
 
