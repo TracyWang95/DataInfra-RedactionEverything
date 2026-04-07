@@ -512,7 +512,7 @@ export function RedactionList() {
 
       {modalOpen && (
         <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-          <DialogContent className="flex max-h-[90vh] w-[95vw] max-w-[64rem] flex-col overflow-hidden">
+          <DialogContent className="flex max-h-[90vh] w-[90vw] max-w-3xl flex-col overflow-hidden">
             <DialogHeader>
               <DialogTitle>
                 {editingPresetId
@@ -524,7 +524,7 @@ export function RedactionList() {
 
             <div className="min-h-0 flex-1 overflow-y-auto">
               <div className="space-y-5 py-2">
-                <div className="space-y-1.5">
+                <div className="max-w-sm space-y-1.5">
                   <Label>{t('settings.redaction.nameLabel')} *</Label>
                   <Input
                     value={presetForm.name}
@@ -836,7 +836,7 @@ function TypeCheckboxGrid({
       <p className="mb-2 border-l-[3px] border-muted-foreground/30 pl-2 text-sm font-semibold">
         {title} <span className="text-xs text-muted-foreground">({types.length})</span>
       </p>
-      <div className="grid grid-cols-2 gap-2 rounded-xl border bg-muted/20 p-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 rounded-xl border bg-muted/20 p-3 sm:grid-cols-3 md:grid-cols-4">
         {types.map(type => {
           const checked = selectedIds.includes(type.id);
           return (
@@ -888,7 +888,7 @@ function PipelineCheckboxGrid({
       >
         {pipeline.mode === 'ocr_has' ? t('settings.redaction.ocrGroup') : t('settings.redaction.imageGroup')}
       </p>
-      <div className="grid grid-cols-2 gap-2 rounded-xl border bg-muted/20 p-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 rounded-xl border bg-muted/20 p-3 sm:grid-cols-3 md:grid-cols-4">
         {pipeline.types.filter(type => type.enabled).map(type => {
           const active = selectedIds.includes(type.id);
           return (
