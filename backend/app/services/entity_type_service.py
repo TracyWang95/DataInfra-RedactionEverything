@@ -153,12 +153,14 @@ def get_llm_types() -> List[EntityTypeConfig]:
 
 # ── 业务方法 ──────────────────────────────────────────────
 
-def list_types(enabled_only: bool = False, page: int = 1, page_size: int = 50) -> EntityTypesResponse:
+def list_types(enabled_only: bool = False, page: int = 1, page_size: int = 0) -> EntityTypesResponse:
     types = list(entity_types_db.values())
     if enabled_only:
         types = [t for t in types if t.enabled]
     types.sort(key=lambda x: x.order)
     total = len(types)
+    if page_size <= 0:
+        return EntityTypesResponse(custom_types=types, total=total, page=1, page_size=total)
     start = (page - 1) * page_size
     page_items = types[start : start + page_size]
     return EntityTypesResponse(custom_types=page_items, total=total, page=page, page_size=page_size)

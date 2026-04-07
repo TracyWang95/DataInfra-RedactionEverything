@@ -10,7 +10,7 @@ export async function fetchRecognitionEntityTypes(
   timeoutMs = 3_500,
 ): Promise<RecognitionEntityType[]> {
   const res = await fetchWithTimeout(
-    `/api/v1/custom-types?enabled_only=${enabledOnly}&page_size=100`,
+    `/api/v1/custom-types?enabled_only=${enabledOnly}`,
     { timeoutMs },
   );
   if (!res.ok) {

@@ -30,9 +30,9 @@ async def test_regex(request: RegexTestRequest):
 async def get_entity_types(
     enabled_only: bool = Query(False, description="是否只返回启用的类型"),
     page: int = Query(1, ge=1, description="页码，从 1 开始"),
-    page_size: int = Query(50, ge=1, le=100, description="每页条数"),
+    page_size: int = Query(0, ge=0, le=10000, description="每页条数，0=全量返回"),
 ):
-    """获取所有实体类型配置"""
+    """获取所有实体类型配置（page_size=0 返回全部）"""
     return entity_type_service.list_types(enabled_only, page, page_size)
 
 
