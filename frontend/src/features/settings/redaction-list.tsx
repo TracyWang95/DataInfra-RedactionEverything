@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
+
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
@@ -522,7 +522,7 @@ export function RedactionList() {
               <DialogDescription>{t('settings.redaction.dialogDesc')}</DialogDescription>
             </DialogHeader>
 
-            <ScrollArea className="flex-1 pr-4">
+            <div className="min-h-0 flex-1 overflow-y-auto pr-4">
               <div className="space-y-5 py-2">
                 <div className="space-y-1.5">
                   <Label>{t('settings.redaction.nameLabel')} *</Label>
@@ -586,7 +586,7 @@ export function RedactionList() {
                     />
                   ))}
               </div>
-            </ScrollArea>
+            </div>
 
             <DialogFooter className="border-t pt-4">
               <Button variant="outline" onClick={() => setModalOpen(false)} data-testid="preset-cancel">
