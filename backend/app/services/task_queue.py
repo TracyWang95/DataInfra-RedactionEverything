@@ -162,13 +162,7 @@ class SimpleTaskQueue:
     # ------------------------------------------------------------------
 
     async def _run_recognition(self, task: TaskItem) -> None:
-        from app.services.job_store import JobItemStatus, JobStatus, JobStore
-        from app.services.file_operations import (
-            get_file_info,
-            parse_file,
-            hybrid_ner,
-            vision_detect,
-        )
+        from app.services.job_store import JobItemStatus, JobStatus
 
         store = self._get_store()
         job = store.get_job(task.job_id)
@@ -197,7 +191,6 @@ class SimpleTaskQueue:
             return
 
         cfg = json.loads(job.get("config_json") or "{}")
-        entity_type_ids = list(cfg.get("entity_type_ids") or [])
 
         try:
             # 标记处理中
@@ -205,39 +198,13 @@ class SimpleTaskQueue:
             self._try_update_job_status(store, task.job_id, JobStatus.PROCESSING)
 
             # 1) 解析
-            logger.info("[queue] item=%s → parse", task.item_id[:8])
-            await parse_file(task.file_id)
+            await self._parse_file(task)
 
-            # 2) 判断类型 → NER 或 Vision
-            fi = get_file_info(task.file_id) or {}
-            ft = str(fi.get("file_type", ""))
-            is_img = ft == "image" or bool(fi.get("is_scanned"))
-
-            if is_img:
-                logger.info("[queue] item=%s → vision", task.item_id[:8])
-                ocr_types = list(cfg.get("ocr_has_types") or [])
-                has_img_types = list(cfg.get("has_image_types") or [])
-                pages = int(fi.get("page_count") or 1)
-                for p in range(1, max(1, pages) + 1):
-                    await vision_detect(task.file_id, p, ocr_types or None, has_img_types or None)
-            else:
-                logger.info("[queue] item=%s → NER (%d types)", task.item_id[:8], len(entity_type_ids))
-                await hybrid_ner(task.file_id, entity_type_ids)
+            # 2) NER 或 Vision
+            await self._run_ner_or_vision(task, cfg)
 
             # 3) 完成识别
-            skip_review = bool(job.get("skip_item_review"))
-            if skip_review:
-                # skip_item_review=true: 直接入队匿名化，不等人工审阅
-                store.update_item_status(task.item_id, JobItemStatus.AWAITING_REVIEW)
-                logger.info("[queue] item=%s → skip review, enqueue redaction", task.item_id[:8])
-                self._queue.put_nowait(TaskItem(
-                    job_id=task.job_id, item_id=task.item_id,
-                    file_id=task.file_id, task_type="redaction",
-                ))
-                self._pending_items.add(task.item_id)
-            else:
-                store.update_item_status(task.item_id, JobItemStatus.AWAITING_REVIEW)
-                logger.info("[queue] item=%s → awaiting_review ✓", task.item_id[:8])
+            self._mark_recognition_complete(task, job, store)
 
         except (FileNotFoundError, OSError) as e:
             err_msg = str(e)[:500]
@@ -263,6 +230,64 @@ class SimpleTaskQueue:
         finally:
             store.touch_job_updated(task.job_id)
             self._refresh_job_status(store, task.job_id)
+
+    async def _parse_file(self, task: TaskItem) -> None:
+        """Step 1: 解析上传文件。"""
+        from app.services.file_operations import parse_file
+
+        logger.info("[queue] item=%s → parse", task.item_id[:8])
+        await parse_file(task.file_id)
+
+    async def _run_ner(self, task: TaskItem, entity_type_ids: list) -> None:
+        """Step 2a: 文本 NER 识别。"""
+        from app.services.file_operations import hybrid_ner
+
+        logger.info("[queue] item=%s → NER (%d types)", task.item_id[:8], len(entity_type_ids))
+        await hybrid_ner(task.file_id, entity_type_ids)
+
+    async def _run_vision(self, task: TaskItem, cfg: dict) -> None:
+        """Step 2b: 图像/扫描件 OCR + Vision 识别。"""
+        from app.services.file_operations import get_file_info, vision_detect
+
+        fi = get_file_info(task.file_id) or {}
+        ocr_types = list(cfg.get("ocr_has_types") or [])
+        has_img_types = list(cfg.get("has_image_types") or [])
+        pages = int(fi.get("page_count") or 1)
+        logger.info("[queue] item=%s → vision", task.item_id[:8])
+        for p in range(1, max(1, pages) + 1):
+            await vision_detect(task.file_id, p, ocr_types or None, has_img_types or None)
+
+    async def _run_ner_or_vision(self, task: TaskItem, cfg: dict) -> None:
+        """Step 2: 根据文件类型选择 NER 或 Vision 流水线。"""
+        from app.services.file_operations import get_file_info
+
+        fi = get_file_info(task.file_id) or {}
+        ft = str(fi.get("file_type", ""))
+        is_img = ft == "image" or bool(fi.get("is_scanned"))
+
+        if is_img:
+            await self._run_vision(task, cfg)
+        else:
+            entity_type_ids = list(cfg.get("entity_type_ids") or [])
+            await self._run_ner(task, entity_type_ids)
+
+    def _mark_recognition_complete(self, task: TaskItem, job: dict, store: "JobStore") -> None:
+        """Step 3: 更新状态为 awaiting_review，可选自动入队匿名化。"""
+        from app.services.job_store import JobItemStatus
+
+        skip_review = bool(job.get("skip_item_review"))
+        store.update_item_status(task.item_id, JobItemStatus.AWAITING_REVIEW)
+
+        if skip_review:
+            # skip_item_review=true: 直接入队匿名化，不等人工审阅
+            logger.info("[queue] item=%s → skip review, enqueue redaction", task.item_id[:8])
+            self._queue.put_nowait(TaskItem(
+                job_id=task.job_id, item_id=task.item_id,
+                file_id=task.file_id, task_type="redaction",
+            ))
+            self._pending_items.add(task.item_id)
+        else:
+            logger.info("[queue] item=%s → awaiting_review ✓", task.item_id[:8])
 
     # ------------------------------------------------------------------
     # 匿名化流水线

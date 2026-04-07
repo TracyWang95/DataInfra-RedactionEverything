@@ -2,7 +2,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,319 +14,43 @@ import {
 } from 'react-router-dom';
 import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
-import { useDropzone } from 'react-dropzone';
-import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
 
-import { fileApi, authenticatedBlobUrl } from '@/services/api';
-import { authFetch } from '@/services/api-client';
-import { FileType, ReplacementMode } from '@/types';
+import { FileType } from '@/types';
 import {
   batchGetFileRaw,
-  batchPreviewEntityMap,
-  batchPreviewImage,
-  flattenBoundingBoxesFromStore,
-  loadBatchWizardConfig,
-  saveBatchWizardConfig,
   type BatchWizardMode,
-  type BatchWizardPersistedConfig,
 } from '@/services/batchPipeline';
-import {
-  getActivePresetTextId,
-  getActivePresetVisionId,
-  setActivePresetTextId,
-  setActivePresetVisionId,
-} from '@/services/activePresetBridge';
-import {
-  presetAppliesText,
-  presetAppliesVision,
-  type RecognitionPreset,
-} from '@/services/presetsApi';
-import {
-  buildDefaultPipelineTypeIds,
-  buildDefaultTextTypeIds,
-} from '@/services/defaultRedactionPreset';
-import {
-  fetchRecognitionEntityTypes,
-  fetchRecognitionPipelines,
-  fetchRecognitionPresets,
-} from '@/services/recognition-config';
-import {
-  buildFallbackPreviewEntityMap,
-  buildTextSegments,
-  mergePreviewMapWithDocumentSlices,
-} from '@/utils/textRedactionSegments';
-
 import {
   createJob,
   getJob,
-  submitJob as apiSubmitJob,
   updateJobDraft,
-  commitItemReview,
-  getItemReviewDraft,
-  putItemReviewDraft,
-  requeueFailed,
 } from '@/services/jobsApi';
 import {
-  effectiveWizardFurthestStep,
-  parseWizardFurthestFromUnknown,
-} from '@/utils/jobPrimaryNavigation';
-import {
   buildPreviewBatchRows,
-  buildPreviewDownloadBlob,
-  getPreviewReviewPayload,
   isPreviewBatchJobId,
   PREVIEW_BATCH_JOB_ID,
-  previewBatchConfig,
-  previewPipelines,
-  previewPresets,
-  previewTextTypes,
 } from '../lib/batch-preview-fixtures';
 import {
   RECOGNITION_DONE_STATUSES,
   type BatchRow,
-  type PipelineCfg,
-  type ReviewEntity,
   type Step,
-  type TextEntityType,
 } from '../types';
 
-function isBatchWizardMode(value: string | null | undefined): value is BatchWizardMode {
-  return value === 'text' || value === 'image' || value === 'smart';
-}
-
-function toBatchJobType(mode: BatchWizardMode): 'text_batch' | 'image_batch' | 'smart_batch' {
-  if (mode === 'text') return 'text_batch';
-  if (mode === 'image') return 'image_batch';
-  return 'smart_batch';
-}
-
-function mapBackendStatus(status: string): BatchRow['analyzeStatus'] {
-  switch (status) {
-    case 'failed':
-    case 'cancelled':
-      return 'failed';
-    case 'awaiting_review':
-      return 'awaiting_review';
-    case 'review_approved':
-      return 'review_approved';
-    case 'redacting':
-      return 'redacting';
-    case 'completed':
-      return 'completed';
-    case 'processing':
-    case 'parsing':
-    case 'ner':
-    case 'vision':
-      return 'analyzing';
-    default:
-      return 'pending';
-  }
-}
-
-function deriveReviewConfirmed(item: { status: string; has_output?: boolean | null }): boolean {
-  if (item.status === 'completed') return item.has_output !== false;
-  return item.status === 'review_approved' || item.status === 'redacting';
-}
-
-function triggerDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function defaultConfig(): BatchWizardPersistedConfig {
-  return {
-    selectedEntityTypeIds: [],
-    ocrHasTypes: [],
-    hasImageTypes: [],
-    replacementMode: 'structured',
-    imageRedactionMethod: 'mosaic',
-    imageRedactionStrength: 25,
-    imageFillColor: '#000000',
-    presetTextId: null,
-    presetVisionId: null,
-    presetId: null,
-    executionDefault: 'queue',
-  };
-}
-
-function normalizeReviewEntity(e: ReviewEntity): ReviewEntity {
-  const start = Math.max(0, Math.floor(Number(e.start) || 0));
-  const end = Math.max(start, Math.floor(Number(e.end) || 0));
-  return {
-    ...e,
-    id: String(e.id ?? ''),
-    text: String(e.text ?? ''),
-    type: String(e.type ?? 'CUSTOM'),
-    start,
-    end,
-    page: Math.max(1, Math.floor(Number(e.page) || 1)),
-    confidence: typeof e.confidence === 'number' && !Number.isNaN(e.confidence) ? e.confidence : 1,
-    selected: e.selected !== false,
-  };
-}
-
-function buildJobConfigForWorker(
-  c: BatchWizardPersistedConfig,
-  wizardMode: BatchWizardMode,
-  wizardFurthestStep: Step,
-): Record<string, unknown> {
-  return {
-    entity_type_ids: c.selectedEntityTypeIds,
-    ocr_has_types: c.ocrHasTypes,
-    has_image_types: c.hasImageTypes,
-    replacement_mode: c.replacementMode,
-    image_redaction_method: c.imageRedactionMethod,
-    image_redaction_strength: c.imageRedactionStrength,
-    image_fill_color: c.imageFillColor,
-    batch_wizard_mode: wizardMode,
-    preferred_execution: c.executionDefault === 'local' ? 'local' : 'queue',
-    wizard_furthest_step: wizardFurthestStep,
-  };
-}
-
-function mergeJobConfigIntoWizardCfg(
-  c: BatchWizardPersistedConfig,
-  jc: Record<string, unknown>,
-): BatchWizardPersistedConfig {
-  return {
-    ...c,
-    selectedEntityTypeIds:
-      Array.isArray(jc.entity_type_ids) && (jc.entity_type_ids as string[]).length
-        ? (jc.entity_type_ids as string[])
-        : c.selectedEntityTypeIds,
-    ocrHasTypes:
-      Array.isArray(jc.ocr_has_types) && (jc.ocr_has_types as string[]).length
-        ? (jc.ocr_has_types as string[])
-        : c.ocrHasTypes,
-    hasImageTypes:
-      Array.isArray(jc.has_image_types) && (jc.has_image_types as string[]).length
-        ? (jc.has_image_types as string[])
-        : c.hasImageTypes,
-    replacementMode:
-      jc.replacement_mode === 'smart' ||
-      jc.replacement_mode === 'mask' ||
-      jc.replacement_mode === 'structured'
-        ? (jc.replacement_mode as BatchWizardPersistedConfig['replacementMode'])
-        : c.replacementMode,
-    imageRedactionMethod:
-      jc.image_redaction_method === 'mosaic' ||
-      jc.image_redaction_method === 'blur' ||
-      jc.image_redaction_method === 'fill'
-        ? jc.image_redaction_method
-        : c.imageRedactionMethod,
-    imageRedactionStrength:
-      typeof jc.image_redaction_strength === 'number'
-        ? jc.image_redaction_strength
-        : c.imageRedactionStrength,
-    imageFillColor:
-      typeof jc.image_fill_color === 'string' ? jc.image_fill_color : c.imageFillColor,
-  };
-}
-
-const BATCH_WIZ_FURTHEST_LS_PREFIX = 'lr_batch_wiz_furthest_';
-
-function readLocalWizardMaxStep(jobId: string): Step | null {
-  try {
-    const v = localStorage.getItem(BATCH_WIZ_FURTHEST_LS_PREFIX + jobId);
-    return parseWizardFurthestFromUnknown(v);
-  } catch {
-    return null;
-  }
-}
-
-function writeLocalWizardMaxStep(jobId: string, step: Step) {
-  try {
-    const prev = readLocalWizardMaxStep(jobId);
-    const merged = Math.max(step, prev ?? 1) as Step;
-    if (merged >= 2) localStorage.setItem(BATCH_WIZ_FURTHEST_LS_PREFIX + jobId, String(merged));
-  } catch {
-    return;
-  }
-}
-
-function clearLocalWizardMaxStep(jobId: string) {
-  try {
-    localStorage.removeItem(BATCH_WIZ_FURTHEST_LS_PREFIX + jobId);
-  } catch {
-    return;
-  }
-}
-
-function applyTextPresetFields(
-  p: RecognitionPreset,
-  textTypes: TextEntityType[],
-): Pick<BatchWizardPersistedConfig, 'selectedEntityTypeIds' | 'presetTextId'> &
-  Partial<Pick<BatchWizardPersistedConfig, 'replacementMode'>> {
-  const textIds = new Set(textTypes.map(tt => tt.id));
-  const base = {
-    selectedEntityTypeIds: p.selectedEntityTypeIds.filter((id: string) => textIds.has(id)),
-    presetTextId: p.id,
-  };
-  if ((p.kind ?? 'full') === 'text') return base;
-  return { ...base, replacementMode: p.replacementMode };
-}
-
-function applyVisionPresetFields(
-  p: RecognitionPreset,
-  pipelines: PipelineCfg[],
-): Pick<BatchWizardPersistedConfig, 'ocrHasTypes' | 'hasImageTypes' | 'presetVisionId'> {
-  const ocrIds = pipelines
-    .filter(pl => pl.mode === 'ocr_has' && pl.enabled)
-    .flatMap(pl => pl.types.filter(tt => tt.enabled).map(tt => tt.id));
-  const hiIds = pipelines
-    .filter(pl => pl.mode === 'has_image' && pl.enabled)
-    .flatMap(pl => pl.types.filter(tt => tt.enabled).map(tt => tt.id));
-  return {
-    ocrHasTypes: p.ocrHasTypes.filter((id: string) => ocrIds.includes(id)),
-    hasImageTypes: p.hasImageTypes.filter((id: string) => hiIds.includes(id)),
-    presetVisionId: p.id,
-  };
-}
-
-async function fetchBatchPreviewMap(
-  entities: ReviewEntity[],
-  replacementMode: BatchWizardPersistedConfig['replacementMode'],
-): Promise<Record<string, string>> {
-  const visible = entities.filter(e => e.selected !== false);
-  const payload = visible.map(e => {
-    const n = normalizeReviewEntity(e);
-    return {
-      id: n.id, text: n.text, type: n.type,
-      start: n.start, end: n.end, page: n.page,
-      confidence: n.confidence, selected: n.selected,
-      source: n.source, coref_id: n.coref_id,
-    };
-  });
-  if (payload.length === 0) return {};
-  const replacement_mode =
-    replacementMode === 'smart'
-      ? ReplacementMode.SMART
-      : replacementMode === 'mask'
-        ? ReplacementMode.MASK
-        : ReplacementMode.STRUCTURED;
-  const modeKey: 'structured' | 'smart' | 'mask' =
-    replacementMode === 'smart' ? 'smart' : replacementMode === 'mask' ? 'mask' : 'structured';
-  try {
-    const map = await batchPreviewEntityMap({
-      entities: payload,
-      config: { replacement_mode, entity_types: [], custom_replacements: {} },
-    });
-    if (map && Object.keys(map).length > 0) return map;
-  } catch {
-    return buildFallbackPreviewEntityMap(
-      payload.map((item) => ({ text: item.text, type: item.type, selected: item.selected })),
-      modeKey,
-    );
-  }
-  return buildFallbackPreviewEntityMap(
-    payload.map(p => ({ text: p.text, type: p.type, selected: p.selected })),
-    modeKey,
-  );
-}
+import {
+  buildJobConfigForWorker,
+  deriveReviewConfirmed,
+  effectiveWizardFurthestStep,
+  isBatchWizardMode,
+  mapBackendStatus,
+  mergeJobConfigIntoWizardCfg,
+  readLocalWizardMaxStep,
+  toBatchJobType,
+  writeLocalWizardMaxStep,
+} from './use-batch-wizard-utils';
+import { useBatchConfig } from './use-batch-config';
+import { useBatchFiles } from './use-batch-files';
+import { useBatchReview } from './use-batch-review';
+import { useBatchSubmit } from './use-batch-submit';
 
 export function useBatchWizard() {
   const { batchMode } = useParams<{ batchMode: string }>();
@@ -350,7 +73,6 @@ export function useBatchWizard() {
     }
   });
   const [jobSkipItemReview, setJobSkipItemReview] = useState(false);
-  const itemIdByFileIdRef = useRef<Record<string, string>>({});
   const hydratedFromUrlRef = useRef(false);
   const batchHydrateGenRef = useRef(0);
   const urlHydrateKeyRef = useRef('');
@@ -363,52 +85,58 @@ export function useBatchWizard() {
   const [step, setStep] = useState<Step>(1);
   const [furthestStep, setFurthestStep] = useState<Step>(1);
 
-  // ── Config ──
-  const [cfg, setCfg] = useState<BatchWizardPersistedConfig>(() => defaultConfig());
-  const [textTypes, setTextTypes] = useState<TextEntityType[]>([]);
-  const [pipelines, setPipelines] = useState<PipelineCfg[]>([]);
-  const [configLoaded, setConfigLoaded] = useState(false);
-  const [presets, setPresets] = useState<RecognitionPreset[]>([]);
-  const [confirmStep1, setConfirmStep1] = useState(false);
-  const [jobPriority, setJobPriority] = useState<number>(0);
+  // ── Sub-hooks ──
+  const files = useBatchFiles(step, activeJobId, isPreviewMode);
+  const {
+    rows, setRows, selected, setSelected, selectedIds, loading,
+    msg, setMsg, toggle, getRootProps, getInputProps, isDragActive,
+    failedRows,
+    batchGroupIdRef, itemIdByFileIdRef,
+  } = files;
 
-  // ── File rows ──
-  const [rows, setRows] = useState<BatchRow[]>([]);
-  const batchGroupIdRef = useRef<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
-  const [analyzeRunning, _setAnalyzeRunning] = useState(false);
-  const [zipLoading, setZipLoading] = useState(false);
-  const [msg, setMsg] = useState<{ text: string; tone: 'neutral' | 'ok' | 'warn' | 'err' } | null>(null);
+  const config = useBatchConfig(mode, activeJobId, setActiveJobId, isPreviewMode, setMsg);
+  const {
+    cfg, setCfg, configLoaded, textTypes, pipelines, presets,
+    textPresets, visionPresets, confirmStep1, setConfirmStep1,
+    isStep1Complete, jobPriority, setJobPriority,
+    onBatchTextPresetChange, onBatchVisionPresetChange,
+  } = config;
 
-  // ── Review state ──
-  const [reviewIndex, setReviewIndex] = useState(0);
-  const [reviewEntities, setReviewEntities] = useState<ReviewEntity[]>([]);
-  const [reviewBoxes, setReviewBoxes] = useState<EditorBox[]>([]);
-  const [reviewLoading, setReviewLoading] = useState(false);
-  const [reviewExecuteLoading, setReviewExecuteLoading] = useState(false);
-  const [reviewDraftSaving, setReviewDraftSaving] = useState(false);
-  const [reviewDraftError, setReviewDraftError] = useState<string | null>(null);
-  const [reviewImagePreview, setReviewImagePreview] = useState('');
-  const [reviewImagePreviewLoading, setReviewImagePreviewLoading] = useState(false);
-  const [reviewOrigImageBlobUrl, setReviewOrigImageBlobUrl] = useState('');
-  const [reviewTextUndoStack, setReviewTextUndoStack] = useState<ReviewEntity[][]>([]);
-  const [reviewTextRedoStack, setReviewTextRedoStack] = useState<ReviewEntity[][]>([]);
-  const [reviewImageUndoStack, setReviewImageUndoStack] = useState<EditorBox[][]>([]);
-  const [reviewImageRedoStack, setReviewImageRedoStack] = useState<EditorBox[][]>([]);
-  const [reviewTextContent, setReviewTextContent] = useState('');
-  const [previewEntityMap, setPreviewEntityMap] = useState<Record<string, string>>({});
-  const reviewTextContentRef = useRef<HTMLDivElement | null>(null);
-  const reviewTextScrollRef = useRef<HTMLDivElement | null>(null);
-  const reviewAutosaveTimerRef = useRef<number | null>(null);
-  const reviewLastSavedJsonRef = useRef('');
-  const reviewDraftInitializedRef = useRef(false);
-  const reviewDraftDirtyRef = useRef(false);
-  const batchScrollCountersRef = useRef<Record<string, number>>({});
-  const reviewLoadSeqRef = useRef(0);
+  const review = useBatchReview(
+    step, rows, activeJobId, itemIdByFileIdRef,
+    cfg, isPreviewMode, textTypes, setMsg,
+  );
+  const {
+    reviewIndex, setReviewIndex, reviewEntities, reviewBoxes,
+    reviewLoading, reviewExecuteLoading, setReviewExecuteLoading,
+    reviewDraftSaving, reviewDraftError,
+    reviewImagePreviewLoading, reviewOrigImageBlobUrl,
+    reviewTextUndoStack, reviewTextRedoStack,
+    reviewImageUndoStack, reviewImageRedoStack,
+    reviewTextContent, reviewTextContentRef, reviewTextScrollRef,
+    reviewDraftDirtyRef,
+    reviewLastSavedJsonRef,
+    reviewFile, doneRows, reviewFileReadOnly,
+    selectedReviewEntityCount, selectedReviewBoxCount,
+    reviewImagePreviewSrc, displayPreviewMap, textPreviewSegments,
+    reviewedOutputCount, allReviewConfirmed, pendingReviewCount,
+    applyReviewEntities, toggleReviewEntitySelected,
+    setReviewBoxes, handleReviewBoxesCommit, toggleReviewBoxSelected,
+    undoReviewText, redoReviewText, undoReviewImage, redoReviewImage,
+    flushCurrentReviewDraft,
+    navigateReviewIndex, rerunCurrentItemRecognition, rerunRecognitionLoading,
+  } = review;
 
-  const [leaveConfirmOpen, _setLeaveConfirmOpen] = useState(false);
-  const [_pendingStepAfterLeave, _setPendingStepAfterLeave] = useState<Step | null>(null);
+  const submit = useBatchSubmit(
+    mode, activeJobId, isPreviewMode, cfg, furthestStep,
+    rows, setRows, selected, setMsg, setFurthestStep,
+    failedRows, reviewFile, reviewIndex, setReviewIndex,
+    doneRows, reviewEntities, reviewBoxes,
+    reviewDraftError, flushCurrentReviewDraft,
+    reviewLastSavedJsonRef, reviewDraftDirtyRef,
+    setReviewExecuteLoading, itemIdByFileIdRef, lastSavedJobConfigJson,
+  );
+  const { submitQueueToWorker, requeueFailedItems, confirmCurrentReview, downloadZip, zipLoading } = submit;
 
   // ── Session persistence ──
   useEffect(() => {
@@ -485,89 +213,6 @@ export function useBatchWizard() {
         currentLocation.search !== nextLocation.search ||
         currentLocation.hash !== nextLocation.hash),
   );
-
-  useEffect(() => { saveBatchWizardConfig(cfg, mode); }, [cfg, mode]);
-
-  // ── Load config from backend ──
-  useEffect(() => {
-    let cancelled = false;
-    if (isPreviewMode) {
-      setTextTypes(previewTextTypes);
-      setPipelines(previewPipelines);
-      setPresets(previewPresets);
-      setCfg({ ...previewBatchConfig });
-      setConfirmStep1(true);
-      setJobPriority(5);
-      setConfigLoaded(true);
-      setMsg(null);
-      if (!activeJobId) setActiveJobId(PREVIEW_BATCH_JOB_ID);
-      return () => { cancelled = true; };
-    }
-    (async () => {
-      try {
-        const [types, pipes, presetRes] = await Promise.all([
-          fetchRecognitionEntityTypes(true, 25_000),
-          fetchRecognitionPipelines(25_000) as Promise<PipelineCfg[]>,
-          fetchRecognitionPresets().catch(() => [] as RecognitionPreset[]),
-        ]);
-        if (cancelled) return;
-        setTextTypes(types);
-        setPipelines(pipes);
-        setPresets(Array.isArray(presetRes) ? presetRes : []);
-
-        const persisted = loadBatchWizardConfig(mode);
-        const defaultTextTypeIds = buildDefaultTextTypeIds(types);
-        const defaultOcrHasTypeIds = buildDefaultPipelineTypeIds(pipes, 'ocr_has');
-        const defaultHasImageTypeIds = buildDefaultPipelineTypeIds(pipes, 'has_image');
-        const ocrIds = pipes.filter(p => p.mode === 'ocr_has' && p.enabled).flatMap(p => p.types.filter(tt => tt.enabled).map(tt => tt.id));
-        const hiIds = pipes.filter(p => p.mode === 'has_image' && p.enabled).flatMap(p => p.types.filter(tt => tt.enabled).map(tt => tt.id));
-
-        const presetList: RecognitionPreset[] = Array.isArray(presetRes) ? presetRes : [];
-        const selectedEntityTypeIds = persisted?.selectedEntityTypeIds?.length
-          ? persisted.selectedEntityTypeIds.filter(id => types.some(tt => tt.id === id))
-          : defaultTextTypeIds;
-        const ocrHas = persisted?.ocrHasTypes?.length
-          ? persisted.ocrHasTypes.filter(id => ocrIds.includes(id))
-          : defaultOcrHasTypeIds;
-        const hasImg = persisted?.hasImageTypes?.length
-          ? persisted.hasImageTypes.filter(id => hiIds.includes(id))
-          : defaultHasImageTypeIds;
-
-        let next: BatchWizardPersistedConfig = {
-          selectedEntityTypeIds, ocrHasTypes: ocrHas, hasImageTypes: hasImg,
-          replacementMode: persisted?.replacementMode ?? 'structured',
-          imageRedactionMethod: persisted?.imageRedactionMethod ?? 'mosaic',
-          imageRedactionStrength: persisted?.imageRedactionStrength ?? 25,
-          imageFillColor: persisted?.imageFillColor ?? '#000000',
-          presetTextId: null, presetVisionId: null, presetId: null,
-          executionDefault: persisted?.executionDefault === 'local' ? 'local' : 'queue',
-        };
-
-        const tid = persisted?.presetTextId ?? persisted?.presetId ?? null;
-        const vid = persisted?.presetVisionId ?? persisted?.presetId ?? null;
-        const pt = tid ? presetList.find(x => x.id === tid && presetAppliesText(x)) : undefined;
-        const pv = vid ? presetList.find(x => x.id === vid && presetAppliesVision(x)) : undefined;
-        if (pt) next = { ...next, ...applyTextPresetFields(pt, types), presetTextId: pt.id };
-        if (pv) next = { ...next, ...applyVisionPresetFields(pv, pipes), presetVisionId: pv.id };
-        if (!pt && persisted === null) {
-          const bid = getActivePresetTextId();
-          const ptB = bid ? presetList.find(x => x.id === bid && presetAppliesText(x)) : undefined;
-          if (ptB) next = { ...next, ...applyTextPresetFields(ptB, types), presetTextId: ptB.id };
-        }
-        if (!pv && persisted === null) {
-          const bid = getActivePresetVisionId();
-          const pvB = bid ? presetList.find(x => x.id === bid && presetAppliesVision(x)) : undefined;
-          if (pvB) next = { ...next, ...applyVisionPresetFields(pvB, pipes), presetVisionId: pvB.id };
-        }
-        setCfg(next);
-      } catch {
-        setMsg({ text: t('batchWizard.waitConfig'), tone: 'err' });
-      } finally {
-        if (!cancelled) setConfigLoaded(true);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeJobId, isPreviewMode, mode]);
 
   // ── URL hydration (deep-link restore) ──
   useEffect(() => {
@@ -766,625 +411,13 @@ export function useBatchWizard() {
     setSearchParams(sp, { replace: true });
   }, [step, activeJobId, searchParams, setSearchParams]);
 
-  // ── Derived values ──
-  const textPresets = useMemo(() => presets.filter(presetAppliesText), [presets]);
-  const visionPresets = useMemo(() => presets.filter(presetAppliesVision), [presets]);
-  const batchDefaultTextTypeIds = useMemo(() => buildDefaultTextTypeIds(textTypes), [textTypes]);
-  const batchDefaultOcrHasTypeIds = useMemo(() => buildDefaultPipelineTypeIds(pipelines, 'ocr_has'), [pipelines]);
-  const batchDefaultHasImageTypeIds = useMemo(() => buildDefaultPipelineTypeIds(pipelines, 'has_image'), [pipelines]);
-  const doneRows = useMemo(() => rows.filter(r => RECOGNITION_DONE_STATUSES.has(r.analyzeStatus)), [rows]);
-  const failedRows = useMemo(() => rows.filter(r => r.analyzeStatus === 'failed'), [rows]);
-  const reviewFile = doneRows[reviewIndex] ?? null;
-  const reviewedOutputCount = useMemo(() => rows.filter(r => r.reviewConfirmed === true).length, [rows]);
-  const pendingReviewCount = Math.max(0, rows.length - reviewedOutputCount);
-  const allReviewConfirmed = rows.length > 0 && pendingReviewCount === 0;
+  // ── Derived ──
   const allAnalyzeDone = useMemo(
     () => rows.length > 0 && rows.every(row => RECOGNITION_DONE_STATUSES.has(row.analyzeStatus)),
     [rows],
   );
-  const reviewItemId = reviewFile ? itemIdByFileIdRef.current[reviewFile.file_id] : undefined;
-  const reviewFileReadOnly = reviewFile?.analyzeStatus === 'completed' || reviewFile?.analyzeStatus === 'redacting';
-
-  const isStep1Complete = useMemo(() => {
-    if (!confirmStep1 || !configLoaded) return false;
-    const anyTextSelected = cfg.selectedEntityTypeIds.length > 0;
-    const anyVisionSelected = cfg.ocrHasTypes.length > 0 || cfg.hasImageTypes.length > 0;
-    return anyTextSelected || anyVisionSelected;
-  }, [configLoaded, cfg.selectedEntityTypeIds, cfg.ocrHasTypes, cfg.hasImageTypes, confirmStep1]);
-
-  // ── Preset change handlers ──
-  const onBatchTextPresetChange = useCallback((id: string) => {
-    if (!id) {
-      setActivePresetTextId(null);
-      setCfg(c => ({ ...c, presetTextId: null, selectedEntityTypeIds: [...batchDefaultTextTypeIds], replacementMode: 'structured' }));
-      return;
-    }
-    const p = presets.find(x => x.id === id);
-    if (p && presetAppliesText(p)) {
-      setActivePresetTextId(p.id);
-      setCfg(c => ({ ...c, ...applyTextPresetFields(p, textTypes), presetTextId: p.id }));
-    }
-  }, [batchDefaultTextTypeIds, presets, textTypes]);
-
-  const onBatchVisionPresetChange = useCallback((id: string) => {
-    if (!id) {
-      setActivePresetVisionId(null);
-      setCfg(c => ({ ...c, presetVisionId: null, ocrHasTypes: [...batchDefaultOcrHasTypeIds], hasImageTypes: [...batchDefaultHasImageTypeIds] }));
-      return;
-    }
-    const p = presets.find(x => x.id === id);
-    if (p && presetAppliesVision(p)) {
-      setActivePresetVisionId(p.id);
-      setCfg(c => ({ ...c, ...applyVisionPresetFields(p, pipelines), presetVisionId: p.id }));
-    }
-  }, [batchDefaultOcrHasTypeIds, batchDefaultHasImageTypeIds, presets, pipelines]);
-
-  // ── Review draft management ──
-  const buildCurrentReviewDraftPayload = useCallback(() => {
-    const entities = reviewEntities.map(e => ({
-      id: e.id, text: e.text, type: e.type, start: e.start, end: e.end,
-      page: e.page ?? 1, confidence: e.confidence ?? 1, selected: e.selected,
-      source: e.source, coref_id: e.coref_id, replacement: e.replacement,
-    }));
-    const bounding_boxes = reviewBoxes.map(b => ({
-      id: b.id, x: b.x, y: b.y, width: b.width, height: b.height,
-      page: 1, type: b.type, text: b.text, selected: b.selected,
-      source: b.source, confidence: b.confidence,
-    }));
-    return { entities, bounding_boxes };
-  }, [reviewEntities, reviewBoxes]);
-
-  const flushCurrentReviewDraft = useCallback(async () => {
-    if (isPreviewMode) return true;
-    const jid = activeJobId;
-    const linkedItemId = reviewFile ? itemIdByFileIdRef.current[reviewFile.file_id] : undefined;
-    if (!jid || !linkedItemId || !reviewDraftInitializedRef.current) return true;
-    const payload = buildCurrentReviewDraftPayload();
-    const json = JSON.stringify(payload);
-    if (json === reviewLastSavedJsonRef.current) return true;
-    setReviewDraftSaving(true);
-    setReviewDraftError(null);
-    try {
-      await putItemReviewDraft(jid, linkedItemId, payload);
-      reviewLastSavedJsonRef.current = JSON.stringify(payload);
-      reviewDraftDirtyRef.current = false;
-      return true;
-    } catch (e) {
-      setReviewDraftError(localizeErrorMessage(e, 'batchWizard.autoSaveFailed'));
-      return false;
-    } finally {
-      setReviewDraftSaving(false);
-    }
-  }, [activeJobId, buildCurrentReviewDraftPayload, isPreviewMode, reviewFile]);
-
-  const pushReviewTextHistory = useCallback((prev: ReviewEntity[]) => {
-    setReviewTextUndoStack(stack => [...stack, prev.map(e => ({ ...e }))]);
-    setReviewTextRedoStack([]);
-  }, []);
-
-  const applyReviewEntities = useCallback((updater: ReviewEntity[] | ((prev: ReviewEntity[]) => ReviewEntity[])) => {
-    setReviewEntities(prev => {
-      const next = typeof updater === 'function' ? updater(prev) : updater;
-      pushReviewTextHistory(prev);
-      reviewDraftDirtyRef.current = true;
-      return next;
-    });
-  }, [pushReviewTextHistory]);
-
-  const undoReviewText = useCallback(() => {
-    setReviewTextUndoStack(stack => {
-      if (!stack.length) return stack;
-      const prev = stack[stack.length - 1];
-      setReviewTextRedoStack(redo => [...redo, reviewEntities.map(e => ({ ...e }))]);
-      setReviewEntities(prev.map(e => ({ ...e })));
-      reviewDraftDirtyRef.current = true;
-      return stack.slice(0, -1);
-    });
-  }, [reviewEntities]);
-
-  const redoReviewText = useCallback(() => {
-    setReviewTextRedoStack(stack => {
-      if (!stack.length) return stack;
-      const next = stack[stack.length - 1];
-      setReviewTextUndoStack(undo => [...undo, reviewEntities.map(e => ({ ...e }))]);
-      setReviewEntities(next.map(e => ({ ...e })));
-      reviewDraftDirtyRef.current = true;
-      return stack.slice(0, -1);
-    });
-  }, [reviewEntities]);
-
-  const undoReviewImage = useCallback(() => {
-    setReviewImageUndoStack(stack => {
-      if (!stack.length) return stack;
-      const prev = stack[stack.length - 1];
-      setReviewImageRedoStack(redo => [...redo, reviewBoxes.map(b => ({ ...b }))]);
-      setReviewBoxes(prev.map(b => ({ ...b })));
-      reviewDraftDirtyRef.current = true;
-      return stack.slice(0, -1);
-    });
-  }, [reviewBoxes]);
-
-  const redoReviewImage = useCallback(() => {
-    setReviewImageRedoStack(stack => {
-      if (!stack.length) return stack;
-      const next = stack[stack.length - 1];
-      setReviewImageUndoStack(undo => [...undo, reviewBoxes.map(b => ({ ...b }))]);
-      setReviewBoxes(next.map(b => ({ ...b })));
-      reviewDraftDirtyRef.current = true;
-      return stack.slice(0, -1);
-    });
-  }, [reviewBoxes]);
-
-  // ── Load review data ──
-  useEffect(() => { batchScrollCountersRef.current = {}; }, [reviewFile?.file_id]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let currentBlobUrl = '';
-    if (!reviewFile || !reviewFile.isImageMode) { setReviewOrigImageBlobUrl(''); return; }
-    const raw = fileApi.getDownloadUrl(reviewFile.file_id, false);
-    authenticatedBlobUrl(raw).then(u => {
-      if (!cancelled) { currentBlobUrl = u; setReviewOrigImageBlobUrl(u); }
-      else if (u.startsWith('blob:')) URL.revokeObjectURL(u);
-    }).catch(() => { if (!cancelled) setReviewOrigImageBlobUrl(raw); });
-    return () => { cancelled = true; if (currentBlobUrl.startsWith('blob:')) URL.revokeObjectURL(currentBlobUrl); };
-  }, [reviewFile?.file_id, reviewFile?.isImageMode]);
-
-  useLayoutEffect(() => {
-    if (step !== 4 || !reviewFile) return;
-    setReviewLoading(true);
-  }, [step, reviewFile?.file_id, reviewFile?.isImageMode]);
-
-  const loadReviewData = useCallback(
-    async (fileId: string, isImage: boolean) => {
-      const loadSeq = reviewLoadSeqRef.current + 1;
-      reviewLoadSeqRef.current = loadSeq;
-      setReviewLoading(true);
-      setPreviewEntityMap({});
-      setReviewImagePreview('');
-      setReviewDraftError(null);
-      setReviewEntities([]);
-      setReviewBoxes([]);
-      setReviewTextContent('');
-      reviewDraftInitializedRef.current = false;
-      reviewDraftDirtyRef.current = false;
-      if (reviewAutosaveTimerRef.current !== null) {
-        window.clearTimeout(reviewAutosaveTimerRef.current);
-        reviewAutosaveTimerRef.current = null;
-      }
-      if (isPreviewMode) {
-        const previewPayload = getPreviewReviewPayload(fileId);
-        if (isImage) {
-          setReviewTextContent('');
-          setReviewEntities([]);
-          setReviewBoxes(previewPayload.boxes.map((box) => ({ ...box })));
-          setReviewOrigImageBlobUrl(previewPayload.imageSrc);
-          setReviewImagePreview(previewPayload.previewSrc);
-          setReviewImageUndoStack([]);
-          setReviewImageRedoStack([]);
-          reviewLastSavedJsonRef.current = JSON.stringify({ entities: [], bounding_boxes: previewPayload.boxes });
-        } else {
-          setReviewBoxes([]);
-          setReviewEntities(previewPayload.entities.map((entity) => ({ ...entity })));
-          setReviewTextContent(previewPayload.content);
-          setReviewTextUndoStack([]);
-          setReviewTextRedoStack([]);
-          const map = await fetchBatchPreviewMap(previewPayload.entities, cfg.replacementMode);
-          if (loadSeq !== reviewLoadSeqRef.current) return;
-          setPreviewEntityMap(map);
-          reviewLastSavedJsonRef.current = JSON.stringify({ entities: previewPayload.entities, bounding_boxes: [] });
-        }
-        reviewDraftInitializedRef.current = true;
-        setReviewLoading(false);
-        return;
-      }
-      try {
-        const info = await batchGetFileRaw(fileId);
-        if (loadSeq !== reviewLoadSeqRef.current) return;
-        const linkedItemId = itemIdByFileIdRef.current[fileId];
-        let draft: { exists?: boolean; entities?: Array<Record<string, unknown>>; bounding_boxes?: Array<Record<string, unknown>> } | null = null;
-        if (activeJobId && linkedItemId) {
-          try {
-            const loadedDraft = await getItemReviewDraft(activeJobId, linkedItemId);
-            if (loadSeq !== reviewLoadSeqRef.current) return;
-            if (loadedDraft.exists) draft = loadedDraft;
-          } catch { /* ignore */ }
-        }
-        if (isImage) {
-          setReviewTextContent('');
-          const raw = draft?.bounding_boxes && draft.bounding_boxes.length > 0 ? draft.bounding_boxes : flattenBoundingBoxesFromStore(info.bounding_boxes);
-          const boxes: EditorBox[] = raw.map((b, idx) => ({
-            id: String(b.id ?? `bbox_${idx}`), x: Number(b.x), y: Number(b.y),
-            width: Number(b.width), height: Number(b.height), type: String(b.type ?? 'CUSTOM'),
-            text: b.text ? String(b.text) : undefined, selected: b.selected !== false,
-            confidence: typeof b.confidence === 'number' ? b.confidence : undefined,
-            source: (b.source as EditorBox['source']) || undefined,
-          }));
-          setReviewBoxes(boxes);
-          setReviewEntities([]);
-          setReviewImageUndoStack([]);
-          setReviewImageRedoStack([]);
-          reviewLastSavedJsonRef.current = JSON.stringify({ entities: [], bounding_boxes: boxes.map(b => ({ id: b.id, x: b.x, y: b.y, width: b.width, height: b.height, page: 1, type: b.type, text: b.text, selected: b.selected, source: b.source, confidence: b.confidence })) });
-        } else {
-          setReviewEntities([]);
-          setReviewTextContent('');
-          const ents = ((draft?.entities as ReviewEntity[] | undefined) ?? (info.entities as ReviewEntity[]) ?? []);
-          const mapped = ents.map((e, i) =>
-            normalizeReviewEntity({ id: e.id || `ent_${i}`, text: e.text, type: typeof e.type === 'string' ? e.type : String(e.type ?? 'CUSTOM'), start: typeof e.start === 'number' ? e.start : Number(e.start), end: typeof e.end === 'number' ? e.end : Number(e.end), selected: e.selected !== false, page: e.page ?? 1, confidence: e.confidence, source: e.source, coref_id: e.coref_id, replacement: e.replacement }),
-          );
-          setReviewBoxes([]);
-          const contentStr = typeof info.content === 'string' ? info.content : '';
-          setReviewEntities(mapped);
-          setReviewTextContent(contentStr);
-          setReviewTextUndoStack([]);
-          setReviewTextRedoStack([]);
-          const map = await fetchBatchPreviewMap(mapped, cfg.replacementMode);
-          if (loadSeq !== reviewLoadSeqRef.current) return;
-          setPreviewEntityMap(map);
-          reviewLastSavedJsonRef.current = JSON.stringify({ entities: mapped.map(e => ({ id: e.id, text: e.text, type: e.type, start: e.start, end: e.end, page: e.page ?? 1, confidence: e.confidence ?? 1, selected: e.selected, source: e.source, coref_id: e.coref_id, replacement: e.replacement })), bounding_boxes: [] });
-        }
-        reviewDraftInitializedRef.current = true;
-      } finally {
-        if (loadSeq === reviewLoadSeqRef.current) setReviewLoading(false);
-      }
-    },
-    [activeJobId, cfg.replacementMode, cfg.selectedEntityTypeIds, isPreviewMode, textTypes],
-  );
-
-  useEffect(() => {
-    if (step !== 4 || !reviewFile) return;
-    const isImg = reviewFile.isImageMode === true;
-    void loadReviewData(reviewFile.file_id, isImg);
-  }, [step, reviewFile?.file_id, reviewFile?.isImageMode, loadReviewData]);
-
-  // ── Re-run recognition for current review item ──
-  const [rerunRecognitionLoading, setRerunRecognitionLoading] = useState(false);
-
-  const rerunCurrentItemRecognition = useCallback(async () => {
-    if (!reviewFile) return;
-    const isImage = reviewFile.isImageMode === true;
-    setRerunRecognitionLoading(true);
-    try {
-      if (isImage) {
-        // Vision detection: call the same endpoint as playground
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => controller.abort(), 400_000);
-        let res: Response;
-        try {
-          res = await authFetch(`/api/v1/redaction/${reviewFile.file_id}/vision?page=1`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              selected_ocr_has_types: cfg.ocrHasTypes,
-              selected_has_image_types: cfg.hasImageTypes,
-            }),
-            signal: controller.signal,
-          });
-        } finally {
-          window.clearTimeout(timer);
-        }
-        if (!res.ok) throw new Error('Vision detection failed');
-        const data = await res.json();
-        const boxes: EditorBox[] = ((data.bounding_boxes || []) as Record<string, unknown>[]).map((b, idx) => ({
-          id: String(b.id ?? `bbox_${idx}`),
-          x: Number(b.x),
-          y: Number(b.y),
-          width: Number(b.width),
-          height: Number(b.height),
-          type: String(b.type ?? 'CUSTOM'),
-          text: b.text ? String(b.text) : undefined,
-          selected: true,
-          confidence: typeof b.confidence === 'number' ? b.confidence : undefined,
-          source: (b.source as EditorBox['source']) || undefined,
-        }));
-        setReviewBoxes(boxes);
-        setReviewImageUndoStack([]);
-        setReviewImageRedoStack([]);
-      } else {
-        // Text NER: call the hybrid endpoint
-        const nerRes = await authFetch(`/api/v1/files/${reviewFile.file_id}/ner/hybrid`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ entity_type_ids: cfg.selectedEntityTypeIds }),
-        });
-        if (!nerRes.ok) throw new Error('NER recognition failed');
-        const nerData = await nerRes.json();
-        const entities: ReviewEntity[] = ((nerData.entities || []) as Record<string, unknown>[]).map(
-          (e, idx) => normalizeReviewEntity({
-            id: String(e.id || `ent_${idx}`),
-            text: String(e.text ?? ''),
-            type: String(e.type ?? 'CUSTOM'),
-            start: Number(e.start ?? 0),
-            end: Number(e.end ?? 0),
-            selected: true,
-            source: (e.source as ReviewEntity['source']) || 'llm',
-            page: Number(e.page ?? 1),
-            confidence: typeof e.confidence === 'number' ? e.confidence : 1,
-            coref_id: e.coref_id as string | undefined,
-            replacement: e.replacement as string | undefined,
-          }),
-        );
-        setReviewEntities(entities);
-        setReviewTextUndoStack([]);
-        setReviewTextRedoStack([]);
-        // Refresh preview map
-        const map = await fetchBatchPreviewMap(entities, cfg.replacementMode);
-        setPreviewEntityMap(map);
-      }
-      // Mark draft as dirty so autosave picks it up
-      reviewDraftDirtyRef.current = true;
-    } catch (e) {
-      setMsg({ text: localizeErrorMessage(e, 'batchWizard.actionFailed'), tone: 'err' });
-    } finally {
-      setRerunRecognitionLoading(false);
-    }
-  }, [reviewFile, cfg.selectedEntityTypeIds, cfg.ocrHasTypes, cfg.hasImageTypes, cfg.replacementMode]);
-
-  // ── Autosave ──
-  useEffect(() => {
-    if (isPreviewMode) return;
-    if (step !== 4 || !reviewFile || !reviewDraftInitializedRef.current) return;
-    if (!activeJobId || !reviewItemId) return;
-    const payload = buildCurrentReviewDraftPayload();
-    const json = JSON.stringify(payload);
-    if (json === reviewLastSavedJsonRef.current) return;
-    reviewDraftDirtyRef.current = true;
-    if (reviewAutosaveTimerRef.current !== null) window.clearTimeout(reviewAutosaveTimerRef.current);
-    reviewAutosaveTimerRef.current = window.setTimeout(() => { void flushCurrentReviewDraft(); }, 900);
-    return () => { if (reviewAutosaveTimerRef.current !== null) { window.clearTimeout(reviewAutosaveTimerRef.current); reviewAutosaveTimerRef.current = null; } };
-  }, [step, reviewFile?.file_id, reviewItemId, activeJobId, buildCurrentReviewDraftPayload, flushCurrentReviewDraft, isPreviewMode]);
-
-  // ── Preview map refresh ──
-  useEffect(() => {
-    if (isPreviewMode) return;
-    if (step !== 4 || !reviewFile || reviewLoading || reviewFile.isImageMode) return;
-    if (!reviewTextContent || reviewEntities.length === 0) { setPreviewEntityMap({}); return; }
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      const map = await fetchBatchPreviewMap(reviewEntities, cfg.replacementMode);
-      if (!cancelled) setPreviewEntityMap(map);
-    }, 300);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [step, reviewFile?.file_id, reviewEntities, reviewTextContent, reviewLoading, cfg.replacementMode, isPreviewMode]);
-
-  // ── Image preview ──
-  useEffect(() => {
-    if (isPreviewMode) return;
-    if (step !== 4 || !reviewFile || reviewLoading || !reviewFile.isImageMode) return;
-    let cancelled = false;
-    const timer = window.setTimeout(async () => {
-      try {
-        setReviewImagePreviewLoading(true);
-        const imageBase64 = await batchPreviewImage({
-          file_id: reviewFile.file_id, page: 1,
-          bounding_boxes: reviewBoxes.filter(b => b.selected !== false).map(b => ({ id: b.id, x: b.x, y: b.y, width: b.width, height: b.height, page: 1, type: b.type, text: b.text, selected: b.selected, source: b.source, confidence: b.confidence })),
-          config: { replacement_mode: ReplacementMode.STRUCTURED, entity_types: [], custom_replacements: {}, image_redaction_method: cfg.imageRedactionMethod ?? 'mosaic', image_redaction_strength: cfg.imageRedactionStrength ?? 25, image_fill_color: cfg.imageFillColor ?? '#000000' },
-        });
-        if (!cancelled) setReviewImagePreview(imageBase64);
-      } catch { if (!cancelled) setReviewImagePreview(''); }
-      finally { if (!cancelled) setReviewImagePreviewLoading(false); }
-    }, 250);
-    return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [step, reviewFile?.file_id, reviewBoxes, reviewLoading, cfg.imageRedactionMethod, cfg.imageRedactionStrength, cfg.imageFillColor, isPreviewMode]);
-
-  const displayPreviewMap = useMemo(() => mergePreviewMapWithDocumentSlices(reviewTextContent, reviewEntities, previewEntityMap), [reviewTextContent, reviewEntities, previewEntityMap]);
-  const textPreviewSegments = useMemo(() => buildTextSegments(reviewTextContent, displayPreviewMap), [reviewTextContent, displayPreviewMap]);
-
-  const selectedReviewEntityCount = useMemo(() => reviewEntities.filter(e => e.selected !== false).length, [reviewEntities]);
-  const selectedReviewBoxCount = useMemo(() => reviewBoxes.filter(b => b.selected !== false).length, [reviewBoxes]);
-  const reviewImagePreviewSrc = useMemo(() => {
-    if (!reviewImagePreview) return '';
-    return reviewImagePreview.startsWith('data:') ? reviewImagePreview : `data:image/png;base64,${reviewImagePreview}`;
-  }, [reviewImagePreview]);
-
-  // ── File upload ──
-  const onDrop = useCallback(async (accepted: File[]) => {
-    if (!accepted.length) return;
-    setLoading(true);
-    setMsg(null);
-    if (isPreviewMode) {
-      const uploaded = accepted.map((file, index) => {
-        const name = file.name.toLowerCase();
-        const isImage = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.pdf');
-        const fileType = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg')
-          ? FileType.IMAGE
-          : name.endsWith('.pdf')
-            ? FileType.PDF
-            : name.endsWith('.doc')
-              ? FileType.DOC
-              : FileType.DOCX;
-        return {
-          file_id: `preview-upload-${Date.now()}-${index}`,
-          original_filename: file.name,
-          file_size: file.size,
-          file_type: fileType,
-          created_at: new Date().toISOString(),
-          has_output: false,
-          reviewConfirmed: false,
-          entity_count: 0,
-          analyzeStatus: 'pending' as const,
-          isImageMode: isImage,
-        };
-      });
-      setRows((prev) => [...uploaded, ...prev]);
-      setSelected((prev) => {
-        const next = new Set(prev);
-        uploaded.forEach((row) => next.add(row.file_id));
-        return next;
-      });
-      setMsg({ text: t('batchWizard.previewFilesAdded').replace('{count}', String(uploaded.length)), tone: 'ok' });
-      setLoading(false);
-      return;
-    }
-    const uploaded: BatchRow[] = [];
-    const failed: string[] = [];
-    try {
-      if (!batchGroupIdRef.current) {
-        batchGroupIdRef.current = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `bg_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-      }
-      const bg = batchGroupIdRef.current;
-      for (const file of accepted) {
-        try {
-          const r = await fileApi.upload(file, bg, activeJobId ?? undefined, 'batch');
-          const ft = String(r.file_type ?? '').toLowerCase();
-          const isImg = ft === 'image' || ft === 'jpg' || ft === 'jpeg' || ft === 'png' || ft === 'pdf_scanned';
-          uploaded.push({ file_id: r.file_id, original_filename: r.filename, file_size: r.file_size, file_type: r.file_type, created_at: r.created_at ?? undefined, has_output: false, reviewConfirmed: false, entity_count: 0, analyzeStatus: 'pending', isImageMode: isImg });
-        } catch { failed.push(file.name); }
-      }
-      if (uploaded.length) {
-        setRows(prev => [...uploaded, ...prev]);
-        setSelected(prev => { const n = new Set(prev); uploaded.forEach(u => n.add(u.file_id)); return n; });
-        if (activeJobId) {
-          try {
-            const d = await getJob(activeJobId);
-            const m = { ...itemIdByFileIdRef.current };
-            for (const it of d.items) m[it.file_id] = it.id;
-            itemIdByFileIdRef.current = m;
-          } catch { /* ignore */ }
-        }
-      }
-    } finally { setLoading(false); }
-  }, [activeJobId, isPreviewMode]);
-
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, disabled: loading, multiple: true });
-
-  // ── Queue submit ──
-  const submitQueueToWorker = useCallback(async () => {
-    if (isPreviewMode) {
-      setRows((prev) => prev.map((row, index) => ({
-        ...row,
-        analyzeStatus: index === 0 ? 'completed' : 'awaiting_review',
-        has_output: index === 0,
-        reviewConfirmed: index === 0,
-      })));
-      setFurthestStep(5);
-      setMsg({ text: t('batchWizard.previewRecognitionDone'), tone: 'ok' });
-      return;
-    }
-    if (!activeJobId) { setMsg({ text: t('batchWizard.noActiveJob'), tone: 'warn' }); return; }
-    setMsg(null);
-    setRows(prev => prev.map(r => !RECOGNITION_DONE_STATUSES.has(r.analyzeStatus) && r.analyzeStatus !== 'failed' ? { ...r, analyzeStatus: 'pending' as const } : r));
-    try {
-      const jobCfg = buildJobConfigForWorker(cfg, mode, furthestStep);
-      try { await updateJobDraft(activeJobId, { config: jobCfg }); lastSavedJobConfigJson.current = JSON.stringify(jobCfg); } catch { /* */ }
-      await apiSubmitJob(activeJobId);
-      clearLocalWizardMaxStep(activeJobId);
-    } catch (e) { setMsg({ text: localizeErrorMessage(e, 'batchWizard.submitFailed'), tone: 'err' }); }
-  }, [activeJobId, cfg, furthestStep, isPreviewMode, mode]);
-
-  // ── Polling ──
-  const hasItemsInProgress = useMemo(() => rows.some(r => r.analyzeStatus === 'pending' || r.analyzeStatus === 'parsing' || r.analyzeStatus === 'analyzing'), [rows]);
-
-  useEffect(() => {
-    if (isPreviewMode) return;
-    if (step !== 3 || !activeJobId || !hasItemsInProgress || analyzeRunning) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const detail = await getJob(activeJobId);
-        if (cancelled) return;
-        const itemMap = new Map(detail.items.map(it => [it.file_id, it]));
-        setRows(prev => prev.map(r => {
-          const item = itemMap.get(r.file_id);
-          if (!item) return r;
-          return { ...r, analyzeStatus: mapBackendStatus(item.status), reviewConfirmed: deriveReviewConfirmed(item), has_output: Boolean(item.has_output), isImageMode: r.isImageMode ?? false, analyzeError: item.status === 'failed' || item.status === 'cancelled' ? (item.error_message || t('batchWizard.actionFailed')) : undefined, entity_count: typeof item.entity_count === 'number' ? item.entity_count : r.entity_count };
-        }));
-      } catch { /* ignore network jitter */ }
-    };
-    const timer = setInterval(poll, 1000);
-    poll();
-    return () => { cancelled = true; clearInterval(timer); };
-  }, [step, activeJobId, hasItemsInProgress, analyzeRunning, isPreviewMode]);
-
-  // ── Requeue failed ──
-  const requeueFailedItems = useCallback(async () => {
-    if (!failedRows.length) return;
-    if (isPreviewMode) {
-      setRows((prev) => prev.map((row) => row.analyzeStatus === 'failed'
-        ? { ...row, analyzeStatus: 'awaiting_review', analyzeError: undefined }
-        : row));
-      setMsg({ text: t('batchWizard.previewRecognitionDone'), tone: 'ok' });
-      return;
-    }
-    if (activeJobId && cfg.executionDefault !== 'local') {
-      setMsg(null);
-      try {
-        await requeueFailed(activeJobId);
-        setRows(prev => prev.map(r => r.analyzeStatus === 'failed' ? { ...r, analyzeStatus: 'pending', analyzeError: undefined } : r));
-      } catch { /* fallback handled outside */ }
-      return;
-    }
-  }, [activeJobId, cfg.executionDefault, failedRows.length, isPreviewMode]);
-
-  // ── Confirm review ──
-  const confirmCurrentReview = useCallback(async () => {
-    if (!reviewFile) return;
-    setReviewExecuteLoading(true);
-    setMsg(null);
-    const currentFileId = reviewFile.file_id;
-    const currentIsImage = reviewFile.isImageMode;
-    try {
-      if (isPreviewMode) {
-        setRows((prev) => prev.map((row) => row.file_id === currentFileId
-          ? { ...row, reviewConfirmed: true, has_output: true, analyzeStatus: 'completed' as const }
-          : row));
-        const isLastFile = reviewIndex >= doneRows.length - 1;
-        if (!isLastFile) setReviewIndex(reviewIndex + 1);
-        if (isLastFile) setFurthestStep(5);
-        setMsg({ text: t('batchWizard.previewReviewDone'), tone: 'ok' });
-        return;
-      }
-      const jid = activeJobId;
-      const linkedItemId = itemIdByFileIdRef.current[currentFileId];
-      if (!jid || !linkedItemId) throw new Error(t('batchWizard.noLinkedItem'));
-      const entitiesPayload = reviewEntities.map(e => ({ id: e.id, text: e.text, type: e.type, start: e.start, end: e.end, page: e.page ?? 1, confidence: e.confidence ?? 1, selected: e.selected, source: e.source, coref_id: e.coref_id, replacement: e.replacement }));
-      const boxesPayload = reviewBoxes.map(b => ({ id: b.id, x: b.x, y: b.y, width: b.width, height: b.height, page: 1, type: b.type, text: b.text, selected: b.selected, source: b.source, confidence: b.confidence }));
-
-      setRows(prev => prev.map(r => r.file_id === currentFileId ? { ...r, reviewConfirmed: true, has_output: true, analyzeStatus: 'completed' as const } : r));
-      const isLastFile = reviewIndex >= doneRows.length - 1;
-      if (!isLastFile) setReviewIndex(reviewIndex + 1);
-
-      const ok = await flushCurrentReviewDraft();
-      if (!ok) throw new Error(reviewDraftError || t('batchWizard.autoSaveFailed'));
-      const commitResult = await commitItemReview(jid, linkedItemId, { entities: entitiesPayload as Array<Record<string, unknown>>, bounding_boxes: boxesPayload as Array<Record<string, unknown>> });
-      const committedStatus = mapBackendStatus(commitResult.status ?? 'completed');
-      setRows(prev => prev.map(r => r.file_id === currentFileId ? { ...r, has_output: Boolean(commitResult.has_output ?? true), reviewConfirmed: deriveReviewConfirmed(commitResult), analyzeStatus: committedStatus, entity_count: typeof commitResult.entity_count === 'number' ? commitResult.entity_count : currentIsImage ? boxesPayload.length : entitiesPayload.length } : r));
-      reviewLastSavedJsonRef.current = JSON.stringify({ entities: entitiesPayload, bounding_boxes: boxesPayload });
-      reviewDraftDirtyRef.current = false;
-      if (isLastFile) setFurthestStep(prev => Math.max(prev, 5) as Step);
-    } catch (e) {
-      setRows(prev => prev.map(r => r.file_id === currentFileId ? { ...r, reviewConfirmed: false, has_output: false, analyzeStatus: 'awaiting_review' as const } : r));
-      setMsg({ text: localizeErrorMessage(e, 'batchWizard.actionFailed'), tone: 'err' });
-    } finally { setReviewExecuteLoading(false); }
-  }, [activeJobId, doneRows.length, flushCurrentReviewDraft, isPreviewMode, reviewBoxes, reviewDraftError, reviewEntities, reviewFile, reviewIndex]);
-
-  // ── Download ZIP ──
-  const downloadZip = useCallback(async (redacted: boolean) => {
-    const selectedIds = rows.filter(r => selected.has(r.file_id)).map(r => r.file_id);
-    if (!selectedIds.length) { setMsg({ text: t('batchWizard.noFilesSelected'), tone: 'warn' }); return; }
-    if (redacted) {
-      const noOut = rows.filter(r => selected.has(r.file_id) && !r.has_output);
-      if (noOut.length) { setMsg({ text: t('batchWizard.someFilesNotRedacted'), tone: 'warn' }); return; }
-    }
-    setZipLoading(true);
-    setMsg(null);
-    try {
-      if (isPreviewMode) {
-        const blob = buildPreviewDownloadBlob(redacted, rows.filter((row) => selected.has(row.file_id)));
-        triggerDownload(blob, redacted ? 'batch_redacted_preview.txt' : 'batch_original_preview.txt');
-        setMsg({ text: t('batchWizard.previewDownloadReady'), tone: 'ok' });
-        return;
-      }
-      const blob = await fileApi.batchDownloadZip(selectedIds, redacted);
-      triggerDownload(blob, redacted ? 'batch_redacted.zip' : 'batch_original.zip');
-      if (redacted && activeJobId) clearLocalWizardMaxStep(activeJobId);
-    } catch (e) { setMsg({ text: localizeErrorMessage(e, 'batchWizard.downloadFailed'), tone: 'err' }); }
-    finally { setZipLoading(false); }
-  }, [activeJobId, isPreviewMode, rows, selected]);
 
   // ── Step navigation ──
-  const selectedIds = rows.filter(r => selected.has(r.file_id)).map(r => r.file_id);
-
   const canUnlockStep = useCallback((target: Step): boolean => {
     if (target === 1) return true;
     if (target === 2) return isStep1Complete;
@@ -1473,7 +506,6 @@ export function useBatchWizard() {
           writeLocalWizardMaxStep(jid, nextFurthest);
           await updateJobDraft(jid, { config: payload });
         } catch {
-          // Stale/deleted job — clear and fall through to create a new one
           jid = null;
           setActiveJobId(null);
         }
@@ -1530,34 +562,8 @@ export function useBatchWizard() {
     setMsg(null);
   }, [activeJobId, allReviewConfirmed, flushCurrentReviewDraft, isPreviewMode, rows.length]);
 
-  const navigateReviewIndex = useCallback(async (nextIndex: number) => {
-    if (nextIndex < 0 || nextIndex >= doneRows.length || nextIndex === reviewIndex) return;
-    if (reviewLoading) return;
-    await flushCurrentReviewDraft();
-    setReviewIndex(nextIndex);
-  }, [doneRows.length, flushCurrentReviewDraft, reviewIndex, reviewLoading]);
-
-  const handleReviewBoxesCommit = useCallback((prevBoxes: EditorBox[], nextBoxes: EditorBox[]) => {
-    setReviewImageUndoStack(stack => [...stack, prevBoxes.map(b => ({ ...b }))]);
-    setReviewImageRedoStack([]);
-    setReviewBoxes(nextBoxes.map(b => ({ ...b })));
-    reviewDraftDirtyRef.current = true;
-  }, []);
-
-  const toggleReviewBoxSelected = useCallback((boxId: string) => {
-    setReviewBoxes(prev => prev.map(b => (b.id === boxId ? { ...b, selected: !b.selected } : b)));
-    reviewDraftDirtyRef.current = true;
-  }, []);
-
-  const toggleReviewEntitySelected = useCallback((entityId: string) => {
-    applyReviewEntities(prev => prev.map(e => (e.id === entityId ? { ...e, selected: !e.selected } : e)));
-  }, [applyReviewEntities]);
-
-  const toggle = useCallback((id: string) => {
-    setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-  }, []);
-
   // ── Blocker effects ──
+  const [leaveConfirmOpen, _setLeaveConfirmOpen] = useState(false);
   const showLeaveConfirmModal = leaveConfirmOpen || navigationBlocker.state === 'blocked';
 
   useEffect(() => {

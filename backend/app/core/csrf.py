@@ -75,7 +75,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 value=token,
                 httponly=False,  # JS must read this cookie
                 samesite="strict",
-                secure=False,  # local tool runs on HTTP; set True behind HTTPS
+                secure=False,  # DEV ONLY: local tool runs on HTTP; MUST set True in production behind HTTPS
                 path="/",
             )
 

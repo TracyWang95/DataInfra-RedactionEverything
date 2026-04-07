@@ -1,8 +1,11 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React from 'react';
+import { toPixel, type ResizeHandle } from './bbox-utils';
+import { useImageViewport, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from './hooks/useImageViewport';
+import { useBBoxInteraction } from './hooks/useBBoxInteraction';
 
 export interface BoundingBox {
   id: string;
-  x: number;      
+  x: number;
   y: number;
   width: number;
   height: number;
@@ -10,7 +13,7 @@ export interface BoundingBox {
   text?: string;
   selected: boolean;
   confidence?: number;
-  source?: 'ocr_has' | 'has_image' | 'manual';  
+  source?: 'ocr_has' | 'has_image' | 'manual';
 }
 
 interface TypeOption {
@@ -27,16 +30,13 @@ interface ImageBBoxEditorProps {
   getTypeConfig: (typeId: string) => { name: string; color: string };
   availableTypes?: TypeOption[];
   defaultType?: string;
-  
+
   readOnly?: boolean;
-  
+
   viewportTopSlot?: React.ReactNode;
-  
+
   viewportBottomSlot?: React.ReactNode;
 }
-
-type ResizeHandle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w' | null;
-
 
 const BOX_STROKE = '#94a3b8';
 const BOX_STROKE_SELECTED = '#64748b';
@@ -53,419 +53,38 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
   viewportTopSlot,
   viewportBottomSlot,
 }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
-  const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
-  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-  const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 });
-  
-  const [selectedBoxId, setSelectedBoxId] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [resizeHandle, setResizeHandle] = useState<ResizeHandle>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [drawStart, setDrawStart] = useState({ x: 0, y: 0 });
-  const [drawCurrent, setDrawCurrent] = useState({ x: 0, y: 0 });
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [drawMode, setDrawMode] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const lastBoxesRef = useRef<BoundingBox[]>(boxes);
-  const editStartBoxesRef = useRef<BoundingBox[] | null>(null);
-  const ZOOM_MIN = 0.5;
-  const ZOOM_MAX = 3;
-  const ZOOM_STEP = 0.1;
+  // --- hooks ----------------------------------------------------------------
+  const viewport = useImageViewport(imageSrc, readOnly);
+  const {
+    containerRef, viewportRef, imageRef,
+    naturalSize, displaySize,
+    displayW, displayH,
+    zoom, setZoom,
+    handleImageLoad,
+  } = viewport;
 
-  
-  useEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(entries => {
-      const cr = entries[0]?.contentRect;
-      if (!cr) return;
-      setViewportSize({ width: cr.width, height: cr.height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
+  const interaction = useBBoxInteraction({
+    boxes, onBoxesChange, onBoxesCommit,
+    displaySize, imageRef, readOnly,
+  });
+  const {
+    selectedBoxId,
+    drawMode, setDrawMode,
+    isDragging, isResizing, isDrawing,
+    drawingBox,
+    handleMouseDown, handleBoxMouseDown,
+    handleMouseMove, handleMouseUp,
+    handleTouchStart, handleBoxTouchStart,
+    handleDelete,
+  } = interaction;
 
-  
-  const fitScale = useMemo(() => {
-    if (naturalSize.width <= 0 || naturalSize.height <= 0) return 0;
-    if (viewportSize.width <= 0 || viewportSize.height <= 0) return 0;
-    return Math.min(viewportSize.width / naturalSize.width, viewportSize.height / naturalSize.height);
-  }, [naturalSize, viewportSize]);
-
-  const displayW = naturalSize.width * fitScale * zoom;
-  const displayH = naturalSize.height * fitScale * zoom;
-
-  
-  const handleImageLoad = useCallback(() => {
-    if (imageRef.current) {
-      setNaturalSize({
-        width: imageRef.current.naturalWidth,
-        height: imageRef.current.naturalHeight,
-      });
-    }
-  }, []);
-
-  useEffect(() => {
-    setDisplaySize({ width: displayW, height: displayH });
-  }, [displayW, displayH]);
-
-  useEffect(() => {
-    setZoom(1);
-    setNaturalSize({ width: 0, height: 0 });
-  }, [imageSrc]);
-
-  useEffect(() => {
-    if (readOnly) {
-      setZoom(1);
-      setDrawMode(false);
-      setSelectedBoxId(null);
-      setIsDrawing(false);
-      setIsDragging(false);
-      setIsResizing(false);
-    }
-  }, [readOnly]);
-
-  useEffect(() => {
-    lastBoxesRef.current = boxes;
-  }, [boxes]);
-
-  
-  const toPixel = useCallback((normalized: number, dimension: 'x' | 'y') => {
-    return normalized * (dimension === 'x' ? displaySize.width : displaySize.height);
-  }, [displaySize]);
-
-  
-  const toNormalized = useCallback((pixel: number, dimension: 'x' | 'y') => {
-    const size = dimension === 'x' ? displaySize.width : displaySize.height;
-    return size > 0 ? pixel / size : 0;
-  }, [displaySize]);
-
-  
-  const getMousePosFromClient = useCallback((clientX: number, clientY: number) => {
-    if (!imageRef.current) return { x: 0, y: 0 };
-    const rect = imageRef.current.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.min(clientX - rect.left, displaySize.width)),
-      y: Math.max(0, Math.min(clientY - rect.top, displaySize.height)),
-    };
-  }, [displaySize]);
-
-  const getMousePos = useCallback(
-    (e: React.MouseEvent) => getMousePosFromClient(e.clientX, e.clientY),
-    [getMousePosFromClient]
-  );
-
-  
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (readOnly) return;
-    if (!drawMode) return;
-    e.preventDefault();
-    editStartBoxesRef.current = boxes;
-    const pos = getMousePos(e);
-    setDrawStart(pos);
-    setDrawCurrent(pos);
-    setIsDrawing(true);
-    setSelectedBoxId(null);
-  }, [readOnly, drawMode, getMousePos, boxes]);
-
-  
-  const handleBoxMouseDown = useCallback((e: React.MouseEvent, boxId: string, handle?: ResizeHandle) => {
-    if (readOnly) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setSelectedBoxId(boxId);
-    editStartBoxesRef.current = boxes;
-    
-    const pos = getMousePos(e);
-    const box = boxes.find(b => b.id === boxId);
-    if (!box) return;
-
-    if (handle) {
-      setIsResizing(true);
-      setResizeHandle(handle);
-    } else {
-      setIsDragging(true);
-      setDragOffset({
-        x: pos.x - toPixel(box.x, 'x'),
-        y: pos.y - toPixel(box.y, 'y'),
-      });
-    }
-  }, [readOnly, boxes, getMousePos, toPixel]);
-
-  
-  const handleMouseMove = useCallback((e: React.MouseEvent | MouseEvent) => {
-    if (readOnly) return;
-    const pos = getMousePosFromClient(e.clientX, e.clientY);
-
-    if (isDrawing) {
-      setDrawCurrent(pos);
-      return;
-    }
-
-    if (!selectedBoxId) return;
-    const box = boxes.find(b => b.id === selectedBoxId);
-    if (!box) return;
-
-    if (isDragging) {
-      const newX = toNormalized(pos.x - dragOffset.x, 'x');
-      const newY = toNormalized(pos.y - dragOffset.y, 'y');
-      
-      
-      const clampedX = Math.max(0, Math.min(newX, 1 - box.width));
-      const clampedY = Math.max(0, Math.min(newY, 1 - box.height));
-
-      onBoxesChange(boxes.map(b => 
-        b.id === selectedBoxId ? { ...b, x: clampedX, y: clampedY } : b
-      ));
-    } else if (isResizing && resizeHandle) {
-      const normX = toNormalized(pos.x, 'x');
-      const normY = toNormalized(pos.y, 'y');
-      
-      const newBox = { ...box };
-      const minSize = 0.01;
-
-      switch (resizeHandle) {
-        case 'nw':
-          newBox.width = Math.max(minSize, box.x + box.width - normX);
-          newBox.height = Math.max(minSize, box.y + box.height - normY);
-          newBox.x = Math.min(normX, box.x + box.width - minSize);
-          newBox.y = Math.min(normY, box.y + box.height - minSize);
-          break;
-        case 'n':
-          newBox.height = Math.max(minSize, box.y + box.height - normY);
-          newBox.y = Math.min(normY, box.y + box.height - minSize);
-          break;
-        case 'ne':
-          newBox.width = Math.max(minSize, normX - box.x);
-          newBox.height = Math.max(minSize, box.y + box.height - normY);
-          newBox.y = Math.min(normY, box.y + box.height - minSize);
-          break;
-        case 'e':
-          newBox.width = Math.max(minSize, normX - box.x);
-          break;
-        case 'se':
-          newBox.width = Math.max(minSize, normX - box.x);
-          newBox.height = Math.max(minSize, normY - box.y);
-          break;
-        case 's':
-          newBox.height = Math.max(minSize, normY - box.y);
-          break;
-        case 'sw':
-          newBox.width = Math.max(minSize, box.x + box.width - normX);
-          newBox.height = Math.max(minSize, normY - box.y);
-          newBox.x = Math.min(normX, box.x + box.width - minSize);
-          break;
-        case 'w':
-          newBox.width = Math.max(minSize, box.x + box.width - normX);
-          newBox.x = Math.min(normX, box.x + box.width - minSize);
-          break;
-      }
-
-      
-      newBox.x = Math.max(0, newBox.x);
-      newBox.y = Math.max(0, newBox.y);
-      newBox.width = Math.min(newBox.width, 1 - newBox.x);
-      newBox.height = Math.min(newBox.height, 1 - newBox.y);
-
-      onBoxesChange(boxes.map(b => b.id === selectedBoxId ? newBox : b));
-    }
-  }, [readOnly, isDrawing, isDragging, isResizing, selectedBoxId, boxes, dragOffset, resizeHandle, getMousePosFromClient, toNormalized, onBoxesChange]);
-
-  
-  const handleMouseUp = useCallback(() => {
-    if (readOnly) return;
-    if (isDrawing) {
-      const x1 = toNormalized(Math.min(drawStart.x, drawCurrent.x), 'x');
-      const y1 = toNormalized(Math.min(drawStart.y, drawCurrent.y), 'y');
-      const x2 = toNormalized(Math.max(drawStart.x, drawCurrent.x), 'x');
-      const y2 = toNormalized(Math.max(drawStart.y, drawCurrent.y), 'y');
-      
-      const width = x2 - x1;
-      const height = y2 - y1;
-
-      
-      if (width > 0.01 && height > 0.01) {
-        const newBox: BoundingBox = {
-          id: `manual_${Date.now()}`,
-          x: x1,
-          y: y1,
-          width,
-          height,
-          type: 'CUSTOM',
-          text: '自定义',
-          selected: true,
-          confidence: 1.0,
-          source: 'manual',
-        };
-        const nextBoxes = [...boxes, newBox];
-        onBoxesChange(nextBoxes);
-        onBoxesCommit?.(boxes, nextBoxes);
-        setSelectedBoxId(newBox.id);
-      }
-    }
-
-    if ((isDragging || isResizing) && editStartBoxesRef.current) {
-      onBoxesCommit?.(editStartBoxesRef.current, lastBoxesRef.current);
-    }
-
-    setIsDrawing(false);
-    setIsDragging(false);
-    setIsResizing(false);
-    setResizeHandle(null);
-    editStartBoxesRef.current = null;
-  }, [readOnly, isDrawing, isDragging, isResizing, drawStart, drawCurrent, boxes, toNormalized, onBoxesChange, onBoxesCommit]);
-
-  // Touch event handlers
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    if (readOnly || !drawMode) return;
-    e.preventDefault();
-    editStartBoxesRef.current = boxes;
-    const touch = e.touches[0];
-    const pos = getMousePosFromClient(touch.clientX, touch.clientY);
-    setDrawStart(pos);
-    setDrawCurrent(pos);
-    setIsDrawing(true);
-    setSelectedBoxId(null);
-  }, [readOnly, drawMode, getMousePosFromClient, boxes]);
-
-  const handleBoxTouchStart = useCallback((e: React.TouchEvent, boxId: string, handle?: ResizeHandle) => {
-    if (readOnly) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setSelectedBoxId(boxId);
-    editStartBoxesRef.current = boxes;
-
-    const touch = e.touches[0];
-    const pos = getMousePosFromClient(touch.clientX, touch.clientY);
-    const box = boxes.find(b => b.id === boxId);
-    if (!box) return;
-
-    if (handle) {
-      setIsResizing(true);
-      setResizeHandle(handle);
-    } else {
-      setIsDragging(true);
-      setDragOffset({
-        x: pos.x - toPixel(box.x, 'x'),
-        y: pos.y - toPixel(box.y, 'y'),
-      });
-    }
-  }, [readOnly, boxes, getMousePosFromClient, toPixel]);
-
-  const handleTouchMove = useCallback((e: TouchEvent | React.TouchEvent) => {
-    if (readOnly) return;
-    const touch = ('touches' in e) ? e.touches[0] : (e as React.TouchEvent).touches[0];
-    if (!touch) return;
-    const pos = getMousePosFromClient(touch.clientX, touch.clientY);
-
-    if (isDrawing) {
-      setDrawCurrent(pos);
-      return;
-    }
-
-    if (!selectedBoxId) return;
-    const box = boxes.find(b => b.id === selectedBoxId);
-    if (!box) return;
-
-    if (isDragging) {
-      const newX = toNormalized(pos.x - dragOffset.x, 'x');
-      const newY = toNormalized(pos.y - dragOffset.y, 'y');
-      const clampedX = Math.max(0, Math.min(newX, 1 - box.width));
-      const clampedY = Math.max(0, Math.min(newY, 1 - box.height));
-      onBoxesChange(boxes.map(b =>
-        b.id === selectedBoxId ? { ...b, x: clampedX, y: clampedY } : b
-      ));
-    } else if (isResizing && resizeHandle) {
-      const normX = toNormalized(pos.x, 'x');
-      const normY = toNormalized(pos.y, 'y');
-      const newBox = { ...box };
-      const minSize = 0.01;
-      switch (resizeHandle) {
-        case 'nw': newBox.width = Math.max(minSize, box.x + box.width - normX); newBox.height = Math.max(minSize, box.y + box.height - normY); newBox.x = Math.min(normX, box.x + box.width - minSize); newBox.y = Math.min(normY, box.y + box.height - minSize); break;
-        case 'n': newBox.height = Math.max(minSize, box.y + box.height - normY); newBox.y = Math.min(normY, box.y + box.height - minSize); break;
-        case 'ne': newBox.width = Math.max(minSize, normX - box.x); newBox.height = Math.max(minSize, box.y + box.height - normY); newBox.y = Math.min(normY, box.y + box.height - minSize); break;
-        case 'e': newBox.width = Math.max(minSize, normX - box.x); break;
-        case 'se': newBox.width = Math.max(minSize, normX - box.x); newBox.height = Math.max(minSize, normY - box.y); break;
-        case 's': newBox.height = Math.max(minSize, normY - box.y); break;
-        case 'sw': newBox.width = Math.max(minSize, box.x + box.width - normX); newBox.height = Math.max(minSize, normY - box.y); newBox.x = Math.min(normX, box.x + box.width - minSize); break;
-        case 'w': newBox.width = Math.max(minSize, box.x + box.width - normX); newBox.x = Math.min(normX, box.x + box.width - minSize); break;
-      }
-      newBox.x = Math.max(0, newBox.x);
-      newBox.y = Math.max(0, newBox.y);
-      newBox.width = Math.min(newBox.width, 1 - newBox.x);
-      newBox.height = Math.min(newBox.height, 1 - newBox.y);
-      onBoxesChange(boxes.map(b => b.id === selectedBoxId ? newBox : b));
-    }
-  }, [readOnly, isDrawing, isDragging, isResizing, selectedBoxId, boxes, dragOffset, resizeHandle, getMousePosFromClient, toNormalized, onBoxesChange]);
-
-  // 拖拽/缩放/拉框时指针移出图片区域仍跟踪（避免被父级 overflow 截断）
-  useEffect(() => {
-    if (readOnly) return;
-    if (!isDragging && !isResizing && !isDrawing) return;
-    const onMove = (e: MouseEvent) => {
-      handleMouseMove(e);
-    };
-    const onTouchMove = (e: TouchEvent) => {
-      e.preventDefault();
-      handleTouchMove(e);
-    };
-    const onUp = () => handleMouseUp();
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    document.addEventListener('touchmove', onTouchMove, { passive: false });
-    document.addEventListener('touchend', onUp);
-    document.addEventListener('touchcancel', onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      document.removeEventListener('touchmove', onTouchMove);
-      document.removeEventListener('touchend', onUp);
-      document.removeEventListener('touchcancel', onUp);
-    };
-  }, [readOnly, isDragging, isResizing, isDrawing, handleMouseMove, handleMouseUp, handleTouchMove]);
-
-  // 删除选中的框
-  const handleDelete = useCallback(() => {
-    if (readOnly) return;
-    if (selectedBoxId) {
-      const nextBoxes = boxes.filter(b => b.id !== selectedBoxId);
-      onBoxesChange(nextBoxes);
-      onBoxesCommit?.(boxes, nextBoxes);
-      setSelectedBoxId(null);
-    }
-  }, [readOnly, selectedBoxId, boxes, onBoxesChange, onBoxesCommit]);
-
-  // 键盘事件
-  useEffect(() => {
-    if (readOnly) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') {
-        handleDelete();
-      } else if (e.key === 'Escape') {
-        setSelectedBoxId(null);
-        setDrawMode(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [readOnly, handleDelete]);
-
-  // 渲染调整手柄
+  // --- resize handles -------------------------------------------------------
   const renderResizeHandles = (box: BoundingBox) => {
     const handleSize = 8;
     const handleLabels: Record<string, string> = {
-      nw: '向左上调整大小',
-      n: '向上调整大小',
-      ne: '向右上调整大小',
-      e: '向右调整大小',
-      se: '向右下调整大小',
-      s: '向下调整大小',
-      sw: '向左下调整大小',
-      w: '向左调整大小',
+      nw: '向左上调整大小', n: '向上调整大小', ne: '向右上调整大小',
+      e: '向右调整大小', se: '向右下调整大小', s: '向下调整大小',
+      sw: '向左下调整大小', w: '向左调整大小',
     };
     const handles: { pos: ResizeHandle; style: React.CSSProperties }[] = [
       { pos: 'nw', style: { left: -handleSize/2, top: -handleSize/2, cursor: 'nwse-resize' } },
@@ -484,26 +103,14 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
         role="separator"
         aria-label={handleLabels[pos!] || '调整大小'}
         className="absolute rounded-sm border border-border bg-[var(--surface-overlay)] shadow-[var(--shadow-sm)]"
-        style={{
-          width: handleSize,
-          height: handleSize,
-          ...style,
-        }}
+        style={{ width: handleSize, height: handleSize, ...style }}
         onMouseDown={(e) => handleBoxMouseDown(e, box.id, pos)}
         onTouchStart={(e) => handleBoxTouchStart(e, box.id, pos)}
       />
     ));
   };
 
-  // 绘制中的预览框
-  const drawingBox = isDrawing ? {
-    left: Math.min(drawStart.x, drawCurrent.x),
-    top: Math.min(drawStart.y, drawCurrent.y),
-    width: Math.abs(drawCurrent.x - drawStart.x),
-    height: Math.abs(drawCurrent.y - drawStart.y),
-  } : null;
-
-  /** 只读对比：与 Playground 右侧「纯 img + object-contain」同一套缩放，框用百分比叠在图上，避免 fitScale 像素取整与视口测量导致裁切、显大 */
+  // --- box rendering --------------------------------------------------------
   const renderBoxes = (percentCoords: boolean) =>
     boxes.map(box => {
       const config = getTypeConfig(box.type);
@@ -524,10 +131,10 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
             height: `${box.height * 100}%`,
           }
         : {
-            left: toPixel(box.x, 'x'),
-            top: toPixel(box.y, 'y'),
-            width: toPixel(box.width, 'x'),
-            height: toPixel(box.height, 'y'),
+            left: toPixel(box.x, 'x', displaySize),
+            top: toPixel(box.y, 'y', displaySize),
+            width: toPixel(box.width, 'x', displaySize),
+            height: toPixel(box.height, 'y', displaySize),
           };
 
       return (
@@ -576,9 +183,10 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
       );
     });
 
+  // --- JSX ------------------------------------------------------------------
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* 工具栏（脱敏结果对比 / 只读模式不展示） */}
+      {/* Toolbar (hidden in readOnly mode) */}
       {!readOnly && (
       <div className="flex flex-wrap items-center gap-1.5 border-b border-border/70 bg-[var(--surface-overlay)] px-2 py-1.5 flex-shrink-0">
         <button
@@ -639,7 +247,7 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
       </div>
       )}
 
-      {/* 图片区：按视口适应缩放 + 用户 zoom；插槽浮在视口上 */}
+      {/* Image viewport */}
       <div
         ref={viewportRef}
         className={`relative flex-1 w-full min-h-0 ${readOnly ? 'overflow-hidden' : 'overflow-auto'} flex items-center justify-center bg-[var(--surface-canvas)] ${
