@@ -187,7 +187,6 @@ export function usePlaygroundFile(options: UsePlaygroundFileOptions) {
     };
 
     doRecognition();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFile]);
 
   // --- Dropzone ---

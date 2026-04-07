@@ -10,7 +10,7 @@ export async function safeJson<T = any>(res: Response): Promise<T> {
   try {
     return await res.json();
   } catch {
-    throw new Error('服务端返回了非 JSON 响应');
+    throw new Error('Non-JSON response from server');
   }
 }
 
@@ -42,11 +42,9 @@ export function getModePreview(mode: string, sampleEntity?: Entity) {
 }
 
 export async function authBlobUrl(url: string, mime?: string): Promise<string> {
-  const token = localStorage.getItem('auth_token');
-  if (!token) return url;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  const res = await authFetch(url);
   if (!res.ok) {
-    throw new Error(`加载文件失败: ${res.status}`);
+    throw new Error(`Failed to load file: ${res.status}`);
   }
   const buf = await res.arrayBuffer();
   const blob = mime ? new Blob([buf], { type: mime }) : new Blob([buf]);
@@ -105,7 +103,7 @@ export async function runVisionDetection(
   }
 
   if (!res.ok) {
-    throw new Error('图像识别失败');
+    throw new Error('Vision detection failed');
   }
 
   const data = await safeJson(res);

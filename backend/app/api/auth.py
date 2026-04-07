@@ -13,7 +13,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.rate_limit import RateLimiter
-from app.models.schemas import PasswordRequest, ChangePasswordRequest, TokenResponse, AuthStatusResponse
+from app.models.schemas import PasswordRequest, ChangePasswordRequest, TokenResponse, AuthStatusResponse, MessageResponse
 
 router = APIRouter(tags=["auth"])
 
@@ -65,7 +65,7 @@ async def login(req: PasswordRequest):
     )
 
 
-@router.post("/auth/change-password", dependencies=[Depends(_check_auth_rate_limit)])
+@router.post("/auth/change-password", response_model=MessageResponse, dependencies=[Depends(_check_auth_rate_limit)])
 async def change_password(req: ChangePasswordRequest, _: str = Depends(require_auth)):
     """Change password (requires current auth + old password verification)."""
     if not check_password(req.old_password):
@@ -76,7 +76,7 @@ async def change_password(req: ChangePasswordRequest, _: str = Depends(require_a
     return {"message": "密码修改成功"}
 
 
-@router.post("/auth/logout")
+@router.post("/auth/logout", response_model=MessageResponse)
 async def logout(request: Request, _: str = Depends(require_auth)):
     """Revoke the current JWT so it can no longer be used."""
     auth_header = request.headers.get("Authorization", "")
@@ -86,7 +86,7 @@ async def logout(request: Request, _: str = Depends(require_auth)):
     return {"message": "已注销"}
 
 
-@router.post("/auth/revoke-all")
+@router.post("/auth/revoke-all", response_model=MessageResponse)
 async def revoke_all_tokens(_: str = Depends(require_auth)):
     """Invalidate ALL existing tokens by rotating the JWT secret.
 
