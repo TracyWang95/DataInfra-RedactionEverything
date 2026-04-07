@@ -267,7 +267,7 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
         {readOnly ? (
           <div
             role="img"
-            aria-label="Image bounding box editor (read-only)"
+            aria-label="Image redaction preview (read-only)"
             className="relative shrink-0 leading-none"
             style={
               naturalSize.width > 0 && naturalSize.height > 0
