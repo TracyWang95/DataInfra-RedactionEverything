@@ -5,7 +5,7 @@ export type SelectionTone = 'regex' | 'semantic' | 'visual';
 export const selectionToneHex: Record<SelectionTone, string> = {
   regex: '#6f86a7',
   semantic: '#10a37f',
-  visual: '#c77c2c',
+  visual: '#7c6f9c',
 };
 
 type ToneClasses = {
