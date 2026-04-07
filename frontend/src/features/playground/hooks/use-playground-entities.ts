@@ -1,5 +1,9 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { t } from '@/i18n';
 import { useUndoRedo } from '@/hooks/useUndoRedo';
 import { authFetch } from '@/services/api-client';
 import { showToast } from '@/components/Toast';
@@ -57,7 +61,7 @@ export function usePlaygroundEntities() {
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
-      if (!nerRes.ok) throw new Error('重新识别失败');
+      if (!nerRes.ok) throw new Error(t('error.reRecognizeFailed'));
       const nerData = await safeJson(nerRes);
       if (controller.signal.aborted) return;
       const entitiesWithSource = (nerData.entities || []).map(

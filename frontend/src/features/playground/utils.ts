@@ -1,4 +1,8 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
 
+
+import { t } from '@/i18n';
 import { authFetch, VISION_TIMEOUT } from '@/services/api-client';
 import { getSelectionMarkStyle, getSelectionToneClasses, type SelectionTone } from '@/ui/selectionPalette';
 import type { Entity, BoundingBox } from './types';
@@ -92,9 +96,7 @@ export async function runVisionDetection(
     if (e instanceof DOMException && e.name === 'AbortError') {
       // If aborted by external signal, re-throw as AbortError (caller handles it)
       if (externalSignal?.aborted) throw e;
-      throw new Error(
-        '图像识别超时（超过 3 分钟）。若 Paddle 在 CPU 上跑会很慢，可换更小图片或安装 paddle GPU 版加速。'
-      );
+      throw new Error(t('error.visionTimeout'));
     }
     throw e;
   } finally {
@@ -103,7 +105,7 @@ export async function runVisionDetection(
   }
 
   if (!res.ok) {
-    throw new Error('Vision detection failed');
+    throw new Error(t('error.visionDetectionFailed'));
   }
 
   const data = await safeJson(res);

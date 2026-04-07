@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { useT } from '@/i18n';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';

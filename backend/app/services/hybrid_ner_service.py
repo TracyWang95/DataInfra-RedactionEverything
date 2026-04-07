@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 混合NER识别服务
 三阶段架构：HaS（本地模型） → 正则 → 交叉验证

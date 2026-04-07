@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 结构化日志配置 — JSON 格式输出，方便日志聚合（ELK / Loki / CloudWatch）。
 

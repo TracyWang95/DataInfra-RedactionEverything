@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import React from 'react';
 import { toPixel, type ResizeHandle } from './bbox-utils';
 import { useImageViewport, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP } from './hooks/useImageViewport';
@@ -191,6 +194,8 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
       <div className="flex flex-wrap items-center gap-1.5 border-b border-border/70 bg-[var(--surface-overlay)] px-2 py-1.5 flex-shrink-0">
         <button
           onClick={() => setDrawMode(!drawMode)}
+          aria-label={drawMode ? '退出绘制模式' : '进入拉框标注模式'}
+          aria-pressed={drawMode}
           className={`px-3 py-1.5 text-xs font-medium rounded-lg flex items-center gap-1.5 transition-colors ${
             drawMode
               ? 'bg-foreground text-background shadow-[var(--shadow-control)]'
@@ -206,6 +211,7 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
         {selectedBoxId && (
           <button
             onClick={handleDelete}
+            aria-label="删除选中的标注区域"
             className="flex items-center gap-1.5 rounded-lg border border-[var(--error-border)] bg-[var(--error-surface)] px-3 py-1.5 text-xs font-medium text-[var(--error-foreground)] shadow-[var(--shadow-sm)]"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -235,6 +241,7 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
             type="button"
             onClick={() => setZoom(1)}
             className="rounded-lg border border-input bg-[var(--surface-control)] px-2 py-1 text-xs text-muted-foreground shadow-[var(--shadow-sm)] hover:bg-accent hover:text-foreground"
+            aria-label="恢复为适应窗口大小"
             title="恢复为适应窗口大小"
           >
             适应
@@ -295,12 +302,30 @@ const ImageBBoxEditor: React.FC<ImageBBoxEditorProps> = ({
             ref={containerRef}
             role="application"
             aria-label="图像标注区域，可拖拽框选敏感区域"
+            aria-roledescription="bounding box editor"
             tabIndex={0}
             className={`relative inline-block shrink-0 ${drawMode ? 'cursor-crosshair' : 'cursor-default'}`}
             style={{
               width: displayW > 0 ? displayW : undefined,
               height: displayH > 0 ? displayH : undefined,
               touchAction: 'none',
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedBoxId) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleDelete();
+                }
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                if (drawMode) {
+                  setDrawMode(false);
+                } else {
+                  interaction.setSelectedBoxId(null);
+                }
+              }
             }}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}

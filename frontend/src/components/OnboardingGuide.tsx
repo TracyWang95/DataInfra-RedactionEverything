@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Sparkles, Upload, ScanText, ShieldCheck, Layers3 } from 'lucide-react';

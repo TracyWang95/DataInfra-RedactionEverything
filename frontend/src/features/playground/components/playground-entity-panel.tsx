@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 
 import { type FC, type MouseEvent as ReactMouseEvent, useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';

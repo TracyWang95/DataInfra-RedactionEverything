@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Pure utility functions for bounding-box coordinate transforms and resize computation.
  * No React dependencies — safe to use in hooks, workers, or tests.

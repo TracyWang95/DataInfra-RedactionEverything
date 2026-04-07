@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """主后端调用 HaS Image 微服务 (8081)。"""
 from __future__ import annotations
 

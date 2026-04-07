@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 文件解析与 NER 执行服务 — 从 file_management_service.py 提取。
 

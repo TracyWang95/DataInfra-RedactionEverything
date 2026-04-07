@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """Unified error response handling."""
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -50,9 +53,17 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # Sanitize Pydantic errors: expose field location + user-friendly message only
+    safe_errors = []
+    for err in exc.errors():
+        loc = " → ".join(str(l) for l in err.get("loc", []) if l != "body")
+        safe_errors.append({
+            "field": loc or "(root)",
+            "message": err.get("msg", "校验失败"),
+        })
     return _error_response(
         422,
         "VALIDATION_ERROR",
         "请求参数校验失败",
-        {"errors": exc.errors()},
+        {"errors": safe_errors},
     )

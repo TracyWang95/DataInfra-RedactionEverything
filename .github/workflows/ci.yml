@@ -63,5 +63,14 @@ jobs:
         run: pip install pip-audit && pip-audit -r requirements-ci.txt
         continue-on-error: true
 
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+      - name: Run tests with coverage
+        run: |
+          pip install pytest-cov
+          python -m pytest tests/ -v --tb=short --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml

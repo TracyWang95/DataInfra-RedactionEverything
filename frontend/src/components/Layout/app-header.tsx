@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 
 import { Globe } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
@@ -18,7 +21,7 @@ export function AppHeader() {
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 backdrop-blur-2xl sm:px-6">
       <div className="flex min-h-[40px] min-w-0 flex-1 items-center gap-3">
-        <SidebarTrigger className="md:hidden" />
+        <SidebarTrigger className="md:hidden" aria-label={t('layout.toggleSidebar')} />
         <div className="flex min-w-0 flex-col justify-center">
           <h1 className="truncate text-lg font-semibold leading-tight tracking-[-0.04em] text-foreground">
             {title}
@@ -31,6 +34,16 @@ export function AppHeader() {
 
       <nav aria-label={t('layout.headerActions')} className="flex shrink-0 items-center gap-2 rounded-full border border-border/70 bg-[var(--surface-control)] px-2 py-1.5 shadow-[var(--shadow-control)]">
         <div
+          role="status"
+          aria-label={
+            checking
+              ? t('health.checking')
+              : health?.all_online
+                ? t('health.allOnline')
+                : health
+                  ? t('health.someOffline')
+                  : t('health.backendDown')
+          }
           className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
           data-testid="health-indicator"
         >

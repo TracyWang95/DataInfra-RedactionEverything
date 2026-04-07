@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 SQLite 数据库备份 — 定时备份 + 启动时损坏检测。
 

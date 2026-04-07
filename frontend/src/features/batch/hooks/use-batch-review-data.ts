@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 
 import {
   useCallback,
@@ -6,6 +9,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
 import { fileApi, authenticatedBlobUrl } from '@/services/api';
@@ -253,7 +257,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
           window.clearTimeout(timer);
         }
         if (controller.signal.aborted) return;
-        if (!res.ok) throw new Error('Vision detection failed');
+        if (!res.ok) throw new Error(t('error.visionDetectionFailed'));
         const data = await res.json();
         if (controller.signal.aborted) return;
         const boxes: EditorBox[] = ((data.bounding_boxes || []) as Record<string, unknown>[]).map((b, idx) => ({

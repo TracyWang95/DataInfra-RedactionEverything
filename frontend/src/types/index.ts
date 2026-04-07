@@ -1,3 +1,18 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+// ---------------------------------------------------------------------------
+// Shared / canonical type definitions used across features (history, batch
+// API layer, redaction pipeline, etc.).
+//
+// NOTE: The playground and batch features maintain lighter, context-specific
+// projections of some types here (Entity, BoundingBox, FileInfo,
+// EntityTypeConfig). See:
+//   - features/playground/types.ts  — UI-oriented playground slices
+//   - features/batch/types.ts       — batch wizard runtime types
+//
+// Do NOT blindly merge them: the field differences are intentional.
+// ---------------------------------------------------------------------------
 
 export enum IdentifierCategory {
   DIRECT = 'direct',       

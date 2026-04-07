@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 图片匿名化模块
 处理图片/扫描件的区域匿名化（马赛克 / 高斯模糊 / 纯色填充）

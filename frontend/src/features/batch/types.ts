@@ -1,3 +1,22 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+// ---------------------------------------------------------------------------
+// Batch-local type definitions.
+//
+// These are specific to the batch processing wizard and intentionally separate
+// from the shared types in `@/types/index.ts`:
+//
+//  - PipelineCfg: similar to playground's PipelineConfig but with inline
+//    `types` containing an `enabled` flag for per-batch toggling.
+//  - TextEntityType: lighter than the shared EntityTypeConfig — only the
+//    fields the batch config step UI needs.
+//  - BatchRow: extends the shared FileListItem with batch-specific runtime
+//    state (analyzeStatus, reviewConfirmed, etc.).
+//  - ReviewEntity: superset of Entity used during the review step, adding
+//    optional fields like `confidence`, `source`, `coref_id`, `replacement`.
+// ---------------------------------------------------------------------------
+
 import type { FileListItem } from '@/types';
 
 export type Step = 1 | 2 | 3 | 4 | 5;

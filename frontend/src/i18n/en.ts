@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 ﻿const enBase: Record<string, string> = {
   
   'nav.playground': 'Playground',
@@ -645,6 +648,7 @@
   
   'layout.navLabel': 'Main navigation',
   'layout.headerActions': 'Status and settings',
+  'layout.toggleSidebar': 'Toggle sidebar',
   'layout.languageSwitch': 'Switch language',
   'health.status.checking': 'Checking',
   'health.status.allOnline': 'All online',
@@ -689,6 +693,10 @@
   'safety.cleanup.failed': 'Cleanup failed',
   'safety.autoDelete.label': 'Auto-delete originals after redaction',
   'safety.autoDelete.desc': 'Automatically remove uploaded source files once redaction completes',
+
+  'error.visionTimeout': 'Vision detection timed out (over 3 min). PaddleOCR is slow on CPU — try a smaller image or install paddle GPU.',
+  'error.visionDetectionFailed': 'Vision detection failed',
+  'error.reRecognizeFailed': 'Re-recognition failed',
 };
 
 const enOverrides: Record<string, string> = {

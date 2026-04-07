@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 文本匿名化模块
 处理 DOCX、PDF、TXT 文档的文本替换逻辑

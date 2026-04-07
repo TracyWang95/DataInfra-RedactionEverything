@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 ﻿const zhBase: Record<string, string> = {
   
   'nav.playground': 'Playground',
@@ -645,6 +648,7 @@
   
   'layout.navLabel': '主导航',
   'layout.headerActions': '状态与设置',
+  'layout.toggleSidebar': '展开/收起侧边栏',
   'health.status.checking': '检测中',
   'health.status.allOnline': '全部在线',
   'health.status.someOffline': '部分离线',
@@ -715,6 +719,10 @@
   'batchWizard.previewReviewDone': '当前预览文件已确认，可以继续检查下一份文件或导出页。',
   'batchWizard.previewDownloadReady': '已生成预览导出文件，用来检查下载入口和状态展示。',
   'batchWizard.previewJobLabel': '预览任务',
+
+  'error.visionTimeout': '图像识别超时（超过 3 分钟）。若 Paddle 在 CPU 上跑会很慢，可换更小图片或安装 paddle GPU 版加速。',
+  'error.visionDetectionFailed': '图像识别失败',
+  'error.reRecognizeFailed': '重新识别失败',
 };
 
 const zhOverrides: Record<string, string> = {

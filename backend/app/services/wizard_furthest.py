@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """从 Job config 中解析 wizard_furthest_step（int / str / float），供 jobs 列表与 files embed 共用。"""
 from __future__ import annotations
 

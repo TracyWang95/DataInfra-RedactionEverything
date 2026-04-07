@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """Auth API endpoints."""
 import secrets as _secrets
 
@@ -42,8 +45,8 @@ async def auth_status():
 async def setup_password(req: PasswordRequest):
     if is_password_set():
         raise HTTPException(status_code=400, detail="密码已设置，请使用登录接口")
-    if len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="密码长度至少 6 位")
+    if len(req.password) < 12:
+        raise HTTPException(status_code=400, detail="密码长度至少 12 位")
     set_password(req.password)
     token = create_token()
     return TokenResponse(
@@ -70,8 +73,8 @@ async def change_password(req: ChangePasswordRequest, _: str = Depends(require_a
     """Change password (requires current auth + old password verification)."""
     if not check_password(req.old_password):
         raise HTTPException(status_code=401, detail="旧密码错误")
-    if len(req.new_password) < 6:
-        raise HTTPException(status_code=400, detail="密码长度至少 6 位")
+    if len(req.new_password) < 12:
+        raise HTTPException(status_code=400, detail="密码长度至少 12 位")
     set_password(req.new_password)
     return {"message": "密码修改成功"}
 
@@ -101,7 +104,7 @@ async def revoke_all_tokens(_: str = Depends(require_auth)):
         with open(secret_path, "w") as f:
             json.dump({"secret": new_secret}, f)
     except OSError as e:
-        logging.getLogger(__name__).error("Failed to persist rotated JWT secret: %s", e)
+        logging.getLogger(__name__).error("Failed to persist rotated JWT secret")
         raise HTTPException(status_code=500, detail="无法保存新密钥")
 
     # Update the in-memory settings so new tokens use the new secret

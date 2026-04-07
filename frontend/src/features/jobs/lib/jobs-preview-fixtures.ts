@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { JobDetail, JobItemRow, JobProgress, JobSummary, JobTypeApi } from '@/services/jobsApi';
 
 const PREVIEW_JOB_COUNT = 42;

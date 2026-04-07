@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 图像识别 Pipeline 配置 — 业务逻辑层
 1. OCR + HaS：文字类敏感信息

@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Download, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';

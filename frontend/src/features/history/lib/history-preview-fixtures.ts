@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { FileType, type CompareData, type FileListItem, type FileListResponse } from '@/types';
 
 const PREVIEW_ROW_COUNT = 60;

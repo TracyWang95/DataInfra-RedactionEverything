@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """Simple in-memory rate limiter with bounded memory (no external dependencies)."""
 import threading
 import time

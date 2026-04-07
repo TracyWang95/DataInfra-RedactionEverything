@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared pytest fixtures for the backend test suite."""
 from __future__ import annotations
 

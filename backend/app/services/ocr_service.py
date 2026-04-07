@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 OCR 服务客户端
 通过 HTTP 调用独立的 PaddleOCR-VL 微服务 (端口8082)

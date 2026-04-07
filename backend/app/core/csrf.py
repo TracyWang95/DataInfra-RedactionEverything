@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """CSRF protection via double-submit cookie pattern.
 
 How it works:
@@ -38,9 +41,20 @@ _HEADER_NAME = "x-csrf-token"
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):
-    """Double-submit cookie CSRF protection."""
+    """Double-submit cookie CSRF protection.
+
+    Automatically disabled when AUTH_ENABLED is false (no session to protect).
+    """
 
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
+        # CSRF is a browser-session attack; skip when auth is disabled.
+        # Check env var directly to handle test-time overrides (Pydantic
+        # Settings is a cached singleton, not re-read per request).
+        # Align with config.py: AUTH_ENABLED must be explicitly "true".
+        import os
+        if os.environ.get("AUTH_ENABLED", "false").lower() != "true":
+            return await call_next(request)
+
         path = request.url.path
 
         # --- Exempt paths ------------------------------------------------

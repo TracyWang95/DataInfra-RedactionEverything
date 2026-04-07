@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 替换策略模块
 管理不同的匿名化替换模式：SMART / MASK / CUSTOM / STRUCTURED

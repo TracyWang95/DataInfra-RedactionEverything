@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 文件管理 API 路由
 处理文件上传、下载、解析等操作
@@ -14,9 +17,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, BackgroundTasks, Body, Query, Depends
+from fastapi import APIRouter, UploadFile, File, Form, Header, HTTPException, BackgroundTasks, Body, Query, Depends, Path
 from fastapi.responses import FileResponse, Response
-from typing import Optional
+from typing import Annotated, Optional
+
+# Reusable path parameter with UUID format validation
+_UUID_RE = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+FileIdPath = Annotated[str, Path(description="文件 UUID", pattern=_UUID_RE)]
 
 from app.core.idempotency import check_idempotency, save_idempotency
 from app.core.audit import audit_log
@@ -227,7 +234,7 @@ async def upload_file(
 
 
 @router.get("/files/{file_id}/parse", response_model=ParseResult)
-async def parse_file(file_id: str):
+async def parse_file(file_id: FileIdPath):
     """
     解析文件内容
 
@@ -246,7 +253,7 @@ async def parse_file(file_id: str):
 
 @router.post("/files/{file_id}/ner/hybrid", response_model=NERResult)
 async def hybrid_ner_extract(
-    file_id: str,
+    file_id: FileIdPath,
     request: HybridNERRequest = Body(default=HybridNERRequest()),
 ):
     """
@@ -278,7 +285,7 @@ async def hybrid_ner_extract(
 
 
 @router.get("/files/{file_id}/ner", response_model=NERResult)
-async def extract_entities(file_id: str):
+async def extract_entities(file_id: FileIdPath):
     """
     对文件进行命名实体识别 (NER) - 使用默认实体类型
     """
@@ -300,7 +307,7 @@ async def extract_entities(file_id: str):
 
 @router.post("/files/{file_id}/ner", response_model=NERResult)
 async def extract_entities_with_config(
-    file_id: str,
+    file_id: FileIdPath,
     request: NERRequest = Body(default=NERRequest()),
 ):
     """
@@ -323,7 +330,7 @@ async def extract_entities_with_config(
 
 
 @router.get("/files/{file_id}")
-async def get_file_info(file_id: str):
+async def get_file_info(file_id: FileIdPath):
     """获取文件信息"""
     info = await _fms.get_file_info(file_id)
     if not info:
@@ -332,7 +339,7 @@ async def get_file_info(file_id: str):
 
 
 @router.get("/files/{file_id}/download")
-async def download_file(file_id: str, redacted: bool = False):
+async def download_file(file_id: FileIdPath, redacted: bool = False):
     """
     下载文件
 
@@ -368,7 +375,7 @@ async def download_file(file_id: str, redacted: bool = False):
 
 
 @router.delete("/files/{file_id}")
-async def delete_file(file_id: str):
+async def delete_file(file_id: FileIdPath):
     """删除文件"""
     snapshot = await _fms.delete_file(file_id)
     if not snapshot:

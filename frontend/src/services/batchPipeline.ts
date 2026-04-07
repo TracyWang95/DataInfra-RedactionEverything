@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 
 import type { ParseResult, NERResult, VisionResult, RedactionResult, RedactionRequest } from '../types';
 import { get, post, BATCH_TIMEOUT } from './api-client';

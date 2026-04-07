@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Shared DOM selection helpers used by both Playground and Batch review UIs.
  */

@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 图像识别 Pipeline 配置 API — 路由层（thin wrapper）
 1. OCR + HaS：文字类敏感信息

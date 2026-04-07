@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 
 import { NavLink, useLocation } from 'react-router-dom';
 import { Lock, ShieldCheck } from 'lucide-react';
@@ -91,6 +94,7 @@ export function AppSidebar() {
                       <NavLink
                         to={item.path}
                         end={item.end}
+                        aria-label={item.sublabel ? `${item.label} — ${item.sublabel}` : item.label}
                         data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '')}`}
                       >
                         <item.icon className="h-[16px] w-[16px] opacity-70" />
@@ -136,6 +140,7 @@ export function AppSidebar() {
                     >
                       <NavLink
                         to={item.path}
+                        aria-label={item.label}
                         data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '')}`}
                       >
                         <item.icon className="h-[16px] w-[16px] opacity-70" />

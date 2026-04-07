@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { t } from '@/i18n';
 import type { SelectionTone } from '@/ui/selectionPalette';
 import type { EntityTypeConfig, PipelineConfig, VisionTypeConfig } from '../types';

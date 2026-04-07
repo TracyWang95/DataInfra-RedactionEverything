@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 OCR Pipeline - PaddleOCR text extraction + HaS NER sensitive entity detection.
 

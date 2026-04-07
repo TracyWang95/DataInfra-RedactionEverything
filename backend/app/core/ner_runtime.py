@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 运行时 NER 后端配置（优先于环境变量 / .env）
 由前端「模型设置」页写入 data/ner_backend.json

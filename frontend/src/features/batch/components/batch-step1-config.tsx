@@ -1,32 +1,16 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Eye } from 'lucide-react';
 import { useT } from '@/i18n';
-import { cn } from '@/lib/utils';
 
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import type { RecognitionPreset } from '@/services/presetsApi';
 import type { BatchWizardPersistedConfig } from '@/services/batchPipeline';
 import type { PipelineCfg, TextEntityType } from '../types';
-
-const DEFAULT_PRESET_VALUE = '__default__';
+import { BatchStep1PresetCards } from './batch-step1-preset-cards';
+import { BatchStep1PreviewCards, type PreviewGroup } from './batch-step1-preview';
+import { BatchStep1Footer } from './batch-step1-footer';
 
 interface BatchStep1ConfigProps {
   cfg: BatchWizardPersistedConfig;
@@ -128,12 +112,7 @@ export function BatchStep1Config({
           `${t('batchWizard.step1.currentImageMethod')}${imageMethodLabel}`,
           `${t('batchWizard.step1.currentImageStrength')}${imageRedactionStrength}%`,
         ];
-  const textModeBullets = [
-    { key: 'structured', label: t('batchWizard.step1.textModeBulletStructured') },
-    { key: 'smart', label: t('batchWizard.step1.textModeBulletSmart') },
-    { key: 'mask', label: t('batchWizard.step1.textModeBulletMask') },
-  ];
-  const textPreviewGroups = [
+  const textPreviewGroups: PreviewGroup[] = [
     {
       title: t('settings.regex'),
       items: selectedRegexLabels,
@@ -145,7 +124,7 @@ export function BatchStep1Config({
       emptyLabel: t('batchWizard.step1.noTextSelection'),
     },
   ];
-  const imagePreviewGroups = [
+  const imagePreviewGroups: PreviewGroup[] = [
     {
       title: t('batchWizard.step1.ocrTypes'),
       items: selectedOcrLabels,
@@ -157,24 +136,6 @@ export function BatchStep1Config({
       emptyLabel: t('batchWizard.step1.noVisionSelection'),
     },
   ];
-  const previewDialogConfig =
-    previewDialog === 'text'
-      ? {
-          title: t('batchWizard.step1.textSummary'),
-          presetName: textPresetName,
-          presetLabel: t('batchWizard.step1.activePreset'),
-          groups: textPreviewGroups,
-          summaryPills: [`${t('batchWizard.step1.currentTextMethod')}${textModeLabel}`],
-        }
-      : previewDialog === 'image'
-        ? {
-            title: t('batchWizard.step1.imageSummary'),
-            presetName: visionPresetName,
-            presetLabel: t('batchWizard.step1.activePreset'),
-            groups: imagePreviewGroups,
-            summaryPills: imageDetailPills,
-          }
-        : null;
 
   if (!configLoaded) {
     return (
@@ -201,417 +162,42 @@ export function BatchStep1Config({
       </CardHeader>
 
       <CardContent className="page-surface-body flex-1 flex flex-col gap-2 pt-2">
-        <div className="grid flex-1 gap-2 xl:grid-cols-2">
-          <Card className="rounded-[20px] border-border/70 bg-card/90 shadow-[var(--shadow-sm)]">
-            <CardContent className="flex h-full flex-col gap-1.5 p-2.5">
-              <div className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                <span className="text-sm font-semibold">
-                  {t('batchWizard.step1.textPreset')}
-                </span>
-              </div>
-                <p className="text-xs text-muted-foreground leading-snug">
-                {t('batchWizard.step1.textPresetDesc')}
-              </p>
-              <Select
-                value={cfg.presetTextId || DEFAULT_PRESET_VALUE}
-                onValueChange={value => onBatchTextPresetChange(value === DEFAULT_PRESET_VALUE ? '' : value)}
-              >
-                <SelectTrigger className="text-xs" data-testid="text-preset-select">
-                  <SelectValue placeholder={t('batchWizard.step1.defaultPreset')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_PRESET_VALUE}>{t('batchWizard.step1.defaultPreset')}</SelectItem>
-                  {textPresets.map(p => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                      {p.kind === 'full' ? ` (${t('batchWizard.step1.comboPreset')})` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="surface-subtle flex flex-1 flex-col gap-1 px-2.5 py-1.5">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    {t('batchWizard.step1.textRedactionMode')}
-                  </p>
-                  <span className="rounded-full border border-border/70 bg-background px-2.5 py-0.5 text-[11px] font-medium text-foreground">
-                    {textModeLabel}
-                  </span>
-                </div>
-                <Select
-                  value={textRedactionMode}
-                  onValueChange={(value: 'structured' | 'smart' | 'mask') =>
-                    setCfg((current) => ({ ...current, replacementMode: value }))
-                  }
-                >
-                  <SelectTrigger className="text-xs" data-testid="text-redaction-mode-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="structured">{t('mode.structured')}</SelectItem>
-                    <SelectItem value="smart">{t('mode.smart')}</SelectItem>
-                    <SelectItem value="mask">{t('mode.mask')}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <ul className="mt-3.5 space-y-1">
-                  {textModeBullets.map((bullet) => (
-                    <li
-                      key={bullet.key}
-                      className={cn(
-                        'flex items-start gap-1.5 text-[11px] leading-4',
-                        bullet.key === textRedactionMode
-                          ? 'font-medium text-foreground'
-                          : 'text-muted-foreground',
-                      )}
-                    >
-                      <span className="mt-1.5 inline-block size-1 shrink-0 rounded-full bg-current" />
-                      {bullet.label}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </CardContent>
-          </Card>
+        <BatchStep1PresetCards
+          cfg={cfg}
+          setCfg={setCfg}
+          textPresets={textPresets}
+          visionPresets={visionPresets}
+          onBatchTextPresetChange={onBatchTextPresetChange}
+          onBatchVisionPresetChange={onBatchVisionPresetChange}
+          textRedactionMode={textRedactionMode}
+          textModeLabel={textModeLabel}
+          imageRedactionMethod={imageRedactionMethod}
+          imageMethodLabel={imageMethodLabel}
+          imageMethodHint={imageMethodHint}
+          imageRedactionStrength={imageRedactionStrength}
+          imageFillColor={imageFillColor}
+        />
 
-          <Card className="rounded-[20px] border-border/70 bg-card/90 shadow-[var(--shadow-sm)]">
-            <CardContent className="flex h-full flex-col gap-1.5 p-2.5">
-              <div className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--selection-yolo-accent)]" />
-                <span className="text-sm font-semibold">
-                  {t('batchWizard.step1.imagePreset')}
-                </span>
-              </div>
-                <p className="text-xs text-muted-foreground leading-snug">
-                {t('batchWizard.step1.imagePresetDesc')}
-              </p>
-              <Select
-                value={cfg.presetVisionId || DEFAULT_PRESET_VALUE}
-                onValueChange={value => onBatchVisionPresetChange(value === DEFAULT_PRESET_VALUE ? '' : value)}
-              >
-                <SelectTrigger className="text-xs" data-testid="vision-preset-select">
-                  <SelectValue placeholder={t('batchWizard.step1.defaultPreset')} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_PRESET_VALUE}>{t('batchWizard.step1.defaultPreset')}</SelectItem>
-                  {visionPresets.map(p => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                      {p.kind === 'full' ? ` (${t('batchWizard.step1.comboPreset')})` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="surface-subtle flex flex-1 flex-col gap-1 px-2.5 py-1.5">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                    {t('batchWizard.step1.imageRedactionMode')}
-                  </p>
-                  <span className="rounded-full border border-border/70 bg-background px-2.5 py-0.5 text-[11px] font-medium text-foreground">
-                    {imageMethodLabel}
-                  </span>
-                </div>
-                <p className="text-[11px] leading-4 text-muted-foreground">
-                  {imageMethodHint}
-                </p>
-                <Select
-                  value={imageRedactionMethod}
-                  onValueChange={(value: 'mosaic' | 'blur' | 'fill') =>
-                    setCfg((current) => ({ ...current, imageRedactionMethod: value }))
-                  }
-                >
-                  <SelectTrigger className="text-xs" data-testid="image-redaction-mode-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="mosaic">{t('batchWizard.step1.imageMethodMosaic')}</SelectItem>
-                    <SelectItem value="blur">{t('batchWizard.step1.imageMethodBlur')}</SelectItem>
-                    <SelectItem value="fill">{t('batchWizard.step1.imageMethodFill')}</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                {imageRedactionMethod === 'fill' ? (
-                  <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_6rem]">
-                    <div className="space-y-0.5">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                        {t('batchWizard.step1.imageFillColorLabel')}
-                      </p>
-                      <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-background px-2.5 py-1.5">
-                        <input
-                          type="color"
-                          value={imageFillColor}
-                          onChange={(event) => setCfg((current) => ({ ...current, imageFillColor: event.target.value }))}
-                          className="h-6 w-6 rounded-md border-0 bg-transparent p-0"
-                          data-testid="image-redaction-color"
-                        />
-                        <span className="text-xs font-medium text-foreground">{imageFillColor.toUpperCase()}</span>
-                      </div>
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                        {t('batchWizard.step1.previewSwatch')}
-                      </p>
-                      <div
-                        className="h-[2rem] rounded-2xl border border-border/70"
-                        style={{ backgroundColor: imageFillColor }}
-                        aria-hidden
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                        {t('batchWizard.step1.imageStrengthLabel')}
-                      </p>
-                      <span className="rounded-full border border-border/70 bg-background px-2.5 py-0.5 text-[11px] font-medium text-foreground">
-                        {imageRedactionStrength}%
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="10"
-                      max="100"
-                      step="5"
-                      value={imageRedactionStrength}
-                      onChange={(event) =>
-                        setCfg((current) => ({ ...current, imageRedactionStrength: Number(event.target.value) }))
-                      }
-                      className="w-full accent-primary"
-                      data-testid="image-redaction-strength"
-                    />
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid flex-1 gap-2 xl:grid-cols-2">
-          <SelectionPreviewSummaryCard
-            title={t('batchWizard.step1.textSummary')}
-            presetName={textPresetName}
-            presetLabel={t('batchWizard.step1.activePreset')}
-            groups={textPreviewGroups}
-            summaryPills={[`${t('batchWizard.step1.currentTextMethod')}${textModeLabel}`]}
-            onViewDetails={() => setPreviewDialog('text')}
-            viewLabel={t('batchWizard.step1.viewSelection')}
-          />
-          <SelectionPreviewSummaryCard
-            title={t('batchWizard.step1.imageSummary')}
-            presetName={visionPresetName}
-            presetLabel={t('batchWizard.step1.activePreset')}
-            groups={imagePreviewGroups}
-            summaryPills={imageDetailPills}
-            onViewDetails={() => setPreviewDialog('image')}
-            viewLabel={t('batchWizard.step1.viewSelection')}
-          />
-        </div>
+        <BatchStep1PreviewCards
+          textPreviewGroups={textPreviewGroups}
+          imagePreviewGroups={imagePreviewGroups}
+          textPresetName={textPresetName}
+          visionPresetName={visionPresetName}
+          textModeLabel={textModeLabel}
+          imageDetailPills={imageDetailPills}
+          previewDialog={previewDialog}
+          setPreviewDialog={setPreviewDialog}
+        />
       </CardContent>
 
-      <div className="page-surface-footer">
-        <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
-          <div className="surface-subtle flex items-center justify-between gap-3 px-3 py-1.5">
-            <span className="text-sm text-muted-foreground">
-              {t('batchWizard.step1.priority')}
-            </span>
-            <Select
-              value={String(jobPriority)}
-              onValueChange={v => setJobPriority(Number(v))}
-            >
-              <SelectTrigger className="w-24 text-xs" data-testid="priority-select">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('batchWizard.step1.priorityNormal')}</SelectItem>
-                <SelectItem value="5">{t('batchWizard.step1.priorityHigh')}</SelectItem>
-                <SelectItem value="10">{t('batchWizard.step1.priorityUrgent')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="surface-subtle flex flex-col gap-1.5 px-3 py-1.5">
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <Checkbox
-                checked={confirmStep1}
-                onCheckedChange={v => setConfirmStep1(v === true)}
-                className="mt-0.5"
-                data-testid="confirm-step1"
-              />
-              <span>{t('batchWizard.step1.confirm')}</span>
-            </label>
-            <Button
-              className="w-full"
-              disabled={!isStep1Complete}
-              onClick={() => advanceToUploadStep()}
-              data-testid="advance-upload"
-            >
-              {t('batchWizard.step1.nextUpload')}
-            </Button>
-          </div>
-        </div>
-
-        <p className="mt-1 text-xs text-muted-foreground">
-          <Link to="/jobs" className="text-primary hover:underline font-medium">
-            {t('batchHub.jobCenter')}
-          </Link>
-          <span className="mx-1">&middot;</span>
-          <Link to="/history" className="text-primary hover:underline font-medium">
-            {t('batchHub.history')}
-          </Link>
-        </p>
-      </div>
-
-      <Dialog open={previewDialog !== null} onOpenChange={(open) => !open && setPreviewDialog(null)}>
-        {previewDialogConfig ? (
-          <DialogContent className="max-w-5xl gap-0 overflow-hidden border-border/70 bg-[var(--surface-overlay)] p-0">
-            <DialogHeader className="border-b border-border/70 px-6 pb-4 pt-6">
-              <DialogTitle>{previewDialogConfig.title}</DialogTitle>
-              <DialogDescription className="text-sm leading-relaxed">
-                {previewDialogConfig.presetLabel}
-                <span className="ml-1 font-medium text-foreground">{previewDialogConfig.presetName}</span>
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="flex max-h-[72vh] flex-col gap-5 overflow-y-auto px-6 py-5">
-              {previewDialogConfig.summaryPills.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {previewDialogConfig.summaryPills.map((pill) => (
-                    <span
-                      key={pill}
-                      className="rounded-full border border-border/70 bg-background px-3 py-1.5 text-xs font-medium text-foreground"
-                    >
-                      {pill}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="grid gap-4 xl:grid-cols-2">
-                {previewDialogConfig.groups.map((group) => (
-                  <div
-                    key={group.title}
-                    className="surface-subtle flex min-h-[16rem] flex-col gap-3 px-4 py-4"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <p className="text-sm font-semibold text-foreground">{group.title}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {t('batchWizard.step1.selectedTotal').replace('{n}', String(group.items.length))}
-                        </p>
-                      </div>
-                    </div>
-
-                    {group.items.length > 0 ? (
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {group.items.map((item) => (
-                          <span
-                            key={`${group.title}-${item}`}
-                            className="flex h-9 items-center rounded-2xl border border-border/70 bg-background px-3 text-xs font-medium text-foreground"
-                            title={item}
-                          >
-                            <span className="truncate">{item}</span>
-                          </span>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-border/70 bg-background/80 px-4 text-center text-sm text-muted-foreground">
-                        {group.emptyLabel}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </DialogContent>
-        ) : null}
-      </Dialog>
-    </Card>
-  );
-}
-
-function SelectionPreviewSummaryCard({
-  title,
-  presetLabel,
-  presetName,
-  groups,
-  summaryPills = [],
-  onViewDetails,
-  viewLabel,
-}: {
-  title: string;
-  presetLabel: string;
-  presetName: string;
-  groups: Array<{ title: string; items: string[]; emptyLabel: string }>;
-  summaryPills?: string[];
-  onViewDetails: () => void;
-  viewLabel: string;
-}) {
-  const t = useT();
-  const total = groups.reduce((sum, group) => sum + group.items.length, 0);
-  const firstGroup = groups[0];
-  const secondGroup = groups[1];
-
-  return (
-    <Card className="rounded-[20px] border-border/70 bg-card/90 shadow-[var(--shadow-sm)]">
-      <CardContent className="flex h-full flex-col gap-1.5 p-2.5">
-        <div className="flex items-start justify-between gap-2">
-          <div className="space-y-0.5">
-            <p className="text-sm font-semibold tracking-[-0.02em] text-foreground">{title}</p>
-            <p className="text-xs text-muted-foreground">
-              {presetLabel}
-              <span className="ml-1 font-medium text-foreground">{presetName}</span>
-            </p>
-            {summaryPills.length > 0 && (
-              <div className="flex flex-wrap gap-1 pt-0.5">
-                {summaryPills.map((pill) => (
-                  <span
-                    key={pill}
-                    className="rounded-full border border-border/70 bg-background px-2 py-0.5 text-[11px] font-medium text-foreground"
-                  >
-                    {pill}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="rounded-full border border-border/70 bg-muted/35 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-              {total}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 rounded-full px-2.5"
-              onClick={onViewDetails}
-            >
-              <Eye data-icon="inline-start" />
-              {viewLabel}
-            </Button>
-          </div>
-        </div>
-
-        <div className="grid flex-1 gap-2 sm:grid-cols-2">
-          {[firstGroup, secondGroup].filter(Boolean).map((group) => (
-            <div key={group!.title} className="surface-subtle flex items-center justify-between gap-2 px-2.5 py-2">
-              <div className="space-y-0.5">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                  {group!.title}
-                </p>
-                <p className="text-[11px] leading-4 text-muted-foreground">
-                  {group!.items.length > 0
-                    ? `${group!.items.slice(0, 3).join(' · ')}${t('batchWizard.step1.summaryEtc')}`
-                    : group!.emptyLabel}
-                </p>
-              </div>
-              <span className="rounded-full border border-border/70 bg-background px-2 py-0.5 text-[11px] font-medium text-foreground">
-                {group!.items.length}
-              </span>
-            </div>
-          ))}
-        </div>
-      </CardContent>
+      <BatchStep1Footer
+        confirmStep1={confirmStep1}
+        setConfirmStep1={setConfirmStep1}
+        isStep1Complete={isStep1Complete}
+        jobPriority={jobPriority}
+        setJobPriority={setJobPriority}
+        advanceToUploadStep={advanceToUploadStep}
+      />
     </Card>
   );
 }

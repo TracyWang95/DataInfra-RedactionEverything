@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { t } from '@/i18n';
 
 export type JobStatusTone = 'neutral' | 'brand' | 'warning' | 'review' | 'success' | 'danger' | 'muted';

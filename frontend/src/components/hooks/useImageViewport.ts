@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { computeFitScale, type DisplaySize } from '../bbox-utils';
 

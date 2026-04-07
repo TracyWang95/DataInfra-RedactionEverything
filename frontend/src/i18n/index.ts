@@ -1,3 +1,6 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { useCallback } from 'react';
 import { create } from 'zustand';
 import { zh } from './zh';

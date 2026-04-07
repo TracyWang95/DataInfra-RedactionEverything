@@ -1,3 +1,6 @@
+# Copyright 2026 DataInfra-RedactionEverything Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 """
 识别配置预设（Preset） — 业务逻辑层
 供 Playground / 批量向导 / 识别项配置页 共用同一套「识别类型 + 替换模式」组合。

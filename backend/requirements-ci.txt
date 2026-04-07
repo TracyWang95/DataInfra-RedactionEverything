@@ -11,44 +11,40 @@
 # ---------------------------------------------------------------------------
 
 # FastAPI 框架
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-python-multipart>=0.0.18
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.32.0,<1.0.0
+python-multipart>=0.0.18,<1.0.0
 
 # 数据验证
-pydantic>=2.10.0
-pydantic-settings>=2.7.0
+pydantic>=2.10.0,<3.0.0
+pydantic-settings>=2.7.0,<3.0.0
 
 # 文件处理（lightweight subset）
 python-docx==1.1.0
 PyMuPDF==1.23.8
-Pillow>=11.0.0
+Pillow>=11.0.0,<12.0.0
 # pdf2image — excluded: requires system poppler
 # pywin32 — excluded: Windows-only
 
 # HTTP 客户端
-httpx>=0.28.0
+httpx>=0.28.0,<1.0.0
 
-# nvidia-ml-py — excluded: requires NVIDIA drivers
-aiofiles>=24.1.0
+aiofiles>=24.1.0,<25.0.0
 
 # 智谱AI SDK
-zhipuai>=2.0.0
-
-# ultralytics — excluded: heavy ML, requires torch
-# paddleocr — excluded: heavy ML, requires paddlepaddle
+zhipuai>=2.0.0,<3.0.0
 
 # 工具库
-PyJWT>=2.8.0
+PyJWT>=2.8.0,<3.0.0
 passlib[bcrypt]==1.7.4
 
 # 可观测性
-python-json-logger>=2.0.0
-prometheus-client>=0.20.0
+python-json-logger>=2.0.0,<3.0.0
+prometheus-client>=0.20.0,<1.0.0
 
 # 安全
-cryptography>=42.0.0
+cryptography>=42.0.0,<44.0.0
 
 # 开发工具
-python-dotenv>=1.0.1
-pytest>=8.0.0
+python-dotenv>=1.0.1,<2.0.0
+pytest>=8.0.0,<9.0.0

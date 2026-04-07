@@ -1,87 +1,29 @@
+// Copyright 2026 DataInfra-RedactionEverything Contributors
+// SPDX-License-Identifier: Apache-2.0
 
-import type React from 'react';
+
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-
-import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
-import type { TextSegment } from '@/utils/textRedactionSegments';
 import { tonePanelClass } from '@/utils/toneClasses';
-import type {
-  BatchRow,
-  PipelineCfg,
-  ReviewEntity,
-  TextEntityType,
-} from '../types';
+import { useBatchWizardContext } from '../batch-wizard-context';
 import { ReviewImageContent } from './review-image-content';
 import { ReviewTextContent } from './review-text-content';
 
-interface BatchStep4ReviewProps {
-
-  doneRows: BatchRow[];
-  reviewIndex: number;
-  reviewFile: BatchRow | null;
-  reviewLoading: boolean;
-  reviewExecuteLoading: boolean;
-  reviewFileReadOnly: boolean;
-  navigateReviewIndex: (idx: number) => void;
-
-  reviewEntities: ReviewEntity[];
-  reviewTextContent: string;
-  reviewTextContentRef: React.RefObject<HTMLDivElement | null>;
-  reviewTextScrollRef: React.RefObject<HTMLDivElement | null>;
-  selectedReviewEntityCount: number;
-  displayPreviewMap: Record<string, string>;
-  textPreviewSegments: TextSegment[];
-  applyReviewEntities: (updater: ReviewEntity[] | ((prev: ReviewEntity[]) => ReviewEntity[])) => void;
-  /** @deprecated — group-level toggle is used instead; kept for interface compat */
-  toggleReviewEntitySelected: (id: string) => void;
-
-  reviewBoxes: EditorBox[];
-  reviewOrigImageBlobUrl: string;
-  reviewImagePreviewSrc: string;
-  reviewImagePreviewLoading: boolean;
-  selectedReviewBoxCount: number;
-  pipelines: PipelineCfg[];
-  textTypes: TextEntityType[];
-  setReviewBoxes: React.Dispatch<React.SetStateAction<EditorBox[]>>;
-  handleReviewBoxesCommit: (prev: EditorBox[], next: EditorBox[]) => void;
-  toggleReviewBoxSelected: (id: string) => void;
-
-  undoReviewText: () => void;
-  redoReviewText: () => void;
-  undoReviewImage: () => void;
-  redoReviewImage: () => void;
-  reviewTextUndoStack: ReviewEntity[][];
-  reviewTextRedoStack: ReviewEntity[][];
-  reviewImageUndoStack: EditorBox[][];
-  reviewImageRedoStack: EditorBox[][];
-
-  reviewDraftSaving: boolean;
-  reviewDraftError: string | null;
-
-  reviewedOutputCount: number;
-  rows: BatchRow[];
-  allReviewConfirmed: boolean;
-
-  confirmCurrentReview: () => Promise<void>;
-  advanceToExportStep: () => Promise<void>;
-
-  onRerunRecognition?: () => Promise<void>;
-  rerunRecognitionLoading?: boolean;
-}
-
-export function BatchStep4Review(props: BatchStep4ReviewProps) {
+export function BatchStep4Review() {
   const t = useT();
+  const w = useBatchWizardContext();
+
   const {
     doneRows, reviewIndex, reviewFile, reviewLoading, reviewExecuteLoading,
     reviewFileReadOnly, navigateReviewIndex,
     reviewDraftSaving, reviewDraftError,
     reviewedOutputCount, rows, allReviewConfirmed,
     confirmCurrentReview, advanceToExportStep,
-    onRerunRecognition, rerunRecognitionLoading,
-  } = props;
+    rerunCurrentItemRecognition: onRerunRecognition,
+    rerunRecognitionLoading,
+  } = w;
 
   if (!doneRows.length) {
     return (
@@ -155,16 +97,16 @@ export function BatchStep4Review(props: BatchStep4ReviewProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={isImage ? props.undoReviewImage : props.undoReviewText}
-            disabled={isImage ? !props.reviewImageUndoStack.length : !props.reviewTextUndoStack.length}
+            onClick={isImage ? w.undoReviewImage : w.undoReviewText}
+            disabled={isImage ? !w.reviewImageUndoStack.length : !w.reviewTextUndoStack.length}
           >
             {t('playground.undo')}
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={isImage ? props.redoReviewImage : props.redoReviewText}
-            disabled={isImage ? !props.reviewImageRedoStack.length : !props.reviewTextRedoStack.length}
+            onClick={isImage ? w.redoReviewImage : w.redoReviewText}
+            disabled={isImage ? !w.reviewImageRedoStack.length : !w.reviewTextRedoStack.length}
           >
             {t('playground.redo')}
           </Button>
@@ -232,28 +174,28 @@ export function BatchStep4Review(props: BatchStep4ReviewProps) {
       {/* Content area */}
       {isImage ? (
         <ReviewImageContent
-          reviewBoxes={props.reviewBoxes}
-          reviewOrigImageBlobUrl={props.reviewOrigImageBlobUrl}
-          reviewImagePreviewSrc={props.reviewImagePreviewSrc}
-          reviewImagePreviewLoading={props.reviewImagePreviewLoading}
-          selectedReviewBoxCount={props.selectedReviewBoxCount}
-          pipelines={props.pipelines}
-          setReviewBoxes={props.setReviewBoxes}
-          handleReviewBoxesCommit={props.handleReviewBoxesCommit}
-          toggleReviewBoxSelected={props.toggleReviewBoxSelected}
+          reviewBoxes={w.reviewBoxes}
+          reviewOrigImageBlobUrl={w.reviewOrigImageBlobUrl}
+          reviewImagePreviewSrc={w.reviewImagePreviewSrc}
+          reviewImagePreviewLoading={w.reviewImagePreviewLoading}
+          selectedReviewBoxCount={w.selectedReviewBoxCount}
+          pipelines={w.pipelines}
+          setReviewBoxes={w.setReviewBoxes}
+          handleReviewBoxesCommit={w.handleReviewBoxesCommit}
+          toggleReviewBoxSelected={w.toggleReviewBoxSelected}
         />
       ) : (
         <ReviewTextContent
-          reviewEntities={props.reviewEntities}
-          reviewTextContent={props.reviewTextContent}
-          reviewTextContentRef={props.reviewTextContentRef}
-          reviewTextScrollRef={props.reviewTextScrollRef}
-          selectedReviewEntityCount={props.selectedReviewEntityCount}
-          displayPreviewMap={props.displayPreviewMap}
-          textPreviewSegments={props.textPreviewSegments}
-          applyReviewEntities={props.applyReviewEntities}
-          textTypes={props.textTypes}
-          reviewFileReadOnly={props.reviewFileReadOnly}
+          reviewEntities={w.reviewEntities}
+          reviewTextContent={w.reviewTextContent}
+          reviewTextContentRef={w.reviewTextContentRef}
+          reviewTextScrollRef={w.reviewTextScrollRef}
+          selectedReviewEntityCount={w.selectedReviewEntityCount}
+          displayPreviewMap={w.displayPreviewMap}
+          textPreviewSegments={w.textPreviewSegments}
+          applyReviewEntities={w.applyReviewEntities}
+          textTypes={w.textTypes}
+          reviewFileReadOnly={w.reviewFileReadOnly}
         />
       )}
     </Card>
