@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 file_store SQLite 后端 — 替代全量内存 JSON dict。
 
@@ -31,15 +28,11 @@ CREATE INDEX IF NOT EXISTS idx_fs_created ON file_store(created_at);
 """
 
 
-_thread_local = threading.local()
-
-
 class FileStoreDB:
     """SQLite-backed file store with dict-like API.
 
     注意：不使用进程内缓存，每次读写均直接访问 SQLite。
     SQLite WAL 模式 + busy_timeout=5000 可满足并发读写需求。
-    使用 thread-local 连接复用，避免每次调用都创建新连接。
     """
 
     def __init__(self, db_path: str) -> None:
@@ -51,20 +44,10 @@ class FileStoreDB:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        attr = f"_filestore_conn_{self._path}"
-        conn: sqlite3.Connection | None = getattr(_thread_local, attr, None)
-        if conn is not None:
-            try:
-                conn.execute("SELECT 1")
-                return conn
-            except sqlite3.ProgrammingError:
-                # Connection was closed; fall through to create a new one
-                pass
         conn = sqlite3.connect(self._path, check_same_thread=False, timeout=10.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout = 5000")
-        setattr(_thread_local, attr, conn)
         return conn
 
     def _init_db(self) -> None:
@@ -114,40 +97,12 @@ class FileStoreDB:
                 conn.commit()
 
     def update_fields(self, file_id: str, updates: dict) -> None:
-        """部分更新：在单个锁+事务内完成读取 → 合并 → 写回，避免竞态条件。"""
-        with self._lock:
-            conn = self._connect()
-            conn.execute("BEGIN IMMEDIATE")
-            try:
-                row = conn.execute(
-                    "SELECT data_json FROM file_store WHERE file_id = ?", (file_id,)
-                ).fetchone()
-                if row is None:
-                    conn.execute("ROLLBACK")
-                    return
-                existing = json.loads(row["data_json"])
-                existing.update(updates)
-                data_json = json.dumps(
-                    to_jsonable(existing), ensure_ascii=False, default=str
-                )
-                conn.execute(
-                    "UPDATE file_store SET data_json = ?, updated_at = datetime('now') WHERE file_id = ?",
-                    (data_json, file_id),
-                )
-                conn.execute("COMMIT")
-            except Exception:
-                conn.execute("ROLLBACK")
-                raise
-
-    def items_paginated(self, offset: int = 0, limit: int = 100) -> list[tuple[str, dict]]:
-        """Return a page of (file_id, data) tuples for memory-efficient iteration."""
-        with self._lock:
-            with self._connect() as conn:
-                rows = conn.execute(
-                    "SELECT file_id, data_json FROM file_store ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    (limit, offset),
-                ).fetchall()
-        return [(r["file_id"], json.loads(r["data_json"])) for r in rows]
+        """部分更新：读取 → 合并 → 写回。"""
+        existing = self.get(file_id)
+        if existing is None:
+            return
+        existing.update(updates)
+        self.set(file_id, existing)
 
     def pop(self, file_id: str, default: Any = None) -> Any:
         val = self.get(file_id)
@@ -173,20 +128,6 @@ class FileStoreDB:
             with self._connect() as conn:
                 rows = conn.execute("SELECT file_id, data_json FROM file_store").fetchall()
         return [(r["file_id"], json.loads(r["data_json"])) for r in rows]
-
-    def items_paginated(self, offset: int = 0, limit: int = 100) -> list[tuple[str, dict]]:
-        """Return a page of (file_id, data) tuples for memory-efficient iteration."""
-        with self._lock:
-            with self._connect() as conn:
-                rows = conn.execute(
-                    "SELECT file_id, data_json FROM file_store ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    (limit, offset),
-                ).fetchall()
-        return [(r["file_id"], json.loads(r["data_json"])) for r in rows]
-
-    def count(self) -> int:
-        """Return total number of entries (same as __len__ but more explicit)."""
-        return len(self)
 
     def keys(self) -> list[str]:
         with self._lock:

@@ -4,11 +4,8 @@
 import {
   apiClient as api,
   authFetch,
-  clearAuthToken,
   downloadFile,
   authenticatedBlobUrl,
-  getAuthToken,
-  setAuthToken,
   VISION_TIMEOUT,
 } from './api-client';
 import type {
@@ -25,7 +22,7 @@ import type {
   VisionResult,
 } from '../types';
 
-export { clearAuthToken, downloadFile, authenticatedBlobUrl, getAuthToken, setAuthToken };
+export { downloadFile, authenticatedBlobUrl };
 
 export const fileApi = {
   upload: async (

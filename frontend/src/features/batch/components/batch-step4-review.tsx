@@ -1,12 +1,12 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { tonePanelClass } from '@/utils/toneClasses';
+
 import { useBatchWizardContext } from '../batch-wizard-context';
 import { ReviewImageContent } from './review-image-content';
 import { ReviewTextContent } from './review-text-content';

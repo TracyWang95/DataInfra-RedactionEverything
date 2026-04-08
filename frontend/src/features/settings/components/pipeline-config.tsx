@@ -190,6 +190,7 @@ export function PipelineConfigPanel({
                           variant="ghost"
                           className="size-6"
                           onClick={() => openEdit(activePipeline.mode, type)}
+                          aria-label={t('common.edit')}
                           data-testid={`edit-pipeline-${type.id}`}
                         >
                           <PencilIcon />
@@ -199,6 +200,7 @@ export function PipelineConfigPanel({
                           variant="ghost"
                           className="size-6 text-destructive hover:text-destructive"
                           onClick={() => onDeleteType(activePipeline.mode, type.id)}
+                          aria-label={t('common.delete')}
                           data-testid={`delete-pipeline-${type.id}`}
                         >
                           <TrashIcon />

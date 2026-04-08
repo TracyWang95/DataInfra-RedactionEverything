@@ -9,7 +9,7 @@ import { authFetch } from '@/services/api-client';
 import { showToast } from '@/components/Toast';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import { safeJson } from '../utils';
-import type { Entity } from '../types';
+import type { Entity, NerResponse } from '../types';
 
 export function usePlaygroundEntities() {
   const [entities, setEntities] = useState<Entity[]>([]);
@@ -62,7 +62,7 @@ export function usePlaygroundEntities() {
       });
       if (controller.signal.aborted) return;
       if (!nerRes.ok) throw new Error(t('error.reRecognizeFailed'));
-      const nerData = await safeJson(nerRes);
+      const nerData = await safeJson<NerResponse>(nerRes);
       if (controller.signal.aborted) return;
       const entitiesWithSource = (nerData.entities || []).map(
         (e: Record<string, unknown>, idx: number) => ({
@@ -70,7 +70,7 @@ export function usePlaygroundEntities() {
           id: e.id || `entity_${idx}`,
           selected: true,
           source: e.source || 'llm',
-        }),
+        } as Entity),
       );
       setEntities(entitiesWithSource);
       entityHistory.reset();

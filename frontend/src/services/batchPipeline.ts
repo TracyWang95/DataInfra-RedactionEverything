@@ -99,8 +99,6 @@ export function batchWizardStorageKey(mode: BatchWizardMode): string {
   return `batchWizard:config:v1:${mode}`;
 }
 
-/** @deprecated 使用 batchWizardStorageKey(mode) */
-export const BATCH_WIZARD_STORAGE_KEY = LEGACY_BATCH_WIZARD_KEY;
 
 export interface BatchWizardPersistedConfig {
   selectedEntityTypeIds: string[];
@@ -115,8 +113,6 @@ export interface BatchWizardPersistedConfig {
   presetTextId?: string | null;
   /** 图像脱敏配置清单（图片类文本 + 图像特征） */
   presetVisionId?: string | null;
-  /** @deprecated 已拆分为 presetTextId / presetVisionId，仅用于兼容旧 session */
-  presetId?: string | null;
   /**
    * 默认处理路径：queue=与后台 Worker 队列协同（推荐）；local=倾向在本页跑完识别与导出
    */
@@ -143,13 +139,12 @@ export function loadBatchWizardConfig(mode: BatchWizardMode = 'text'): BatchWiza
     const legacy = raw.glmVisionTypes as string[] | undefined;
     const hasImageTypes = (raw.hasImageTypes as string[] | undefined) ?? legacy ?? [];
     const base = raw as unknown as BatchWizardPersistedConfig;
-    const legacyPid = (raw.presetId as string | null | undefined) ?? base.presetId ?? null;
+    const legacyPid = (raw.presetId as string | null | undefined) ?? null;
     return {
       ...base,
       hasImageTypes,
       presetTextId: (raw.presetTextId as string | null | undefined) ?? (legacyPid ?? base.presetTextId ?? null),
       presetVisionId: (raw.presetVisionId as string | null | undefined) ?? (legacyPid ?? base.presetVisionId ?? null),
-      presetId: legacyPid,
     };
   } catch {
     return null;

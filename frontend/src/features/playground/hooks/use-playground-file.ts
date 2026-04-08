@@ -9,7 +9,7 @@ import { showToast } from '@/components/Toast';
 import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import { safeJson, runVisionDetection } from '../utils';
-import type { FileInfo, Entity, BoundingBox, Stage } from '../types';
+import type { FileInfo, Entity, BoundingBox, Stage, UploadResponse, ParseResponse, NerResponse } from '../types';
 
 export interface PendingFile {
   fileId: string;
@@ -75,19 +75,19 @@ export function usePlaygroundFile(options: UsePlaygroundFileOptions) {
 
     const opts = optionsRef.current;
     try {
-      setLoadingMessage(t('playground.uploading') || '正在上传文件...');
+      setLoadingMessage(t('playground.uploading'));
       const formData = new FormData();
       formData.append('file', file);
       formData.append('upload_source', 'playground');
 
       const uploadRes = await authFetch('/api/v1/files/upload', { method: 'POST', body: formData });
-      if (!uploadRes.ok) throw new Error(t('playground.uploadFailed') || '文件上传失败');
-      const uploadData = await safeJson(uploadRes);
+      if (!uploadRes.ok) throw new Error(t('playground.uploadFailed'));
+      const uploadData = await safeJson<UploadResponse>(uploadRes);
 
-      setLoadingMessage(t('playground.parsing') || '正在解析文件...');
+      setLoadingMessage(t('playground.parsing'));
       const parseRes = await authFetch(`/api/v1/files/${uploadData.file_id}/parse`);
-      if (!parseRes.ok) throw new Error(t('playground.parseFailed') || '文件解析失败');
-      const parseData = await safeJson(parseRes);
+      if (!parseRes.ok) throw new Error(t('playground.parseFailed'));
+      const parseData = await safeJson<ParseResponse>(parseRes);
 
       const isScanned = parseData.is_scanned || false;
       const parsedContent = parseData.content || '';
@@ -137,12 +137,12 @@ export function usePlaygroundFile(options: UsePlaygroundFileOptions) {
           const ocrTypes = opts.latestOcrHasTypesRef.current;
           const hiTypes = opts.latestHasImageTypesRef.current;
           const vLabel = ocrTypes.length > 0 && hiTypes.length > 0
-            ? '正在进行图像识别（OCR+HaS 与 HaS Image 并行）...'
+            ? t('playground.loading.visionHybrid')
             : ocrTypes.length > 0
-              ? '正在进行图像识别（OCR+HaS）...'
+              ? t('playground.loading.visionOcr')
               : hiTypes.length > 0
-                ? '正在进行图像识别（HaS Image）...'
-                : '正在进行图像识别...';
+                ? t('playground.loading.visionImage')
+                : t('playground.loading.vision');
           setLoadingMessage(vLabel);
 
           const result = await runVisionDetection(fileId, ocrTypes, hiTypes, signal);
@@ -150,9 +150,9 @@ export function usePlaygroundFile(options: UsePlaygroundFileOptions) {
 
           opts.setBoundingBoxes(result.boxes);
           opts.resetImageHistory();
-          showToast(`识别到 ${result.boxes.length} 个敏感区域`, 'success');
+          showToast(t('playground.toast.detectedRegions').replace('{count}', String(result.boxes.length)), 'success');
         } else if (parsedContent) {
-          setLoadingMessage('AI正在识别敏感信息...');
+          setLoadingMessage(t('playground.loading.text'));
           const nerRes = await authFetch(`/api/v1/files/${fileId}/ner/hybrid`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -162,18 +162,18 @@ export function usePlaygroundFile(options: UsePlaygroundFileOptions) {
           if (signal.aborted) return;
 
           if (nerRes.ok) {
-            const nerData = await safeJson(nerRes);
+            const nerData = await safeJson<NerResponse>(nerRes);
             const entitiesWithSource = (nerData.entities || []).map(
               (e: Record<string, unknown>, idx: number) => ({
                 ...e,
                 id: e.id || `entity_${idx}`,
                 selected: true,
                 source: e.source || 'llm',
-              }),
+              } as Entity),
             );
             opts.setEntities(entitiesWithSource);
             opts.resetEntityHistory();
-            showToast(`识别到 ${entitiesWithSource.length} 处敏感信息`, 'success');
+            showToast(t('playground.toast.detectedEntities').replace('{count}', String(entitiesWithSource.length)), 'success');
           }
         }
         if (signal.aborted) return;

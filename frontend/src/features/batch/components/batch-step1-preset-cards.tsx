@@ -1,10 +1,10 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import type { FC } from 'react';
+import { memo } from 'react';
+
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
-
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Select,
@@ -34,7 +34,7 @@ export interface BatchStep1PresetCardsProps {
   imageFillColor: string;
 }
 
-export const BatchStep1PresetCards: FC<BatchStep1PresetCardsProps> = ({
+function BatchStep1PresetCardsInner({
   cfg,
   setCfg,
   textPresets,
@@ -48,7 +48,7 @@ export const BatchStep1PresetCards: FC<BatchStep1PresetCardsProps> = ({
   imageMethodHint,
   imageRedactionStrength,
   imageFillColor,
-}) => {
+}: BatchStep1PresetCardsProps) {
   const t = useT();
 
   const textModeBullets = [
@@ -244,4 +244,6 @@ export const BatchStep1PresetCards: FC<BatchStep1PresetCardsProps> = ({
       </Card>
     </div>
   );
-};
+}
+
+export const BatchStep1PresetCards = memo(BatchStep1PresetCardsInner);

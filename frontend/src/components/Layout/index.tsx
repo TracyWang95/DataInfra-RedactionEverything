@@ -1,16 +1,17 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { Outlet, useLocation } from 'react-router-dom';
+
 import { ToastContainer } from '@/components/Toast';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { OnboardingGuide } from '@/components/OnboardingGuide';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+
 import { AppSidebar } from './app-sidebar';
 import { AppHeader } from './app-header';
 
-export const Layout: React.FC = () => {
+export function Layout() {
   const location = useLocation();
 
   return (
@@ -32,6 +33,6 @@ export const Layout: React.FC = () => {
       <OnboardingGuide />
     </SidebarProvider>
   );
-};
+}
 
 export default Layout;

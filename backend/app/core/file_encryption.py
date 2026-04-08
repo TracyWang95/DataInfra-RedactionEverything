@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 文件加密存储 — AES-256-GCM 对上传文件加密落盘。
 
@@ -67,17 +64,10 @@ class FileEncryptor:
         if enabled:
             self._key = _load_or_create_key(data_dir)
 
-    # Chunked encryption format (v2):
-    #   [8 bytes magic "ENCV2\x00\x00\x00"] + [4 bytes chunk_size BE uint32]
-    #   + for each chunk: [16 bytes nonce] + [AESGCM(plaintext_chunk)]
-    # Legacy format (v1): [16 bytes nonce] + [AESGCM(entire_file)]
-
-    _MAGIC = b"ENCV2\x00\x00\x00"
-    _CHUNK_SIZE = 4 * 1024 * 1024  # 4 MB
-
     def encrypt_file(self, input_path: str, output_path: str) -> None:
-        """加密文件（流式分块，内存占用 ≤ chunk_size + overhead）。"""
+        """加密文件（就地或指定输出路径）。"""
         if not self.enabled or self._key is None:
+            # 未启用加密，直接拷贝
             if input_path != output_path:
                 import shutil
                 shutil.copy2(input_path, output_path)
@@ -86,31 +76,19 @@ class FileEncryptor:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
         aesgcm = AESGCM(self._key)
+        nonce = secrets.token_bytes(16)
 
-        with open(input_path, "rb") as fin, open(output_path, "wb") as fout:
-            fout.write(self._MAGIC)
-            fout.write(self._CHUNK_SIZE.to_bytes(4, "big"))
+        with open(input_path, "rb") as f:
+            plaintext = f.read()
 
-            while True:
-                chunk = fin.read(self._CHUNK_SIZE)
-                if not chunk:
-                    break
-                nonce = secrets.token_bytes(16)
-                ct = aesgcm.encrypt(nonce, chunk, None)
-                fout.write(nonce)
-                fout.write(len(ct).to_bytes(4, "big"))
-                fout.write(ct)
+        ciphertext = aesgcm.encrypt(nonce, plaintext, None)
 
-    def _is_v2(self, f) -> bool:
-        """Check if file uses chunked v2 format."""
-        header = f.read(len(self._MAGIC))
-        if header == self._MAGIC:
-            return True
-        f.seek(0)
-        return False
+        with open(output_path, "wb") as f:
+            f.write(nonce)
+            f.write(ciphertext)
 
     def decrypt_file(self, input_path: str, output_path: str) -> None:
-        """解密文件（自动识别 v1/v2 格式）。"""
+        """解密文件。"""
         if not self.enabled or self._key is None:
             if input_path != output_path:
                 import shutil
@@ -121,24 +99,16 @@ class FileEncryptor:
 
         aesgcm = AESGCM(self._key)
 
-        with open(input_path, "rb") as fin:
-            if self._is_v2(fin):
-                fin.read(4)  # skip chunk_size header
-                with open(output_path, "wb") as fout:
-                    while True:
-                        nonce = fin.read(16)
-                        if not nonce:
-                            break
-                        ct_len = int.from_bytes(fin.read(4), "big")
-                        ct = fin.read(ct_len)
-                        fout.write(aesgcm.decrypt(nonce, ct, None))
-            else:
-                # Legacy v1 format
-                data = fin.read()
-                nonce = data[:16]
-                ciphertext = data[16:]
-                with open(output_path, "wb") as fout:
-                    fout.write(aesgcm.decrypt(nonce, ciphertext, None))
+        with open(input_path, "rb") as f:
+            data = f.read()
+
+        nonce = data[:16]
+        ciphertext = data[16:]
+
+        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+
+        with open(output_path, "wb") as f:
+            f.write(plaintext)
 
     def decrypt_to_bytes(self, input_path: str) -> bytes:
         """解密文件到内存。"""
@@ -150,21 +120,9 @@ class FileEncryptor:
 
         aesgcm = AESGCM(self._key)
 
-        with open(input_path, "rb") as fin:
-            if self._is_v2(fin):
-                fin.read(4)  # skip chunk_size header
-                parts: list[bytes] = []
-                while True:
-                    nonce = fin.read(16)
-                    if not nonce:
-                        break
-                    ct_len = int.from_bytes(fin.read(4), "big")
-                    ct = fin.read(ct_len)
-                    parts.append(aesgcm.decrypt(nonce, ct, None))
-                return b"".join(parts)
-            else:
-                # Legacy v1 format
-                data = fin.read()
-                nonce = data[:16]
-                ciphertext = data[16:]
-                return aesgcm.decrypt(nonce, ciphertext, None)
+        with open(input_path, "rb") as f:
+            data = f.read()
+
+        nonce = data[:16]
+        ciphertext = data[16:]
+        return aesgcm.decrypt(nonce, ciphertext, None)

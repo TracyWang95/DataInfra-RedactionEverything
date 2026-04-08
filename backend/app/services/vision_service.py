@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 视觉识别服务
 - OCR + HaS：文字类

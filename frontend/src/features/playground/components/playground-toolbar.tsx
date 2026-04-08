@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { type FC } from 'react';
+import { type FC, memo } from 'react';
 import { ArrowUpRight, FileText, Redo2, RotateCcw, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
@@ -19,7 +19,7 @@ export interface PlaygroundToolbarProps {
   hintText: string;
 }
 
-export const PlaygroundToolbar: FC<PlaygroundToolbarProps> = ({
+export const PlaygroundToolbar: FC<PlaygroundToolbarProps> = memo(({
   filename,
   isImageMode,
   canUndo,
@@ -102,4 +102,4 @@ export const PlaygroundToolbar: FC<PlaygroundToolbarProps> = ({
       </div>
     </div>
   );
-};
+});

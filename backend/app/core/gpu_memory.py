@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 GPU 显存查询模块
 支持 nvidia-smi / pynvml / PaddlePaddle 三种方式查询 GPU 显存占用。

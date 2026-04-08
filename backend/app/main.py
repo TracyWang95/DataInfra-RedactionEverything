@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 匿名化数据基础设施 - FastAPI 应用入口
 """
@@ -109,11 +106,7 @@ async def _periodic_cleanup():
 async def lifespan(app: FastAPI):
     # === Startup ===
 
-    # 0a. Run schema migrations (idempotent, safe on every startup)
-    from app.core.migrations import run_migrations
-    run_migrations(settings.JOB_DB_PATH)
-
-    # 0b. Database integrity check + restore from backup if corrupted
+    # 0. Database integrity check + restore from backup if corrupted
     from app.core.db_backup import ensure_db_healthy, backup_sqlite
     ensure_db_healthy(settings.JOB_DB_PATH)
 
@@ -249,22 +242,14 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
 # runs first). Register MaxBodySizeMiddleware AFTER CORSMiddleware so that the
 # body-size check executes BEFORE CORS headers are evaluated.
 
-# CSRF protection (double-submit cookie; inner to CORS so preflight is handled first)
-from app.core.csrf import CSRFMiddleware  # noqa: E402
-app.add_middleware(CSRFMiddleware)
-
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key", "X-CSRF-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key"],
 )
-
-# Security response headers (outer to CORS so headers appear on all responses incl. preflight)
-from app.core.security_headers import SecurityHeadersMiddleware  # noqa: E402
-app.add_middleware(SecurityHeadersMiddleware)
 
 app.add_middleware(MaxBodySizeMiddleware)
 

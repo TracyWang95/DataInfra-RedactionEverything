@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { type FC } from 'react';
+import { type FC, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { Progress } from '@/components/ui/progress';
 import { useT } from '@/i18n';
@@ -13,7 +13,7 @@ export interface PlaygroundLoadingProps {
   elapsedSec: number;
 }
 
-export const PlaygroundLoading: FC<PlaygroundLoadingProps> = ({
+export const PlaygroundLoading: FC<PlaygroundLoadingProps> = memo(({
   loadingMessage,
   isImageMode,
   elapsedSec,
@@ -60,4 +60,4 @@ export const PlaygroundLoading: FC<PlaygroundLoadingProps> = ({
     </div>,
     document.body,
   );
-};
+});

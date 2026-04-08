@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 llama-server / OpenAI 兼容服务探测：不同版本/构建暴露的路径不一致。
 官方文档：GET /v1/models、GET /v1/health、GET /health 等；部分环境可能仅部分路由可用。

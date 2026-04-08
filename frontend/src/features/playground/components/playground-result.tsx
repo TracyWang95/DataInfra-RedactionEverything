@@ -3,6 +3,7 @@
 
 import { type CSSProperties, type Dispatch, type FC, type SetStateAction, useRef, useState } from 'react';
 import { useT } from '@/i18n';
+import { RESULT_MARK_HIGHLIGHT_MS } from '@/constants/timing';
 import { cn } from '@/lib/utils';
 import { getEntityRiskConfig } from '@/config/entityTypes';
 import type { VersionHistoryEntry } from '@/types';
@@ -125,7 +126,7 @@ export const PlaygroundResult: FC<PlaygroundResultProps> = ({
       document.querySelectorAll('.result-mark-active').forEach((element) => {
         element.classList.remove('result-mark-active', 'ring-2', 'ring-offset-1', 'ring-blue-400/80', 'scale-105');
       });
-    }, 2500);
+    }, RESULT_MARK_HIGHLIGHT_MS);
   };
 
   const renderOriginal = () => segments.map((segment, index) =>

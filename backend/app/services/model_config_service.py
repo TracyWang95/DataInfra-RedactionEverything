@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 推理模型配置 — 业务逻辑层
 （视觉：HaS Image 8081 微服务；与文本 NER 分离）

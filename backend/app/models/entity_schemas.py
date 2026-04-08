@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 Entity and bounding-box models, custom entity type definitions,
 and entity-type list responses.

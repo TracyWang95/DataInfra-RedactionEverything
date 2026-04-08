@@ -2,17 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type React from 'react';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
+
 import { useT } from '@/i18n';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { getEntityRiskConfig, getEntityTypeName } from '@/config/entityTypes';
 import type { TextSegment } from '@/utils/textRedactionSegments';
-import { getSelectionOffsets, clampPopoverInCanvas } from '@/utils/domSelection';
+
 import type { ReviewEntity, TextEntityType } from '../types';
+import { ReviewAnnotationPopover } from './review-annotation-popover';
+import { ReviewEntityPopover } from './review-entity-popover';
+import { ReviewEntityList } from './review-entity-list';
+import { useTextSelection } from './use-text-selection';
 
 export interface ReviewTextContentProps {
   reviewEntities: ReviewEntity[];
@@ -27,7 +28,7 @@ export interface ReviewTextContentProps {
   reviewFileReadOnly: boolean;
 }
 
-export function ReviewTextContent({
+function ReviewTextContentInner({
   reviewEntities,
   reviewTextContent,
   reviewTextContentRef,
@@ -41,66 +42,30 @@ export function ReviewTextContent({
 }: ReviewTextContentProps) {
   const t = useT();
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement>(null);
 
   // ── Clicked entity popover (remove annotation) ──
   const [clickedEntity, setClickedEntity] = useState<ReviewEntity | null>(null);
   const [entityPopupPos, setEntityPopupPos] = useState<{ left: number; top: number } | null>(null);
 
-  // ── Grouped entity list ──
-  const entityGroups = useMemo(() => {
-    const map = new Map<string, { type: string; text: string; ids: string[]; selected: number; total: number }>();
-    reviewEntities.forEach(e => {
-      const key = `${e.type}::${e.text}`;
-      const g = map.get(key) || { type: e.type, text: e.text, ids: [], selected: 0, total: 0 };
-      g.ids.push(e.id);
-      g.total++;
-      if (e.selected !== false) g.selected++;
-      map.set(key, g);
-    });
-    return Array.from(map.values());
-  }, [reviewEntities]);
-
-  // ── Scroll to entity in text panel — cycles through occurrences ──
-  const scrollIndexRef = useRef<Map<string, number>>(new Map());
-  const previewScrollRef = useRef<HTMLDivElement>(null);
-
-  const scrollToEntityGroup = useCallback((ids: string[]) => {
-    if (!ids.length) return;
-    const key = ids.join(',');
-    const prevIdx = scrollIndexRef.current.get(key) ?? -1;
-    const nextIdx = (prevIdx + 1) % ids.length;
-    scrollIndexRef.current.set(key, nextIdx);
-
-    const targetId = ids[nextIdx];
-    const el = reviewTextContentRef.current?.querySelector(`[data-review-entity-id="${CSS.escape(targetId)}"]`) as HTMLElement | null;
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      el.classList.add('ring-2', 'ring-primary');
-      setTimeout(() => el.classList.remove('ring-2', 'ring-primary'), 1500);
-
-      // Sync redacted preview scroll to same ratio
-      const origScroll = reviewTextScrollRef.current;
-      const prevScroll = previewScrollRef.current;
-      if (origScroll && prevScroll) {
-        const ratio = origScroll.scrollHeight > origScroll.clientHeight
-          ? origScroll.scrollTop / (origScroll.scrollHeight - origScroll.clientHeight)
-          : 0;
-        prevScroll.scrollTop = ratio * (prevScroll.scrollHeight - prevScroll.clientHeight);
-      }
-    }
-  }, [reviewTextContentRef, reviewTextScrollRef]);
-
-  // ── Text selection annotation state ──
-  const [selectedText, setSelectedText] = useState<{ text: string; start: number; end: number } | null>(null);
-  const [selectionPos, setSelectionPos] = useState<{ left: number; top: number } | null>(null);
-  const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
-  const selectionRangeRef = useRef<Range | null>(null);
-
-  const clearTextSelection = useCallback(() => {
-    setSelectedText(null);
-    setSelectionPos(null);
-    selectionRangeRef.current = null;
-  }, []);
+  // ── Text selection hook ──
+  const {
+    selectedText,
+    selectionPos,
+    selectedTypeId,
+    setSelectedTypeId,
+    clearTextSelection,
+    handleTextSelect,
+    addManualAnnotation,
+  } = useTextSelection({
+    reviewTextContent,
+    reviewTextContentRef,
+    reviewTextScrollRef,
+    cardRef,
+    textTypes,
+    reviewFileReadOnly,
+    applyReviewEntities,
+  });
 
   const handleEntityClick = useCallback((entity: ReviewEntity) => {
     if (reviewFileReadOnly) return;
@@ -124,120 +89,6 @@ export function ReviewTextContent({
     setClickedEntity(null);
     setEntityPopupPos(null);
   }, [clickedEntity, applyReviewEntities]);
-
-  const handleTextSelect = useCallback(() => {
-    if (reviewFileReadOnly) return;
-
-    const selection = window.getSelection();
-    if (!selection || !reviewTextContentRef.current) {
-      clearTextSelection();
-      return;
-    }
-
-    if (selection.isCollapsed) {
-      if (!selectedText || !selectionPos) clearTextSelection();
-      return;
-    }
-
-    const text = selection.toString().trim();
-    if (!text || text.length < 2) {
-      clearTextSelection();
-      return;
-    }
-
-    const range = selection.getRangeAt(0);
-    if (!reviewTextContentRef.current.contains(range.commonAncestorContainer)) {
-      clearTextSelection();
-      return;
-    }
-
-    const offsets = getSelectionOffsets(range, reviewTextContentRef.current);
-    const start = offsets?.start ?? reviewTextContent.indexOf(text);
-    const end = offsets?.end ?? (start + text.length);
-    if (start < 0 || end < 0) {
-      clearTextSelection();
-      return;
-    }
-
-    try {
-      selectionRangeRef.current = range.cloneRange();
-    } catch {
-      clearTextSelection();
-      return;
-    }
-
-    if (!selectedTypeId) {
-      const fallbackType = textTypes[0]?.id;
-      if (fallbackType) setSelectedTypeId(fallbackType);
-    }
-
-    setSelectionPos(null);
-    setSelectedText({ text, start, end });
-  }, [clearTextSelection, reviewFileReadOnly, reviewTextContent, reviewTextContentRef, selectedText, selectedTypeId, selectionPos, textTypes]);
-
-  // Position the popover after selectedText changes (absolute within Card)
-  useLayoutEffect(() => {
-    if (!selectedText) {
-      selectionRangeRef.current = null;
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing position with DOM layout
-      setSelectionPos(null);
-      return;
-    }
-
-    const card = cardRef.current;
-    if (!card) return;
-
-    const update = () => {
-      const range = selectionRangeRef.current;
-      if (!range || range.collapsed) {
-        setSelectionPos(null);
-        return;
-      }
-
-      let rect: DOMRect;
-      try {
-        rect = range.getBoundingClientRect();
-      } catch {
-        setSelectionPos(null);
-        return;
-      }
-
-      if (rect.width === 0 && rect.height === 0) return;
-
-      const cardRect = card.getBoundingClientRect();
-      // Clamp within the Card bounds (viewport coords), then convert to Card-relative
-      const clamped = clampPopoverInCanvas(rect, cardRect, 240, 240);
-      setSelectionPos({ left: clamped.left - cardRect.left, top: clamped.top - cardRect.top });
-    };
-
-    update();
-
-    const scrollEl = reviewTextScrollRef.current;
-    window.addEventListener('resize', update);
-    scrollEl?.addEventListener('scroll', update, { passive: true });
-    return () => {
-      window.removeEventListener('resize', update);
-      scrollEl?.removeEventListener('scroll', update);
-    };
-  }, [selectedText, reviewTextScrollRef]);
-
-  const addManualAnnotation = useCallback(() => {
-    if (!selectedText || !selectedTypeId) return;
-    const newEntity: ReviewEntity = {
-      id: `manual_${Date.now()}`,
-      text: selectedText.text,
-      type: selectedTypeId,
-      start: selectedText.start,
-      end: selectedText.end,
-      selected: true,
-      source: 'manual',
-      page: 0,
-      confidence: 1,
-    };
-    applyReviewEntities(prev => [...prev, newEntity]);
-    clearTextSelection();
-    window.getSelection()?.removeAllRanges();
-  }, [selectedText, selectedTypeId, applyReviewEntities, clearTextSelection]);
 
   const renderMarkedContent = () => {
     if (!reviewTextContent) return <p className="text-muted-foreground">-</p>;
@@ -290,9 +141,7 @@ export function ReviewTextContent({
           ref={reviewTextScrollRef}
           className="flex-1 overflow-auto p-4"
           onScroll={() => {
-            // Dismiss entity popover on scroll to avoid stale positioning
             if (clickedEntity) { setClickedEntity(null); setEntityPopupPos(null); }
-
             const orig = reviewTextScrollRef.current;
             const prev = previewScrollRef.current;
             if (orig && prev && orig.scrollHeight > orig.clientHeight) {
@@ -310,109 +159,26 @@ export function ReviewTextContent({
           </div>
         </div>
 
-        {/* Text selection annotation popover */}
         {selectedText && selectionPos && (
-          <div
-            className="absolute z-50 w-[220px] animate-in fade-in zoom-in-95 rounded-xl border border-border bg-popover shadow-lg"
-            style={{ left: selectionPos.left, top: selectionPos.top }}
-            onMouseDown={(e) => e.stopPropagation()}
-            onMouseUp={(e) => e.stopPropagation()}
-          >
-            {/* Header: selected text + close */}
-            <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
-              <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                &ldquo;{selectedText.text}&rdquo;
-              </p>
-              <button
-                type="button"
-                onClick={clearTextSelection}
-                className="ml-2 shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-              >
-                <svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.782 4.032a.575.575 0 10-.813-.814L7.5 6.687 4.032 3.218a.575.575 0 00-.814.814L6.687 7.5l-3.469 3.468a.575.575 0 00.814.814L7.5 8.313l3.469 3.469a.575.575 0 00.813-.814L8.313 7.5l3.469-3.468z" fill="currentColor"/></svg>
-              </button>
-            </div>
-
-            {/* Type pills grid */}
-            <div className="max-h-[180px] overflow-y-auto overscroll-contain px-1.5 py-1.5">
-              <div className="grid grid-cols-2 gap-1">
-                {textTypes.map((et) => {
-                  const risk = getEntityRiskConfig(et.id);
-                  const active = selectedTypeId === et.id;
-                  return (
-                    <button
-                      key={et.id}
-                      type="button"
-                      onClick={() => setSelectedTypeId(et.id)}
-                      className={cn(
-                        'truncate rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors',
-                        active ? 'font-medium shadow-sm ring-1 ring-inset' : 'hover:bg-accent',
-                      )}
-                      style={active ? { backgroundColor: risk.bgColor, color: risk.textColor, '--tw-ring-color': risk.color } as React.CSSProperties : undefined}
-                    >
-                      {et.name ?? getEntityTypeName(et.id)}
-                    </button>
-                  );
-                })}
-                <button
-                  type="button"
-                  onClick={() => setSelectedTypeId('CUSTOM')}
-                  className={cn(
-                    'truncate rounded-lg px-2 py-1.5 text-left text-[11px] transition-colors',
-                    selectedTypeId === 'CUSTOM' ? 'bg-muted font-medium shadow-sm ring-1 ring-inset ring-border' : 'hover:bg-accent',
-                  )}
-                >
-                  {t('playground.customType')}
-                </button>
-              </div>
-            </div>
-
-            {/* Add button */}
-            <div className="flex items-center gap-1.5 border-t border-border/60 px-3 py-2">
-              <Button
-                size="sm"
-                onClick={addManualAnnotation}
-                disabled={!selectedTypeId}
-                className="h-7 flex-1 text-xs"
-              >
-                {t('playground.addAnnotation')}
-              </Button>
-            </div>
-          </div>
+          <ReviewAnnotationPopover
+            selectedText={selectedText.text}
+            selectionPos={selectionPos}
+            selectedTypeId={selectedTypeId}
+            textTypes={textTypes}
+            onTypeSelect={setSelectedTypeId}
+            onAdd={addManualAnnotation}
+            onClose={clearTextSelection}
+          />
         )}
 
-        {/* Clicked entity popover — remove annotation */}
-        {clickedEntity && entityPopupPos && (() => {
-          const risk = getEntityRiskConfig(clickedEntity.type);
-          return (
-            <div
-              className="absolute z-50 w-[220px] animate-in fade-in zoom-in-95 rounded-xl border border-border bg-popover p-3 shadow-lg"
-              style={{ left: entityPopupPos.left, top: entityPopupPos.top }}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span
-                    className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium"
-                    style={{ backgroundColor: risk.bgColor, color: risk.textColor }}
-                  >
-                    {getEntityTypeName(clickedEntity.type)}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">{clickedEntity.text}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setClickedEntity(null); setEntityPopupPos(null); }}
-                  className="shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                >
-                  <svg width="14" height="14" viewBox="0 0 15 15" fill="none"><path d="M11.782 4.032a.575.575 0 10-.813-.814L7.5 6.687 4.032 3.218a.575.575 0 00-.814.814L6.687 7.5l-3.469 3.468a.575.575 0 00.814.814L7.5 8.313l3.469 3.469a.575.575 0 00.813-.814L8.313 7.5l3.469-3.468z" fill="currentColor"/></svg>
-                </button>
-              </div>
-              <Button size="sm" variant="ghost" onClick={removeClickedEntity} className="h-7 w-full text-xs text-destructive hover:bg-destructive/10 hover:text-destructive">
-                {t('playground.removeAnnotation')}
-              </Button>
-            </div>
-          );
-        })()}
+        {clickedEntity && entityPopupPos && (
+          <ReviewEntityPopover
+            entity={clickedEntity}
+            position={entityPopupPos}
+            onRemove={removeClickedEntity}
+            onClose={() => { setClickedEntity(null); setEntityPopupPos(null); }}
+          />
+        )}
       </Card>
 
       {/* Redacted preview */}
@@ -424,11 +190,7 @@ export function ReviewTextContent({
           <div className="text-sm leading-relaxed whitespace-pre-wrap font-[system-ui]">
             {textPreviewSegments.map((seg, i) =>
               seg.isMatch ? (
-                <mark
-                  key={i}
-                  style={batchMarkStyle(seg.origKey)}
-                  className="px-0.5 rounded-md transition-all duration-300"
-                >
+                <mark key={i} style={batchMarkStyle(seg.origKey)} className="px-0.5 rounded-md transition-all duration-300">
                   {displayPreviewMap[seg.origKey] ?? seg.origKey}
                 </mark>
               ) : (
@@ -440,86 +202,17 @@ export function ReviewTextContent({
       </Card>
 
       {/* Entity list */}
-      <Card className="min-h-0 flex flex-col overflow-hidden">
-        <div className="shrink-0 px-3 py-2 border-b flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs font-semibold">{t('batchWizard.step4.entityList')}</span>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {selectedReviewEntityCount}/{reviewEntities.length}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-6"
-              onClick={() => applyReviewEntities(prev => prev.map(e => ({ ...e, selected: true })))}
-              data-testid="select-all-entities"
-            >
-              {t('batchWizard.step4.selectAll')}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-6"
-              onClick={() => applyReviewEntities(prev => prev.map(e => ({ ...e, selected: false })))}
-              data-testid="deselect-all-entities"
-            >
-              {t('batchWizard.step4.deselectAll')}
-            </Button>
-          </div>
-        </div>
-        <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
-          {entityGroups.map(g => {
-            const risk = getEntityRiskConfig(g.type);
-            const allSelected = g.selected === g.total;
-            const noneSelected = g.selected === 0;
-            return (
-              <div
-                key={`${g.type}::${g.text}`}
-                className="rounded-xl border shadow-sm px-3 py-2 cursor-pointer transition-colors hover:bg-accent/30"
-                style={{
-                  backgroundColor: noneSelected ? undefined : risk.bgColor,
-                  borderLeft: `3px solid ${risk.color}`,
-                }}
-                onClick={() => scrollToEntityGroup(g.ids)}
-              >
-                <div className="flex items-start gap-2">
-                  <Checkbox
-                    checked={allSelected ? true : noneSelected ? false : 'indeterminate'}
-                    onCheckedChange={() => {
-                      const newSelected = !allSelected;
-                      applyReviewEntities(prev =>
-                        prev.map(e => g.ids.includes(e.id) ? { ...e, selected: newSelected } : e),
-                      );
-                    }}
-                    className="mt-0.5"
-                    data-testid={`entity-group-toggle-${g.type}-${g.text}`}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-medium" style={{ color: risk.textColor }}>
-                        {textTypes.find(tt => tt.id === g.type)?.name ?? getEntityTypeName(g.type)}
-                      </span>
-                      {g.total > 1 && (
-                        <Badge variant="secondary" className="rounded-full px-1.5 py-0 text-[10px] leading-4">
-                          &times;{g.total}
-                        </Badge>
-                      )}
-                    </div>
-                    <span className="block text-xs break-all mt-0.5" style={{ color: risk.textColor }}>
-                      {g.text}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {reviewEntities.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-6">
-              {t('batchWizard.step4.noEntities')}
-            </p>
-          )}
-        </div>
-      </Card>
+      <ReviewEntityList
+        reviewEntities={reviewEntities}
+        selectedReviewEntityCount={selectedReviewEntityCount}
+        textTypes={textTypes}
+        applyReviewEntities={applyReviewEntities}
+        reviewTextContentRef={reviewTextContentRef}
+        reviewTextScrollRef={reviewTextScrollRef}
+        previewScrollRef={previewScrollRef}
+      />
     </div>
   );
 }
+
+export const ReviewTextContent = memo(ReviewTextContentInner);

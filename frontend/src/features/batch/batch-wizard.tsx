@@ -1,11 +1,12 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { Navigate } from 'react-router-dom';
+
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+
 import { useBatchWizard } from './hooks/use-batch-wizard';
 import { BatchWizardProvider } from './batch-wizard-context';
 import { BatchStepProgress } from './components/batch-step-progress';
@@ -67,25 +68,7 @@ export function BatchWizard() {
             </Alert>
           )}
 
-          {w.step === 1 && (
-            <BatchStep1Config
-              cfg={w.cfg}
-              setCfg={w.setCfg}
-              configLoaded={w.configLoaded}
-              textTypes={w.textTypes}
-              pipelines={w.pipelines}
-              textPresets={w.textPresets}
-              visionPresets={w.visionPresets}
-              onBatchTextPresetChange={w.onBatchTextPresetChange}
-              onBatchVisionPresetChange={w.onBatchVisionPresetChange}
-              confirmStep1={w.confirmStep1}
-              setConfirmStep1={w.setConfirmStep1}
-              isStep1Complete={w.isStep1Complete}
-              jobPriority={w.jobPriority}
-              setJobPriority={w.setJobPriority}
-              advanceToUploadStep={w.advanceToUploadStep}
-            />
-          )}
+          {w.step === 1 && <BatchStep1Config />}
 
           {w.step === 2 && (
             <BatchStep2Upload

@@ -1,10 +1,10 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import type { FC } from 'react';
+import { memo } from 'react';
+
 import { Eye } from 'lucide-react';
 import { useT } from '@/i18n';
-
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -40,7 +40,7 @@ export interface BatchStep1PreviewCardsProps {
   setPreviewDialog: (v: 'text' | 'image' | null) => void;
 }
 
-export const BatchStep1PreviewCards: FC<BatchStep1PreviewCardsProps> = ({
+function BatchStep1PreviewCardsInner({
   textPreviewGroups,
   imagePreviewGroups,
   textPresetName,
@@ -49,7 +49,7 @@ export const BatchStep1PreviewCards: FC<BatchStep1PreviewCardsProps> = ({
   imageDetailPills,
   previewDialog,
   setPreviewDialog,
-}) => {
+}: BatchStep1PreviewCardsProps) {
   const t = useT();
 
   const previewDialogConfig: PreviewDialogConfig | null =
@@ -160,7 +160,9 @@ export const BatchStep1PreviewCards: FC<BatchStep1PreviewCardsProps> = ({
       </Dialog>
     </>
   );
-};
+}
+
+export const BatchStep1PreviewCards = memo(BatchStep1PreviewCardsInner);
 
 function SelectionPreviewSummaryCard({
   title,

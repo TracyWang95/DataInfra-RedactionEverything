@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 Prometheus 监控指标 — 识别/匿名化延迟、错误率、队列深度。
 

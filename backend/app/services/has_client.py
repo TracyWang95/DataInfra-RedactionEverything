@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 HaS (Hide And Seek) 本地模型客户端
 使用 llama.cpp 的 OpenAI 兼容接口

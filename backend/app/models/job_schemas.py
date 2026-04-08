@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 Job (task-center) request/response models: create, list, detail,
 progress, review-draft, and related bodies.

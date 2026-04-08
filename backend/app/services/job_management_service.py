@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 任务管理业务逻辑服务层 — 从 api/jobs.py 提取。
 
@@ -73,7 +70,7 @@ def refresh_job_status(store: JobStore, job_id: str) -> None:
             store.update_job_status(job_id, JobStatus.AWAITING_REVIEW)
         elif any(s == JobItemStatus.FAILED.value for s in sts):
             store.update_job_status(job_id, JobStatus.FAILED)
-    except (InvalidStatusTransition, KeyError, ValueError):
+    except Exception:
         pass  # 状态已是目标值或转换不合法，忽略
 
 
@@ -229,7 +226,7 @@ def enqueue_task(task_type: str, job_id: str, item_id: str, file_id: str) -> Non
             file_id=file_id,
             task_type=task_type,
         ))
-    except (RuntimeError, ValueError):
+    except Exception:
         logger.exception("enqueue_task: 投递 %s 失败（item=%s）", task_type, item_id[:8])
 
 
@@ -611,12 +608,12 @@ async def commit_review(
         store.complete_item_review(item_id, reviewer=reviewer)
         store.touch_job_updated(job_id)
         refresh_job_status(store, job_id)
-    except Exception as exc:  # broad catch: commit_review must report all failures to caller
+    except Exception as exc:
         import traceback
         logger.error("commit_review Exception for item %s: %s\n%s", item_id, str(exc), traceback.format_exc())
         try:
             store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW, error_message=str(exc))
-        except (InvalidStatusTransition, KeyError, ValueError):
+        except Exception:
             store.update_item_status(item_id, JobItemStatus.FAILED, error_message=str(exc))
         store.touch_job_updated(job_id)
         refresh_job_status(store, job_id)

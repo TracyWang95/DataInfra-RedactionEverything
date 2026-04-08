@@ -14,6 +14,8 @@ import {
   parseWizardFurthestFromUnknown,
 } from '@/utils/jobPrimaryNavigation';
 import { buildFallbackPreviewEntityMap } from '@/utils/textRedactionSegments';
+import { queryClient } from '@/lib/query-client';
+import { queryKeys } from '@/lib/query-keys';
 
 import type {
   BatchRow,
@@ -83,7 +85,6 @@ export function defaultConfig(): BatchWizardPersistedConfig {
     imageFillColor: '#000000',
     presetTextId: null,
     presetVisionId: null,
-    presetId: null,
     executionDefault: 'queue',
   };
 }
@@ -267,6 +268,48 @@ export async function fetchBatchPreviewMap(
     payload.map(p => ({ text: p.text, type: p.type, selected: p.selected })),
     modeKey,
   );
+}
+
+// ── Cached preview map fetch (React Query) ──
+
+/**
+ * Simple string hash for query-key deduplication.
+ * Not cryptographic — just enough to avoid redundant API calls.
+ */
+function shortHash(input: string): string {
+  let h = 0;
+  for (let i = 0; i < input.length; i++) {
+    h = ((h << 5) - h + input.charCodeAt(i)) | 0;
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * Wraps `fetchBatchPreviewMap` with `queryClient.fetchQuery` so identical
+ * entity-set + replacement-mode combinations are served from cache.
+ *
+ * The cache key is derived from a hash of the entities array (id + text +
+ * type + selected) plus the replacement mode.  `staleTime: 60 s` keeps
+ * results warm during typical review navigation.
+ */
+export function fetchCachedBatchPreviewMap(
+  entities: ReviewEntity[],
+  replacementMode: BatchWizardPersistedConfig['replacementMode'],
+): Promise<Record<string, string>> {
+  // Build a stable, compact representation for hashing
+  const digest = shortHash(
+    JSON.stringify(
+      entities
+        .filter(e => e.selected !== false)
+        .map(e => `${e.id}|${e.text}|${e.type}|${e.selected}`),
+    ) + '|' + replacementMode,
+  );
+
+  return queryClient.fetchQuery({
+    queryKey: queryKeys.batchPreview.entityMap(digest),
+    queryFn: () => fetchBatchPreviewMap(entities, replacementMode),
+    staleTime: 60_000,
+  });
 }
 
 // Re-export types that sub-hooks need from effectiveWizardFurthestStep

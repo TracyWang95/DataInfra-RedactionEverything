@@ -1,10 +1,10 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import type { FC } from 'react';
+import { memo } from 'react';
+
 import { Link } from 'react-router-dom';
 import { useT } from '@/i18n';
-
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -24,14 +24,14 @@ export interface BatchStep1FooterProps {
   advanceToUploadStep: () => void;
 }
 
-export const BatchStep1Footer: FC<BatchStep1FooterProps> = ({
+function BatchStep1FooterInner({
   confirmStep1,
   setConfirmStep1,
   isStep1Complete,
   jobPriority,
   setJobPriority,
   advanceToUploadStep,
-}) => {
+}: BatchStep1FooterProps) {
   const t = useT();
 
   return (
@@ -88,4 +88,6 @@ export const BatchStep1Footer: FC<BatchStep1FooterProps> = ({
       </p>
     </div>
   );
-};
+}
+
+export const BatchStep1Footer = memo(BatchStep1FooterInner);

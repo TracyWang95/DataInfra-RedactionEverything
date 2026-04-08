@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import React from 'react';
+import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { useT } from '@/i18n';
 
 interface Props {
   open: boolean;
@@ -24,7 +23,7 @@ interface Props {
   onCancel: () => void;
 }
 
-export const ConfirmDialog: React.FC<Props> = ({
+export function ConfirmDialog({
   open,
   title,
   message,
@@ -33,7 +32,7 @@ export const ConfirmDialog: React.FC<Props> = ({
   danger = false,
   onConfirm,
   onCancel,
-}) => {
+}: Props) {
   const t = useT();
 
   return (
@@ -56,4 +55,4 @@ export const ConfirmDialog: React.FC<Props> = ({
       </DialogContent>
     </Dialog>
   );
-};
+}

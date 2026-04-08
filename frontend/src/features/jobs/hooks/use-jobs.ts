@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { authFetch } from '@/services/api-client';
 import { t } from '@/i18n';
+import { JOBS_LIST_POLL_MS } from '@/constants/timing';
 import {
   deleteJob,
   getJob,
@@ -211,7 +212,7 @@ export function useJobs() {
     const hasActiveJobs = rows.some(j => !['completed', 'failed', 'cancelled', 'draft'].includes(j.status));
     if (!hasActiveJobs) return;
     const tick = () => { if (document.visibilityState === 'visible') void load(); };
-    const timer = setInterval(tick, 10_000);
+    const timer = setInterval(tick, JOBS_LIST_POLL_MS);
     document.addEventListener('visibilitychange', tick);
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
   }, [rows, load]);

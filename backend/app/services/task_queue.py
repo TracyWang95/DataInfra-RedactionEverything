@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 进程内异步任务队列。
 
@@ -12,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import traceback
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -134,9 +130,9 @@ class SimpleTaskQueue:
                         task.item_id, JobItemStatus.FAILED,
                         error_message=f"worker: {type(exc).__name__}: {str(exc)[:200]}",
                     )
-                except (sqlite3.Error, KeyError, ValueError):
+                except Exception:
                     pass
-            except Exception:  # broad catch: worker must not crash
+            except Exception:
                 logger.exception(
                     "task failed (unexpected): job=%s item=%s", task.job_id[:8], task.item_id[:8]
                 )
@@ -147,7 +143,7 @@ class SimpleTaskQueue:
                         task.item_id, JobItemStatus.FAILED,
                         error_message="worker unhandled exception",
                     )
-                except (sqlite3.Error, KeyError, ValueError):
+                except Exception:
                     pass
             finally:
                 self._current = None
@@ -224,13 +220,13 @@ class SimpleTaskQueue:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 logger.warning("failed to mark item %s as FAILED (item not found or invalid transition)", task.item_id[:8])
-        except Exception as e:  # broad catch: worker must not crash
+        except Exception as e:
             err_msg = str(e)[:500]
             logger.exception("[queue] item=%s recognition failed (unexpected): %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
-            except (sqlite3.Error, KeyError, ValueError):
-                logger.warning("failed to mark item %s as FAILED", task.item_id[:8])
+            except Exception:
+                logger.exception("failed to mark item %s as FAILED", task.item_id[:8])
         finally:
             store.touch_job_updated(task.job_id)
             self._refresh_job_status(store, task.job_id)
@@ -380,12 +376,12 @@ class SimpleTaskQueue:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 pass
-        except Exception as e:  # broad catch: worker must not crash
+        except Exception as e:
             err_msg = str(e)[:500]
             logger.exception("[queue] item=%s redaction failed (unexpected): %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
-            except (sqlite3.Error, KeyError, ValueError):
+            except Exception:
                 pass
         finally:
             store.touch_job_updated(task.job_id)
@@ -437,7 +433,7 @@ class SimpleTaskQueue:
                     self._try_update_job_status(store, job_id, JobStatus.AWAITING_REVIEW)
                 else:
                     self._try_update_job_status(store, job_id, JobStatus.COMPLETED)
-        except (sqlite3.Error, KeyError, ValueError):
+        except Exception:
             logger.warning("_refresh_job_status failed for job %s", job_id[:8], exc_info=True)
 
 

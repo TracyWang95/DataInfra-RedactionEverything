@@ -12,7 +12,17 @@ HaS 模型服务启动脚本 (Python版本)
 import os
 import sys
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "has", "has_4.0_0.6B.gguf")
+_DEFAULT_MODEL = os.path.join(os.path.dirname(__file__), "..", "models", "has", "HaS_Text_0209_0.6B_Q4_K_M.gguf")
+MODEL_PATH = os.environ.get("HAS_MODEL_PATH", _DEFAULT_MODEL)
+# 常见备用路径
+if not os.path.exists(MODEL_PATH):
+    for alt in [
+        r"D:\has_models\HaS_Text_0209_0.6B_Q4_K_M.gguf",
+        os.path.join(os.path.dirname(__file__), "models", "has", "has_4.0_0.6B.gguf"),
+    ]:
+        if os.path.exists(alt):
+            MODEL_PATH = alt
+            break
 HOST = "0.0.0.0"
 PORT = 8080
 

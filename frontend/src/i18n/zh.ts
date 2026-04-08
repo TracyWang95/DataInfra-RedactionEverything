@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-﻿const zhBase: Record<string, string> = {
+const zhBase: Record<string, string> = {
   
   'nav.playground': 'Playground',
   'nav.batch': '批量任务',
@@ -37,6 +37,7 @@
   'common.confirm': '确认',
   'common.cancel': '取消',
   'common.delete': '删除',
+  'common.edit': '编辑',
   'common.save': '保存',
   'common.export': '导出',
   'common.import': '导入',
@@ -1164,6 +1165,33 @@ const zhOverrides: Record<string, string> = {
   'settings.preview.preset.mixed': '混合批次交付清单',
   'settings.preview.preset.litigation': '诉讼材料交付清单',
   'settings.preview.preset.finance': '财务材料默认清单',
+
+  // Image BBox Editor
+  'editor.resize.nw': '向左上调整大小',
+  'editor.resize.n': '向上调整大小',
+  'editor.resize.ne': '向右上调整大小',
+  'editor.resize.e': '向右调整大小',
+  'editor.resize.se': '向右下调整大小',
+  'editor.resize.s': '向下调整大小',
+  'editor.resize.sw': '向左下调整大小',
+  'editor.resize.w': '向左调整大小',
+  'editor.resize.fallback': '调整大小',
+  'editor.deselected': '已取消',
+  'editor.exitDraw': '退出绘制模式',
+  'editor.enterDraw': '进入拉框标注模式',
+  'editor.drawModeActive': '绘制模式 (ESC退出)',
+  'editor.drawModeTrigger': '拉框标注',
+  'editor.deleteSelected': '删除选中的标注区域',
+  'editor.deleteSelectedShort': '删除选中 (Del)',
+  'editor.zoom': '缩放',
+  'editor.zoomIn': '放大',
+  'editor.zoomOut': '缩小',
+  'editor.zoomFit': '恢复为适应窗口大小',
+  'editor.fit': '适应',
+  'editor.canvasLabel': '图像标注区域，可拖拽框选敏感区域',
+  'editor.sampleName': '张三',
+  'editor.sampleSmart': '当事人一',
+  'editor.sampleStructured': '人物[001].个人.姓名',
 };
 
 export const zh: Record<string, string> = {

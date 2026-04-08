@@ -1,7 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-
 import axios, { type AxiosRequestConfig } from 'axios';
 
 // ─── Timeout constants ───────────────────────────────────────
@@ -9,34 +8,30 @@ export const API_TIMEOUT = 60_000;
 export const VISION_TIMEOUT = 400_000;
 export const BATCH_TIMEOUT = 120_000;
 
-const AUTH_TOKEN_KEY = 'auth_token';
+// ─── Error types ─────────────────────────────────────────────
 
-export function getAuthToken(): string | null {
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+export type ApiErrorType = 'network' | 'timeout' | 'cancelled' | 'server' | 'auth' | 'unknown';
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status?: number,
+    public errorType: ApiErrorType = 'unknown',
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
-export function setAuthToken(token: string): void {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
-}
-
-export function clearAuthToken(): void {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
-}
+// ─── Client ──────────────────────────────────────────────────
 
 export const apiClient = axios.create({
   baseURL: '/api/v1',
   timeout: API_TIMEOUT,
+  withCredentials: true, // Send httpOnly cookies automatically
 });
 
-apiClient.interceptors.request.use((config) => {
-  const token = getAuthToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// Response: unwrap data, handle errors
+// Response: unwrap data, handle errors with classified error types
 apiClient.interceptors.response.use(
   (response) => response.data,
   (error) => {
@@ -45,24 +40,26 @@ apiClient.interceptors.response.use(
       error.response?.data?.detail ||
       error.message ||
       'Request failed';
-    if (import.meta.env.DEV) {
-      console.error('API Error:', message);
+
+    let errorType: ApiErrorType;
+    if (axios.isCancel(error)) {
+      errorType = 'cancelled';
+    } else if (error.code === 'ECONNABORTED') {
+      errorType = 'timeout';
+    } else if (!error.response) {
+      errorType = 'network';
+    } else if (error.response.status === 401) {
+      errorType = 'auth';
+    } else {
+      errorType = 'server';
     }
-    return Promise.reject(new ApiError(message, error.response?.status));
+
+    if (import.meta.env.DEV) {
+      console.error(`API Error [${errorType}]:`, message);
+    }
+    return Promise.reject(new ApiError(message, error.response?.status, errorType));
   },
 );
-
-// ─── Error class ──────────────────────────────────────────────
-
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public status?: number,
-  ) {
-    super(message);
-    this.name = 'ApiError';
-  }
-}
 
 // ─── Typed request helpers ────────────────────────────────────
 
@@ -84,36 +81,22 @@ export function del<T = void>(url: string, config?: AxiosRequestConfig): Promise
 
 // ─── Authenticated fetch helpers ─────────────────────────────
 
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...extra };
-  const token = getAuthToken();
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  return headers;
-}
-
 export function buildAuthHeaders(extra?: Record<string, string>): Record<string, string> {
-  return authHeaders(extra);
+  return { ...extra };
 }
 
-/** Drop-in replacement for `fetch()` that attaches the JWT Bearer token. */
+/** Drop-in replacement for `fetch()` that sends cookies automatically. */
 export function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   return fetch(input, {
     ...init,
-    headers: authHeaders(init?.headers as Record<string, string> | undefined),
+    credentials: 'include',
+    headers: init?.headers,
   });
 }
 
 export async function downloadFile(url: string, filename: string): Promise<void> {
-  const token = getAuthToken();
-  if (!token) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    return;
-  }
-  const res = await fetch(url, { headers: authHeaders() });
-  if (!res.ok) throw new ApiError(`Download failed: ${res.status}`, res.status);
+  const res = await fetch(url, { credentials: 'include' });
+  if (!res.ok) throw new ApiError(`Download failed: ${res.status}`, res.status, 'server');
   const blob = await res.blob();
   const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -124,17 +107,14 @@ export async function downloadFile(url: string, filename: string): Promise<void>
 }
 
 export async function authenticatedBlobUrl(url: string, mime?: string): Promise<string> {
-  const token = getAuthToken();
-  if (!token) return url;
-  const blob = await fetchBlob(url, { headers: authHeaders() });
+  const blob = await fetchBlob(url);
   return URL.createObjectURL(mime ? new Blob([blob], { type: mime }) : blob);
 }
 
 export async function fetchBlob(url: string, init?: RequestInit): Promise<Blob> {
   const res = await fetch(url, {
     ...init,
-    headers: authHeaders(init?.headers as Record<string, string>),
-    credentials: 'same-origin',
+    credentials: 'include',
   });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -142,7 +122,7 @@ export async function fetchBlob(url: string, init?: RequestInit): Promise<Blob> 
       const err = await res.json();
       msg = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail ?? err);
     } catch { /* ignore */ }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, 'server');
   }
   return res.blob();
 }

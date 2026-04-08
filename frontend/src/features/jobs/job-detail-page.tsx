@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { t } from '@/i18n';
+import { JOB_DETAIL_POLL_ACTIVE_MS, JOB_DETAIL_POLL_IDLE_MS } from '@/constants/timing';
 import {
   cancelJob,
   deleteJob,
@@ -68,7 +69,7 @@ export function JobDetailPage() {
         load().catch((e) => { if (import.meta.env.DEV) console.error('Load failed:', e); });
       }
     };
-    const interval = data?.status === 'redacting' || data?.status === 'processing' ? 5000 : 2000;
+    const interval = data?.status === 'redacting' || data?.status === 'processing' ? JOB_DETAIL_POLL_ACTIVE_MS : JOB_DETAIL_POLL_IDLE_MS;
     const timer = window.setInterval(tick, interval);
     document.addEventListener('visibilitychange', tick);
     return () => {

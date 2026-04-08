@@ -8,6 +8,9 @@ updates:
     labels:
       - dependencies
       - frontend
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
 
   - package-ecosystem: pip
     directory: "/backend"
@@ -17,11 +20,17 @@ updates:
     labels:
       - dependencies
       - backend
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: monthly
+      interval: weekly
     labels:
       - dependencies
       - ci
+    groups:
+      actions:
+        update-types: [minor, patch]

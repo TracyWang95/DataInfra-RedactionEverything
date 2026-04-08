@@ -115,6 +115,7 @@ export function EntityTypeList({
                           variant="ghost"
                           className="size-6"
                           onClick={() => onEdit(type)}
+                          aria-label={t('common.edit')}
                           data-testid={`edit-type-${type.id}`}
                         >
                           <PencilIcon />
@@ -124,6 +125,7 @@ export function EntityTypeList({
                           variant="ghost"
                           className="size-6 text-destructive hover:text-destructive"
                           onClick={() => onDelete(type.id)}
+                          aria-label={t('common.delete')}
                           data-testid={`delete-type-${type.id}`}
                         >
                           <TrashIcon />

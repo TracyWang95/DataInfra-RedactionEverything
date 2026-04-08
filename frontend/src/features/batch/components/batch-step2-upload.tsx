@@ -1,12 +1,14 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import { memo } from 'react';
 
 import { Link } from 'react-router-dom';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+
 import type { BatchWizardMode } from '@/services/batchPipeline';
 import { isPreviewBatchJobId } from '../lib/batch-preview-fixtures';
 import type { BatchRow, Step } from '../types';
@@ -22,7 +24,7 @@ interface BatchStep2UploadProps {
   goStep: (s: Step) => void;
 }
 
-export function BatchStep2Upload({
+function BatchStep2UploadInner({
   mode,
   activeJobId,
   rows,
@@ -136,3 +138,5 @@ export function BatchStep2Upload({
     </div>
   );
 }
+
+export const BatchStep2Upload = memo(BatchStep2UploadInner);

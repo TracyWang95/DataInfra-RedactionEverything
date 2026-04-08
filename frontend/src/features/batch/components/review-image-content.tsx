@@ -1,10 +1,13 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import { memo } from 'react';
+
 import { useT } from '@/i18n';
 import { Checkbox } from '@/components/ui/checkbox';
 import ImageBBoxEditor from '@/components/ImageBBoxEditor';
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
+
 import type { PipelineCfg } from '../types';
 
 export interface ReviewImageContentProps {
@@ -19,7 +22,7 @@ export interface ReviewImageContentProps {
   toggleReviewBoxSelected: (id: string) => void;
 }
 
-export function ReviewImageContent({
+function ReviewImageContentInner({
   reviewBoxes,
   reviewOrigImageBlobUrl,
   reviewImagePreviewSrc,
@@ -131,3 +134,5 @@ export function ReviewImageContent({
     </div>
   );
 }
+
+export const ReviewImageContent = memo(ReviewImageContentInner);

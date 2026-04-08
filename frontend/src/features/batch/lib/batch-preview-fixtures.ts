@@ -211,7 +211,6 @@ export const previewBatchConfig: BatchWizardPersistedConfig = {
   imageFillColor: '#000000',
   presetTextId: 'preview-text-preset',
   presetVisionId: 'preview-vision-preset',
-  presetId: null,
   executionDefault: 'queue',
 };
 

@@ -1,6 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import { memo } from 'react';
 
 import { useT } from '@/i18n';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ import {
   getRedactionStateLabel,
   resolveRedactionState,
 } from '@/utils/redactionState';
+
 import type { BatchRow, Step } from '../types';
 
 interface BatchStep5ExportProps {
@@ -23,7 +25,7 @@ interface BatchStep5ExportProps {
   downloadZip: (redacted: boolean) => Promise<void>;
 }
 
-export function BatchStep5Export({
+function BatchStep5ExportInner({
   rows,
   selected,
   selectedIds,
@@ -98,3 +100,5 @@ export function BatchStep5Export({
     </Card>
   );
 }
+
+export const BatchStep5Export = memo(BatchStep5ExportInner);

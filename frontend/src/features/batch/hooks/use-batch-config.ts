@@ -135,12 +135,12 @@ export function useBatchConfig(
           imageRedactionMethod: persisted?.imageRedactionMethod ?? 'mosaic',
           imageRedactionStrength: persisted?.imageRedactionStrength ?? 25,
           imageFillColor: persisted?.imageFillColor ?? '#000000',
-          presetTextId: null, presetVisionId: null, presetId: null,
+          presetTextId: null, presetVisionId: null,
           executionDefault: persisted?.executionDefault === 'local' ? 'local' : 'queue',
         };
 
-        const tid = persisted?.presetTextId ?? persisted?.presetId ?? null;
-        const vid = persisted?.presetVisionId ?? persisted?.presetId ?? null;
+        const tid = persisted?.presetTextId ?? null;
+        const vid = persisted?.presetVisionId ?? null;
         const pt = tid ? presetList.find(x => x.id === tid && presetAppliesText(x)) : undefined;
         const pv = vid ? presetList.find(x => x.id === vid && presetAppliesVision(x)) : undefined;
         if (pt) next = { ...next, ...applyTextPresetFields(pt, types), presetTextId: pt.id };

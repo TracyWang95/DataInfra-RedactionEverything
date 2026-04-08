@@ -5,7 +5,8 @@ import React from 'react';
 import { createBrowserRouter, Navigate, useParams } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { t } from './i18n';
+import { useT } from './i18n';
+import { SUSPENSE_SPINNER_DELAY_MS, ROUTE_PREFETCH_DELAY_MS } from './constants/timing';
 
 const Playground = React.lazy(() => import('./features/playground').then(m => ({ default: m.Playground })));
 const Batch = React.lazy(() => import('./features/batch').then(m => ({ default: m.Batch })));
@@ -23,7 +24,7 @@ function DelayedSpinner() {
   const [show, setShow] = React.useState(false);
 
   React.useEffect(() => {
-    const timer = setTimeout(() => setShow(true), 150);
+    const timer = setTimeout(() => setShow(true), SUSPENSE_SPINNER_DELAY_MS);
     return () => clearTimeout(timer);
   }, []);
 
@@ -48,7 +49,7 @@ if (typeof window !== 'undefined') {
   if ('requestIdleCallback' in window) {
     (window as Window & { requestIdleCallback: (callback: () => void) => void }).requestIdleCallback(prefetchRoutes);
   } else {
-    setTimeout(prefetchRoutes, 2000);
+    setTimeout(prefetchRoutes, ROUTE_PREFETCH_DELAY_MS);
   }
 }
 
@@ -93,6 +94,7 @@ export const router = createBrowserRouter([
 ]);
 
 function NotFound() {
+  const t = useT();
   return (
     <div className="flex h-full min-h-0 items-center justify-center px-6">
       <div className="flex min-h-[320px] w-full max-w-xl flex-col items-center justify-center gap-4 rounded-[28px] border border-border/70 bg-card px-8 py-12 text-center shadow-[var(--shadow-floating)]">

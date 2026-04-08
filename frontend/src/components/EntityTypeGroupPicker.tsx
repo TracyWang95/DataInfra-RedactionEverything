@@ -1,7 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import React from 'react';
 import { cn } from '@/lib/utils';
 import {
   ENTITY_GROUPS,
@@ -9,7 +8,7 @@ import {
   getEntityRiskConfig,
   getEntityTypeName,
   type EntityTypeConfig,
-} from '../config/entityTypes';
+} from '@/config/entityTypes';
 
 export type EntityTypeOption = { id: string; name: string; description?: string };
 
@@ -20,12 +19,12 @@ type Props = {
   className?: string;
 };
 
-export const EntityTypeGroupPicker: React.FC<Props> = ({
+export function EntityTypeGroupPicker({
   entityTypes,
   selectedTypeId,
   onSelectType,
   className = '',
-}) => {
+}: Props) {
   const enabled = new Set(entityTypes.map((type) => type.id));
   const resolveName = (cfg: EntityTypeConfig) =>
     entityTypes.find((type) => type.id === cfg.id)?.name ?? getEntityTypeName(cfg.id);
@@ -98,4 +97,4 @@ export const EntityTypeGroupPicker: React.FC<Props> = ({
       })}
     </div>
   );
-};
+}

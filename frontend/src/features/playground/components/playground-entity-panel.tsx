@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { type FC, type MouseEvent as ReactMouseEvent, useMemo } from 'react';
+import { type FC, type MouseEvent as ReactMouseEvent, useMemo, memo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -32,7 +32,7 @@ export interface PlaygroundEntityPanelProps {
   onRemoveEntity: (id: string) => void;
 }
 
-export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = ({
+export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(({
   isImageMode,
   isLoading,
   entities,
@@ -188,7 +188,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = ({
       </Button>
     </div>
   );
-};
+});
 
 const ReplacementModeSelector: FC<{
   entities: Entity[];

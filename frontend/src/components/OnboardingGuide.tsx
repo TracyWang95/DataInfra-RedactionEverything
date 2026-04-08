@@ -5,6 +5,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Sparkles, Upload, ScanText, ShieldCheck, Layers3 } from 'lucide-react';
 import { useT } from '../i18n';
+import { STORAGE_KEYS } from '@/constants/storage-keys';
+import { getStorageItem, setStorageItem } from '@/lib/storage';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 
@@ -34,19 +36,11 @@ export function OnboardingGuide() {
       setShow(false);
       return;
     }
-    try {
-      setShow(!localStorage.getItem('onboarding_completed'));
-    } catch {
-      setShow(false);
-    }
+    setShow(!getStorageItem<boolean>(STORAGE_KEYS.ONBOARDING_COMPLETED, false));
   }, [location.pathname]);
 
   const finish = useCallback(() => {
-    try {
-      localStorage.setItem('onboarding_completed', 'true');
-    } catch {
-      return;
-    }
+    setStorageItem(STORAGE_KEYS.ONBOARDING_COMPLETED, true);
     setShow(false);
   }, []);
 

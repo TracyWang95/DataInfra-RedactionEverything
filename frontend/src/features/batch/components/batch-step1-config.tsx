@@ -1,53 +1,37 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react';
-import { useT } from '@/i18n';
+import { memo, useEffect, useState } from 'react';
 
+import { useT } from '@/i18n';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import type { RecognitionPreset } from '@/services/presetsApi';
-import type { BatchWizardPersistedConfig } from '@/services/batchPipeline';
-import type { PipelineCfg, TextEntityType } from '../types';
+
+import { useBatchWizardContext } from '../batch-wizard-context';
+import type { PreviewGroup } from './batch-step1-preview';
 import { BatchStep1PresetCards } from './batch-step1-preset-cards';
-import { BatchStep1PreviewCards, type PreviewGroup } from './batch-step1-preview';
+import { BatchStep1PreviewCards } from './batch-step1-preview';
 import { BatchStep1Footer } from './batch-step1-footer';
 
-interface BatchStep1ConfigProps {
-  cfg: BatchWizardPersistedConfig;
-  setCfg: React.Dispatch<React.SetStateAction<BatchWizardPersistedConfig>>;
-  configLoaded: boolean;
-  textTypes: TextEntityType[];
-  pipelines: PipelineCfg[];
-  textPresets: RecognitionPreset[];
-  visionPresets: RecognitionPreset[];
-  onBatchTextPresetChange: (id: string) => void;
-  onBatchVisionPresetChange: (id: string) => void;
-  confirmStep1: boolean;
-  setConfirmStep1: (v: boolean) => void;
-  isStep1Complete: boolean;
-  jobPriority: number;
-  setJobPriority: (v: number) => void;
-  advanceToUploadStep: () => void;
-}
-
-export function BatchStep1Config({
-  cfg,
-  setCfg,
-  configLoaded,
-  textTypes,
-  pipelines,
-  textPresets,
-  visionPresets,
-  onBatchTextPresetChange,
-  onBatchVisionPresetChange,
-  confirmStep1,
-  setConfirmStep1,
-  isStep1Complete,
-  jobPriority,
-  setJobPriority,
-  advanceToUploadStep,
-}: BatchStep1ConfigProps) {
+function BatchStep1ConfigInner() {
   const t = useT();
+  const {
+    cfg,
+    setCfg,
+    configLoaded,
+    textTypes,
+    pipelines,
+    textPresets,
+    visionPresets,
+    onBatchTextPresetChange,
+    onBatchVisionPresetChange,
+    confirmStep1,
+    setConfirmStep1,
+    isStep1Complete,
+    jobPriority,
+    setJobPriority,
+    advanceToUploadStep,
+  } = useBatchWizardContext();
+
   const [previewDialog, setPreviewDialog] = useState<'text' | 'image' | null>(null);
 
   useEffect(() => {
@@ -201,3 +185,5 @@ export function BatchStep1Config({
     </Card>
   );
 }
+
+export const BatchStep1Config = memo(BatchStep1ConfigInner);

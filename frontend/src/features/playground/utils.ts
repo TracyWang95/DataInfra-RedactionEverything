@@ -5,12 +5,12 @@
 import { t } from '@/i18n';
 import { authFetch, VISION_TIMEOUT } from '@/services/api-client';
 import { getSelectionMarkStyle, getSelectionToneClasses, type SelectionTone } from '@/ui/selectionPalette';
-import type { Entity, BoundingBox } from './types';
+import type { Entity, BoundingBox, VisionDetectionResponse } from './types';
 
 // Re-export from shared module so existing `import { clampPopoverInCanvas } from './utils'` still works.
 export { clampPopoverInCanvas } from '@/utils/domSelection';
 
-export async function safeJson<T = any>(res: Response): Promise<T> {
+export async function safeJson<T = unknown>(res: Response): Promise<T> {
   try {
     return await res.json();
   } catch {
@@ -32,14 +32,14 @@ export function previewEntityHoverRingClass(source: Entity['source']): string {
 }
 
 export function getModePreview(mode: string, sampleEntity?: Entity) {
-  const name = sampleEntity?.text || '张三';
+  const name = sampleEntity?.text || t('editor.sampleName');
   switch (mode) {
     case 'smart':
-      return `${name} → [当事人一]`;
+      return `${name} → [${t('editor.sampleSmart')}]`;
     case 'mask':
       return `${name} → ${name[0]}${'*'.repeat(Math.max(name.length - 1, 1))}`;
     case 'structured':
-      return `${name} → <人物[001].个人.姓名>`;
+      return `${name} → <${t('editor.sampleStructured')}>`;
     default:
       return '';
   }
@@ -108,12 +108,12 @@ export async function runVisionDetection(
     throw new Error(t('error.visionDetectionFailed'));
   }
 
-  const data = await safeJson(res);
+  const data = await safeJson<VisionDetectionResponse>(res);
   const boxes = (data.bounding_boxes || []).map((b: Record<string, unknown>, idx: number) => ({
     ...b,
     id: b.id || `bbox_${idx}`,
     selected: true,
-  }));
+  } as BoundingBox));
   return { boxes, resultImage: data.result_image };
 }
 

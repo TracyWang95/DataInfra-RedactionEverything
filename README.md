@@ -9,6 +9,7 @@
 Word、PDF、扫描件、图片全覆盖，双 AI 流水线驱动，100% 本地部署。
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
+[![CI](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml/badge.svg)](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#贡献)
 [![GitHub Stars](https://img.shields.io/github/stars/TracyWang95/DataInfra-RedactionEverything?style=social)](https://github.com/TracyWang95/DataInfra-RedactionEverything)
 
@@ -367,6 +368,20 @@ PR 检查清单：
 本项目基于 **[Apache License 2.0](./LICENSE)** 开源。
 
 商业部署、OEM 或托管服务需要单独的商业许可证。详见 **[COMMERCIAL_LICENSE.md](./COMMERCIAL_LICENSE.md)**。
+
+---
+
+## 常见问题排查
+
+| 问题 | 解决方案 |
+|------|----------|
+| CUDA / GPU 未识别 | 确认已安装 NVIDIA 驱动，运行 `nvidia-smi` 验证；使用 `docker compose --profile gpu up -d` 启动 GPU 服务 |
+| 端口冲突 (3000/8000) | 修改 `.env` 中的端口映射，或停止占用端口的进程 |
+| 模型文件下载慢 | NER/Vision 模型在首次启动时自动下载，可手动下载后放入 `models/` 目录并通过 volume 挂载 |
+| 内存不足 (OOM) | 文本模式需 4GB+，GPU 视觉模式需 8GB+；可通过 `docker compose` 设置资源限制 |
+| 上传文件失败 | 检查文件大小是否超过 50MB 限制（`MAX_FILE_SIZE`），确认 `uploads/` 目录权限正确 |
+| OCR 识别为空 | 确认 OCR 服务健康（`curl http://localhost:8082/health`），检查图片是否清晰 |
+| 认证问题 | 首次启用 `AUTH_ENABLED=true` 后访问 `/setup` 设置密码；忘记密码可删除 `data/` 下的密码文件重新设置 |
 
 ---
 

@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 批量任务 Job / JobItem — SQLite（WAL）持久化。
 """
@@ -162,8 +159,53 @@ class JobStore:
             conn.executescript(_SCHEMA)
             # WAL 自动 checkpoint 阈值，防止 WAL 文件无限增长
             conn.execute("PRAGMA wal_autocheckpoint = 1000")
-            # NOTE: Column additions and CHECK-constraint rebuilds are now
-            # handled by app.core.migrations (run_migrations at startup).
+            cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(job_items)").fetchall()}
+            if "review_draft_json" not in cols:
+                conn.execute("ALTER TABLE job_items ADD COLUMN review_draft_json TEXT")
+            if "review_draft_updated_at" not in cols:
+                conn.execute("ALTER TABLE job_items ADD COLUMN review_draft_updated_at TEXT")
+            job_cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
+            if "priority" not in job_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+            # Migrate CHECK constraint to include smart_batch
+            try:
+                conn.execute(
+                    "INSERT INTO jobs (id, job_type, status, created_at, updated_at) "
+                    "VALUES ('__test_smart', 'smart_batch', 'draft', '', '')"
+                )
+                conn.execute("DELETE FROM jobs WHERE id = '__test_smart'")
+            except sqlite3.IntegrityError:
+                # Rebuild table with updated CHECK constraint.
+                # Wrap in IMMEDIATE transaction to prevent data loss on crash.
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
+                    conn.execute("""
+                        CREATE TABLE jobs (
+                            id TEXT PRIMARY KEY,
+                            job_type TEXT NOT NULL CHECK(job_type IN ('text_batch','image_batch','smart_batch')),
+                            title TEXT NOT NULL DEFAULT '',
+                            status TEXT NOT NULL,
+                            skip_item_review INTEGER NOT NULL DEFAULT 0,
+                            config_json TEXT NOT NULL DEFAULT '{}',
+                            priority INTEGER NOT NULL DEFAULT 0,
+                            error_message TEXT,
+                            created_at TEXT NOT NULL,
+                            updated_at TEXT NOT NULL
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT INTO jobs (id, job_type, title, status, skip_item_review,
+                                         config_json, priority, error_message, created_at, updated_at)
+                        SELECT id, job_type, title, status, skip_item_review,
+                               config_json, COALESCE(priority, 0), error_message, created_at, updated_at
+                        FROM jobs_old
+                    """)
+                    conn.execute("DROP TABLE jobs_old")
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
             conn.commit()
 
     def create_job(

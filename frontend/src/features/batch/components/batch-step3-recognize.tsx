@@ -1,14 +1,16 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import { memo, useState, useRef } from 'react';
 
-import { useState, useRef } from 'react';
 import { useT } from '@/i18n';
+import { SUBMIT_BUTTON_MIN_SPIN_MS } from '@/constants/timing';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+
 import {
   type BatchRow,
   RECOGNITION_DONE_STATUSES,
@@ -24,7 +26,7 @@ interface BatchStep3RecognizeProps {
   requeueFailedItems: () => Promise<void>;
 }
 
-export function BatchStep3Recognize({
+function BatchStep3RecognizeInner({
   rows,
   activeJobId,
   failedRows,
@@ -46,7 +48,7 @@ export function BatchStep3Recognize({
     setEverSubmitted(true);
     await submitQueueToWorker();
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setSubmitting(false), 2000);
+    timerRef.current = setTimeout(() => setSubmitting(false), SUBMIT_BUTTON_MIN_SPIN_MS);
   };
 
   const progressLabel = allDone
@@ -192,3 +194,5 @@ export function BatchStep3Recognize({
     </Card>
   );
 }
+
+export const BatchStep3Recognize = memo(BatchStep3RecognizeInner);

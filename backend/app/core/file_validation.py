@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 文件校验工具 — 魔术字节验证、扩展名检查、文件类型推断、路径安全校验。
 

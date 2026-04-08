@@ -9,11 +9,12 @@ module.exports = {
   ignorePatterns: ['dist', '.eslintrc.cjs'],
   parser: '@typescript-eslint/parser',
   rules: {
-    '@typescript-eslint/no-explicit-any': 'off',
+    '@typescript-eslint/no-explicit-any': 'warn',
     '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
     'react-hooks/exhaustive-deps': 'warn',
     'react-hooks/set-state-in-effect': 'warn',
     'react-hooks/refs': 'off',
     'react-hooks/purity': 'off',
+    'no-console': ['warn', { allow: ['warn', 'error'] }],
   },
 };

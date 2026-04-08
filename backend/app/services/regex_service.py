@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 正则表达式识别服务
 用于识别有固定模式的敏感信息，准确率接近100%

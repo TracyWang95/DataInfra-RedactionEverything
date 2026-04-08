@@ -9,8 +9,6 @@ import { type Step } from '../types';
 interface BatchStepProgressProps {
   currentStep: Step;
   canGoStep: (s: Step) => boolean;
-  /** @deprecated Step indicators are now display-only; navigation is via prev/next buttons only. */
-  onStepClick?: (s: Step) => void;
 }
 
 export function BatchStepProgress({

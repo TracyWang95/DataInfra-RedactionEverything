@@ -11,6 +11,7 @@ import { showToast } from '@/components/Toast';
 import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import { safeJson } from '../utils';
+import type { RedactionResult } from '../types';
 import { usePlaygroundRecognition } from './use-playground-recognition';
 import { usePlaygroundFile } from './use-playground-file';
 import { usePlaygroundEntities } from './use-playground-entities';
@@ -124,7 +125,7 @@ export function usePlayground() {
   const handleRedact = useCallback(async () => {
     if (!fileCtx.fileInfo) return;
     fileCtx.setIsLoading(true);
-    fileCtx.setLoadingMessage(t('playground.redacting') || '正在执行脱敏...');
+    fileCtx.setLoadingMessage(t('playground.redacting'));
 
     try {
       const selectedEntities = entityCtx.entities.filter(e => e.selected);
@@ -145,8 +146,8 @@ export function usePlayground() {
         }),
       });
 
-      if (!res.ok) throw new Error(t('playground.redactFailed') || '脱敏处理失败');
-      const result = await safeJson(res);
+      if (!res.ok) throw new Error(t('playground.redactFailed'));
+      const result = await safeJson<RedactionResult>(res);
       setEntityMap(result.entity_map || {});
       setRedactedCount(result.redacted_count || 0);
       fileCtx.setStage('result');

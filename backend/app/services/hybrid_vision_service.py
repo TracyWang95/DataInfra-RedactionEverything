@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 Hybrid Vision Service - 图像匿名化核心服务
 PaddleOCR-VL（独立微服务@8082）+ HaS 本地模型（敏感信息识别）混合模式

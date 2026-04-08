@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 HaS Image (YOLO11) 官方 21 类：与模型卡 Category 一致。
 id = 英文 slug；class_id = 模型输出 cls 整数 0–20。

@@ -65,7 +65,6 @@ const baseCfg: BatchWizardPersistedConfig = {
   imageFillColor: '#000000',
   presetTextId: null,
   presetVisionId: null,
-  presetId: null,
   executionDefault: 'queue',
 };
 
@@ -446,6 +445,292 @@ describe('useBatchReview', () => {
       const payload = result.current.buildCurrentReviewDraftPayload();
       expect(payload.entities).toEqual([]);
       expect(payload.bounding_boxes).toEqual([]);
+    });
+  });
+
+  // ── Image bounding box undo / redo ──
+
+  describe('image bounding box undo / redo', () => {
+    const makeBox = (id: string): { id: string; x: number; y: number; width: number; height: number; type: string; selected: boolean } => ({
+      id,
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 50,
+      type: 'FACE',
+      selected: true,
+    });
+
+    it('handleReviewBoxesCommit pushes previous boxes to image undo stack', () => {
+      const { result } = renderUseBatchReview();
+      const prevBoxes = [makeBox('b1')];
+      const nextBoxes = [makeBox('b1'), makeBox('b2')];
+
+      act(() => result.current.handleReviewBoxesCommit(prevBoxes, nextBoxes));
+
+      expect(result.current.reviewBoxes).toHaveLength(2);
+      expect(result.current.reviewImageUndoStack).toHaveLength(1);
+    });
+
+    it('handleReviewBoxesCommit clears image redo stack', () => {
+      const { result } = renderUseBatchReview();
+      const b1 = [makeBox('b1')];
+      const b2 = [makeBox('b1'), makeBox('b2')];
+      const b3 = [makeBox('b3')];
+
+      act(() => result.current.handleReviewBoxesCommit(b1, b2));
+      act(() => result.current.undoReviewImage());
+      expect(result.current.reviewImageRedoStack.length).toBeGreaterThan(0);
+
+      act(() => result.current.handleReviewBoxesCommit(result.current.reviewBoxes, b3));
+      expect(result.current.reviewImageRedoStack).toEqual([]);
+    });
+
+    it('undoReviewImage restores previous boxes', () => {
+      const { result } = renderUseBatchReview();
+      const b1 = [makeBox('b1')];
+      const b2 = [makeBox('b1'), makeBox('b2')];
+
+      act(() => result.current.handleReviewBoxesCommit(b1, b2));
+      act(() => result.current.undoReviewImage());
+
+      expect(result.current.reviewBoxes).toHaveLength(1);
+      expect(result.current.reviewBoxes[0].id).toBe('b1');
+    });
+
+    it('redoReviewImage restores undone boxes', () => {
+      const { result } = renderUseBatchReview();
+      const b1 = [makeBox('b1')];
+      const b2 = [makeBox('b1'), makeBox('b2')];
+
+      act(() => result.current.handleReviewBoxesCommit(b1, b2));
+      act(() => result.current.undoReviewImage());
+      act(() => result.current.redoReviewImage());
+
+      expect(result.current.reviewBoxes).toHaveLength(2);
+    });
+
+    it('undoReviewImage with empty stack is a no-op', () => {
+      const { result } = renderUseBatchReview();
+      const before = result.current.reviewBoxes;
+
+      act(() => result.current.undoReviewImage());
+
+      expect(result.current.reviewBoxes).toEqual(before);
+    });
+
+    it('redoReviewImage with empty stack is a no-op', () => {
+      const { result } = renderUseBatchReview();
+
+      act(() => result.current.redoReviewImage());
+
+      expect(result.current.reviewBoxes).toEqual([]);
+    });
+
+    it('handleReviewBoxesCommit marks reviewDraftDirtyRef as true', () => {
+      const { result } = renderUseBatchReview();
+      result.current.reviewDraftDirtyRef.current = false;
+
+      act(() => result.current.handleReviewBoxesCommit([], [makeBox('b1')]));
+
+      expect(result.current.reviewDraftDirtyRef.current).toBe(true);
+    });
+  });
+
+  // ── toggleReviewBoxSelected ──
+
+  describe('toggleReviewBoxSelected', () => {
+    it('toggles box selected state', () => {
+      const { result } = renderUseBatchReview();
+      const box = { id: 'b1', x: 0, y: 0, width: 50, height: 50, type: 'FACE', selected: true };
+
+      act(() => result.current.handleReviewBoxesCommit([], [box]));
+      act(() => result.current.toggleReviewBoxSelected('b1'));
+
+      expect(result.current.reviewBoxes[0].selected).toBe(false);
+    });
+
+    it('toggling back restores selected state', () => {
+      const { result } = renderUseBatchReview();
+      const box = { id: 'b1', x: 0, y: 0, width: 50, height: 50, type: 'FACE', selected: true };
+
+      act(() => result.current.handleReviewBoxesCommit([], [box]));
+      act(() => result.current.toggleReviewBoxSelected('b1'));
+      act(() => result.current.toggleReviewBoxSelected('b1'));
+
+      expect(result.current.reviewBoxes[0].selected).toBe(true);
+    });
+
+    it('marks reviewDraftDirtyRef as true', () => {
+      const { result } = renderUseBatchReview();
+      const box = { id: 'b1', x: 0, y: 0, width: 50, height: 50, type: 'FACE', selected: true };
+
+      act(() => result.current.handleReviewBoxesCommit([], [box]));
+      result.current.reviewDraftDirtyRef.current = false;
+
+      act(() => result.current.toggleReviewBoxSelected('b1'));
+
+      expect(result.current.reviewDraftDirtyRef.current).toBe(true);
+    });
+  });
+
+  // ── selectedReviewBoxCount ──
+
+  describe('selectedReviewBoxCount', () => {
+    it('counts selected boxes', () => {
+      const { result } = renderUseBatchReview();
+      const boxes = [
+        { id: 'b1', x: 0, y: 0, width: 50, height: 50, type: 'FACE', selected: true },
+        { id: 'b2', x: 10, y: 10, width: 50, height: 50, type: 'FACE', selected: false },
+      ];
+
+      act(() => result.current.handleReviewBoxesCommit([], boxes));
+
+      expect(result.current.selectedReviewBoxCount).toBe(1);
+    });
+  });
+
+  // ── reviewFileReadOnly ──
+
+  describe('reviewFileReadOnly', () => {
+    it('is false for awaiting_review status', () => {
+      const rows = [makeDoneRow('file-1')];
+      const { result } = renderUseBatchReview({ rows });
+      expect(result.current.reviewFileReadOnly).toBe(false);
+    });
+
+    it('is true for completed status', () => {
+      const rows = [{ ...makeDoneRow('file-1'), analyzeStatus: 'completed' as const }];
+      const { result } = renderUseBatchReview({ rows });
+      expect(result.current.reviewFileReadOnly).toBe(true);
+    });
+
+    it('is true for redacting status', () => {
+      const rows = [{ ...makeDoneRow('file-1'), analyzeStatus: 'redacting' as const }];
+      const { result } = renderUseBatchReview({ rows });
+      expect(result.current.reviewFileReadOnly).toBe(true);
+    });
+  });
+
+  // ── flushCurrentReviewDraft ──
+
+  describe('flushCurrentReviewDraft', () => {
+    it('returns true immediately in preview mode', async () => {
+      const { result } = renderUseBatchReview({ isPreviewMode: true });
+      let ok: boolean | undefined;
+
+      await act(async () => {
+        ok = await result.current.flushCurrentReviewDraft();
+      });
+
+      expect(ok).toBe(true);
+    });
+
+    it('returns true when no activeJobId', async () => {
+      const { result } = renderUseBatchReview({ activeJobId: null });
+      let ok: boolean | undefined;
+
+      await act(async () => {
+        ok = await result.current.flushCurrentReviewDraft();
+      });
+
+      expect(ok).toBe(true);
+    });
+  });
+
+  // ── navigateReviewIndex ──
+
+  describe('navigateReviewIndex', () => {
+    it('changes reviewIndex to valid target', async () => {
+      const rows = [makeDoneRow('file-1'), makeDoneRow('file-2')];
+      const { result } = renderUseBatchReview({ rows });
+
+      await act(async () => {
+        await result.current.navigateReviewIndex(1);
+      });
+
+      expect(result.current.reviewIndex).toBe(1);
+    });
+
+    it('does not navigate to same index', async () => {
+      const rows = [makeDoneRow('file-1'), makeDoneRow('file-2')];
+      const { result } = renderUseBatchReview({ rows });
+
+      await act(async () => {
+        await result.current.navigateReviewIndex(0);
+      });
+
+      expect(result.current.reviewIndex).toBe(0);
+    });
+
+    it('does not navigate to out-of-bounds index', async () => {
+      const rows = [makeDoneRow('file-1')];
+      const { result } = renderUseBatchReview({ rows });
+
+      await act(async () => {
+        await result.current.navigateReviewIndex(5);
+      });
+
+      expect(result.current.reviewIndex).toBe(0);
+    });
+
+    it('does not navigate to negative index', async () => {
+      const rows = [makeDoneRow('file-1')];
+      const { result } = renderUseBatchReview({ rows });
+
+      await act(async () => {
+        await result.current.navigateReviewIndex(-1);
+      });
+
+      expect(result.current.reviewIndex).toBe(0);
+    });
+  });
+
+  // ── reviewedOutputCount ──
+
+  describe('reviewedOutputCount', () => {
+    it('counts rows with reviewConfirmed=true', () => {
+      const rows = [
+        { ...makeDoneRow('file-1'), reviewConfirmed: true } as BatchRow,
+        makeDoneRow('file-2'),
+        { ...makeDoneRow('file-3'), reviewConfirmed: true } as BatchRow,
+      ];
+      const { result } = renderUseBatchReview({ rows });
+      expect(result.current.reviewedOutputCount).toBe(2);
+    });
+
+    it('returns 0 when no rows are confirmed', () => {
+      const rows = [makeDoneRow('file-1'), makeDoneRow('file-2')];
+      const { result } = renderUseBatchReview({ rows });
+      expect(result.current.reviewedOutputCount).toBe(0);
+    });
+  });
+
+  // ── buildCurrentReviewDraftPayload with boxes ──
+
+  describe('buildCurrentReviewDraftPayload (with boxes)', () => {
+    it('includes bounding boxes in payload', () => {
+      const { result } = renderUseBatchReview();
+      const box = { id: 'b1', x: 0, y: 0, width: 50, height: 50, type: 'FACE', selected: true };
+
+      act(() => result.current.handleReviewBoxesCommit([], [box]));
+
+      const payload = result.current.buildCurrentReviewDraftPayload();
+      expect(payload.bounding_boxes).toHaveLength(1);
+      expect(payload.bounding_boxes[0]).toHaveProperty('id', 'b1');
+    });
+
+    it('includes both entities and boxes', () => {
+      const { result } = renderUseBatchReview();
+      const entity = makeEntity('e1', 'Alice');
+      const box = { id: 'b1', x: 0, y: 0, width: 50, height: 50, type: 'FACE', selected: true };
+
+      act(() => result.current.applyReviewEntities([entity]));
+      act(() => result.current.handleReviewBoxesCommit([], [box]));
+
+      const payload = result.current.buildCurrentReviewDraftPayload();
+      expect(payload.entities).toHaveLength(1);
+      expect(payload.bounding_boxes).toHaveLength(1);
     });
   });
 });

@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 实体类型管理 — 业务逻辑层
 基于 GB/T 37964-2019《信息安全技术 个人信息去标识化指南》国家标准设计

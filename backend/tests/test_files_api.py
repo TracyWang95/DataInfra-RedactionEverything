@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """File management API endpoint tests."""
 from __future__ import annotations
 
@@ -90,7 +87,7 @@ def test_download_file_exists(test_client: TestClient):
 
 
 def test_download_file_not_found_returns_404(test_client: TestClient):
-    resp = test_client.get("/api/v1/files/00000000-0000-0000-0000-000000000000/download")
+    resp = test_client.get("/api/v1/files/nonexistent-id/download")
     assert resp.status_code == 404
 
 
@@ -108,5 +105,5 @@ def test_delete_file_success(test_client: TestClient):
 
 
 def test_delete_file_not_found_returns_404(test_client: TestClient):
-    resp = test_client.delete("/api/v1/files/00000000-0000-0000-0000-000000000000")
+    resp = test_client.delete("/api/v1/files/nonexistent-id")
     assert resp.status_code == 404

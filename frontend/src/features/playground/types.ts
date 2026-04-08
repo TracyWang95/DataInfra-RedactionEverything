@@ -81,3 +81,38 @@ export interface PipelineConfig {
 }
 
 export type Stage = 'upload' | 'preview' | 'result';
+
+// ---------------------------------------------------------------------------
+// API response shapes used by playground hooks / utils
+// ---------------------------------------------------------------------------
+
+/** POST /api/v1/files/upload */
+export interface UploadResponse {
+  file_id: string;
+  filename: string;
+  file_size: number;
+  file_type: string;
+}
+
+/** GET /api/v1/files/:id/parse */
+export interface ParseResponse {
+  is_scanned?: boolean;
+  content?: string;
+}
+
+/** POST /api/v1/files/:id/ner/hybrid */
+export interface NerResponse {
+  entities: Array<Record<string, unknown>>;
+}
+
+/** POST /api/v1/redaction/execute */
+export interface RedactionResult {
+  entity_map: Record<string, string>;
+  redacted_count: number;
+}
+
+/** POST /api/v1/redaction/:id/vision */
+export interface VisionDetectionResponse {
+  bounding_boxes?: Array<Record<string, unknown>>;
+  result_image?: string;
+}

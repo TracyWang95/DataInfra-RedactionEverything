@@ -1,18 +1,17 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
-  getAuthToken,
-  setAuthToken,
-  clearAuthToken,
   buildAuthHeaders,
+  apiClient,
   ApiError,
   API_TIMEOUT,
   VISION_TIMEOUT,
   BATCH_TIMEOUT,
   revokeObjectUrl,
 } from '../api-client';
+import type { ApiErrorType } from '../api-client';
 
 describe('timeout constants', () => {
   it('API_TIMEOUT is 60 seconds', () => {
@@ -28,60 +27,15 @@ describe('timeout constants', () => {
   });
 });
 
-describe('token management', () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  it('getAuthToken returns null when no token is set', () => {
-    expect(getAuthToken()).toBeNull();
-  });
-
-  it('setAuthToken stores and getAuthToken retrieves the token', () => {
-    setAuthToken('my-jwt-token');
-    expect(getAuthToken()).toBe('my-jwt-token');
-  });
-
-  it('clearAuthToken removes the stored token', () => {
-    setAuthToken('token-to-clear');
-    clearAuthToken();
-    expect(getAuthToken()).toBeNull();
-  });
-
-  it('setAuthToken overwrites a previous token', () => {
-    setAuthToken('first');
-    setAuthToken('second');
-    expect(getAuthToken()).toBe('second');
-  });
-});
-
 describe('buildAuthHeaders', () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  it('returns empty object when no token and no extra headers', () => {
+  it('returns empty object when no extra headers', () => {
     const headers = buildAuthHeaders();
     expect(headers).toEqual({});
   });
 
-  it('includes Authorization header when token is set', () => {
-    setAuthToken('test-token');
-    const headers = buildAuthHeaders();
-    expect(headers['Authorization']).toBe('Bearer test-token');
-  });
-
-  it('merges extra headers with Authorization', () => {
-    setAuthToken('tok');
-    const headers = buildAuthHeaders({ 'Content-Type': 'application/json' });
-    expect(headers['Authorization']).toBe('Bearer tok');
-    expect(headers['Content-Type']).toBe('application/json');
-  });
-
-  it('passes through extra headers even without token', () => {
+  it('passes through extra headers', () => {
     const headers = buildAuthHeaders({ 'X-Custom': 'value' });
     expect(headers['X-Custom']).toBe('value');
-    expect(headers['Authorization']).toBeUndefined();
   });
 });
 
@@ -106,6 +60,24 @@ describe('ApiError', () => {
     const err = new ApiError('oops');
     expect(err.status).toBeUndefined();
   });
+
+  it('defaults errorType to unknown', () => {
+    const err = new ApiError('oops');
+    expect(err.errorType).toBe('unknown');
+  });
+
+  it('stores custom errorType', () => {
+    const err = new ApiError('timeout', 0, 'timeout');
+    expect(err.errorType).toBe('timeout');
+  });
+
+  it('accepts all valid error types', () => {
+    const types: ApiErrorType[] = ['network', 'timeout', 'cancelled', 'server', 'auth', 'unknown'];
+    types.forEach(t => {
+      const err = new ApiError('msg', undefined, t);
+      expect(err.errorType).toBe(t);
+    });
+  });
 });
 
 describe('revokeObjectUrl', () => {
@@ -116,5 +88,149 @@ describe('revokeObjectUrl', () => {
 
   it('does not throw for non-blob URL', () => {
     expect(() => revokeObjectUrl('https://example.com')).not.toThrow();
+  });
+});
+
+describe('apiClient configuration', () => {
+  it('has baseURL set to /api/v1', () => {
+    expect(apiClient.defaults.baseURL).toBe('/api/v1');
+  });
+
+  it('has timeout set to API_TIMEOUT', () => {
+    expect(apiClient.defaults.timeout).toBe(API_TIMEOUT);
+  });
+});
+
+describe('apiClient response interceptor — error handling', () => {
+  it('rejects with ApiError containing status and server errorType', async () => {
+    const mockError = {
+      response: {
+        status: 403,
+        data: { message: 'Forbidden' },
+      },
+      message: 'Request failed with status code 403',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rejected = (apiClient.interceptors.response as any).handlers[0].rejected!;
+    try {
+      await rejected(mockError);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).message).toBe('Forbidden');
+      expect((err as ApiError).status).toBe(403);
+      expect((err as ApiError).errorType).toBe('server');
+    }
+  });
+
+  it('classifies 401 as auth errorType', async () => {
+    const mockError = {
+      response: {
+        status: 401,
+        data: { message: 'Unauthorized' },
+      },
+      message: 'Request failed',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rejected = (apiClient.interceptors.response as any).handlers[0].rejected!;
+    try {
+      await rejected(mockError);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).errorType).toBe('auth');
+      expect((err as ApiError).status).toBe(401);
+    }
+  });
+
+  it('classifies missing response as network errorType', async () => {
+    const mockError = {
+      message: 'Network Error',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rejected = (apiClient.interceptors.response as any).handlers[0].rejected!;
+    try {
+      await rejected(mockError);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).errorType).toBe('network');
+    }
+  });
+
+  it('classifies ECONNABORTED as timeout errorType', async () => {
+    const mockError = {
+      code: 'ECONNABORTED',
+      message: 'timeout of 60000ms exceeded',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rejected = (apiClient.interceptors.response as any).handlers[0].rejected!;
+    try {
+      await rejected(mockError);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).errorType).toBe('timeout');
+    }
+  });
+
+  it('uses detail field when message is missing', async () => {
+    const mockError = {
+      response: {
+        status: 422,
+        data: { detail: 'Validation failed' },
+      },
+      message: 'Request failed',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rejected = (apiClient.interceptors.response as any).handlers[0].rejected!;
+    try {
+      await rejected(mockError);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).message).toBe('Validation failed');
+      expect((err as ApiError).status).toBe(422);
+    }
+  });
+
+  it('falls back to error.message when response data is empty', async () => {
+    const mockError = {
+      response: {
+        status: 500,
+        data: {},
+      },
+      message: 'Internal Server Error',
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rejected = (apiClient.interceptors.response as any).handlers[0].rejected!;
+    try {
+      await rejected(mockError);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).message).toBe('Internal Server Error');
+      expect((err as ApiError).status).toBe(500);
+    }
+  });
+
+  it('uses "Request failed" when no message is available', async () => {
+    const mockError = {};
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rejected = (apiClient.interceptors.response as any).handlers[0].rejected!;
+    try {
+      await rejected(mockError);
+      expect.fail('should have thrown');
+    } catch (err) {
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).message).toBe('Request failed');
+    }
   });
 });

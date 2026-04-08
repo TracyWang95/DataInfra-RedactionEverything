@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 文本 NER 后端（HaS / llama-server）运行时配置 API
 持久化至 data/ner_backend.json，优先级高于环境变量。

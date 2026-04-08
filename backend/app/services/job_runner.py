@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 批量任务 Worker：识别链路与审阅闸门；可注入 JobRunnerPorts 供测试。
 """

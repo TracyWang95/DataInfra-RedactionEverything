@@ -4,12 +4,12 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
-  fetchPresets,
   createPreset,
   presetAppliesText,
   presetAppliesVision,
   type RecognitionPreset,
 } from '@/services/presetsApi';
+import { usePresets, useInvalidatePresets } from '@/services/hooks/use-presets';
 import {
   fetchRecognitionEntityTypes,
   fetchRecognitionPipelines,
@@ -25,6 +25,8 @@ import {
   getActivePresetVisionId,
 } from '@/services/activePresetBridge';
 import { t } from '@/i18n';
+import { STORAGE_KEYS } from '@/constants/storage-keys';
+import { getStorageItem, setStorageItem } from '@/lib/storage';
 import { showToast } from '@/components/Toast';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import {
@@ -41,6 +43,9 @@ import type {
 } from '../types';
 
 export function usePlaygroundRecognition() {
+  const presetsQuery = usePresets();
+  const invalidatePresets = useInvalidatePresets();
+
   const [entityTypes, setEntityTypes] = useState<EntityTypeConfig[]>([]);
   const [textConfigState, setTextConfigState] = useState<ConfigLoadState>('loading');
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -80,13 +85,13 @@ export function usePlaygroundRecognition() {
   const updateOcrHasTypes = useCallback((types: string[]) => {
     selectedOcrHasTypesRef.current = types;
     setSelectedOcrHasTypes(types);
-    localStorage.setItem('ocrHasTypes', JSON.stringify(types));
+    setStorageItem(STORAGE_KEYS.OCR_HAS_TYPES, types);
   }, []);
 
   const updateHasImageTypes = useCallback((types: string[]) => {
     selectedHasImageTypesRef.current = types;
     setSelectedHasImageTypes(types);
-    localStorage.setItem('hasImageTypes', JSON.stringify(types));
+    setStorageItem(STORAGE_KEYS.HAS_IMAGE_TYPES, types);
   }, []);
 
   const clearPlaygroundTextPresetTracking = useCallback(() => {
@@ -172,11 +177,10 @@ export function usePlaygroundRecognition() {
     ]
   );
 
+  // Sync presets from react-query cache into local state
   useEffect(() => {
-    void fetchPresets()
-      .then(setPlaygroundPresets)
-      .catch(() => setPlaygroundPresets([]));
-  }, []);
+    setPlaygroundPresets(presetsQuery.data ?? []);
+  }, [presetsQuery.data]);
 
   const closePresetDialog = useCallback(() => {
     if (presetSaving) return;
@@ -211,8 +215,7 @@ export function usePlaygroundRecognition() {
         hasImageTypes: [],
         replacementMode: 'structured',
       });
-      const nextPresets = await fetchPresets();
-      setPlaygroundPresets(nextPresets);
+      await invalidatePresets();
       setPlaygroundPresetTextId(created.id);
       setActivePresetTextId(created.id);
       closePresetDialog();
@@ -222,7 +225,7 @@ export function usePlaygroundRecognition() {
     } finally {
       setPresetSaving(false);
     }
-  }, [closePresetDialog, presetDialogName, selectedTypes]);
+  }, [closePresetDialog, presetDialogName, selectedTypes, invalidatePresets]);
 
   const saveVisionPresetFromPlayground = useCallback(async () => {
     const name = presetDialogName.trim();
@@ -241,8 +244,7 @@ export function usePlaygroundRecognition() {
         hasImageTypes: selectedHasImageTypes,
         replacementMode: 'structured',
       });
-      const nextPresets = await fetchPresets();
-      setPlaygroundPresets(nextPresets);
+      await invalidatePresets();
       setPlaygroundPresetVisionId(created.id);
       setActivePresetVisionId(created.id);
       closePresetDialog();
@@ -252,7 +254,7 @@ export function usePlaygroundRecognition() {
     } finally {
       setPresetSaving(false);
     }
-  }, [closePresetDialog, presetDialogName, selectedHasImageTypes, selectedOcrHasTypes]);
+  }, [closePresetDialog, presetDialogName, selectedHasImageTypes, selectedOcrHasTypes, invalidatePresets]);
 
   const fetchEntityTypes = useCallback(async () => {
     try {
@@ -283,17 +285,10 @@ export function usePlaygroundRecognition() {
         .filter(pipeline => pipeline.mode === 'ocr_has')
         .flatMap(pipeline => pipeline.types.map(type => type.id));
       const defaultOcrHasTypeIds = buildDefaultPipelineTypeIds(normalizedPipelines, 'ocr_has');
-      const savedOcrHasTypes = localStorage.getItem('ocrHasTypes');
-      if (savedOcrHasTypes) {
-        try {
-          const parsed = JSON.parse(savedOcrHasTypes);
-          const filtered = Array.isArray(parsed)
-            ? parsed.filter((id: string) => ocrHasTypeIds.includes(id))
-            : [];
-          updateOcrHasTypes(filtered);
-        } catch {
-          updateOcrHasTypes(defaultOcrHasTypeIds);
-        }
+      const savedOcrHasTypes = getStorageItem<string[] | null>(STORAGE_KEYS.OCR_HAS_TYPES, null);
+      if (savedOcrHasTypes && Array.isArray(savedOcrHasTypes)) {
+        const filtered = savedOcrHasTypes.filter((id: string) => ocrHasTypeIds.includes(id));
+        updateOcrHasTypes(filtered);
       } else {
         updateOcrHasTypes(defaultOcrHasTypeIds);
       }
@@ -303,17 +298,11 @@ export function usePlaygroundRecognition() {
         .flatMap(pipeline => pipeline.types.map(type => type.id));
       const defaultHasImageTypeIds = buildDefaultPipelineTypeIds(normalizedPipelines, 'has_image');
       const savedHasImageTypes =
-        localStorage.getItem('hasImageTypes') || localStorage.getItem('glmVisionTypes');
-      if (savedHasImageTypes) {
-        try {
-          const parsed = JSON.parse(savedHasImageTypes);
-          const filtered = Array.isArray(parsed)
-            ? parsed.filter((id: string) => hasImageTypeIds.includes(id))
-            : [];
-          updateHasImageTypes(filtered);
-        } catch {
-          updateHasImageTypes(defaultHasImageTypeIds);
-        }
+        getStorageItem<string[] | null>(STORAGE_KEYS.HAS_IMAGE_TYPES, null)
+        ?? getStorageItem<string[] | null>(STORAGE_KEYS.GLM_VISION_TYPES, null);
+      if (savedHasImageTypes && Array.isArray(savedHasImageTypes)) {
+        const filtered = savedHasImageTypes.filter((id: string) => hasImageTypeIds.includes(id));
+        updateHasImageTypes(filtered);
       } else {
         updateHasImageTypes(defaultHasImageTypeIds);
       }

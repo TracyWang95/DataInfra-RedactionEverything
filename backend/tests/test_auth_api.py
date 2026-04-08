@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """Auth API endpoint tests."""
 from __future__ import annotations
 
@@ -55,7 +52,7 @@ def test_auth_status_returns_enabled_flag(auth_client: TestClient):
 # ── Setup password ───────────────────────────────────────────
 
 def test_setup_password_success(auth_client: TestClient):
-    resp = auth_client.post("/api/v1/auth/setup", json={"password": "secure123!@#A"})
+    resp = auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
     assert resp.status_code == 200
     body = resp.json()
     assert "access_token" in body
@@ -64,29 +61,29 @@ def test_setup_password_success(auth_client: TestClient):
 
 
 def test_setup_password_too_short_returns_400(auth_client: TestClient):
-    resp = auth_client.post("/api/v1/auth/setup", json={"password": "short12345"})
+    resp = auth_client.post("/api/v1/auth/setup", json={"password": "12345"})
     assert resp.status_code == 400
     # Custom error handler maps HTTPException.detail to "message"
-    assert "12" in resp.json()["message"]
+    assert "6" in resp.json()["message"]
 
 
 def test_setup_password_twice_returns_400(auth_client: TestClient):
-    auth_client.post("/api/v1/auth/setup", json={"password": "secure123!@#A"})
-    resp = auth_client.post("/api/v1/auth/setup", json={"password": "another12345"})
+    auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
+    resp = auth_client.post("/api/v1/auth/setup", json={"password": "another1"})
     assert resp.status_code == 400
 
 
 # ── Login ────────────────────────────────────────────────────
 
 def test_login_success(auth_client: TestClient):
-    auth_client.post("/api/v1/auth/setup", json={"password": "secure123!@#A"})
-    resp = auth_client.post("/api/v1/auth/login", json={"password": "secure123!@#A"})
+    auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
+    resp = auth_client.post("/api/v1/auth/login", json={"password": "secure123"})
     assert resp.status_code == 200
     assert "access_token" in resp.json()
 
 
 def test_login_wrong_password_returns_401(auth_client: TestClient):
-    auth_client.post("/api/v1/auth/setup", json={"password": "secure123!@#A"})
+    auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
     resp = auth_client.post("/api/v1/auth/login", json={"password": "wrong999"})
     assert resp.status_code == 401
 
@@ -99,36 +96,36 @@ def test_login_no_password_set_returns_400(auth_client: TestClient):
 # ── Change password ──────────────────────────────────────────
 
 def test_change_password_success(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "oldPa$$word1"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": "old12345"})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post(
         "/api/v1/auth/change-password",
-        json={"old_password": "oldPa$$word1", "new_password": "newPa$$word1"},
+        json={"old_password": "old12345", "new_password": "new12345"},
         headers=headers,
     )
     assert resp.status_code == 200
 
 
 def test_change_password_wrong_old_returns_401(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "oldPa$$word1"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": "old12345"})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post(
         "/api/v1/auth/change-password",
-        json={"old_password": "wrongold", "new_password": "newPa$$word1"},
+        json={"old_password": "wrongold", "new_password": "new12345"},
         headers=headers,
     )
     assert resp.status_code == 401
 
 
 def test_change_password_new_too_short_returns_400(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "oldPa$$word1"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": "old12345"})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post(
         "/api/v1/auth/change-password",
-        json={"old_password": "oldPa$$word1", "new_password": "ab"},
+        json={"old_password": "old12345", "new_password": "ab"},
         headers=headers,
     )
     assert resp.status_code == 400
@@ -137,7 +134,7 @@ def test_change_password_new_too_short_returns_400(auth_client: TestClient):
 # ── Logout ───────────────────────────────────────────────────
 
 def test_logout_success(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "secure123!@#A"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post("/api/v1/auth/logout", headers=headers)

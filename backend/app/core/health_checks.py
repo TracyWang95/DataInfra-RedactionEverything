@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 健康检查辅助函数
 同步探测外部 HTTP 服务状态（供 /health/services 在线程池中调用）。

@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-﻿const enBase: Record<string, string> = {
+const enBase: Record<string, string> = {
   
   'nav.playground': 'Playground',
   'nav.batch': 'Batch',
@@ -37,6 +37,7 @@
   'common.confirm': 'Confirm',
   'common.cancel': 'Cancel',
   'common.delete': 'Delete',
+  'common.edit': 'Edit',
   'common.save': 'Save',
   'common.export': 'Export',
   'common.import': 'Import',
@@ -1166,6 +1167,33 @@ const enOverrides: Record<string, string> = {
   'batchWizard.previewReviewDone': 'The current preview file is confirmed. Continue checking the next file or the export step.',
   'batchWizard.previewDownloadReady': 'A preview export file is ready so you can inspect the download entry and status states.',
   'batchWizard.previewJobLabel': 'Preview task',
+
+  // Image BBox Editor
+  'editor.resize.nw': 'Resize top-left',
+  'editor.resize.n': 'Resize top',
+  'editor.resize.ne': 'Resize top-right',
+  'editor.resize.e': 'Resize right',
+  'editor.resize.se': 'Resize bottom-right',
+  'editor.resize.s': 'Resize bottom',
+  'editor.resize.sw': 'Resize bottom-left',
+  'editor.resize.w': 'Resize left',
+  'editor.resize.fallback': 'Resize',
+  'editor.deselected': 'Deselected',
+  'editor.exitDraw': 'Exit draw mode',
+  'editor.enterDraw': 'Enter bounding box draw mode',
+  'editor.drawModeActive': 'Draw mode (ESC to exit)',
+  'editor.drawModeTrigger': 'Draw box',
+  'editor.deleteSelected': 'Delete selected region',
+  'editor.deleteSelectedShort': 'Delete (Del)',
+  'editor.zoom': 'Zoom',
+  'editor.zoomIn': 'Zoom in',
+  'editor.zoomOut': 'Zoom out',
+  'editor.zoomFit': 'Fit to window',
+  'editor.fit': 'Fit',
+  'editor.canvasLabel': 'Image annotation area — drag to select sensitive regions',
+  'editor.sampleName': 'John Doe',
+  'editor.sampleSmart': 'Party 1',
+  'editor.sampleStructured': 'Person[001].name',
 };
 
 export const en: Record<string, string> = {

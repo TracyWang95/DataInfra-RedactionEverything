@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """
 匿名化执行服务（薄编排层）
 实际逻辑委托给 redaction 子包的三个专注模块：

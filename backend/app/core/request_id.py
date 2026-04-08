@@ -1,6 +1,3 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """Request-ID middleware: propagates or generates X-Request-ID for tracing."""
 import uuid
 import contextvars

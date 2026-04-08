@@ -7,6 +7,7 @@ import { authFetch } from '@/services/api-client';
 import { fetchWithTimeout } from '@/utils/fetchWithTimeout';
 import { showToast } from '@/components/Toast';
 import { t } from '@/i18n';
+import { TEST_BUTTON_MIN_SPIN_MS } from '@/constants/timing';
 import { useServiceHealth } from '@/hooks/use-service-health';
 
 function normalizeServiceLive(status: 'online' | 'offline' | 'checking' | undefined) {
@@ -100,7 +101,7 @@ export function useNerBackend() {
     } catch {
       setTestResult({ success: false, message: t('settings.textModel.testRequestFailed') });
     }
-    finally { setTimeout(() => setTesting(false), 300); }
+    finally { setTimeout(() => setTesting(false), TEST_BUTTON_MIN_SPIN_MS); }
   }, [payload]);
 
   const clearNerOverride = useCallback(async () => {

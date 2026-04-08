@@ -26,7 +26,7 @@ import {
 } from '@/services/jobsApi';
 import { getPreviewReviewPayload } from '../lib/batch-preview-fixtures';
 import type { BatchRow, ReviewEntity, Step, TextEntityType } from '../types';
-import { fetchBatchPreviewMap, normalizeReviewEntity } from './use-batch-wizard-utils';
+import { fetchCachedBatchPreviewMap, normalizeReviewEntity } from './use-batch-wizard-utils';
 
 export interface ReviewDataDeps {
   step: Step;
@@ -91,11 +91,15 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
   const reviewLoadSeqRef = useRef(0);
   const batchScrollCountersRef = useRef<Record<string, number>>({});
   const rerunAbortRef = useRef<AbortController | null>(null);
+  const loadDataAbortRef = useRef<AbortController | null>(null);
   const [rerunRecognitionLoading, setRerunRecognitionLoading] = useState(false);
   const [reviewImagePreviewLoading, setReviewImagePreviewLoading] = useState(false);
 
-  // Abort in-flight re-recognition on unmount
-  useEffect(() => () => { rerunAbortRef.current?.abort(); }, []);
+  // Abort in-flight operations on unmount
+  useEffect(() => () => {
+    rerunAbortRef.current?.abort();
+    loadDataAbortRef.current?.abort();
+  }, []);
 
   // ── Reset scroll counters ──
   useEffect(() => { batchScrollCountersRef.current = {}; }, [reviewFile?.file_id]);
@@ -122,6 +126,11 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
   // ── Load review data ──
   const loadReviewData = useCallback(
     async (fileId: string, isImage: boolean) => {
+      // Abort any in-flight load before starting a new one
+      loadDataAbortRef.current?.abort();
+      const controller = new AbortController();
+      loadDataAbortRef.current = controller;
+
       const loadSeq = reviewLoadSeqRef.current + 1;
       reviewLoadSeqRef.current = loadSeq;
       setReviewLoading(true);
@@ -154,7 +163,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
           setReviewTextContent(previewPayload.content);
           setReviewTextUndoStack([]);
           setReviewTextRedoStack([]);
-          const map = await fetchBatchPreviewMap(previewPayload.entities, cfg.replacementMode);
+          const map = await fetchCachedBatchPreviewMap(previewPayload.entities, cfg.replacementMode);
           if (loadSeq !== reviewLoadSeqRef.current) return;
           setPreviewEntityMap(map);
           reviewLastSavedJsonRef.current = JSON.stringify({ entities: previewPayload.entities, bounding_boxes: [] });
@@ -203,7 +212,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
           setReviewTextContent(contentStr);
           setReviewTextUndoStack([]);
           setReviewTextRedoStack([]);
-          const map = await fetchBatchPreviewMap(mapped, cfg.replacementMode);
+          const map = await fetchCachedBatchPreviewMap(mapped, cfg.replacementMode);
           if (loadSeq !== reviewLoadSeqRef.current) return;
           setPreviewEntityMap(map);
           reviewLastSavedJsonRef.current = JSON.stringify({ entities: mapped.map(e => ({ id: e.id, text: e.text, type: e.type, start: e.start, end: e.end, page: e.page ?? 1, confidence: e.confidence ?? 1, selected: e.selected, source: e.source, coref_id: e.coref_id, replacement: e.replacement })), bounding_boxes: [] });
@@ -304,7 +313,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
         setReviewEntities(entities);
         setReviewTextUndoStack([]);
         setReviewTextRedoStack([]);
-        const map = await fetchBatchPreviewMap(entities, cfg.replacementMode);
+        const map = await fetchCachedBatchPreviewMap(entities, cfg.replacementMode);
         if (controller.signal.aborted) return;
         setPreviewEntityMap(map);
       }
@@ -341,19 +350,21 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
     if (isPreviewMode) return;
     if (step !== 4 || !reviewFile || reviewLoading || reviewFile.isImageMode) return;
     if (!reviewTextContent || reviewEntities.length === 0) { setPreviewEntityMap({}); return; }
-    let cancelled = false;
+    const controller = new AbortController();
     const timer = window.setTimeout(async () => {
-      const map = await fetchBatchPreviewMap(reviewEntities, cfg.replacementMode);
-      if (!cancelled) setPreviewEntityMap(map);
+      try {
+        const map = await fetchCachedBatchPreviewMap(reviewEntities, cfg.replacementMode);
+        if (!controller.signal.aborted) setPreviewEntityMap(map);
+      } catch { /* ignore aborted */ }
     }, 300);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => { controller.abort(); window.clearTimeout(timer); };
   }, [step, reviewFile, reviewEntities, reviewTextContent, reviewLoading, cfg.replacementMode, isPreviewMode, setPreviewEntityMap]);
 
   // ── Image preview ──
   useEffect(() => {
     if (isPreviewMode) return;
     if (step !== 4 || !reviewFile || reviewLoading || !reviewFile.isImageMode) return;
-    let cancelled = false;
+    const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
         setReviewImagePreviewLoading(true);
@@ -362,11 +373,11 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
           bounding_boxes: reviewBoxes.filter(b => b.selected !== false).map(b => ({ id: b.id, x: b.x, y: b.y, width: b.width, height: b.height, page: 1, type: b.type, text: b.text, selected: b.selected, source: b.source, confidence: b.confidence })),
           config: { replacement_mode: ReplacementMode.STRUCTURED, entity_types: [], custom_replacements: {}, image_redaction_method: cfg.imageRedactionMethod ?? 'mosaic', image_redaction_strength: cfg.imageRedactionStrength ?? 25, image_fill_color: cfg.imageFillColor ?? '#000000' },
         });
-        if (!cancelled) setReviewImagePreview(imageBase64);
-      } catch { if (!cancelled) setReviewImagePreview(''); }
-      finally { if (!cancelled) setReviewImagePreviewLoading(false); }
+        if (!controller.signal.aborted) setReviewImagePreview(imageBase64);
+      } catch { if (!controller.signal.aborted) setReviewImagePreview(''); }
+      finally { if (!controller.signal.aborted) setReviewImagePreviewLoading(false); }
     }, 250);
-    return () => { cancelled = true; window.clearTimeout(timer); };
+    return () => { controller.abort(); window.clearTimeout(timer); };
   }, [step, reviewFile, reviewBoxes, reviewLoading, cfg.imageRedactionMethod, cfg.imageRedactionStrength, cfg.imageFillColor, isPreviewMode, setReviewImagePreview]);
 
   return {

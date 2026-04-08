@@ -43,9 +43,14 @@ export function presetAppliesVision(p: RecognitionPreset): boolean {
   return k === 'vision' || k === 'full';
 }
 
+/** Shape returned by GET /presets — may be a bare array or `{ presets: [...] }` */
+interface PresetsResponse {
+  presets?: RecognitionPreset[];
+}
+
 export async function fetchPresets(): Promise<RecognitionPreset[]> {
-  const data = await get<any>('/presets');
-  
+  const data = await get<RecognitionPreset[] | PresetsResponse>('/presets');
+
   return Array.isArray(data) ? data : Array.isArray(data?.presets) ? data.presets : [];
 }
 

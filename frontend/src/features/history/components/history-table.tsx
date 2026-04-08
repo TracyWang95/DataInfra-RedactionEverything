@@ -113,6 +113,7 @@ export function HistoryTable({
                         className="h-8 w-8 rounded-xl"
                         onClick={() => onCompare(row)}
                         title={t('history.viewCompare')}
+                        aria-label={t('history.viewCompare')}
                         data-testid={`compare-${row.file_id}`}
                       >
                         <ArrowLeftRight className="h-3.5 w-3.5" />
@@ -124,6 +125,7 @@ export function HistoryTable({
                       className="h-8 w-8 rounded-xl"
                       onClick={() => onDownload(row)}
                       title={t('common.download')}
+                      aria-label={t('common.download')}
                     >
                       <Download className="h-3.5 w-3.5" />
                     </Button>
@@ -133,6 +135,7 @@ export function HistoryTable({
                       className="h-8 w-8 rounded-xl text-destructive hover:text-destructive"
                       onClick={() => onDelete(row)}
                       title={t('common.delete')}
+                      aria-label={t('common.delete')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
