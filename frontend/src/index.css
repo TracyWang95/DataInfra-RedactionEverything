@@ -634,10 +634,9 @@ input[type='checkbox']:focus-visible {
 .history-batch-summary {
   display: grid;
 
-  grid-template-columns: 24px 24px minmax(0, 1fr) minmax(140px, auto) minmax(
-      52px,
-      auto
-    ) 72px 44px 36px;
+  grid-template-columns:
+    24px 24px minmax(0, 1fr) minmax(140px, auto) minmax(52px, auto)
+    72px 44px 36px;
   gap: 0 12px;
   align-items: center;
 }
@@ -723,10 +722,9 @@ input[type='checkbox']:focus-visible {
   .jobs-table-head,
   .jobs-row-main {
     display: grid;
-    grid-template-columns: 32px minmax(300px, 2.35fr) minmax(92px, 0.8fr) minmax(
-        260px,
-        1.45fr
-      ) minmax(116px, 0.9fr) minmax(144px, 1fr) minmax(320px, 1.2fr);
+    grid-template-columns:
+      32px minmax(300px, 2.35fr) minmax(92px, 0.8fr) minmax(260px, 1.45fr)
+      minmax(116px, 0.9fr) minmax(144px, 1fr) minmax(320px, 1.2fr);
     gap: 0 16px;
     align-items: center;
     width: 100%;
