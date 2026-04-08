@@ -4,7 +4,7 @@ WORKDIR /app
 
 # System dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx libglib2.0-0 libreoffice-writer \
+    libgl1 libglib2.0-0 libreoffice-writer \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

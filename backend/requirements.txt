@@ -35,7 +35,7 @@ ultralytics>=8.3.0
 paddleocr[doc-parser]>=2.7.0
 
 # 工具库
-PyJWT>=2.8.0
+PyJWT>=2.12.0
 passlib[bcrypt]==1.7.4
 
 # 可观测性

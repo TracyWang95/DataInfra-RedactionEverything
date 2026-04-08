@@ -4,6 +4,7 @@
 // NOTE: This test suite OOMs on Node.js 24.0.0 due to V8 memory pressure
 // from renderHook + this complex hook's render cycle. It runs correctly on
 // Node 20 (CI ubuntu-latest). Skip locally with: npx vitest run --exclude='**/use-playground-recognition*'
+declare const process: { versions: { node: string } };
 const nodeVersion = parseInt(process.versions.node.split('.')[0], 10);
 if (nodeVersion >= 24) {
   console.warn(`[SKIP] use-playground-recognition tests skipped on Node ${process.versions.node} (OOM). CI uses Node 20.`);
