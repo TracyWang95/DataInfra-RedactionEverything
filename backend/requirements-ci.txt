@@ -20,8 +20,8 @@ pydantic>=2.10.0
 pydantic-settings>=2.7.0
 
 # 文件处理（lightweight subset）
-python-docx==1.1.0
-PyMuPDF==1.23.8
+python-docx==1.2.0
+PyMuPDF==1.27.2.2
 Pillow>=11.0.0
 # pdf2image — excluded: requires system poppler
 # pywin32 — excluded: Windows-only
