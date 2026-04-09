@@ -203,7 +203,7 @@ export function useVisionModelConfig() {
       const data = await res.json().catch(() => ({}));
       const rawConfigs: ModelConfig[] = Array.isArray(data?.configs) ? data.configs : [];
       // After fetching models from API, redact keys
-      const configs = rawConfigs.map(m => ({
+      const configs = rawConfigs.map((m) => ({
         ...m,
         api_key: m.api_key ? '__REDACTED__' : undefined,
       }));
@@ -241,7 +241,8 @@ export function useVisionModelConfig() {
       const payload = {
         ...sanitizedForm,
         id: configId,
-        enabled: editingId && BUILTIN_VISION_IDS.has(editingId) ? true : (sanitizedForm.enabled ?? true),
+        enabled:
+          editingId && BUILTIN_VISION_IDS.has(editingId) ? true : (sanitizedForm.enabled ?? true),
       };
       const url = editingId ? `/api/v1/model-config/${editingId}` : '/api/v1/model-config';
       const method = editingId ? 'PUT' : 'POST';

@@ -126,7 +126,9 @@ export function VisionModelDialog({
                 value={form.api_key === '__REDACTED__' ? '' : (form.api_key ?? '')}
                 onChange={(e) => onUpdateForm({ api_key: e.target.value })}
                 className="font-mono text-sm"
-                placeholder={form.api_key === '__REDACTED__' ? '(已设置，输入新值可替换)' : 'sk-...'}
+                placeholder={
+                  form.api_key === '__REDACTED__' ? '(已设置，输入新值可替换)' : 'sk-...'
+                }
                 data-testid="vision-model-api-key"
                 autoComplete="off"
               />

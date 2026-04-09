@@ -35,8 +35,22 @@ def test_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     os.environ["DEBUG"] = "true"
 
     # Import app lazily so env overrides take effect
+    from app.core.config import settings
     from app.main import app
     from app.core.auth import require_auth
+    from app.services.file_management_service import file_store
+
+    # The settings singleton is cached at first app import. If an earlier
+    # fixture (e.g. auth_client) flipped AUTH_ENABLED=True, that leaks into
+    # later tests and causes CSRFMiddleware to reject POST/DELETE with 403.
+    # Force it off for this fixture and restore on teardown.
+    _prev_auth_enabled = settings.AUTH_ENABLED
+    settings.AUTH_ENABLED = False
+
+    # Module-level singletons (file_store, token_blacklist, etc.) are cached on
+    # first import and won't re-bind to the current test's tmp dir. Clear
+    # file_store rows so each test starts with an empty upload history.
+    file_store.clear()
 
     # Bypass auth for convenience — individual tests can remove this override
     app.dependency_overrides[require_auth] = lambda: "test_user"
@@ -45,6 +59,8 @@ def test_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
         yield client
 
     app.dependency_overrides.clear()
+    file_store.clear()
+    settings.AUTH_ENABLED = _prev_auth_enabled
 
     # Clean up env overrides
     for key in ("UPLOAD_DIR", "OUTPUT_DIR", "DATA_DIR", "JOB_DB_PATH",

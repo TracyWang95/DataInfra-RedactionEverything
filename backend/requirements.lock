@@ -43,3 +43,6 @@ cryptography==46.0.1
 
 # 运行时工具
 python-dotenv==1.1.1
+
+# 开发工具（随 requirements.txt 安装，CI 亦使用）
+pytest==8.3.4

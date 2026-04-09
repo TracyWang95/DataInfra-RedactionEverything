@@ -26,14 +26,14 @@ class TokenBlacklist:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._lock = threading.Lock()
-
-    @property
-    def db_path(self) -> str:
-        return self._db_path
         self._last_cleanup = 0.0
         # Initialise schema
         with self._connect() as conn:
             conn.execute(_CREATE_TABLE_SQL)
+
+    @property
+    def db_path(self) -> str:
+        return self._db_path
 
     # ------------------------------------------------------------------
     # Internal helpers

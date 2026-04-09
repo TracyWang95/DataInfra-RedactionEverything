@@ -21,15 +21,11 @@ httpx>=0.28.0
 nvidia-ml-py>=12.535.133
 aiofiles>=24.1.0
 
-# HaS Image（YOLO11 微服务 has_image_server.py，端口 8081）
-ultralytics>=8.3.0
-
-# OCR（PaddleOCR-VL 微服务 ocr_server.py）
-# 推荐：先安装 GPU 版 Paddle，再装本文件，避免默认装上 CPU 版 paddlepaddle。
-# Windows + NVIDIA：在项目根目录执行 scripts\install_paddle_gpu.ps1，然后:
-#   pip install -r requirements.txt
-# 验证: python -c "import paddle; print(paddle.get_device())"  # 应为 gpu:0
-paddleocr[doc-parser]>=2.7.0
+# HaS Image（YOLO11）和 OCR（PaddleOCR-VL）已拆分为独立微服务：
+#   - Dockerfile.vision + requirements-vision.lock（端口 8080 视觉模型）
+#   - Dockerfile.ocr    + requirements-ocr.lock   （端口 8081 OCR/HaS Image）
+# 主后端不再直接依赖 ultralytics / paddleocr，因此这里不列出。
+# 如需本地跑微服务，请分别 pip install -r requirements-vision.lock / requirements-ocr.lock。
 
 # 工具库
 PyJWT>=2.8.0
