@@ -233,6 +233,7 @@ class FileParser:
 
     async def _parse_txt(self, file_path: str) -> ParseResult:
         """解析纯文本文件 (.txt, .md, .html, .htm, .rtf)"""
+        _validate_path(file_path)
         ext = os.path.splitext(file_path)[1].lower()
         try:
             # 尝试多种编码
@@ -285,6 +286,7 @@ class FileParser:
 
     async def _parse_docx(self, file_path: str) -> ParseResult:
         """解析 Word 文档 (.docx)"""
+        _validate_path(file_path)
         doc = Document(file_path)
 
         paragraphs = []
@@ -319,6 +321,7 @@ class FileParser:
 
     async def _parse_pdf(self, file_path: str) -> ParseResult:
         """解析 PDF 文档"""
+        _validate_path(file_path)
         doc = fitz.open(file_path)
 
         pages = []
@@ -360,6 +363,7 @@ class FileParser:
 
     async def pdf_to_images(self, file_path: str, dpi: int = 150) -> list[bytes]:
         """将 PDF 转换为图片列表"""
+        _validate_path(file_path)
         doc = fitz.open(file_path)
         images = []
 
