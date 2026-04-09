@@ -102,7 +102,14 @@ async def run_hybrid_ner(file_id: str, entity_type_ids: list[str] | None = None)
         logger.info("混合识别完成，共 %d 个实体", len(entities))
     except Exception as e:
         logger.exception("混合识别失败: %s", e)
-        entities = []
+        return {
+            "entities": [],
+            "entity_count": 0,
+            "entity_summary": {},
+            "warnings": warnings,
+            "recognition_failed": True,
+            "error": str(e),
+        }
 
     entity_summary = {}
     for ent in entities:
@@ -121,8 +128,8 @@ async def run_hybrid_ner(file_id: str, entity_type_ids: list[str] | None = None)
     }
 
 
-async def run_default_ner(file_id: str) -> dict[str, Any]:
-    """Run NER with default entity types."""
+async def run_default_ner(file_id: str, entity_type_ids: list[str] | None = None) -> dict[str, Any]:
+    """Run NER with default or caller-specified entity types."""
     from app.services.hybrid_ner_service import perform_hybrid_ner
 
     file_store, _file_store_lock = _store_and_lock()
@@ -139,8 +146,12 @@ async def run_default_ner(file_id: str) -> dict[str, Any]:
     if snapshot.get("is_scanned", False):
         return {"entities": [], "entity_count": 0, "entity_summary": {}}
 
-    from app.services.entity_type_service import get_enabled_types
-    entity_types = get_enabled_types()
+    from app.services.entity_type_service import entity_types_db, get_enabled_types
+
+    if entity_type_ids:
+        entity_types = [entity_types_db[tid] for tid in entity_type_ids if tid in entity_types_db]
+    else:
+        entity_types = get_enabled_types()
     entities = await perform_hybrid_ner(snapshot["content"], entity_types)
 
     entity_summary = {}

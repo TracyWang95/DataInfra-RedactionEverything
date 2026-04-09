@@ -112,6 +112,10 @@ async def lifespan(app: FastAPI):
     from app.core.db_backup import backup_sqlite, ensure_db_healthy
     ensure_db_healthy(settings.JOB_DB_PATH)
 
+    # 0b. Run file-store migrations (JSON→SQLite, path normalization)
+    from app.services.file_management_service import run_startup_migrations
+    run_startup_migrations()
+
     # 1. Clean up orphan files (once at startup)
     removed = cleanup_orphan_files()
     if removed:
@@ -250,7 +254,8 @@ app.add_middleware(
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Idempotency-Key", "X-CSRF-Token"],
+    expose_headers=["X-Request-ID"],
 )
 
 app.add_middleware(MaxBodySizeMiddleware)
@@ -259,6 +264,16 @@ app.add_middleware(MaxBodySizeMiddleware)
 from app.core.rate_limit import RateLimitMiddleware  # noqa: E402
 
 app.add_middleware(RateLimitMiddleware, max_requests=600, window_seconds=60)
+
+# CSRF protection (double-submit cookie)
+from app.core.csrf import CSRFMiddleware  # noqa: E402
+
+app.add_middleware(CSRFMiddleware)
+
+# Security headers on all responses
+from app.core.security_headers import SecurityHeadersMiddleware  # noqa: E402
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Request-ID: outermost middleware (registered last = runs first in Starlette)
 from app.core.request_id import RequestIdMiddleware  # noqa: E402

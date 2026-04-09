@@ -7,7 +7,7 @@ import { t } from '@/i18n';
 import { JOBS_LIST_POLL_MS } from '@/constants/timing';
 import {
   deleteJob,
-  getJob,
+  getJobsBatch,
   listJobs,
   requeueFailed,
   type JobDetail,
@@ -197,15 +197,16 @@ export function useJobs() {
       ids.forEach((id) => next.add(id));
       return next;
     });
-    const results = await Promise.allSettled(
-      ids.map(async (id) => ({ id, detail: await getJob(id) })),
-    );
     const patch: Record<string, JobDetail> = {};
     let firstError: string | null = null;
-    results.forEach((result) => {
-      if (result.status === 'fulfilled') patch[result.value.id] = result.value.detail;
-      else if (!firstError) firstError = localizeErrorMessage(result.reason, 'jobs.expandFailed');
-    });
+    try {
+      const { jobs } = await getJobsBatch(ids);
+      for (const detail of jobs) {
+        patch[detail.id] = detail;
+      }
+    } catch (err) {
+      firstError = localizeErrorMessage(err, 'jobs.expandFailed');
+    }
     if (Object.keys(patch).length > 0) {
       setJobDetails((prev) => ({ ...prev, ...patch }));
       setRows((prev) =>

@@ -21,9 +21,15 @@ def csrf_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     os.environ["AUTH_ENABLED"] = "true"
     os.environ["DEBUG"] = "false"
 
+    from app.core.config import settings
     from app.main import app
 
     app.dependency_overrides.clear()
+
+    _prev_auth = settings.AUTH_ENABLED
+    _prev_debug = settings.DEBUG
+    settings.AUTH_ENABLED = True
+    settings.DEBUG = False
 
     import app.core.auth as _auth_mod
     _auth_mod._AUTH_FILE = os.path.join(tmp_data_dir, "data", "auth.json")
@@ -34,6 +40,8 @@ def csrf_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     with TestClient(app) as client:
         yield client
 
+    settings.AUTH_ENABLED = _prev_auth
+    settings.DEBUG = _prev_debug
     app.dependency_overrides.clear()
     for key in ("UPLOAD_DIR", "OUTPUT_DIR", "DATA_DIR", "JOB_DB_PATH",
                 "AUTH_ENABLED", "DEBUG"):
@@ -50,9 +58,15 @@ def csrf_debug_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     os.environ["AUTH_ENABLED"] = "true"
     os.environ["DEBUG"] = "true"
 
+    from app.core.config import settings
     from app.main import app
 
     app.dependency_overrides.clear()
+
+    _prev_auth = settings.AUTH_ENABLED
+    _prev_debug = settings.DEBUG
+    settings.AUTH_ENABLED = True
+    settings.DEBUG = True
 
     import app.core.auth as _auth_mod
     _auth_mod._AUTH_FILE = os.path.join(tmp_data_dir, "data", "auth.json")
@@ -63,6 +77,8 @@ def csrf_debug_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     with TestClient(app) as client:
         yield client
 
+    settings.AUTH_ENABLED = _prev_auth
+    settings.DEBUG = _prev_debug
     app.dependency_overrides.clear()
     for key in ("UPLOAD_DIR", "OUTPUT_DIR", "DATA_DIR", "JOB_DB_PATH",
                 "AUTH_ENABLED", "DEBUG"):
@@ -72,7 +88,6 @@ def csrf_debug_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
 # ── P0-1: CSRF cookie secure flag follows DEBUG setting ──────
 
 
-@pytest.mark.skip(reason="Feature not implemented: CSRF middleware not registered in app.main")
 def test_csrf_cookie_secure_when_not_debug(csrf_client: TestClient):
     """In production (DEBUG=false), CSRF cookie MUST have Secure flag."""
     resp = csrf_client.get("/api/v1/auth/status")
@@ -87,7 +102,6 @@ def test_csrf_cookie_secure_when_not_debug(csrf_client: TestClient):
     )
 
 
-@pytest.mark.skip(reason="Feature not implemented: CSRF middleware not registered in app.main")
 def test_csrf_cookie_no_secure_when_debug(csrf_debug_client: TestClient):
     """In development (DEBUG=true), CSRF cookie should NOT require Secure flag."""
     resp = csrf_debug_client.get("/api/v1/auth/status")
@@ -115,7 +129,6 @@ def _setup_and_login(client: TestClient) -> tuple[str, str]:
     return token, csrf
 
 
-@pytest.mark.skip(reason="Feature not implemented: CSRF middleware not registered in app.main")
 def test_csrf_token_rotates_after_login(csrf_debug_client: TestClient):
     """CSRF token MUST change after login (prevents session fixation)."""
     # Get initial CSRF token
@@ -137,7 +150,6 @@ def test_csrf_token_rotates_after_login(csrf_debug_client: TestClient):
     )
 
 
-@pytest.mark.skip(reason="Feature not implemented: CSRF middleware not registered in app.main")
 def test_csrf_token_rotates_after_logout(csrf_debug_client: TestClient):
     """CSRF token MUST change after logout."""
     # Setup and login
@@ -157,7 +169,6 @@ def test_csrf_token_rotates_after_logout(csrf_debug_client: TestClient):
     )
 
 
-@pytest.mark.skip(reason="Feature not implemented: CSRF middleware not registered in app.main")
 def test_csrf_token_rotates_after_setup(csrf_debug_client: TestClient):
     """CSRF token MUST change after initial password setup."""
     # Get initial CSRF token

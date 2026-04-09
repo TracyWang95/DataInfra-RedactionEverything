@@ -25,6 +25,8 @@ __all__ = [
     "JobUpdateBody",
     "ReviewDraftBody",
     "ReviewCommitBody",
+    "BatchDetailsBody",
+    "BatchDetailsResponse",
 ]
 
 
@@ -209,3 +211,13 @@ class ReviewDraftBody(BaseModel):
 
 class ReviewCommitBody(ReviewDraftBody):
     pass
+
+
+class BatchDetailsBody(BaseModel):
+    """Request body for POST /jobs/batch-details — fetch multiple job details at once."""
+    ids: list[str] = Field(..., min_length=0, max_length=50)
+
+
+class BatchDetailsResponse(BaseModel):
+    """Response for POST /jobs/batch-details."""
+    jobs: list[JobDetailResponse] = Field(default_factory=list)

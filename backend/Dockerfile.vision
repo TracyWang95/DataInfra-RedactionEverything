@@ -3,7 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx libglib2.0-0 \
+    libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir \
@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir \
     httpx \
     Pillow
 
-COPY has_image_server.py .
+COPY scripts/has_image_server.py .
 COPY app/core/has_image_categories.py ./app/core/
 
 RUN mkdir -p /app/models && \

@@ -8,7 +8,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-@pytest.mark.skip(reason="Feature not implemented: SecurityHeadersMiddleware not yet added to app.main")
 def test_security_headers_present(test_client: TestClient):
     """All security headers should be present on responses."""
     resp = test_client.get("/health")
@@ -19,7 +18,6 @@ def test_security_headers_present(test_client: TestClient):
     assert "camera=()" in resp.headers.get("Permissions-Policy", "")
 
 
-@pytest.mark.skip(reason="Feature not implemented: SecurityHeadersMiddleware not yet added to app.main")
 def test_security_headers_on_api_endpoints(test_client: TestClient):
     """Security headers should also appear on API responses."""
     resp = test_client.get("/api/v1/files")

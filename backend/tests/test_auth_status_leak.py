@@ -21,13 +21,18 @@ def noauth_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     os.environ["AUTH_ENABLED"] = "false"
     os.environ["DEBUG"] = "true"
 
+    from app.core.config import settings
     from app.main import app
 
     app.dependency_overrides.clear()
 
+    _prev_auth = settings.AUTH_ENABLED
+    settings.AUTH_ENABLED = False
+
     with TestClient(app) as client:
         yield client
 
+    settings.AUTH_ENABLED = _prev_auth
     app.dependency_overrides.clear()
     for key in ("UPLOAD_DIR", "OUTPUT_DIR", "DATA_DIR", "JOB_DB_PATH",
                 "AUTH_ENABLED", "DEBUG"):
@@ -44,9 +49,13 @@ def auth_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     os.environ["AUTH_ENABLED"] = "true"
     os.environ["DEBUG"] = "true"
 
+    from app.core.config import settings
     from app.main import app
 
     app.dependency_overrides.clear()
+
+    _prev_auth = settings.AUTH_ENABLED
+    settings.AUTH_ENABLED = True
 
     import app.core.auth as _auth_mod
     _auth_mod._AUTH_FILE = os.path.join(tmp_data_dir, "data", "auth.json")
@@ -57,6 +66,7 @@ def auth_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     with TestClient(app) as client:
         yield client
 
+    settings.AUTH_ENABLED = _prev_auth
     app.dependency_overrides.clear()
     for key in ("UPLOAD_DIR", "OUTPUT_DIR", "DATA_DIR", "JOB_DB_PATH",
                 "AUTH_ENABLED", "DEBUG"):
@@ -66,7 +76,6 @@ def auth_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
 # ── P0-5: Auth status should not leak password_set when auth disabled ──
 
 
-@pytest.mark.skip(reason="Feature not implemented: auth status endpoint always exposes password_set regardless of AUTH_ENABLED")
 def test_auth_status_no_password_set_when_auth_disabled(noauth_client: TestClient):
     """When AUTH_ENABLED=false, password_set should be null/absent."""
     resp = noauth_client.get("/api/v1/auth/status")
@@ -79,7 +88,6 @@ def test_auth_status_no_password_set_when_auth_disabled(noauth_client: TestClien
     )
 
 
-@pytest.mark.skip(reason="Flaky: test-ordering pollution with AUTH_ENABLED env var")
 def test_auth_status_shows_password_set_when_auth_enabled(auth_client: TestClient):
     """When AUTH_ENABLED=true, password_set should be returned normally."""
     resp = auth_client.get("/api/v1/auth/status")

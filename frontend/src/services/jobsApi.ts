@@ -106,6 +106,10 @@ export function getJob(jobId: string): Promise<JobDetail> {
   return get<JobDetail>(`/jobs/${encodeURIComponent(jobId)}`);
 }
 
+export function getJobsBatch(ids: string[]): Promise<{ jobs: JobDetail[] }> {
+  return post<{ jobs: JobDetail[] }>('/jobs/batch-details', { ids });
+}
+
 export function submitJob(jobId: string): Promise<JobSummary> {
   return post<JobSummary>(`/jobs/${encodeURIComponent(jobId)}/submit`);
 }

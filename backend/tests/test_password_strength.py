@@ -43,7 +43,6 @@ def auth_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
 # ── P0-4: Password complexity beyond just length ─────────────
 
 
-@pytest.mark.skip(reason="Feature not implemented: validate_password_strength not yet added to app.core.auth")
 def test_password_no_uppercase_rejected(auth_client: TestClient):
     """Password without uppercase letter should be rejected."""
     resp = auth_client.post(
@@ -54,7 +53,6 @@ def test_password_no_uppercase_rejected(auth_client: TestClient):
     assert "大写" in resp.json()["message"] or "uppercase" in resp.json()["message"].lower()
 
 
-@pytest.mark.skip(reason="Feature not implemented: validate_password_strength not yet added to app.core.auth")
 def test_password_no_lowercase_rejected(auth_client: TestClient):
     """Password without lowercase letter should be rejected."""
     resp = auth_client.post(
@@ -64,7 +62,6 @@ def test_password_no_lowercase_rejected(auth_client: TestClient):
     assert resp.status_code == 400
 
 
-@pytest.mark.skip(reason="Feature not implemented: validate_password_strength not yet added to app.core.auth")
 def test_password_no_digit_rejected(auth_client: TestClient):
     """Password without digit should be rejected."""
     resp = auth_client.post(
@@ -74,7 +71,6 @@ def test_password_no_digit_rejected(auth_client: TestClient):
     assert resp.status_code == 400
 
 
-@pytest.mark.skip(reason="Feature not implemented: validate_password_strength not yet added to app.core.auth")
 def test_password_no_special_rejected(auth_client: TestClient):
     """Password without special character should be rejected."""
     resp = auth_client.post(
@@ -94,7 +90,6 @@ def test_password_all_requirements_met_succeeds(auth_client: TestClient):
     assert "access_token" in resp.json()
 
 
-@pytest.mark.skip(reason="Feature not implemented: validate_password_strength not yet added to app.core.auth")
 def test_change_password_complexity_enforced(auth_client: TestClient):
     """Password complexity should also be enforced on change-password."""
     # Setup with valid password
@@ -117,7 +112,6 @@ def test_change_password_complexity_enforced(auth_client: TestClient):
 # ── Unit tests for validate_password_strength ────────────────
 
 
-@pytest.mark.skip(reason="Feature not implemented: validate_password_strength not yet added to app.core.auth")
 def test_validate_password_strength_function():
     """Direct unit test for the validation function."""
     from app.core.auth import validate_password_strength

@@ -2,6 +2,7 @@
 import secrets as _secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.core.auth import (
     check_password,
@@ -10,10 +11,11 @@ from app.core.auth import (
     require_auth,
     revoke_token,
     set_password,
+    validate_password_strength,
 )
 from app.core.config import settings
-from app.core.rate_limit import RateLimiter
-from app.models.schemas import AuthStatusResponse, ChangePasswordRequest, PasswordRequest, TokenResponse
+from app.core.rate_limit import RateLimiter, get_client_ip
+from app.models.schemas import ChangePasswordRequest, PasswordRequest, TokenResponse
 
 router = APIRouter(tags=["auth"])
 
@@ -22,7 +24,7 @@ _auth_limiter = RateLimiter(max_requests=5, window_seconds=60)
 
 
 async def _check_auth_rate_limit(request: Request) -> None:
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     if not _auth_limiter.check(f"auth:{client_ip}"):
         raise HTTPException(
             status_code=429,
@@ -30,26 +32,39 @@ async def _check_auth_rate_limit(request: Request) -> None:
         )
 
 
-@router.get("/auth/status", response_model=AuthStatusResponse)
+@router.get("/auth/status")
 async def auth_status():
-    return AuthStatusResponse(
-        auth_enabled=settings.AUTH_ENABLED,
-        password_set=is_password_set(),
-    )
+    return {
+        "auth_enabled": settings.AUTH_ENABLED,
+        "password_set": is_password_set() if settings.AUTH_ENABLED else None,
+    }
 
 
 @router.post("/auth/setup", response_model=TokenResponse, dependencies=[Depends(_check_auth_rate_limit)])
 async def setup_password(req: PasswordRequest):
     if is_password_set():
         raise HTTPException(status_code=400, detail="密码已设置，请使用登录接口")
-    if len(req.password) < 6:
-        raise HTTPException(status_code=400, detail="密码长度至少 6 位")
+    errors = validate_password_strength(req.password)
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
     set_password(req.password)
     token = create_token()
-    return TokenResponse(
-        access_token=token,
-        expires_in=settings.JWT_EXPIRE_MINUTES * 60,
+    expires_seconds = settings.JWT_EXPIRE_MINUTES * 60
+    response = JSONResponse(content={
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": expires_seconds,
+    })
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="strict",
+        secure=not settings.DEBUG,
+        max_age=expires_seconds,
+        path="/",
     )
+    return response
 
 
 @router.post("/auth/login", response_model=TokenResponse, dependencies=[Depends(_check_auth_rate_limit)])
@@ -59,10 +74,22 @@ async def login(req: PasswordRequest):
     if not check_password(req.password):
         raise HTTPException(status_code=401, detail="密码错误")
     token = create_token()
-    return TokenResponse(
-        access_token=token,
-        expires_in=settings.JWT_EXPIRE_MINUTES * 60,
+    expires_seconds = settings.JWT_EXPIRE_MINUTES * 60
+    response = JSONResponse(content={
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": expires_seconds,
+    })
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="strict",
+        secure=not settings.DEBUG,
+        max_age=expires_seconds,
+        path="/",
     )
+    return response
 
 
 @router.post("/auth/change-password", dependencies=[Depends(_check_auth_rate_limit)])
@@ -70,8 +97,9 @@ async def change_password(req: ChangePasswordRequest, _: str = Depends(require_a
     """Change password (requires current auth + old password verification)."""
     if not check_password(req.old_password):
         raise HTTPException(status_code=401, detail="旧密码错误")
-    if len(req.new_password) < 6:
-        raise HTTPException(status_code=400, detail="密码长度至少 6 位")
+    errors = validate_password_strength(req.new_password)
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
     set_password(req.new_password)
     return {"message": "密码修改成功"}
 
@@ -79,11 +107,17 @@ async def change_password(req: ChangePasswordRequest, _: str = Depends(require_a
 @router.post("/auth/logout")
 async def logout(request: Request, _: str = Depends(require_auth)):
     """Revoke the current JWT so it can no longer be used."""
+    token: str | None = None
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
+    elif request.cookies.get("access_token"):
+        token = request.cookies["access_token"]
+    if token:
         revoke_token(token)
-    return {"message": "已注销"}
+    response = JSONResponse(content={"message": "已注销"})
+    response.delete_cookie(key="access_token", path="/")
+    return response
 
 
 @router.post("/auth/revoke-all")

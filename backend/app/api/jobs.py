@@ -19,6 +19,8 @@ from starlette.responses import StreamingResponse
 import app.services.job_management_service as _jms
 from app.core.audit import audit_log
 from app.models.schemas import (
+    BatchDetailsBody,
+    BatchDetailsResponse,
     JobCreateBody,
     JobDeleteResponse,
     JobDetailResponse,
@@ -64,6 +66,27 @@ async def list_jobs(
         return _jms.list_jobs(store, job_type, page, page_size)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/batch-details", response_model=BatchDetailsResponse)
+async def batch_job_details(
+    body: BatchDetailsBody,
+    store: JobStore = Depends(get_job_store),
+) -> dict[str, Any]:
+    """Return full details for multiple jobs in a single request.
+
+    Unknown IDs are silently skipped (no 404). Duplicates are deduplicated.
+    """
+    unique_ids = list(dict.fromkeys(body.ids))  # deduplicate, preserve order
+    results: list[dict[str, Any]] = []
+    for jid in unique_ids:
+        try:
+            detail = _jms.get_job_detail(store, jid)
+            results.append(detail)
+        except ValueError:
+            # Job not found — skip silently
+            continue
+    return {"jobs": results}
 
 
 @router.put("/{job_id}", response_model=JobResponse)

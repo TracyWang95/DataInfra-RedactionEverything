@@ -59,7 +59,6 @@ def test_lru_eviction_when_max_tracked():
 # Upload-specific rate limiter
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason="Feature not implemented: upload_limiter instance not yet defined in app.core.rate_limit")
 def test_upload_limiter_blocks_after_limit():
     """Upload rate limiter should reject requests exceeding the limit within the window."""
     from app.core.rate_limit import upload_limiter
@@ -85,7 +84,6 @@ def test_upload_limiter_blocks_after_limit():
         upload_limiter._hits.pop(test_ip, None)
 
 
-@pytest.mark.skip(reason="Feature not implemented: upload_limiter instance not yet defined in app.core.rate_limit")
 def test_upload_limiter_allows_different_ips():
     """Upload rate limiter tracks IPs independently."""
     from app.core.rate_limit import upload_limiter
@@ -98,8 +96,9 @@ def test_upload_limiter_allows_different_ips():
         upload_limiter._hits.pop(ip_a, None)
         upload_limiter._hits.pop(ip_b, None)
 
-    # Exhaust ip_a
-    for _ in range(20):
+    # Exhaust ip_a up to its limit
+    limit = upload_limiter.max_requests
+    for _ in range(limit):
         upload_limiter.check(ip_a)
     assert upload_limiter.check(ip_a) is False
 
@@ -110,3 +109,97 @@ def test_upload_limiter_allows_different_ips():
     with upload_limiter._lock:
         upload_limiter._hits.pop(ip_a, None)
         upload_limiter._hits.pop(ip_b, None)
+
+
+# ---------------------------------------------------------------------------
+# X-Forwarded-For header support (proxy-aware IP detection)
+# ---------------------------------------------------------------------------
+
+def test_get_client_ip_uses_x_forwarded_for():
+    """get_client_ip should prefer X-Forwarded-For header over request.client.host."""
+    from app.core.rate_limit import get_client_ip
+    from starlette.testclient import TestClient
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def echo_ip(request: Request):
+        return JSONResponse({"ip": get_client_ip(request)})
+
+    app = Starlette(routes=[Route("/ip", echo_ip)])
+    client = TestClient(app)
+
+    # With X-Forwarded-For header, should return the first (leftmost) IP
+    resp = client.get("/ip", headers={"X-Forwarded-For": "203.0.113.50, 70.41.3.18"})
+    assert resp.json()["ip"] == "203.0.113.50"
+
+
+def test_get_client_ip_falls_back_to_client_host():
+    """get_client_ip should fall back to request.client.host when no X-Forwarded-For."""
+    from app.core.rate_limit import get_client_ip
+    from starlette.testclient import TestClient
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def echo_ip(request: Request):
+        return JSONResponse({"ip": get_client_ip(request)})
+
+    app = Starlette(routes=[Route("/ip", echo_ip)])
+    client = TestClient(app)
+
+    # Without X-Forwarded-For, should use client.host (testclient uses "testclient")
+    resp = client.get("/ip")
+    ip = resp.json()["ip"]
+    # TestClient sets client to testclient or 127.0.0.1 -- just verify it's not empty
+    assert ip and ip != "unknown"
+
+
+def test_get_client_ip_ignores_empty_forwarded_for():
+    """get_client_ip should ignore empty X-Forwarded-For header."""
+    from app.core.rate_limit import get_client_ip
+    from starlette.testclient import TestClient
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    async def echo_ip(request: Request):
+        return JSONResponse({"ip": get_client_ip(request)})
+
+    app = Starlette(routes=[Route("/ip", echo_ip)])
+    client = TestClient(app)
+
+    resp = client.get("/ip", headers={"X-Forwarded-For": ""})
+    ip = resp.json()["ip"]
+    assert ip and ip != "unknown"
+
+
+def test_rate_limit_middleware_uses_forwarded_ip():
+    """RateLimitMiddleware should rate-limit based on X-Forwarded-For IP."""
+    from app.core.rate_limit import RateLimitMiddleware
+    from starlette.testclient import TestClient
+    from starlette.applications import Starlette
+    from starlette.responses import PlainTextResponse
+    from starlette.routing import Route
+
+    async def ok(request):
+        return PlainTextResponse("ok")
+
+    app = Starlette(routes=[Route("/", ok)])
+    app.add_middleware(RateLimitMiddleware, max_requests=2, window_seconds=60)
+    client = TestClient(app)
+
+    real_ip = "198.51.100.77"
+    headers = {"X-Forwarded-For": real_ip}
+
+    # First 2 requests should pass
+    assert client.get("/", headers=headers).status_code == 200
+    assert client.get("/", headers=headers).status_code == 200
+    # Third should be rate-limited
+    assert client.get("/", headers=headers).status_code == 429
+
+    # A different forwarded IP should still be allowed
+    assert client.get("/", headers={"X-Forwarded-For": "198.51.100.88"}).status_code == 200

@@ -11,6 +11,22 @@ from starlette.responses import JSONResponse
 _MAX_TRACKED_IPS = 10_000
 
 
+def get_client_ip(request: Request) -> str:
+    """Extract the real client IP, respecting ``X-Forwarded-For`` from a reverse proxy.
+
+    The ``X-Forwarded-For`` header contains a comma-separated list of IPs where
+    the leftmost entry is the original client.  We strip whitespace and return
+    the first non-empty value, falling back to ``request.client.host``.
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        # Take the first (leftmost) IP — that is the original client
+        first_ip = forwarded.split(",")[0].strip()
+        if first_ip:
+            return first_ip
+    return request.client.host if request.client else "unknown"
+
+
 class RateLimiter:
     """Token-bucket-style per-IP rate limiter with LRU eviction."""
 
@@ -43,6 +59,10 @@ class RateLimiter:
             return True
 
 
+# Pre-built limiter instance for upload endpoints (reusable across modules)
+upload_limiter = RateLimiter(max_requests=120, window_seconds=60)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """BaseHTTPMiddleware wrapper for RateLimiter (compatible with other BaseHTTPMiddleware)."""
 
@@ -51,7 +71,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._limiter = RateLimiter(max_requests=max_requests, window_seconds=window_seconds)
 
     async def dispatch(self, request: Request, call_next):
-        client_ip = request.client.host if request.client else "unknown"
+        client_ip = get_client_ip(request)
         if not self._limiter.check(client_ip):
             return JSONResponse(
                 status_code=429,

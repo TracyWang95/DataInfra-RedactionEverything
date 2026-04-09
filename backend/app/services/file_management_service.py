@@ -264,11 +264,16 @@ def migrate_json_to_sqlite() -> None:
         pass
 
 
-# Run migration and path repair at module import time (same as before)
-migrate_json_to_sqlite()
-_repaired_paths = repair_file_store_paths()
-if _repaired_paths:
-    logger.info("Normalized %d file_store path records", _repaired_paths)
+def run_startup_migrations() -> None:
+    """Run JSON→SQLite migration and path normalization.
+
+    Previously executed at module import time; now called explicitly from
+    the FastAPI lifespan handler so that imports remain side-effect-free.
+    """
+    migrate_json_to_sqlite()
+    repaired = repair_file_store_paths()
+    if repaired:
+        logger.info("Normalized %d file_store path records", repaired)
 
 
 # ---------------------------------------------------------------------------

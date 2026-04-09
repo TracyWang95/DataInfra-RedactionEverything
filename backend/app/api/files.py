@@ -305,8 +305,13 @@ async def extract_entities_with_config(
     """
     对文件进行命名实体识别 (NER) - 支持自定义实体类型
     """
+    # Merge built-in entity_types and custom_entity_type_ids into a single list
+    entity_type_ids = (request.entity_types or []) + (request.custom_entity_type_ids or [])
     try:
-        ner_result = await _fms.run_default_ner(file_id)
+        ner_result = await _fms.run_default_ner(
+            file_id,
+            entity_type_ids=entity_type_ids if entity_type_ids else None,
+        )
     except ValueError as exc:
         detail = str(exc)
         if "不存在" in detail:

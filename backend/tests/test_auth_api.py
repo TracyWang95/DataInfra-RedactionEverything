@@ -18,9 +18,15 @@ def auth_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     os.environ["AUTH_ENABLED"] = "true"
     os.environ["DEBUG"] = "true"
 
+    from app.core.config import settings
     from app.main import app
     # Clear any leftover overrides from other fixtures
     app.dependency_overrides.clear()
+
+    _prev_auth = settings.AUTH_ENABLED
+    _prev_debug = settings.DEBUG
+    settings.AUTH_ENABLED = True
+    settings.DEBUG = True
 
     # Reset the auth module's cached file path to use the temp DATA_DIR
     import app.core.auth as _auth_mod
@@ -33,15 +39,21 @@ def auth_client(tmp_data_dir: str) -> Generator[TestClient, None, None]:
     with TestClient(app) as client:
         yield client
 
+    settings.AUTH_ENABLED = _prev_auth
+    settings.DEBUG = _prev_debug
     app.dependency_overrides.clear()
     for key in ("UPLOAD_DIR", "OUTPUT_DIR", "DATA_DIR", "JOB_DB_PATH",
                 "AUTH_ENABLED", "DEBUG"):
         os.environ.pop(key, None)
 
 
+# Strong passwords that meet all complexity requirements
+_GOOD_PWD = "Str0ng!Pass#99"
+_GOOD_PWD2 = "N3w!Secure#77"
+
+
 # ── Auth status ──────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Flaky: test-ordering pollution with AUTH_ENABLED env var")
 def test_auth_status_returns_enabled_flag(auth_client: TestClient):
     resp = auth_client.get("/api/v1/auth/status")
     assert resp.status_code == 200
@@ -53,7 +65,7 @@ def test_auth_status_returns_enabled_flag(auth_client: TestClient):
 # ── Setup password ───────────────────────────────────────────
 
 def test_setup_password_success(auth_client: TestClient):
-    resp = auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
+    resp = auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
     assert resp.status_code == 200
     body = resp.json()
     assert "access_token" in body
@@ -62,30 +74,28 @@ def test_setup_password_success(auth_client: TestClient):
 
 
 def test_setup_password_too_short_returns_400(auth_client: TestClient):
-    resp = auth_client.post("/api/v1/auth/setup", json={"password": "12345"})
+    resp = auth_client.post("/api/v1/auth/setup", json={"password": "Ab1!"})
     assert resp.status_code == 400
-    # Custom error handler maps HTTPException.detail to "message"
-    assert "6" in resp.json()["message"]
 
 
 def test_setup_password_twice_returns_400(auth_client: TestClient):
-    auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
-    resp = auth_client.post("/api/v1/auth/setup", json={"password": "another1"})
+    auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
+    resp = auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD2})
     assert resp.status_code == 400
 
 
 # ── Login ────────────────────────────────────────────────────
 
 def test_login_success(auth_client: TestClient):
-    auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
-    resp = auth_client.post("/api/v1/auth/login", json={"password": "secure123"})
+    auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
+    resp = auth_client.post("/api/v1/auth/login", json={"password": _GOOD_PWD})
     assert resp.status_code == 200
     assert "access_token" in resp.json()
 
 
 def test_login_wrong_password_returns_401(auth_client: TestClient):
-    auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
-    resp = auth_client.post("/api/v1/auth/login", json={"password": "wrong999"})
+    auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
+    resp = auth_client.post("/api/v1/auth/login", json={"password": "Wr0ng!Pass#11"})
     assert resp.status_code == 401
 
 
@@ -94,39 +104,73 @@ def test_login_no_password_set_returns_400(auth_client: TestClient):
     assert resp.status_code == 400
 
 
+# ── Login / Setup set httpOnly cookie ────────────────────────
+
+def test_login_sets_access_token_cookie(auth_client: TestClient):
+    """Login response should include an httpOnly Set-Cookie for access_token."""
+    auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
+    resp = auth_client.post("/api/v1/auth/login", json={"password": _GOOD_PWD})
+    assert resp.status_code == 200
+    assert resp.cookies.get("access_token"), "Login should set access_token cookie"
+    set_cookie = resp.headers.get("set-cookie", "")
+    assert "httponly" in set_cookie.lower(), "access_token cookie must be httpOnly"
+
+
+def test_setup_sets_access_token_cookie(auth_client: TestClient):
+    """Setup response should include an httpOnly Set-Cookie for access_token."""
+    resp = auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
+    assert resp.status_code == 200
+    assert resp.cookies.get("access_token"), "Setup should set access_token cookie"
+
+
+# ── Cookie-based auth ────────────────────────────────────────
+
+def test_cookie_auth_works_without_bearer_header(auth_client: TestClient):
+    """A request with only the access_token cookie (no Authorization header) should succeed."""
+    auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
+    login_resp = auth_client.post("/api/v1/auth/login", json={"password": _GOOD_PWD})
+    token = login_resp.json()["access_token"]
+    # Send request with cookie only, no Authorization header
+    resp = auth_client.post(
+        "/api/v1/auth/logout",
+        cookies={"access_token": token},
+    )
+    assert resp.status_code == 200
+
+
 # ── Change password ──────────────────────────────────────────
 
 def test_change_password_success(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "old12345"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post(
         "/api/v1/auth/change-password",
-        json={"old_password": "old12345", "new_password": "new12345"},
+        json={"old_password": _GOOD_PWD, "new_password": _GOOD_PWD2},
         headers=headers,
     )
     assert resp.status_code == 200
 
 
 def test_change_password_wrong_old_returns_401(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "old12345"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post(
         "/api/v1/auth/change-password",
-        json={"old_password": "wrongold", "new_password": "new12345"},
+        json={"old_password": "Wr0ng!Old#11", "new_password": _GOOD_PWD2},
         headers=headers,
     )
     assert resp.status_code == 401
 
 
 def test_change_password_new_too_short_returns_400(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "old12345"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post(
         "/api/v1/auth/change-password",
-        json={"old_password": "old12345", "new_password": "ab"},
+        json={"old_password": _GOOD_PWD, "new_password": "ab"},
         headers=headers,
     )
     assert resp.status_code == 400
@@ -135,7 +179,7 @@ def test_change_password_new_too_short_returns_400(auth_client: TestClient):
 # ── Logout ───────────────────────────────────────────────────
 
 def test_logout_success(auth_client: TestClient):
-    setup = auth_client.post("/api/v1/auth/setup", json={"password": "secure123"})
+    setup = auth_client.post("/api/v1/auth/setup", json={"password": _GOOD_PWD})
     token = setup.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
     resp = auth_client.post("/api/v1/auth/logout", headers=headers)

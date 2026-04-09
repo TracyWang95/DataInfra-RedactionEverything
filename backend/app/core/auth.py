@@ -99,6 +99,22 @@ def revoke_token(token: str) -> None:
         get_blacklist().revoke(jti, int(exp))
 
 
+def validate_password_strength(password: str) -> list[str]:
+    """Validate password complexity. Returns a list of error messages (empty = valid)."""
+    errors: list[str] = []
+    if len(password) < 8:
+        errors.append("密码长度至少 8 位")
+    if not any(c.isupper() for c in password):
+        errors.append("密码需要包含至少一个大写字母 (uppercase)")
+    if not any(c.islower() for c in password):
+        errors.append("密码需要包含至少一个小写字母 (lowercase)")
+    if not any(c.isdigit() for c in password):
+        errors.append("密码需要包含至少一个数字 (digit)")
+    if not any(not c.isalnum() for c in password):
+        errors.append("密码需要包含至少一个特殊字符 (special character)")
+    return errors
+
+
 def is_password_set() -> bool:
     auth = _load_auth()
     return bool(auth.get("password_hash"))
@@ -122,12 +138,26 @@ async def require_auth(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str | None:
-    """Dependency: require valid JWT if AUTH_ENABLED."""
+    """Dependency: require valid JWT if AUTH_ENABLED.
+
+    Checks both the Authorization header and the ``access_token`` cookie so
+    that browser-based auth (httpOnly cookie) works alongside programmatic
+    Bearer-token auth.
+    """
     if not settings.AUTH_ENABLED:
         return "anonymous"
 
-    if credentials is None:
+    # 1. Prefer Authorization header (Bearer token)
+    token: str | None = None
+    if credentials is not None:
+        token = credentials.credentials
+
+    # 2. Fall back to httpOnly cookie
+    if token is None:
+        token = request.cookies.get("access_token")
+
+    if token is None:
         raise HTTPException(status_code=401, detail="未提供认证信息")
 
-    payload = decode_token(credentials.credentials)
+    payload = decode_token(token)
     return payload.get("sub", "unknown")

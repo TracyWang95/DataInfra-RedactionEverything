@@ -42,9 +42,9 @@ jobs:
         run: npx prettier --check src/
 
       - name: Unit tests (vitest)
-        run: npm run test -- --passWithNoTests --exclude='**/use-playground-recognition*'
+        run: npm run test -- --passWithNoTests
         env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
+          NODE_OPTIONS: '--max-old-space-size=8192'
 
   backend:
     name: Backend (pytest)
