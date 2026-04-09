@@ -12,7 +12,19 @@ import fitz  # PyMuPDF
 from docx import Document
 from PIL import Image
 
+from app.core.config import settings
+from app.core.file_validation import safe_path_in_dir
 from app.models.schemas import FileType, ParseResult
+
+
+def _validate_path(file_path: str) -> None:
+    """Raise ``ValueError`` if *file_path* is outside the configured upload/output directories."""
+    resolved = os.path.realpath(file_path)
+    if safe_path_in_dir(resolved, settings.UPLOAD_DIR):
+        return
+    if safe_path_in_dir(resolved, settings.OUTPUT_DIR):
+        return
+    raise ValueError(f"路径不在允许的目录中: {file_path}")
 
 
 class FileParser:
@@ -31,7 +43,11 @@ class FileParser:
 
         Returns:
             解析结果
+
+        Raises:
+            ValueError: 路径不在允许的目录中
         """
+        _validate_path(file_path)
         if file_type == FileType.DOC:
             return await self._parse_doc(file_path)
         elif file_type == FileType.DOCX:
@@ -81,6 +97,11 @@ class FileParser:
         """
         将 .doc 文件转换为 .docx
         """
+        try:
+            _validate_path(doc_path)
+        except ValueError:
+            logger.warning("Path traversal blocked in _convert_doc_to_docx: %s", doc_path)
+            return None
         abs_path = os.path.abspath(doc_path)
 
         # Windows: 尝试使用 pywin32 调用 Word
@@ -98,6 +119,11 @@ class FileParser:
 
     async def _convert_with_word_com(self, doc_path: str) -> str | None:
         """使用 Word COM 接口转换"""
+        try:
+            _validate_path(doc_path)
+        except ValueError:
+            logger.warning("Path traversal blocked in _convert_with_word_com: %s", doc_path)
+            return None
         try:
             import pythoncom
             import win32com.client
@@ -156,6 +182,11 @@ class FileParser:
 
     async def _convert_with_libreoffice(self, doc_path: str) -> str | None:
         """使用 LibreOffice 转换"""
+        try:
+            _validate_path(doc_path)
+        except ValueError:
+            logger.warning("Path traversal blocked in _convert_with_libreoffice: %s", doc_path)
+            return None
         import subprocess
 
         # 查找 LibreOffice

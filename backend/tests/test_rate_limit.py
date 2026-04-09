@@ -115,14 +115,18 @@ def test_upload_limiter_allows_different_ips():
 # X-Forwarded-For header support (proxy-aware IP detection)
 # ---------------------------------------------------------------------------
 
-def test_get_client_ip_uses_x_forwarded_for():
-    """get_client_ip should prefer X-Forwarded-For header over request.client.host."""
+def test_get_client_ip_uses_x_forwarded_for(monkeypatch):
+    """get_client_ip should prefer X-Forwarded-For header when behind a trusted proxy."""
     from app.core.rate_limit import get_client_ip
+    from app.core.config import get_settings
     from starlette.testclient import TestClient
     from starlette.applications import Starlette
     from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Route
+
+    # TestClient peer is "testclient" — add it to trusted proxies
+    monkeypatch.setattr(get_settings(), "TRUSTED_PROXIES", ["127.0.0.1", "::1", "testclient"])
 
     async def echo_ip(request: Request):
         return JSONResponse({"ip": get_client_ip(request)})
@@ -177,13 +181,17 @@ def test_get_client_ip_ignores_empty_forwarded_for():
     assert ip and ip != "unknown"
 
 
-def test_rate_limit_middleware_uses_forwarded_ip():
-    """RateLimitMiddleware should rate-limit based on X-Forwarded-For IP."""
+def test_rate_limit_middleware_uses_forwarded_ip(monkeypatch):
+    """RateLimitMiddleware should rate-limit based on X-Forwarded-For IP when behind trusted proxy."""
     from app.core.rate_limit import RateLimitMiddleware
+    from app.core.config import get_settings
     from starlette.testclient import TestClient
     from starlette.applications import Starlette
     from starlette.responses import PlainTextResponse
     from starlette.routing import Route
+
+    # TestClient peer IP is "testclient" — add it to trusted proxies for this test
+    monkeypatch.setattr(get_settings(), "TRUSTED_PROXIES", ["127.0.0.1", "::1", "testclient"])
 
     async def ok(request):
         return PlainTextResponse("ok")
@@ -203,3 +211,57 @@ def test_rate_limit_middleware_uses_forwarded_ip():
 
     # A different forwarded IP should still be allowed
     assert client.get("/", headers={"X-Forwarded-For": "198.51.100.88"}).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Untrusted proxy: X-Forwarded-For should be IGNORED
+# ---------------------------------------------------------------------------
+
+def test_get_client_ip_ignores_xff_from_untrusted_peer(monkeypatch):
+    """When the direct peer IP is NOT in TRUSTED_PROXIES, X-Forwarded-For must be ignored."""
+    from app.core.rate_limit import get_client_ip
+    from app.core.config import get_settings
+    from starlette.testclient import TestClient
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    # Only trust loopback — TestClient peer "testclient" is NOT in the list
+    monkeypatch.setattr(get_settings(), "TRUSTED_PROXIES", ["127.0.0.1", "::1"])
+
+    async def echo_ip(request: Request):
+        return JSONResponse({"ip": get_client_ip(request)})
+
+    app = Starlette(routes=[Route("/ip", echo_ip)])
+    client = TestClient(app)
+
+    # Even though X-Forwarded-For is sent, it should be ignored
+    resp = client.get("/ip", headers={"X-Forwarded-For": "203.0.113.50, 70.41.3.18"})
+    ip = resp.json()["ip"]
+    # Should NOT be the spoofed 203.0.113.50 — should be the direct peer
+    assert ip != "203.0.113.50"
+    assert ip != "70.41.3.18"
+
+
+def test_get_client_ip_trusts_xff_from_trusted_proxy(monkeypatch):
+    """When the direct peer IS a trusted proxy, X-Forwarded-For should be respected."""
+    from app.core.rate_limit import get_client_ip
+    from app.core.config import get_settings
+    from starlette.testclient import TestClient
+    from starlette.applications import Starlette
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
+
+    # TestClient peer is "testclient" — trust it
+    monkeypatch.setattr(get_settings(), "TRUSTED_PROXIES", ["127.0.0.1", "::1", "testclient"])
+
+    async def echo_ip(request: Request):
+        return JSONResponse({"ip": get_client_ip(request)})
+
+    app = Starlette(routes=[Route("/ip", echo_ip)])
+    client = TestClient(app)
+
+    resp = client.get("/ip", headers={"X-Forwarded-For": "203.0.113.50, 70.41.3.18"})
+    assert resp.json()["ip"] == "203.0.113.50"

@@ -273,6 +273,8 @@ async def hybrid_ner_extract(
         entity_count=ner_result["entity_count"],
         entity_summary=ner_result["entity_summary"],
         warnings=ner_result.get("warnings"),
+        recognition_failed=ner_result.get("recognition_failed", False),
+        error=ner_result.get("error"),
     )
 
 
@@ -294,6 +296,8 @@ async def extract_entities(file_id: str):
         entities=ner_result["entities"],
         entity_count=ner_result["entity_count"],
         entity_summary=ner_result["entity_summary"],
+        recognition_failed=ner_result.get("recognition_failed", False),
+        error=ner_result.get("error"),
     )
 
 
@@ -323,6 +327,8 @@ async def extract_entities_with_config(
         entities=ner_result["entities"],
         entity_count=ner_result["entity_count"],
         entity_summary=ner_result["entity_summary"],
+        recognition_failed=ner_result.get("recognition_failed", False),
+        error=ner_result.get("error"),
     )
 
 

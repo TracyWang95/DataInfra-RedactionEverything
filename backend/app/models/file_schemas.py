@@ -95,6 +95,8 @@ class NERResult(BaseModel):
     entity_count: int
     entity_summary: dict[str, int] = Field(default_factory=dict, description="各类型实体数量统计")
     warnings: list[str] = Field(default_factory=list, description="识别过程中的警告信息")
+    recognition_failed: bool = Field(default=False, description="NER 识别是否失败")
+    error: str | None = Field(default=None, description="识别失败时的错误信息")
 
 
 class BatchDownloadRequest(BaseModel):

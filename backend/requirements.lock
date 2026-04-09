@@ -23,7 +23,15 @@ pywin32==311 ; sys_platform == 'win32'
 # HTTP 客户端
 httpx==0.28.1
 
-aiofiles==23.2.1
+# GPU 显存
+nvidia-ml-py==12.535.133
+aiofiles==24.1.0
+
+# HaS Image
+ultralytics==8.3.0
+
+# OCR
+paddleocr==2.7.0
 
 # 工具库
 PyJWT==2.11.0

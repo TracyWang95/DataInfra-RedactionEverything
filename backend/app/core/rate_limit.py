@@ -1,4 +1,5 @@
 """Simple in-memory rate limiter with bounded memory (no external dependencies)."""
+import ipaddress
 import threading
 import time
 from collections import OrderedDict
@@ -11,20 +12,50 @@ from starlette.responses import JSONResponse
 _MAX_TRACKED_IPS = 10_000
 
 
-def get_client_ip(request: Request) -> str:
-    """Extract the real client IP, respecting ``X-Forwarded-For`` from a reverse proxy.
+def _is_trusted_proxy(client_ip: str, trusted_proxies: list[str]) -> bool:
+    """Return ``True`` if *client_ip* matches any entry in *trusted_proxies*.
 
-    The ``X-Forwarded-For`` header contains a comma-separated list of IPs where
-    the leftmost entry is the original client.  We strip whitespace and return
-    the first non-empty value, falling back to ``request.client.host``.
+    Each entry can be a single IP (``"127.0.0.1"``), a CIDR block
+    (``"172.16.0.0/12"``), or a plain hostname for exact matching.
+    Malformed CIDR entries fall back to exact string comparison.
     """
+    try:
+        addr = ipaddress.ip_address(client_ip)
+    except ValueError:
+        # client_ip is not a valid IP (e.g. hostname) — fall back to exact match
+        return client_ip in trusted_proxies
+
+    for entry in trusted_proxies:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+            if addr in network:
+                return True
+        except ValueError:
+            # Entry is not a valid network — try exact string match
+            if client_ip == entry:
+                return True
+    return False
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract the real client IP, respecting ``X-Forwarded-For`` only from trusted proxies.
+
+    The ``X-Forwarded-For`` header is only trusted when the direct peer
+    (``request.client.host``) is in the ``TRUSTED_PROXIES`` list.  This
+    prevents spoofing when the backend is directly exposed to the internet.
+    """
+    from app.core.config import get_settings
+
+    direct_ip = request.client.host if request.client else "unknown"
+
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        # Take the first (leftmost) IP — that is the original client
-        first_ip = forwarded.split(",")[0].strip()
-        if first_ip:
-            return first_ip
-    return request.client.host if request.client else "unknown"
+        trusted = get_settings().TRUSTED_PROXIES
+        if _is_trusted_proxy(direct_ip, trusted):
+            first_ip = forwarded.split(",")[0].strip()
+            if first_ip:
+                return first_ip
+    return direct_ip
 
 
 class RateLimiter:

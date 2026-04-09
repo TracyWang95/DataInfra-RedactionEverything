@@ -175,6 +175,15 @@ class Settings(BaseSettings):
     # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
     VIRUS_SCAN_ENABLED: bool = False
 
+    # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）
+    TRUSTED_PROXIES: list[str] = [
+        "127.0.0.1",
+        "::1",
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    ]
+
     # 结构化日志（默认生产 JSON，DEBUG 文本）
     LOG_JSON: bool = True
 
