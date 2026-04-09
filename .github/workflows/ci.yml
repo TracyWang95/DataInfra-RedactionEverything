@@ -97,10 +97,10 @@ jobs:
   # ── E2E (Playwright) ─────────────────────────────────────────
   e2e:
     name: E2E Tests (Playwright)
+    if: github.event_name == 'workflow_dispatch'  # E2E only runs on manual trigger
     needs: [frontend, backend, docker-build]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true  # E2E depends on full Docker Compose; don't block CI
     steps:
       - uses: actions/checkout@v4
 
