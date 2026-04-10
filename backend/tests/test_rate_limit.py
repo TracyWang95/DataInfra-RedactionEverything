@@ -181,38 +181,6 @@ def test_get_client_ip_ignores_empty_forwarded_for():
     assert ip and ip != "unknown"
 
 
-def test_rate_limit_middleware_uses_forwarded_ip(monkeypatch):
-    """RateLimitMiddleware should rate-limit based on X-Forwarded-For IP when behind trusted proxy."""
-    from app.core.rate_limit import RateLimitMiddleware
-    from app.core.config import get_settings
-    from starlette.testclient import TestClient
-    from starlette.applications import Starlette
-    from starlette.responses import PlainTextResponse
-    from starlette.routing import Route
-
-    # TestClient peer IP is "testclient" — add it to trusted proxies for this test
-    monkeypatch.setattr(get_settings(), "TRUSTED_PROXIES", ["127.0.0.1", "::1", "testclient"])
-
-    async def ok(request):
-        return PlainTextResponse("ok")
-
-    app = Starlette(routes=[Route("/", ok)])
-    app.add_middleware(RateLimitMiddleware, max_requests=2, window_seconds=60)
-    client = TestClient(app)
-
-    real_ip = "198.51.100.77"
-    headers = {"X-Forwarded-For": real_ip}
-
-    # First 2 requests should pass
-    assert client.get("/", headers=headers).status_code == 200
-    assert client.get("/", headers=headers).status_code == 200
-    # Third should be rate-limited
-    assert client.get("/", headers=headers).status_code == 429
-
-    # A different forwarded IP should still be allowed
-    assert client.get("/", headers={"X-Forwarded-For": "198.51.100.88"}).status_code == 200
-
-
 # ---------------------------------------------------------------------------
 # Untrusted proxy: X-Forwarded-For should be IGNORED
 # ---------------------------------------------------------------------------

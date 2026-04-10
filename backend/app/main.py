@@ -284,11 +284,6 @@ app.add_middleware(
 
 app.add_middleware(MaxBodySizeMiddleware)
 
-# Rate-limit: 600 requests/minute per IP（批量任务含高频轮询，120 太紧）
-from app.core.rate_limit import RateLimitMiddleware  # noqa: E402
-
-app.add_middleware(RateLimitMiddleware, max_requests=600, window_seconds=60)
-
 # CSRF protection (double-submit cookie)
 from app.core.csrf import CSRFMiddleware  # noqa: E402
 
