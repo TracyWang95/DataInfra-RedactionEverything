@@ -9,6 +9,7 @@ RedactionEverything is a local-first redaction workbench for sensitive informati
 [![License](https://img.shields.io/badge/license-Personal%20Use-blue.svg)](./LICENSE)
 [![CI](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml/badge.svg)](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
+[![GitHub Stars](https://img.shields.io/github/stars/TracyWang95/DataInfra-RedactionEverything?style=flat&logo=github&label=Stars)](https://github.com/TracyWang95/DataInfra-RedactionEverything/stargazers)
 
 **Language:** English | [中文](./README_zh.md)
 
