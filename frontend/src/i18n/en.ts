@@ -15,6 +15,8 @@ const enBase: Record<string, string> = {
   'nav.redactionList.sub': 'Item combinations',
   'nav.recognitionSettings': 'Recognition Item Settings',
   'nav.recognitionSettings.sub': 'Atomic items',
+  'nav.systemSettings': 'System Settings',
+  'nav.systemSettings.sub': 'Runtime and access',
   'nav.modelConfig': 'Model Config',
   'nav.textModel': 'Text Service',
   'nav.visionModel': 'Image Service',
@@ -676,6 +678,10 @@ const enBase: Record<string, string> = {
     'After saving, items are displayed with the panel color scheme (green / purple), consistent with the batch wizard.',
   'settings.save': 'Save',
   'settings.saving': 'Saving...',
+  'settings.runtime': 'Runtime',
+  'settings.runtime.jobConcurrency': 'Background job concurrency',
+  'settings.runtime.jobConcurrencyHint':
+    'Current {current}, default {default}. Higher values can increase queue pressure and failures when VRAM is tight.',
   'settings.updateFailed': 'Update failed',
 
   'sidebar.subtitle': 'Anonymization Data Infrastructure',
@@ -1840,6 +1846,8 @@ const enOverrides: Record<string, string> = {
   'auth.setup.submit': 'Create password',
   'auth.setup.hint':
     'Use a strong password with uppercase, lowercase, number, and special character.',
+  'auth.username': 'Username',
+  'auth.username.placeholder': 'Enter username',
   'auth.password': 'Password',
   'auth.password.placeholder': 'Enter password',
   'auth.confirmPassword': 'Confirm password',
@@ -2227,6 +2235,15 @@ Object.assign(enOverrides, {
   'entity.MED_ORDER': 'Medical order',
   'entity.MED_VITAL_SIGN': 'Vital sign',
   'entity.MED_EXAM_RESULT': 'Examination result',
+});
+
+Object.assign(enOverrides, {
+  'auth.register.title': 'Create user account',
+  'auth.register.description': 'Register a normal user account for an isolated workspace.',
+  'auth.register.submit': 'Create account',
+  'auth.register.hint': 'New accounts are normal users. Admin functions stay available only to super admins.',
+  'auth.login.switchToRegister': 'Create a normal user account',
+  'auth.register.switchToLogin': 'Back to sign in',
 });
 
 export const en: Record<string, string> = {

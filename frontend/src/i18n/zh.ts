@@ -12,6 +12,8 @@ const zhBase: Record<string, string> = {
   'nav.redactionList.sub': '识别项组合',
   'nav.recognitionSettings': '识别项设置',
   'nav.recognitionSettings.sub': '原子识别项',
+  'nav.systemSettings': '系统设置',
+  'nav.systemSettings.sub': '运行与权限',
   'nav.modelConfig': '高级设置',
   'nav.textModel': '文本识别服务',
   'nav.visionModel': '图像识别服务',
@@ -570,6 +572,9 @@ const zhBase: Record<string, string> = {
   'settings.saveHint': '保存后列表按上方面板配色展示（绿 / 紫），与批量向导一致。',
   'settings.save': '保存',
   'settings.saving': '保存中...',
+  'settings.runtime': '运行时',
+  'settings.runtime.jobConcurrency': '后台任务并发',
+  'settings.runtime.jobConcurrencyHint': '当前 {current}，默认 {default}。超过显存承载能力会增加排队和失败风险。',
   'settings.updateFailed': '更新失败',
 
   'sidebar.subtitle': '匿名化数据基础设施',
@@ -1740,6 +1745,8 @@ Object.assign(zhOverrides, {
   'auth.setup.description': '这是首次启用登录，请先设置管理员密码。',
   'auth.setup.submit': '创建密码',
   'auth.setup.hint': '建议使用包含大小写字母、数字和特殊字符的强密码。',
+  'auth.username': '用户名',
+  'auth.username.placeholder': '请输入用户名',
   'auth.password': '密码',
   'auth.password.placeholder': '请输入密码',
   'auth.confirmPassword': '确认密码',
@@ -2174,6 +2181,15 @@ Object.assign(zhOverrides, {
   'entity.MED_ORDER': '医嘱',
   'entity.MED_VITAL_SIGN': '生命体征',
   'entity.MED_EXAM_RESULT': '检查结果',
+});
+
+Object.assign(zhOverrides, {
+  'auth.register.title': '注册普通用户',
+  'auth.register.description': '创建一个普通用户账号，登录后只看到自己的数据。',
+  'auth.register.submit': '注册并登录',
+  'auth.register.hint': '新注册账号默认为普通用户，管理员功能只对 super_admin 开放。',
+  'auth.login.switchToRegister': '注册普通用户',
+  'auth.register.switchToLogin': '返回登录',
 });
 
 export const zh: Record<string, string> = {

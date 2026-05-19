@@ -132,6 +132,13 @@ def job_config_dict(job_row: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
+def assert_job_owner(row: dict[str, Any] | None, owner_id: str | None) -> None:
+    if not row:
+        raise ValueError("job not found")
+    if owner_id and str(row.get("owner_id") or "local_user") != owner_id:
+        raise ValueError("job not found")
+
+
 def _status_value(value: Any, *, fallback: str = "unknown") -> str:
     if isinstance(value, Enum):
         value = value.value
@@ -655,7 +662,7 @@ async def detach_job_from_files(job_id: str, items: list[dict[str, Any]]) -> int
 # ---------------------------------------------------------------------------
 
 def create_job(store: JobStore, job_type_str: str, title: str, config: Any,
-               skip_item_review: bool, priority: int) -> dict[str, Any]:
+               skip_item_review: bool, priority: int, owner_id: str = "local_user") -> dict[str, Any]:
     """Create a new job and return its summary."""
     jt = job_type_from_str(job_type_str)
     jid = store.create_job(
@@ -664,6 +671,7 @@ def create_job(store: JobStore, job_type_str: str, title: str, config: Any,
         config=config,
         skip_item_review=skip_item_review,
         priority=priority,
+        owner_id=owner_id,
     )
     row = store.get_job(jid)
     assert row
@@ -703,6 +711,7 @@ def list_jobs(
     page: int,
     page_size: int,
     status_filter: str | None = None,
+    owner_id: str | None = None,
 ) -> dict[str, Any]:
     """List jobs with pagination and optional type filter."""
     jt_filter: JobType | None = job_type_from_str(job_type) if job_type else None
@@ -710,6 +719,7 @@ def list_jobs(
     rows, total = store.list_jobs(
         job_type=jt_filter,
         status_values=status_values,
+        owner_id=owner_id,
         page=page,
         page_size=page_size,
     )
@@ -719,15 +729,15 @@ def list_jobs(
         "total": total,
         "page": page,
         "page_size": page_size,
-        "stats": store.job_list_stats(job_type=jt_filter),
+        "stats": store.job_list_stats(job_type=jt_filter, owner_id=owner_id),
     }
 
 
-def get_job_detail(store: JobStore, job_id: str) -> dict[str, Any]:
+def get_job_detail(store: JobStore, job_id: str, owner_id: str | None = None) -> dict[str, Any]:
     """Get full job detail with items. Raises ValueError if not found."""
     row = store.get_job(job_id)
-    if not row:
-        raise ValueError("job not found")
+    assert_job_owner(row, owner_id)
+    assert row
     items = store.list_items(job_id)
     base = job_to_summary(row, store)
     base["items"] = [item_to_out(i) for i in items]

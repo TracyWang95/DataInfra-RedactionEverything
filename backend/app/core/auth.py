@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 import time
@@ -32,6 +33,10 @@ _auth_version_cache: int | None = None
 _auth_version_cache_mtime: float | None = None
 _auth_version_cache_path: str | None = None
 logger = logging.getLogger(__name__)
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,80}$")
+_LEGACY_SUBJECT = "local_user"
+_ROLE_SUPER_ADMIN = "super_admin"
+_ROLE_USER = "user"
 
 
 class AuthStateError(RuntimeError):
@@ -198,10 +203,65 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(legacy_check, hashed)
 
 
-def create_token(subject: str = "local_user") -> str:
+def normalize_username(username: str | None, *, default: str | None = None) -> str:
+    raw = (username or default or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Username is required.")
+    if not _USERNAME_RE.match(raw):
+        raise HTTPException(
+            status_code=400,
+            detail="Username may contain only letters, numbers, underscore, dot, at sign, and hyphen.",
+        )
+    return raw.lower()
+
+
+def _users(auth: dict) -> dict[str, dict]:
+    raw = auth.get("users")
+    users = raw if isinstance(raw, dict) else {}
+    legacy_hash = auth.get("password_hash")
+    if isinstance(legacy_hash, str) and legacy_hash and _LEGACY_SUBJECT not in users:
+        users = {
+            **users,
+            _LEGACY_SUBJECT: {
+                "password_hash": legacy_hash,
+                "created_at": auth.get("created_at") or "",
+                "legacy": True,
+                "role": _ROLE_SUPER_ADMIN,
+            },
+        }
+    for name, user in list(users.items()):
+        if isinstance(user, dict) and not user.get("role"):
+            users[name] = {**user, "role": _ROLE_USER}
+    return users
+
+
+def normalize_role(role: str | None) -> str:
+    value = str(role or _ROLE_USER).strip().lower()
+    if value in {"admin", _ROLE_SUPER_ADMIN}:
+        return _ROLE_SUPER_ADMIN
+    if value == _ROLE_USER:
+        return _ROLE_USER
+    raise HTTPException(status_code=400, detail="Role must be 'super_admin' or 'user'.")
+
+
+def _resolve_login_username(auth: dict, username: str | None) -> str:
+    users = _users(auth)
+    if username and str(username).strip():
+        return normalize_username(username)
+    if len(users) == 1:
+        return next(iter(users))
+    if auth.get("password_hash"):
+        return _LEGACY_SUBJECT
+    raise HTTPException(status_code=400, detail="Username is required.")
+
+
+def create_token(subject: str = _LEGACY_SUBJECT) -> str:
+    subject = normalize_username(subject, default=_LEGACY_SUBJECT)
+    user = get_user(subject)
     expire = datetime.now(UTC) + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)
     payload = {
         "sub": subject,
+        "role": (user or {}).get("role") or _ROLE_USER,
         "exp": expire,
         "jti": uuid.uuid4().hex,
         "auth_version": get_auth_version(),
@@ -267,14 +327,30 @@ def is_password_set() -> bool:
         auth = _load_auth()
     except AuthStateError as exc:
         raise _auth_state_unavailable() from exc
-    return bool(auth.get("password_hash"))
+    return bool(auth.get("password_hash") or _users(auth))
 
 
-def set_password(password: str, *, invalidate_existing_tokens: bool = False) -> int:
+def set_password(
+    password: str,
+    *,
+    username: str | None = None,
+    invalidate_existing_tokens: bool = False,
+) -> int:
     try:
         with _auth_file_lock:
             auth = _load_auth_unlocked()
-            auth["password_hash"] = hash_password(password)
+            subject = normalize_username(username, default=_LEGACY_SUBJECT)
+            users = _users(auth)
+            users[subject] = {
+                **dict(users.get(subject) or {}),
+                "password_hash": hash_password(password),
+                "created_at": (users.get(subject) or {}).get("created_at") or datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+                "role": (users.get(subject) or {}).get("role") or _ROLE_SUPER_ADMIN,
+            }
+            auth["users"] = users
+            if subject == _LEGACY_SUBJECT:
+                auth["password_hash"] = users[subject]["password_hash"]
 
             current_version = _extract_auth_version(auth)
 
@@ -288,15 +364,71 @@ def set_password(password: str, *, invalidate_existing_tokens: bool = False) -> 
         raise _auth_state_unavailable() from exc
 
 
-def check_password(password: str) -> bool:
+def create_user(username: str, password: str, *, role: str = _ROLE_USER) -> str:
+    subject = normalize_username(username)
+    normalized_role = normalize_role(role)
+    try:
+        with _auth_file_lock:
+            auth = _load_auth_unlocked()
+            users = _users(auth)
+            if subject in users:
+                raise HTTPException(status_code=409, detail="User already exists.")
+            users[subject] = {
+                "password_hash": hash_password(password),
+                "created_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat(),
+                "role": normalized_role,
+            }
+            auth["users"] = users
+            _save_auth_unlocked(auth)
+            return subject
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+
+
+def get_user(username: str | None) -> dict | None:
+    if not username:
+        return None
+    subject = normalize_username(username)
     try:
         auth = _load_auth()
     except AuthStateError as exc:
         raise _auth_state_unavailable() from exc
-    stored = auth.get("password_hash", "")
+    user = _users(auth).get(subject)
+    if not isinstance(user, dict):
+        return None
+    return {"username": subject, **user}
+
+
+def list_users() -> list[dict]:
+    try:
+        auth = _load_auth()
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+    users = _users(auth)
+    return [
+        {
+            "username": username,
+            "role": (user or {}).get("role") or _ROLE_USER,
+            "created_at": (user or {}).get("created_at"),
+            "updated_at": (user or {}).get("updated_at"),
+        }
+        for username, user in sorted(users.items())
+        if isinstance(user, dict)
+    ]
+
+
+def check_password(password: str, *, username: str | None = None) -> str | None:
+    try:
+        auth = _load_auth()
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+    subject = _resolve_login_username(auth, username)
+    user = _users(auth).get(subject) or {}
+    stored = user.get("password_hash", "")
     if not stored:
-        return False
-    return verify_password(password, stored)
+        return None
+    return subject if verify_password(password, stored) else None
 
 
 def _cleanup_lockout_entry(key: str, now: float | None = None) -> None:
@@ -385,6 +517,18 @@ async def require_auth(
 
     payload = decode_token(token)
     return payload.get("sub", "unknown")
+
+
+async def require_super_admin(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> str:
+    subject = await require_auth(request, credentials)
+    user = get_user(subject)
+    role = (user or {}).get("role")
+    if role != _ROLE_SUPER_ADMIN:
+        raise HTTPException(status_code=403, detail="Super administrator privileges are required.")
+    return str(subject)
 
 
 async def get_optional_subject(

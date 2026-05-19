@@ -23,6 +23,7 @@ import app.services.file_management_service as _fms
 import app.services.job_management_service as _jms
 from app.api.jobs import get_job_store
 from app.core.audit import audit_log
+from app.core.auth import require_auth
 from app.core.config import settings
 from app.core.idempotency import check_idempotency, save_idempotency
 from app.models.schemas import (
@@ -64,6 +65,7 @@ async def list_files(
     ),
     job_id: str | None = Query(None, description="按 job_id 筛选，仅返回属于该任务的文件"),
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ):
     """列出已上传文件（处理历史）；同批次文件相邻排列，支持分页与来源筛选。"""
     src_filter: str | None = None
@@ -76,6 +78,9 @@ async def list_files(
     # 如果指定了 job_id，先取该任务的所有 file_id 做白名单
     job_file_ids: set[str] | None = None
     if job_id:
+        job = store.get_job(job_id)
+        if not job or str(job.get("owner_id") or "local_user") != owner_id:
+            raise HTTPException(status_code=404, detail="job not found")
         items = store.list_items(job_id)
         job_file_ids = {it["file_id"] for it in items}
 
@@ -83,6 +88,8 @@ async def list_files(
     filtered_entries: list[tuple[str, dict]] = []
     for fid, info in file_store.items():
         if not isinstance(info, dict):
+            continue
+        if _fms.file_owner_id(info) != owner_id:
             continue
         if job_file_ids is not None and fid not in job_file_ids:
             continue
@@ -137,11 +144,13 @@ async def list_files(
 async def batch_download_zip(
     request: BatchDownloadRequest,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ):
     """将多个文件打包为 ZIP 下载。"""
     if request.redacted and request.job_id:
         unique_file_ids = list(dict.fromkeys(request.file_ids))
-        if not store.get_job(request.job_id):
+        job = store.get_job(request.job_id)
+        if not job or str(job.get("owner_id") or "local_user") != owner_id:
             raise HTTPException(status_code=404, detail="job not found")
         job_file_ids = {str(item["file_id"]) for item in store.list_items(request.job_id)}
         missing_from_job = [file_id for file_id in unique_file_ids if file_id not in job_file_ids]
@@ -171,7 +180,7 @@ async def batch_download_zip(
                 },
             )
     try:
-        zip_bytes, filename, manifest = _fms.build_batch_zip(request)
+        zip_bytes, filename, manifest = _fms.build_batch_zip(request, owner_id=owner_id)
     except ValueError as exc:
         detail = exc.args[0] if exc.args else str(exc)
         if isinstance(detail, list):
@@ -202,6 +211,7 @@ async def upload_file(
     job_id: str | None = Form(None),
     upload_source: str | None = Form(None),
     x_idempotency_key: str | None = Header(None, alias="X-Idempotency-Key"),
+    owner_id: str = Depends(require_auth),
 ):
     """
     上传文件
@@ -211,7 +221,8 @@ async def upload_file(
     - PDF 文档 (.pdf)
     - 图片 (.jpg, .jpeg, .png)
     """
-    cached = check_idempotency(x_idempotency_key)
+    scoped_idempotency_key = f"{owner_id}:{x_idempotency_key}" if x_idempotency_key else None
+    cached = check_idempotency(scoped_idempotency_key)
     if cached is not None:
         return cached
 
@@ -263,6 +274,7 @@ async def upload_file(
             batch_group_id=batch_group_id,
             job_id=job_id,
             upload_source=upload_source,
+            owner_id=owner_id,
         )
         response, jid = response_and_jid
     except ValueError as exc:
@@ -275,7 +287,7 @@ async def upload_file(
 
     if jid:
         try:
-            _fms.register_file_with_job(jid, response.file_id)
+            _fms.register_file_with_job(jid, response.file_id, owner_id=owner_id)
         except ValueError as exc:
             await _fms.rollback_upload(response.file_id, file_path)
             raise HTTPException(status_code=400, detail=str(exc))
@@ -288,12 +300,12 @@ async def upload_file(
             raise HTTPException(status_code=500, detail="任务注册失败，文件已回滚")
 
     audit_log("upload", "file", response.file_id, detail={"filename": file.filename})
-    save_idempotency(x_idempotency_key, response)
+    save_idempotency(scoped_idempotency_key, response)
     return response
 
 
 @router.get("/files/{file_id}/parse", response_model=ParseResult)
-async def parse_file(file_id: str):
+async def parse_file(file_id: str, owner_id: str = Depends(require_auth)):
     """
     解析文件内容
 
@@ -301,6 +313,7 @@ async def parse_file(file_id: str):
     - 对于图片/扫描版 PDF: 标记为需要视觉处理
     """
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         result = await _fms.parse_file(file_id)
     except ValueError as exc:
         if "NOT in file_store" in str(exc) or "不存在" in str(exc):
@@ -314,6 +327,7 @@ async def parse_file(file_id: str):
 async def hybrid_ner_extract(
     file_id: str,
     request: HybridNERRequest = Body(default=HybridNERRequest()),
+    owner_id: str = Depends(require_auth),
 ):
     """
     混合NER识别 - HaS本地模型 + 正则
@@ -327,6 +341,7 @@ async def hybrid_ner_extract(
         raise HTTPException(status_code=400, detail="实体类型数量超过上限（200）")
 
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         logger.info(
             "[hybrid_ner_extract] file_id=%s requested_entity_type_ids=%s",
             file_id,
@@ -351,11 +366,12 @@ async def hybrid_ner_extract(
 
 
 @router.get("/files/{file_id}/ner", response_model=NERResult)
-async def extract_entities(file_id: str):
+async def extract_entities(file_id: str, owner_id: str = Depends(require_auth)):
     """
     对文件进行命名实体识别 (NER) - 使用默认实体类型
     """
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         ner_result = await _fms.run_default_ner(file_id)
     except ValueError as exc:
         detail = str(exc)
@@ -377,6 +393,7 @@ async def extract_entities(file_id: str):
 async def extract_entities_with_config(
     file_id: str,
     request: NERRequest = Body(default=NERRequest()),
+    owner_id: str = Depends(require_auth),
 ):
     """
     对文件进行命名实体识别 (NER) - 支持自定义实体类型
@@ -384,6 +401,7 @@ async def extract_entities_with_config(
     # Merge built-in entity_types and custom_entity_type_ids into a single list
     entity_type_ids = (request.entity_types or []) + (request.custom_entity_type_ids or [])
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         ner_result = await _fms.run_default_ner(
             file_id,
             entity_type_ids=entity_type_ids if entity_type_ids else None,
@@ -405,16 +423,16 @@ async def extract_entities_with_config(
 
 
 @router.get("/files/{file_id}")
-async def get_file_info(file_id: str):
+async def get_file_info(file_id: str, owner_id: str = Depends(require_auth)):
     """获取文件信息"""
     info = await _fms.get_file_info(file_id)
-    if not info:
+    if not info or _fms.file_owner_id(info) != owner_id:
         raise HTTPException(status_code=404, detail="文件不存在")
     return info
 
 
 @router.get("/files/{file_id}/download")
-async def download_file(file_id: str, redacted: bool = False):
+async def download_file(file_id: str, redacted: bool = False, owner_id: str = Depends(require_auth)):
     """
     下载文件
 
@@ -422,7 +440,7 @@ async def download_file(file_id: str, redacted: bool = False):
     - redacted=True: 下载匿名化后的文件
     """
     snapshot = await _fms.get_file_snapshot(file_id)
-    if not snapshot:
+    if not snapshot or _fms.file_owner_id(snapshot) != owner_id:
         raise HTTPException(status_code=404, detail="文件不存在")
 
     if redacted:
@@ -452,7 +470,12 @@ async def download_file(file_id: str, redacted: bool = False):
 
 
 @router.get("/files/{file_id}/page-image")
-async def get_page_image(file_id: str, page: int = 1, redacted: bool = False):
+async def get_page_image(
+    file_id: str,
+    page: int = 1,
+    redacted: bool = False,
+    owner_id: str = Depends(require_auth),
+):
     """Render a single page of a PDF as PNG (for history comparison).
 
     - redacted=False → original upload
@@ -461,7 +484,7 @@ async def get_page_image(file_id: str, page: int = 1, redacted: bool = False):
     from starlette.responses import Response as RawResponse
 
     snapshot = await _fms.get_file_snapshot(file_id)
-    if not snapshot:
+    if not snapshot or _fms.file_owner_id(snapshot) != owner_id:
         raise HTTPException(status_code=404, detail="文件不存在")
 
     if redacted:
@@ -494,8 +517,12 @@ async def get_page_image(file_id: str, page: int = 1, redacted: bool = False):
 
 
 @router.delete("/files/{file_id}")
-async def delete_file(file_id: str):
+async def delete_file(file_id: str, owner_id: str = Depends(require_auth)):
     """删除文件"""
+    try:
+        _fms.assert_file_owner(file_id, owner_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="file not found")
     snapshot = await _fms.delete_file(file_id)
     if not snapshot:
         raise HTTPException(status_code=404, detail="文件不存在")

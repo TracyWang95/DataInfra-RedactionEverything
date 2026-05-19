@@ -35,6 +35,9 @@ const Settings = React.lazy(() =>
 const RedactionListSettings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.RedactionListSettings })),
 );
+const SystemSettings = React.lazy(() =>
+  import('./features/settings').then((m) => ({ default: m.SystemSettings })),
+);
 const TextModelSettings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.TextModelSettings })),
 );
@@ -262,6 +265,14 @@ export const router = createBrowserRouter([
         element: (
           <LazyPage>
             <JobDetailPage />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'settings/system',
+        element: (
+          <LazyPage>
+            <SystemSettings />
           </LazyPage>
         ),
       },

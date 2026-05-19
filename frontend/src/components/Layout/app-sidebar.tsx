@@ -5,6 +5,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { RefreshCw, ShieldCheck } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/features/auth/auth-context';
 import { useServiceHealth, type ServiceInfo, type ServicesHealth } from '@/hooks/use-service-health';
 import {
   HomeIcon,
@@ -12,6 +13,7 @@ import {
   BatchIcon,
   HistoryIcon,
   JobsCenterIcon,
+  ModelIcon,
   RulesIcon,
 } from '@/components/shared/nav-icons';
 import {
@@ -39,7 +41,9 @@ interface NavItem {
 export function AppSidebar() {
   const t = useT();
   const location = useLocation();
+  const { status } = useAuth();
   const { health, checking, roundTripMs, refresh } = useServiceHealth();
+  const isAdmin = Boolean(status?.is_super_admin);
 
   const workflowNavItems: NavItem[] = [
     { path: '/', label: t('nav.start'), sublabel: t('nav.start.sub'), icon: HomeIcon, end: true },
@@ -74,6 +78,16 @@ export function AppSidebar() {
       sublabel: t('nav.redactionList.sub'),
       icon: RulesIcon,
     },
+    ...(isAdmin
+      ? [
+          {
+            path: '/settings/system',
+            label: t('nav.systemSettings'),
+            sublabel: t('nav.systemSettings.sub'),
+            icon: ModelIcon,
+          },
+        ]
+      : []),
   ];
 
   return (

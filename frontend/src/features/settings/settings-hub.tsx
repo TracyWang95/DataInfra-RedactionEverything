@@ -48,6 +48,7 @@ export function SettingsHub() {
 
   const [editingType, setEditingType] = useState<(typeof _entityTypes)[number] | null>(null);
   const [operationLoading, setOperationLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const runLocked = async (action: () => void | Promise<void>) => {
     if (operationLoading) return;
@@ -68,8 +69,6 @@ export function SettingsHub() {
     setEditingType(tp);
     setDialogOpen(true);
   };
-
-  const [saving, setSaving] = useState(false);
 
   const handleSave = async (form: {
     name: string;
@@ -110,7 +109,7 @@ export function SettingsHub() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <div className="w-7 h-7 border-2 border-muted border-t-foreground rounded-full animate-spin" />
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-foreground" />
       </div>
     );
   }
@@ -175,31 +174,29 @@ export function SettingsHub() {
             <div className={panelIntroClass} data-testid="settings-text-intro">
               {t('settings.textPipelineIntro')}
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden">
-              <div className="flex min-h-0 flex-1 overflow-hidden">
-                <EntityTypeList
-                  types={llmTypes}
-                  variant="llm"
-                  onAdd={openAdd}
-                  onEdit={openEdit}
-                  onDelete={(id) =>
-                    setConfirmState({
-                      title: t('common.delete'),
-                      message: t('settings.confirmDeleteType'),
-                      danger: true,
-                      onConfirm: () => deleteType(id),
-                    })
-                  }
-                  onReset={() =>
-                    setConfirmState({
-                      title: t('settings.resetTextRules'),
-                      message: t('settings.confirmReset'),
-                      danger: true,
-                      onConfirm: () => resetToDefault(),
-                    })
-                  }
-                />
-              </div>
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              <EntityTypeList
+                types={llmTypes}
+                variant="llm"
+                onAdd={openAdd}
+                onEdit={openEdit}
+                onDelete={(id) =>
+                  setConfirmState({
+                    title: t('common.delete'),
+                    message: t('settings.confirmDeleteType'),
+                    danger: true,
+                    onConfirm: () => deleteType(id),
+                  })
+                }
+                onReset={() =>
+                  setConfirmState({
+                    title: t('settings.resetTextRules'),
+                    message: t('settings.confirmReset'),
+                    danger: true,
+                    onConfirm: () => resetToDefault(),
+                  })
+                }
+              />
             </div>
           </TabsContent>
 
@@ -208,8 +205,7 @@ export function SettingsHub() {
             className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
           >
             <div className={panelIntroClass} data-testid="settings-vision-intro">
-              {t('settings.pipelineDisplayName.ocr')}、{t('settings.pipelineDisplayName.image')} ·{' '}
-              {t('settings.twoMergedOutput')}
+              {t('settings.pipelineDisplayName.ocr')} / {t('settings.pipelineDisplayName.image')} / VLM
             </div>
             <PipelineConfigPanel
               loading={pipelinesLoading}
