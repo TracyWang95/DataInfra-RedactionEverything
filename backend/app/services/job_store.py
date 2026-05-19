@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   skip_item_review INTEGER NOT NULL DEFAULT 0,
   config_json TEXT NOT NULL DEFAULT '{}',
   priority INTEGER NOT NULL DEFAULT 0,
+  owner_id TEXT NOT NULL DEFAULT 'local_user',
   error_message TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -215,6 +216,9 @@ class JobStore:
             job_cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(jobs)").fetchall()}
             if "priority" not in job_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+            if "owner_id" not in job_cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local_user'")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
             # Migrate CHECK constraint to include smart_batch
             try:
                 conn.execute(
@@ -237,6 +241,7 @@ class JobStore:
                             skip_item_review INTEGER NOT NULL DEFAULT 0,
                             config_json TEXT NOT NULL DEFAULT '{}',
                             priority INTEGER NOT NULL DEFAULT 0,
+                            owner_id TEXT NOT NULL DEFAULT 'local_user',
                             error_message TEXT,
                             created_at TEXT NOT NULL,
                             updated_at TEXT NOT NULL
@@ -244,9 +249,10 @@ class JobStore:
                     """)
                     conn.execute("""
                         INSERT INTO jobs (id, job_type, title, status, skip_item_review,
-                                         config_json, priority, error_message, created_at, updated_at)
+                                         config_json, priority, owner_id, error_message, created_at, updated_at)
                         SELECT id, job_type, title, status, skip_item_review,
-                               config_json, COALESCE(priority, 0), error_message, created_at, updated_at
+                               config_json, COALESCE(priority, 0), COALESCE(owner_id, 'local_user'),
+                               error_message, created_at, updated_at
                         FROM jobs_old
                     """)
                     conn.execute("DROP TABLE jobs_old")
@@ -264,6 +270,7 @@ class JobStore:
         config: dict[str, Any] | None = None,
         skip_item_review: bool = False,
         priority: int = 0,
+        owner_id: str = "local_user",
     ) -> str:
         jid = str(uuid.uuid4())
         now = _utc_iso()
@@ -271,8 +278,8 @@ class JobStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO jobs (id, job_type, title, status, skip_item_review, config_json, priority, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO jobs (id, job_type, title, status, skip_item_review, config_json, priority, owner_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     jid,
@@ -282,6 +289,7 @@ class JobStore:
                     1 if skip_item_review else 0,
                     cfg,
                     int(priority),
+                    owner_id or "local_user",
                     now,
                     now,
                 ),
@@ -413,6 +421,23 @@ class JobStore:
             conn.commit()
             return count
 
+    def clear_jobs_for_owner(self, owner_id: str) -> int:
+        """Delete jobs and job items owned by one authenticated user."""
+        with self._connect() as conn:
+            count = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS c FROM jobs WHERE owner_id = ?",
+                    (owner_id,),
+                ).fetchone()["c"]
+            )
+            conn.execute(
+                "DELETE FROM job_items WHERE job_id IN (SELECT id FROM jobs WHERE owner_id = ?)",
+                (owner_id,),
+            )
+            conn.execute("DELETE FROM jobs WHERE owner_id = ?", (owner_id,))
+            conn.commit()
+            return count
+
     def delete_item(self, item_id: str) -> dict[str, Any] | None:
         """Remove a single item from its job. Returns the deleted row or None."""
         with self._connect() as conn:
@@ -486,6 +511,7 @@ class JobStore:
         *,
         job_type: JobType | None = None,
         status_values: list[str] | None = None,
+        owner_id: str | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -501,6 +527,9 @@ class JobStore:
             placeholders = ",".join("?" for _ in status_values)
             clauses.append(f"status IN ({placeholders})")
             params.extend(status_values)
+        if owner_id:
+            clauses.append("owner_id = ?")
+            params.append(owner_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._connect() as conn:
             total = conn.execute(f"SELECT COUNT(*) AS c FROM jobs {where}", params).fetchone()["c"]
@@ -511,12 +540,15 @@ class JobStore:
             rows = [dict(r) for r in cur.fetchall()]
         return rows, int(total)
 
-    def job_list_stats(self, *, job_type: JobType | None = None) -> dict[str, int]:
+    def job_list_stats(self, *, job_type: JobType | None = None, owner_id: str | None = None) -> dict[str, int]:
         where = ""
         params: list[Any] = []
         if job_type is not None:
             where = "WHERE job_type = ?"
             params.append(job_type.value)
+        if owner_id:
+            where = f"{where} AND owner_id = ?" if where else "WHERE owner_id = ?"
+            params.append(owner_id)
 
         active_job_statuses = (
             JobStatus.QUEUED.value,
@@ -563,8 +595,15 @@ class JobStore:
                 ],
             ).fetchone()
 
-            item_where = "WHERE j.job_type = ?" if job_type is not None else ""
-            item_params = [job_type.value] if job_type is not None else []
+            item_clauses: list[str] = []
+            item_params: list[Any] = []
+            if job_type is not None:
+                item_clauses.append("j.job_type = ?")
+                item_params.append(job_type.value)
+            if owner_id:
+                item_clauses.append("j.owner_id = ?")
+                item_params.append(owner_id)
+            item_where = f"WHERE {' AND '.join(item_clauses)}" if item_clauses else ""
             item_row = conn.execute(
                 f"""
                 SELECT

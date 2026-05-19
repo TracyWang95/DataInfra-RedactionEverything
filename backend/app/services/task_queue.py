@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,46 @@ if TYPE_CHECKING:
     from app.services.job_store import JobStore
 
 logger = logging.getLogger(__name__)
+_MIN_JOB_CONCURRENCY = 1
+_MAX_JOB_CONCURRENCY = 16
+
+
+def _clamp_job_concurrency(value: Any) -> int:
+    return max(_MIN_JOB_CONCURRENCY, min(_MAX_JOB_CONCURRENCY, _safe_int(value, default=3)))
+
+
+def _runtime_settings_path() -> str:
+    from app.core.config import settings
+
+    return os.path.join(settings.DATA_DIR, "runtime_settings.json")
+
+
+def load_persisted_job_concurrency(default: int) -> int:
+    try:
+        from app.core.persistence import load_json
+
+        data = load_json(_runtime_settings_path(), default={}) or {}
+        if isinstance(data, dict) and "job_concurrency" in data:
+            return _clamp_job_concurrency(data.get("job_concurrency"))
+    except Exception:
+        logger.warning("Unable to load persisted job concurrency", exc_info=True)
+    return _clamp_job_concurrency(default)
+
+
+def save_persisted_job_concurrency(value: int) -> int:
+    next_value = _clamp_job_concurrency(value)
+    try:
+        from app.core.persistence import load_json, save_json
+
+        path = _runtime_settings_path()
+        data = load_json(path, default={}) or {}
+        if not isinstance(data, dict):
+            data = {}
+        data["job_concurrency"] = next_value
+        save_json(path, data)
+    except Exception:
+        logger.warning("Unable to persist job concurrency", exc_info=True)
+    return next_value
 
 
 def _utc_iso() -> str:
@@ -207,10 +248,11 @@ class SimpleTaskQueue:
         self._running = False
         self._current: dict[int, TaskItem | None] = {}  # worker_id -> current task
         self._pending_items: set[tuple[str, str]] = set()  # (task_type, item_id) dedupe
-        self._concurrency = max(1, concurrency)
+        self._concurrency = _clamp_job_concurrency(concurrency)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._watchdog_task: asyncio.Task | None = None
         self._enqueue_sequence = 0
+        self._next_worker_id = 0
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -229,10 +271,35 @@ class SimpleTaskQueue:
             return
         self._running = True
         for i in range(self._concurrency):
-            task = loop.create_task(self._worker_loop(worker_id=i))
-            self._worker_tasks.append(task)
+            self._spawn_worker(loop, worker_id=i)
+        self._next_worker_id = self._concurrency
         self._watchdog_task = loop.create_task(self._stale_processing_watchdog())
         logger.info("SimpleTaskQueue started (%d worker(s))", self._concurrency)
+
+    def _spawn_worker(self, loop: asyncio.AbstractEventLoop, *, worker_id: int | None = None) -> None:
+        if worker_id is None:
+            worker_id = self._next_worker_id
+            self._next_worker_id += 1
+        else:
+            self._next_worker_id = max(self._next_worker_id, worker_id + 1)
+        task = loop.create_task(self._worker_loop(worker_id=worker_id))
+        self._worker_tasks.append(task)
+
+    @property
+    def concurrency(self) -> int:
+        return self._concurrency
+
+    def set_concurrency(self, value: int, *, persist: bool = True) -> int:
+        next_value = _clamp_job_concurrency(value)
+        if persist:
+            next_value = save_persisted_job_concurrency(next_value)
+        self._concurrency = next_value
+        if self._running and self._loop is not None:
+            live_workers = sum(1 for task in self._worker_tasks if not task.done())
+            for _ in range(max(0, next_value - live_workers)):
+                self._spawn_worker(self._loop)
+        logger.info("SimpleTaskQueue concurrency set to %d", self._concurrency)
+        return self._concurrency
 
     def stop(self) -> list[asyncio.Task]:
         """在 FastAPI shutdown 事件中调用。返回 worker tasks 供调用方 await。"""
@@ -430,6 +497,8 @@ class SimpleTaskQueue:
             try:
                 task = await asyncio.wait_for(self._queue.get(), timeout=2.0)
             except TimeoutError:
+                if worker_id >= self._concurrency:
+                    break
                 continue
             except asyncio.CancelledError:
                 break
@@ -440,6 +509,7 @@ class SimpleTaskQueue:
                 worker_id, task.task_type, task.job_id[:8], task.item_id[:8],
                 task.file_id[:8], self._queue.qsize(),
             )
+            should_exit = False
             try:
                 if task.task_type == "recognition":
                     await self._run_recognition(task)
@@ -484,6 +554,10 @@ class SimpleTaskQueue:
                     task.task_type, task.job_id[:8], task.item_id[:8],
                     self._queue.qsize(),
                 )
+                if worker_id >= self._concurrency:
+                    should_exit = True
+            if should_exit:
+                break
 
         logger.info("worker-%d loop exited", worker_id)
 
@@ -1180,5 +1254,7 @@ def get_task_queue() -> SimpleTaskQueue:
     global _instance
     if _instance is None:
         from app.core.config import settings
-        _instance = SimpleTaskQueue(concurrency=settings.JOB_CONCURRENCY)
+        _instance = SimpleTaskQueue(
+            concurrency=load_persisted_job_concurrency(settings.JOB_CONCURRENCY)
+        )
     return _instance

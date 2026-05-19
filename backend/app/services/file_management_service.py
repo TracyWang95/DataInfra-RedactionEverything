@@ -90,6 +90,19 @@ def effective_upload_source(info: dict) -> str:
     return "playground"
 
 
+def file_owner_id(info: dict | None) -> str:
+    if not isinstance(info, dict):
+        return "local_user"
+    return str(info.get("owner_id") or "local_user")
+
+
+def assert_file_owner(file_id: str, owner_id: str | None) -> dict:
+    info = file_store.get(file_id)
+    if not info or (owner_id and file_owner_id(info) != owner_id):
+        raise ValueError("file not found")
+    return info
+
+
 def sanitize_batch_group_id(raw: str | None) -> str | None:
     """批量向导会话 ID：UUID 或短标识，非法则忽略（视为单文件）。"""
     if not raw or not str(raw).strip():
@@ -452,6 +465,7 @@ async def process_upload(
     batch_group_id: str | None,
     job_id: str | None,
     upload_source: str | None,
+    owner_id: str = "local_user",
 ) -> tuple:
     """
     Core upload processing after the file has been saved to disk.
@@ -514,6 +528,7 @@ async def process_upload(
         "file_size": file_size,
         "created_at": created_at.isoformat(),
         "upload_source": eff_source,
+        "owner_id": owner_id or "local_user",
     }
     if bg:
         rec["batch_group_id"] = bg
@@ -532,7 +547,7 @@ async def process_upload(
     ), jid
 
 
-def register_file_with_job(job_id: str, file_id: str) -> str:
+def register_file_with_job(job_id: str, file_id: str, owner_id: str | None = None) -> str:
     """Register uploaded file with a batch job (add as job item)."""
     from app.services.batch_mode_validation import validate_file_allowed_for_job_type
     from app.services.job_store import JobStatus
@@ -541,9 +556,12 @@ def register_file_with_job(job_id: str, file_id: str) -> str:
     row = store.get_job(job_id)
     if not row or row["status"] != JobStatus.DRAFT.value:
         raise ValueError("任务不存在或已不是草稿，无法追加文件")
+    if owner_id and str(row.get("owner_id") or "local_user") != owner_id:
+        raise ValueError("job not found")
+    file_info = assert_file_owner(file_id, owner_id) if owner_id else file_store.get(file_id)
     validate_file_allowed_for_job_type(
         job_type=row["job_type"],
-        file_info=file_store.get(file_id),
+        file_info=file_info,
         file_id=file_id,
     )
     n = len(store.list_items(job_id))
@@ -577,7 +595,7 @@ def _get_job_store():
 # Batch download ZIP
 # ---------------------------------------------------------------------------
 
-def build_batch_zip(request: BatchDownloadRequest) -> tuple[bytes, str, dict[str, Any]]:
+def build_batch_zip(request: BatchDownloadRequest, owner_id: str | None = None) -> tuple[bytes, str, dict[str, Any]]:
     """
     Build a ZIP file containing requested files.
     Returns (zip_bytes, filename, manifest). Raises ValueError on errors.
@@ -605,6 +623,9 @@ def build_batch_zip(request: BatchDownloadRequest) -> tuple[bytes, str, dict[str
             skipped.append({"file_id": fid, "reason": "file_not_found"})
             continue
         info = file_store[fid]
+        if owner_id and file_owner_id(info) != owner_id:
+            skipped.append({"file_id": fid, "reason": "file_not_found"})
+            continue
         original_filename = os.path.basename(info.get("original_filename", "file")) or "file"
         if request.redacted:
             item_status = (item_status_map.get(fid) or {}).get("status")

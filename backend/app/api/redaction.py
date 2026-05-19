@@ -10,10 +10,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 
+import app.services.file_management_service as _fms
 import app.services.redaction_orchestrator as _orch
 from app.core.audit import audit_log
+from app.core.auth import require_auth
 from app.core.idempotency import check_idempotency, save_idempotency
 from app.models.schemas import (
     CompareData,
@@ -38,6 +40,7 @@ router = APIRouter()
 async def execute_redaction(
     request: RedactionRequest,
     x_idempotency_key: str | None = Header(None, alias="X-Idempotency-Key"),
+    owner_id: str = Depends(require_auth),
 ):
     """
     执行文档匿名化
@@ -46,7 +49,8 @@ async def execute_redaction(
     - 文本类文档: 替换敏感文本
     - 图片类文档: 对敏感区域执行马赛克、模糊或纯色遮罩
     """
-    cached = check_idempotency(x_idempotency_key)
+    scoped_idempotency_key = f"{owner_id}:{x_idempotency_key}" if x_idempotency_key else None
+    cached = check_idempotency(scoped_idempotency_key)
     if cached is not None:
         logger.warning("[execute_redaction] IDEMPOTENCY HIT key=%r file_id=%s", x_idempotency_key, request.file_id)
         return cached
@@ -54,12 +58,13 @@ async def execute_redaction(
     logger.info("[execute_redaction] START file_id=%s", request.file_id)
 
     try:
+        _fms.assert_file_owner(request.file_id, owner_id)
         response = await _orch.execute_redaction(request)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
     audit_log("redact", "file", request.file_id, detail={"mode": request.config.replacement_mode})
-    save_idempotency(x_idempotency_key, response)
+    save_idempotency(scoped_idempotency_key, response)
     return response
 
 
@@ -79,8 +84,10 @@ async def preview_image_redaction(
     file_id: str,
     body: PreviewImageRequest,
     page: int = 1,
+    owner_id: str = Depends(require_auth),
 ):
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         return await _orch.preview_image(
             file_id=file_id,
             bounding_boxes=body.bounding_boxes,
@@ -92,13 +99,14 @@ async def preview_image_redaction(
 
 
 @router.get("/redaction/{file_id}/compare", response_model=CompareData)
-async def get_comparison(file_id: str):
+async def get_comparison(file_id: str, owner_id: str = Depends(require_auth)):
     """
     获取匿名化前后对比数据
 
     返回原始内容和匿名化后内容，用于前端展示对比视图
     """
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         return await _orch.get_comparison(file_id)
     except ValueError as exc:
         detail = str(exc)
@@ -108,9 +116,10 @@ async def get_comparison(file_id: str):
 
 
 @router.get("/redaction/{file_id}/versions", response_model=RedactionVersionsResponse)
-async def get_redaction_versions(file_id: str):
+async def get_redaction_versions(file_id: str, owner_id: str = Depends(require_auth)):
     """获取文件的匿名化版本历史"""
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         return _orch.get_versions(file_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -123,6 +132,7 @@ async def detect_sensitive_regions(
     force: bool = False,
     include_result_image: bool = True,
     request: VisionDetectRequest | None = None,
+    owner_id: str = Depends(require_auth),
 ):
     """
     对图片/扫描件进行视觉识别
@@ -131,6 +141,7 @@ async def detect_sensitive_regions(
     由后端配置决定顺序或并行调度，最终合并去重。
     """
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         return await _orch.detect_vision(
             file_id=file_id,
             page=page,
@@ -158,9 +169,10 @@ async def get_replacement_modes():
 
 
 @router.get("/redaction/{file_id}/report", response_model=RedactionReport)
-async def get_redaction_report(file_id: str):
+async def get_redaction_report(file_id: str, owner_id: str = Depends(require_auth)):
     """获取匿名化质量报告"""
     try:
+        _fms.assert_file_owner(file_id, owner_id)
         return _orch.get_report(file_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

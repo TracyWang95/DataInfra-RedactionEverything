@@ -18,6 +18,7 @@ from starlette.responses import StreamingResponse
 
 import app.services.job_management_service as _jms
 from app.core.audit import audit_log
+from app.core.auth import require_auth
 from app.models.schemas import (
     BatchDetailsBody,
     BatchDetailsResponse,
@@ -132,7 +133,11 @@ def _enrich_job_detail_with_performance(detail: dict[str, Any], store: JobStore)
 
 
 @router.post("", response_model=JobResponse)
-async def create_job(body: JobCreateBody, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
+async def create_job(
+    body: JobCreateBody,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+) -> dict[str, Any]:
     try:
         result = _jms.create_job(
             store=store,
@@ -141,6 +146,7 @@ async def create_job(body: JobCreateBody, store: JobStore = Depends(get_job_stor
             config=body.config,
             skip_item_review=body.skip_item_review,
             priority=body.priority,
+            owner_id=owner_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -155,9 +161,10 @@ async def list_jobs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
     try:
-        return _jms.list_jobs(store, job_type, page, page_size, status)
+        return _jms.list_jobs(store, job_type, page, page_size, status, owner_id=owner_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -166,6 +173,7 @@ async def list_jobs(
 async def batch_job_details(
     body: BatchDetailsBody,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
     """Return full details for multiple jobs in a single request.
 
@@ -175,7 +183,7 @@ async def batch_job_details(
     results: list[dict[str, Any]] = []
     for jid in unique_ids:
         try:
-            detail = _jms.get_job_detail(store, jid)
+            detail = _jms.get_job_detail(store, jid, owner_id=owner_id)
             results.append(_enrich_job_detail_with_performance(detail, store))
         except ValueError:
             # Job not found — skip silently
@@ -188,9 +196,11 @@ async def update_job_draft(
     job_id: str,
     body: JobUpdateBody,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
     patch = body.model_dump(exclude_unset=True)
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.update_draft(store, job_id, patch)
     except ValueError as exc:
         detail = str(exc)
@@ -202,9 +212,13 @@ async def update_job_draft(
 
 
 @router.get("/{job_id}", response_model=JobDetailResponse)
-async def get_job_detail(job_id: str, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
+async def get_job_detail(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+) -> dict[str, Any]:
     try:
-        return _enrich_job_detail_with_performance(_jms.get_job_detail(store, job_id), store)
+        return _enrich_job_detail_with_performance(_jms.get_job_detail(store, job_id, owner_id=owner_id), store)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -221,7 +235,9 @@ async def get_job_export_report(
         ),
     ),
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
+    _jms.assert_job_owner(store.get_job(job_id), owner_id)
     if file_ids is not None:
         unique_file_ids = list(dict.fromkeys(file_ids))
         if not store.get_job(job_id):
@@ -248,8 +264,12 @@ async def add_job_item(
     job_id: str,
     body: JobItemAddBody,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
+        from app.services.file_management_service import assert_file_owner
+        assert_file_owner(body.file_id, owner_id)
         return _jms.add_item(store, job_id, body.file_id, sort_order=body.sort_order)
     except ValueError as exc:
         detail = str(exc)
@@ -259,8 +279,13 @@ async def add_job_item(
 
 
 @router.post("/{job_id}/submit", response_model=JobResponse)
-async def submit_job(job_id: str, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
+async def submit_job(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+) -> dict[str, Any]:
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.submit_job(store, job_id)
     except ValueError as exc:
         detail = str(exc)
@@ -270,17 +295,27 @@ async def submit_job(job_id: str, store: JobStore = Depends(get_job_store)) -> d
 
 
 @router.post("/{job_id}/cancel", response_model=JobResponse)
-async def cancel_job(job_id: str, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
+async def cancel_job(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+) -> dict[str, Any]:
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.cancel_job(store, job_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post("/{job_id}/requeue-failed", response_model=JobResponse)
-async def requeue_failed_items(job_id: str, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
+async def requeue_failed_items(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+) -> dict[str, Any]:
     """将该 Job 下所有 FAILED 的 item 重新设为 QUEUED，由 Worker 重新处理。"""
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         result = _jms.requeue_failed(store, job_id)
     except ValueError as exc:
         detail = str(exc)
@@ -294,8 +329,13 @@ async def requeue_failed_items(job_id: str, store: JobStore = Depends(get_job_st
 
 
 @router.delete("/{job_id}", response_model=JobDeleteResponse)
-async def delete_job(job_id: str, store: JobStore = Depends(get_job_store)) -> dict[str, Any]:
+async def delete_job(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+) -> dict[str, Any]:
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         result = await _jms.delete_job(store, job_id)
     except ValueError as exc:
         detail = str(exc)
@@ -313,10 +353,11 @@ async def delete_job_item(
     job_id: str,
     item_id: str,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
     """Remove an item from a draft batch job and delete its underlying file."""
     job = store.get_job(job_id)
-    if not job:
+    if not job or str(job.get("owner_id") or "local_user") != owner_id:
         raise HTTPException(status_code=404, detail="job not found")
     if job.get("status") != JobStatus.DRAFT.value:
         raise HTTPException(status_code=409, detail="only draft jobs allow item deletion")
@@ -342,8 +383,10 @@ async def get_item_review_draft(
     job_id: str,
     item_id: str,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.get_review_draft(store, job_id, item_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -355,8 +398,10 @@ async def put_item_review_draft(
     item_id: str,
     body: ReviewDraftBody,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         payload = body.model_dump(mode="json")
         return _jms.save_review_draft(store, job_id, item_id, payload)
     except ValueError as exc:
@@ -368,10 +413,12 @@ async def approve_item_review(
     job_id: str,
     item_id: str,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
     reviewer: str = "local",
 ) -> dict[str, Any]:
     try:
-        return _jms.approve_review(store, job_id, item_id, reviewer=reviewer)
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
+        return _jms.approve_review(store, job_id, item_id, reviewer=owner_id or reviewer)
     except ValueError as exc:
         detail = str(exc)
         if "not found" in detail:
@@ -384,10 +431,12 @@ async def reject_item_review(
     job_id: str,
     item_id: str,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
     reviewer: str = "local",
 ) -> dict[str, Any]:
     try:
-        return _jms.reject_review(store, job_id, item_id, reviewer=reviewer)
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
+        return _jms.reject_review(store, job_id, item_id, reviewer=owner_id or reviewer)
     except ValueError as exc:
         detail = str(exc)
         if "not found" in detail:
@@ -401,10 +450,12 @@ async def commit_item_review(
     item_id: str,
     body: ReviewCommitBody,
     store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
     reviewer: str = "local",
 ) -> dict[str, Any]:
     payload = body.model_dump(mode="json")
     try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return await _jms.commit_review(
             store=store,
             job_id=job_id,
@@ -412,7 +463,7 @@ async def commit_item_review(
             entities=body.entities,
             bounding_boxes=body.bounding_boxes,
             payload=payload,
-            reviewer=reviewer,
+            reviewer=owner_id or reviewer,
         )
     except ValueError as exc:
         detail = str(exc)
@@ -424,9 +475,14 @@ async def commit_item_review(
 
 
 @router.get("/{job_id}/stream")
-async def stream_job_progress(job_id: str, store: JobStore = Depends(get_job_store)):
+async def stream_job_progress(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+):
     """SSE stream for real-time job progress updates."""
     job = store.get_job(job_id)
+    _jms.assert_job_owner(job, owner_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
 

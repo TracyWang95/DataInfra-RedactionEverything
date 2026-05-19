@@ -223,7 +223,7 @@ class Settings(BaseSettings):
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
     # 批量任务并发配置
-    JOB_CONCURRENCY: int = 1  # Number of concurrent job items to process
+    JOB_CONCURRENCY: int = 3  # Number of concurrent job items to process
 
     @field_validator("JOB_CONCURRENCY")
     @classmethod

@@ -8,8 +8,9 @@ import logging
 import os
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.auth import require_auth
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -49,10 +50,24 @@ def invalidate_dir_size_cache() -> None:
 
 
 @router.get("/storage-info")
-async def storage_info():
+async def storage_info(owner_id: str = Depends(require_auth)):
     """返回数据存储路径信息，便于用户了解文件存放位置。"""
-    upload_size = _get_dir_size_cached(settings.UPLOAD_DIR)
-    output_size = _get_dir_size_cached(settings.OUTPUT_DIR)
+    from app.services.file_management_service import file_owner_id, get_file_store
+
+    upload_size = 0
+    output_size = 0
+    for _fid, info in get_file_store().items():
+        if file_owner_id(info) != owner_id:
+            continue
+        for key, expected_dir in (("file_path", settings.UPLOAD_DIR), ("output_path", settings.OUTPUT_DIR)):
+            path = info.get(key) if isinstance(info, dict) else None
+            if isinstance(path, str) and path and os.path.isfile(path):
+                real_path = os.path.realpath(path)
+                if os.path.commonpath([real_path, os.path.realpath(expected_dir)]) == os.path.realpath(expected_dir):
+                    if key == "file_path":
+                        upload_size += os.path.getsize(real_path)
+                    else:
+                        output_size += os.path.getsize(real_path)
     return {
         "upload_dir": os.path.realpath(settings.UPLOAD_DIR),
         "output_dir": os.path.realpath(settings.OUTPUT_DIR),
@@ -64,29 +79,23 @@ async def storage_info():
 
 
 @router.post("/cleanup")
-async def cleanup_all_data():
+async def cleanup_all_data(owner_id: str = Depends(require_auth)):
     """一键清理所有上传文件、匿名化产物和任务记录。"""
-    from app.services.file_management_service import get_file_store, get_file_store_lock
+    from app.services.file_management_service import delete_file, file_owner_id, get_file_store, get_file_store_lock
     from app.services.job_store import get_job_store
 
     file_store = get_file_store()
     _file_store_lock = get_file_store_lock()
     # 先统计用户文件数（file_store 记录数，不是磁盘文件数）
     async with _file_store_lock:
-        files_count = len(file_store)
-        file_store.clear()
+        owned_file_ids = [fid for fid, info in file_store.items() if file_owner_id(info) == owner_id]
     # 清磁盘
-    for d in (settings.UPLOAD_DIR, settings.OUTPUT_DIR):
-        if os.path.isdir(d):
-            for f in os.listdir(d):
-                fp = os.path.join(d, f)
-                if os.path.isfile(fp):
-                    try:
-                        os.remove(fp)
-                    except OSError:
-                        pass
+    files_count = 0
+    for file_id in owned_file_ids:
+        if await delete_file(file_id):
+            files_count += 1
     store = get_job_store()
-    jobs_count = store.clear_all_jobs()
+    jobs_count = store.clear_jobs_for_owner(owner_id)
     invalidate_dir_size_cache()
     logger.info("Cleanup: %d files, %d jobs", files_count, jobs_count)
     return {

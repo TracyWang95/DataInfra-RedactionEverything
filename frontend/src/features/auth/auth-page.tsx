@@ -25,20 +25,23 @@ export function AuthPage() {
   const t = useT();
   const location = useLocation();
   const navigate = useNavigate();
-  const { status, login, setup } = useAuth();
+  const { status, login, setup, register } = useAuth();
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const needsSetup = status?.password_set === false;
+  const isRegister = !needsSetup && mode === 'register';
   const next = useMemo(() => resolveNext(location.search), [location.search]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
 
-    if (needsSetup && password !== confirmPassword) {
+    if ((needsSetup || isRegister) && password !== confirmPassword) {
       setError(t('auth.error.passwordMismatch'));
       return;
     }
@@ -46,11 +49,13 @@ export function AuthPage() {
     setSubmitting(true);
     try {
       if (needsSetup) {
-        await setup(password);
+        await setup(username, password);
+      } else if (isRegister) {
+        await register(username, password);
       } else {
-        await login(password);
+        await login(username, password);
       }
-      navigate(next, { replace: true });
+      navigate(isRegister ? '/' : next, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : t('auth.error.generic'));
     } finally {
@@ -68,10 +73,18 @@ export function AuthPage() {
           </div>
           <div className="space-y-2">
             <CardTitle className="text-2xl tracking-[-0.04em]">
-              {needsSetup ? t('auth.setup.title') : t('auth.login.title')}
+              {needsSetup
+                ? t('auth.setup.title')
+                : isRegister
+                  ? t('auth.register.title')
+                  : t('auth.login.title')}
             </CardTitle>
             <CardDescription>
-              {needsSetup ? t('auth.setup.description') : t('auth.login.description')}
+              {needsSetup
+                ? t('auth.setup.description')
+                : isRegister
+                  ? t('auth.register.description')
+                  : t('auth.login.description')}
             </CardDescription>
           </div>
         </CardHeader>
@@ -86,11 +99,24 @@ export function AuthPage() {
             )}
 
             <div className="space-y-2">
+              <Label htmlFor="auth-username">{t('auth.username')}</Label>
+              <Input
+                id="auth-username"
+                type="text"
+                autoComplete="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder={t('auth.username.placeholder')}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="auth-password">{t('auth.password')}</Label>
               <Input
                 id="auth-password"
                 type="password"
-                autoComplete={needsSetup ? 'new-password' : 'current-password'}
+                autoComplete={needsSetup || isRegister ? 'new-password' : 'current-password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder={t('auth.password.placeholder')}
@@ -98,7 +124,7 @@ export function AuthPage() {
               />
             </div>
 
-            {needsSetup && (
+            {(needsSetup || isRegister) && (
               <div className="space-y-2">
                 <Label htmlFor="auth-confirm-password">{t('auth.confirmPassword')}</Label>
                 <Input
@@ -118,12 +144,29 @@ export function AuthPage() {
                 ? t('auth.submitting')
                 : needsSetup
                   ? t('auth.setup.submit')
-                  : t('auth.login.submit')}
+                  : isRegister
+                    ? t('auth.register.submit')
+                    : t('auth.login.submit')}
             </Button>
 
-            <p className="text-sm leading-6 text-muted-foreground">
-              {needsSetup ? t('auth.setup.hint') : t('auth.login.hint')}
-            </p>
+            {needsSetup ? (
+              <p className="text-sm leading-6 text-muted-foreground">{t('auth.setup.hint')}</p>
+            ) : (
+              <div className="space-y-3 text-sm leading-6 text-muted-foreground">
+                <p>{isRegister ? t('auth.register.hint') : t('auth.login.hint')}</p>
+                <button
+                  type="button"
+                  className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
+                  onClick={() => {
+                    setError(null);
+                    setConfirmPassword('');
+                    setMode(isRegister ? 'login' : 'register');
+                  }}
+                >
+                  {isRegister ? t('auth.register.switchToLogin') : t('auth.login.switchToRegister')}
+                </button>
+              </div>
+            )}
           </form>
         </CardContent>
       </Card>

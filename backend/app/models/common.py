@@ -15,6 +15,9 @@ __all__ = [
     "ToggleResponse",
     "MessageResponse",
     "PasswordRequest",
+    "UserCreateRequest",
+    "ConcurrencySettingsRequest",
+    "ConcurrencySettingsResponse",
     "ChangePasswordRequest",
     "TokenResponse",
     "AuthStatusResponse",
@@ -137,7 +140,25 @@ class MessageResponse(BaseModel):
 # ─── Auth Models ───
 
 class PasswordRequest(BaseModel):
+    username: str | None = None
     password: str
+
+
+class UserCreateRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+
+
+class ConcurrencySettingsRequest(BaseModel):
+    job_concurrency: int
+
+
+class ConcurrencySettingsResponse(BaseModel):
+    job_concurrency: int
+    default_job_concurrency: int
+    min_job_concurrency: int = 1
+    max_job_concurrency: int = 16
 
 
 class ChangePasswordRequest(BaseModel):
@@ -155,3 +176,7 @@ class AuthStatusResponse(BaseModel):
     auth_enabled: bool
     password_set: bool | None = None
     authenticated: bool = False
+    username: str | None = None
+    role: str | None = None
+    is_super_admin: bool = False
+    multi_user: bool = False

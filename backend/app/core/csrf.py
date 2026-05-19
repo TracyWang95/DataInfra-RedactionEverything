@@ -18,6 +18,7 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _EXEMPT_MUTATING_PREFIXES = (
     "/api/v1/auth/login",
     "/api/v1/auth/setup",
+    "/api/v1/auth/register",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -29,6 +30,7 @@ _EXEMPT_MUTATING_PREFIXES = (
 _AUTH_ROTATE_PREFIXES = (
     "/api/v1/auth/login",
     "/api/v1/auth/setup",
+    "/api/v1/auth/register",
     "/api/v1/auth/logout",
 )
 

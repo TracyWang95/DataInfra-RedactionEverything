@@ -17,6 +17,10 @@ export interface AuthStatus {
   auth_enabled: boolean;
   password_set: boolean | null;
   authenticated: boolean;
+  username?: string | null;
+  role?: string | null;
+  is_super_admin?: boolean;
+  multi_user?: boolean;
 }
 
 interface AuthContextValue {
@@ -24,8 +28,9 @@ interface AuthContextValue {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<AuthStatus | null>;
-  login: (password: string) => Promise<void>;
-  setup: (password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<void>;
+  setup: (username: string, password: string) => Promise<void>;
+  register: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -149,11 +154,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [runRefresh]);
 
   const login = useCallback(
-    async (password: string) => {
+    async (username: string, password: string) => {
       const res = await authFetch('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
       await ensureOk<TokenResponse>(res);
       setError(null);
@@ -163,11 +168,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const setup = useCallback(
-    async (password: string) => {
+    async (username: string, password: string) => {
       const res = await authFetch('/api/v1/auth/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
+      });
+      await ensureOk<TokenResponse>(res);
+      setError(null);
+      await confirmAuthenticated();
+    },
+    [confirmAuthenticated],
+  );
+
+  const register = useCallback(
+    async (username: string, password: string) => {
+      const res = await authFetch('/api/v1/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
       });
       await ensureOk<TokenResponse>(res);
       setError(null);
@@ -201,9 +220,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refresh,
       login,
       setup,
+      register,
       logout,
     }),
-    [error, login, loading, logout, refresh, setup, status],
+    [error, login, loading, logout, refresh, register, setup, status],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

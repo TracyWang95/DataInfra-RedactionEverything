@@ -13,7 +13,7 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     env_file:
-      - path: .env
+      - path: ${BACKEND_ENV_FILE:-.env}
         required: false
     environment:
       - DEBUG=${DEBUG:-false}
@@ -21,10 +21,18 @@ services:
       - UPLOAD_DIR=/app/uploads
       - OUTPUT_DIR=/app/outputs
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - FILE_ENCRYPTION_ENABLED=${FILE_ENCRYPTION_ENABLED:-false}
+      - VIRUS_SCAN_ENABLED=${VIRUS_SCAN_ENABLED:-false}
+      - OCR_REQUIRE_GPU=${OCR_REQUIRE_GPU:-false}
+      - JOB_CONCURRENCY=${JOB_CONCURRENCY:-3}
+      - BATCH_RECOGNITION_PAGE_CONCURRENCY=${BATCH_RECOGNITION_PAGE_CONCURRENCY:-2}
+      - HAS_NER_MAX_PARALLEL_REQUESTS=${HAS_NER_MAX_PARALLEL_REQUESTS:-4}
+      - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-true}
       - OCR_BASE_URL=http://ocr:8082
       - HAS_LLAMACPP_BASE_URL=http://ner:8080/v1
       - HAS_IMAGE_BASE_URL=http://vision:8081
-      - CORS_ORIGINS=["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
     volumes:
       - backend-data:/app/data
       - backend-uploads:/app/uploads
@@ -80,7 +88,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.ocr
     ports:
-      - "8082:8082"
+      - "${OCR_PORT:-8082}:8082"
     deploy:
       resources:
         limits:
@@ -111,7 +119,7 @@ services:
   ner:
     image: ghcr.io/ggerganov/llama.cpp:server
     ports:
-      - "8080:8080"
+      - "${NER_PORT:-8080}:8080"
     volumes:
       - ./backend/models:/models
     command: >
@@ -151,7 +159,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.vision
     ports:
-      - "8081:8081"
+      - "${VISION_PORT:-8081}:8081"
     volumes:
       - ./backend/models:/app/models
     deploy:

@@ -26,6 +26,8 @@ RedactionEverything is a local-first redaction workbench for sensitive informati
   <a href="#model-services">Model Services</a> &middot;
   <a href="#model-credits">Model Credits</a> &middot;
   <a href="#limitations-and-gpu-memory">Limitations</a> &middot;
+  <a href="#multi-tenant-deployment">Multi-Tenant</a> &middot;
+  <a href="#user-isolation">User Isolation</a> &middot;
   <a href="#security-and-deployment">Security</a> &middot;
   <a href="#license">License</a>
 </p>
@@ -291,8 +293,63 @@ scripts/        Root local startup and shutdown scripts
 
 - The repository should contain application code and default configuration only. Do not commit local `.env` files, model weights, real samples, uploaded files, runtime databases, logs, or exported results.
 - The default deployment model is local or intranet use. Before exposing the system to the public internet, configure authentication, access control, reverse proxy, TLS, logging, and key-rotation policies.
+- Authentication supports multiple local users. Uploaded files, batch jobs, review drafts, downloads, previews, export reports, and cleanup operations are scoped to the authenticated username. The first setup user is the `super_admin`; only super administrators can create users or change runtime concurrency.
 - Default recognition is driven by model capability and configured schemas. Regex exists only as a user-defined fallback mechanism.
 - Keep models, samples, task data, and export directories in private runtime storage protected by access control and backup policies.
+
+---
+
+## Multi-Tenant Deployment
+
+For customer deployments that require tenant isolation, use instance-level isolation: one Docker Compose project per tenant, with its own `.env`, domain, JWT secret, network, and Docker volumes. Do not share `DATA_DIR`, `UPLOAD_DIR`, `OUTPUT_DIR`, SQLite stores, exported results, or `JWT_SECRET_KEY` across tenants.
+
+Example PowerShell tenant launch commands:
+
+```powershell
+$env:BACKEND_ENV_FILE=".env.tenant-a"
+docker compose --env-file .env.tenant-a -p redaction-tenant-a --profile gpu up -d
+Remove-Item Env:\BACKEND_ENV_FILE
+
+$env:BACKEND_ENV_FILE=".env.tenant-b"
+docker compose --env-file .env.tenant-b -p redaction-tenant-b --profile gpu up -d
+Remove-Item Env:\BACKEND_ENV_FILE
+```
+
+Use per-tenant production env files based on `.env.production.example`. Set a unique `CORS_ORIGINS` domain and `JWT_SECRET_KEY` for each tenant, keep `AUTH_ENABLED=true`, and keep `FILE_ENCRYPTION_ENABLED=true` for sensitive customer data. `BACKEND_ENV_FILE` must point at the same tenant env file so the backend container does not load a shared local `.env`.
+
+The backend job queue uses `JOB_CONCURRENCY` for concurrent recognition/redaction job items. If a shared GPU must be capped at three concurrent job items, keep the sum of `JOB_CONCURRENCY` across all tenant instances at or below 3:
+
+| Deployment shape | Recommended setting |
+|---|---|
+| One tenant on a dedicated GPU | `JOB_CONCURRENCY=3` |
+| Two tenants sharing one GPU | split as `2 + 1` by SLA |
+| Three tenants sharing one GPU | `JOB_CONCURRENCY=1` per tenant |
+
+For stable latency on shared GPUs, start with `BATCH_RECOGNITION_PAGE_CONCURRENCY=1`, `HAS_NER_MAX_PARALLEL_REQUESTS=1`, and `VISION_DUAL_PIPELINE_PARALLEL=false`. Raise these only after measuring latency and VRAM headroom.
+
+---
+
+## User Isolation
+
+Within one company deployment, use one application instance and create separate local users. Users share the same service URL and queue, but each authenticated username only sees its own files, jobs, review drafts, exports, previews, and cleanup scope.
+
+The first login setup screen creates the `super_admin`. Additional users can be created only by a super administrator:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"username":"alice","password":"StrongPassw0rd!"}'
+```
+
+`JOB_CONCURRENCY=3` still means the whole instance processes at most three background job items at once; extra user requests queue instead of requiring a new deployment or port. A super administrator can change the live value from Settings -> Runtime or through the admin-only API:
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/auth/concurrency \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"job_concurrency":3}'
+```
 
 ---
 
