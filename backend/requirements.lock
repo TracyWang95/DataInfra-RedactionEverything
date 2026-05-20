@@ -36,6 +36,7 @@ llama-cpp-python[server]>=0.3.16
 # Utility libraries
 PyJWT==2.12.0
 passlib[bcrypt]==1.7.4
+json-repair==0.58.0
 
 # Observability
 python-json-logger==2.0.4

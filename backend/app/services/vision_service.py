@@ -203,6 +203,7 @@ class VisionService:
     def __init__(self):
         self.file_parser = FileParser()
         self.hybrid_service = get_hybrid_vision_service()
+        self.last_warnings: list[str] = []
 
     async def detect_sensitive_regions(
         self,
@@ -574,6 +575,7 @@ class VisionService:
                 status["stage_duration_ms"] = dict(self.last_has_image_stage_duration_ms)
             logger.info("%s found %d regions", label, len(boxes))
 
+        all_boxes = self._filter_visual_artifacts(all_boxes)
         all_boxes = self._deduplicate_boxes(all_boxes)
 
         result_image_base64 = None
@@ -590,6 +592,121 @@ class VisionService:
         self.last_duration_ms = duration_ms
         logger.info("Dual pipeline total: %d regions, %.2fs", len(all_boxes), duration_ms["total"] / 1000)
         return all_boxes, result_image_base64
+
+    def _filter_visual_artifacts(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """Drop visual false positives that lack enough target-specific evidence.
+
+        This is deliberately evidence based rather than filename/document based:
+        local seal fallbacks are useful for real copied stamps, but edge scanner
+        marks and tiny partial arcs can produce the same color/ink signal. Keep
+        model-backed seals and full local seal regions; reject local fallback
+        fragments that look like page-edge machine-code watermarks.
+        """
+        if not boxes:
+            return boxes
+
+        machine_code_boxes = [
+            box
+            for box in boxes
+            if self._norm_box_type(box.type) in {"qr_code", "qrcode", "barcode"}
+        ]
+        seal_boxes = [
+            box
+            for box in boxes
+            if self._norm_box_type(box.type) in {"official_seal", "seal", "stamp"}
+        ]
+        filtered: list[BoundingBox] = []
+        removed = 0
+        for box in boxes:
+            if self._is_scanner_mark_seal_artifact(box, machine_code_boxes) or self._is_signature_artifact(box, seal_boxes):
+                removed += 1
+                logger.info(
+                    "Filtered visual artifact type=%s detail=%s box=(%.4f, %.4f, %.4f, %.4f)",
+                    box.type,
+                    box.source_detail,
+                    box.x,
+                    box.y,
+                    box.width,
+                    box.height,
+                )
+                continue
+            filtered.append(box)
+
+        if removed:
+            self.last_warnings.append(f"visual artifact filter removed {removed} local seal candidate(s)")
+        return filtered
+
+    @staticmethod
+    def _norm_box_type(value: str | None) -> str:
+        return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+    def _is_scanner_mark_seal_artifact(
+        self,
+        box: BoundingBox,
+        machine_code_boxes: list[BoundingBox],
+    ) -> bool:
+        if self._norm_box_type(box.type) not in {"official_seal", "seal", "stamp"}:
+            return False
+        if box.source != "has_image" or not str(box.source_detail or "").startswith("local_"):
+            return False
+
+        source_detail = str(box.source_detail or "").lower()
+        is_red_fallback = "red_seal_fallback" in source_detail
+        x2 = box.x + box.width
+        y2 = box.y + box.height
+        area = box.width * box.height
+        edge = box.x <= 0.035 or box.y <= 0.035 or x2 >= 0.965 or y2 >= 0.965
+        bottom_band = box.y >= 0.88
+        skinny = min(box.width, box.height) <= 0.045
+        narrow_vertical = box.width <= 0.045 and box.height >= 0.09
+        shallow_horizontal = box.height <= 0.045 and box.width <= 0.18
+
+        # Red fallback candidates have already passed saturated-ink and
+        # curved-fragment checks in the detector. Keep isolated edge/bottom
+        # red seal fragments; only scanner-code-coupled strips are weak enough
+        # to suppress here.
+        if (
+            not is_red_fallback
+            and (bottom_band or edge)
+            and shallow_horizontal
+            and area < 0.010
+        ):
+            return True
+
+        # Scanner-app watermarks commonly couple a machine code with a narrow
+        # edge text strip. A real official seal should not be accepted from that
+        # weak local-fallback evidence alone.
+        if narrow_vertical and edge:
+            for code_box in machine_code_boxes:
+                horizontal_close = (
+                    box.x <= code_box.x + code_box.width + 0.025
+                    and code_box.x <= x2 + 0.025
+                )
+                vertical_gap = max(code_box.y - y2, box.y - (code_box.y + code_box.height), 0.0)
+                if horizontal_close and vertical_gap <= 0.030:
+                    return True
+
+        return bool(not is_red_fallback and edge and skinny and area < 0.003)
+
+    def _is_signature_artifact(
+        self,
+        box: BoundingBox,
+        seal_boxes: list[BoundingBox],
+    ) -> bool:
+        if self._norm_box_type(box.type) not in {"signature", "handwriting", "approval_mark"}:
+            return False
+        if box.source != "vlm":
+            return False
+        # Printed text lines are usually very shallow; handwritten signatures
+        # should have enough vertical stroke extent to be reviewed as a region.
+        if box.height < 0.025:
+            return True
+        for seal in seal_boxes:
+            if self._norm_box_type(seal.type) not in {"official_seal", "seal", "stamp"}:
+                continue
+            if self._calculate_smaller_overlap(box, seal) >= 0.25:
+                return True
+        return False
 
     def _calculate_iou(self, box1: BoundingBox, box2: BoundingBox) -> float:
         x1 = max(box1.x, box2.x)

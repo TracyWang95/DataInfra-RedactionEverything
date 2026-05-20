@@ -193,8 +193,8 @@ class Settings(BaseSettings):
     HAS_TEXT_VLLM_BASE_URL: str = "http://127.0.0.1:8080/v1"
     HAS_TEXT_MODEL_NAME: str = ""
     HAS_TIMEOUT: float = 120.0
-    HAS_NER_CONTEXT_TOKENS: int = 8192
-    HAS_NER_MAX_TOKENS: int = 4096
+    HAS_NER_CONTEXT_TOKENS: int = 16352
+    HAS_NER_MAX_TOKENS: int = 12800
     HAS_NER_MAX_TYPES_PER_REQUEST: int = 12
     HAS_NER_CUSTOM_MAX_TYPES_PER_REQUEST: int = 16
     HAS_NER_TYPE_BATCH_TARGET_TOKENS: int = 900
@@ -263,7 +263,7 @@ class Settings(BaseSettings):
     @field_validator("HAS_NER_MAX_TOKENS")
     @classmethod
     def _validate_has_ner_max_tokens(cls, v: int) -> int:
-        return max(128, min(4096, v))
+        return max(128, min(32768, v))
 
     @field_validator("HAS_NER_CONTEXT_TOKENS")
     @classmethod
