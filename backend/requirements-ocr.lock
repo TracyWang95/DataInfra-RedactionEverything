@@ -1,14 +1,23 @@
-# Pinned dependencies for OCR microservice.
-# Re-generate: pip freeze > requirements-ocr.lock
+# OCR 微服务（MinerU / ModelScope）依赖
 #
-# NOTE: Base image should include CUDA runtime for GPU inference.
-# Consider nvidia/cuda:12.x-runtime or PaddlePaddle official GPU image.
---extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
-paddlepaddle-gpu==3.3.0
-paddleocr[doc-parser]==3.5.0
-fastapi==0.136.1
+# 1) PyTorch（CUDA）：请先安装与本机显卡/驱动匹配的 wheel。
+#    已配置国内源（如 mirrors.aliyun.com/pypi）时，通常可直接：
+#      pip install torch torchvision
+#    aarch64 + 新驱动常见为 torch 2.11.x+cu130（随 PyPI 元数据变化）。
+#
+# 2) 再安装本文件其余包。模型权重由 MinerU 经 modelscope / huggingface-hub 按需下载。
+mineru>=3.0.0,<4
+# mineru 的 pipeline 在部分环境中不会自动装全，显式列出以免运行时报错
+transformers>=4.48.0,<6
+accelerate>=1.0.0
+safetensors>=0.4.0
+shapely>=2.0.0
+pyclipper>=1.3.0
+omegaconf>=2.3.0
+albumentations>=1.4.0
+fastapi==0.117.1
 uvicorn==0.35.0
 httpx==0.28.1
 numpy>=1.24.0
-Pillow>=12.2.0
+Pillow>=11.0.0
 pydantic>=2.0.0
