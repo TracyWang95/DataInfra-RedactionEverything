@@ -50,14 +50,18 @@ else
   _wait_http "http://127.0.0.1:8088/v1/models" "HaS Text" 60 || true
 fi
 
-# 2) vLLM @8000（0.70 显存，可选；与 HaS 分离）
-if curl -sf http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
-  echo "[restart] vLLM 已在 8000 运行，跳过启动"
+# 2) vLLM @8000（可选，默认不启动；与 HaS NER 无关，占大量显存）
+if [[ "${START_OPTIONAL_VLLM:-0}" == "1" ]]; then
+  if curl -sf http://127.0.0.1:8000/v1/models >/dev/null 2>&1; then
+    echo "[restart] vLLM 已在 8000 运行，跳过启动"
+  else
+    echo "[restart] 启动 vLLM (gpu-memory-utilization=0.70) ..."
+    nohup bash "${SCRIPT_DIR}/run_has_text_vllm.sh" >>"${LOG}/vllm.log" 2>&1 &
+    echo $! >"${LOG}/vllm.pid"
+    _wait_http "http://127.0.0.1:8000/v1/models" "vLLM" 600 || true
+  fi
 else
-  echo "[restart] 启动 vLLM (gpu-memory-utilization=0.70) ..."
-  nohup bash "${SCRIPT_DIR}/run_has_text_vllm.sh" >>"${LOG}/vllm.log" 2>&1 &
-  echo $! >"${LOG}/vllm.pid"
-  _wait_http "http://127.0.0.1:8000/v1/models" "vLLM" 600 || true
+  echo "[restart] 跳过可选 vLLM @8000（设 START_OPTIONAL_VLLM=1 可启用）"
 fi
 
 # 3) MinerU OCR
@@ -98,10 +102,15 @@ nohup "${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port "${BACKEND_P
 echo $! >"${LOG}/backend.pid"
 _wait_http "http://127.0.0.1:${BACKEND_PORT}/health" "Backend" 30
 
+# 7) 前端 dev（后台）
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+bash "${SCRIPT_DIR}/start_frontend_background.sh"
+
 echo ""
-echo "======== 本地服务已重启 ========"
+echo "======== 本地服务已后台启动 ========"
+echo "  前端:      http://127.0.0.1:${FRONTEND_PORT}/"
 echo "  后端 API:  http://127.0.0.1:${BACKEND_PORT}"
-echo "  前端 dev:  cd ${REPO_DIR}/frontend && BACKEND_URL=http://127.0.0.1:${BACKEND_PORT} npm run dev"
 echo "  健康检查:  curl http://127.0.0.1:${BACKEND_PORT}/health/services"
+echo "  停止:      ./scripts/stop_all_local.sh"
 echo "  日志目录:  ${LOG}/"
-echo "================================"
+echo "===================================="

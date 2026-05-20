@@ -145,23 +145,19 @@ python scripts/download_mineru_models_modelscope.py
 
 国内下载默认走 [hf-mirror.com](https://hf-mirror.com)；各启动脚本会加载 `scripts/hf_mirror_env.sh`。
 
-**3. 一键重启本地栈**
+**3. 一键后台启动本地栈**
 
 ```bash
-cd backend
+cd frontend && npm ci   # 首次
+cd ../backend
 chmod +x scripts/*.sh
 ./scripts/restart_all_local.sh
 ```
 
-脚本会依次检查/启动：HaS Text @8088、可选 vLLM @8000（`gpu-memory-utilization=0.70` 为 VLM 留显存）、MinerU @9082、HaS Image @8081、GLM VLM @8091、后端 @8090。
+脚本会在后台（`nohup`）依次启动：HaS Text @8088、MinerU @9082、HaS Image @8081、GLM VLM @8091、后端 @8090、前端 @3000。日志与 PID 在 `backend/logs/`。
 
-**4. 启动前端**
-
-```bash
-cd frontend
-npm ci
-BACKEND_URL=http://127.0.0.1:8090 npm run dev -- --host 0.0.0.0
-```
+- 可选 vLLM @8000（与 HaS NER 无关，占大量显存）：`START_OPTIONAL_VLLM=1 ./scripts/restart_all_local.sh`
+- 仅后台起前端：`./scripts/start_frontend_background.sh`
 
 打开 http://localhost:3000 ，在健康面板确认 OCR、HaS Text、HaS Image、VLM 为在线后再识别。
 
@@ -174,7 +170,7 @@ BACKEND_URL=http://127.0.0.1:8090 npm run dev -- --host 0.0.0.0
 ./scripts/start_backend_and_vision_background.sh
 ```
 
-停止：`./scripts/stop_all_local.sh`
+停止（含前端与 8088 HaS Text）：`./scripts/stop_all_local.sh`
 
 **识别无结果时请先检查：** `/health/services` 中 OCR 为 online；**HaS Text 必须指向 8088 的 HaS_Text**，若 `HAS_LLAMACPP_BASE_URL` 指向 8000 上的 Qwen，OCR 有字但 NER 实体数为 0，页面上也会空白。
 
