@@ -4,21 +4,24 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 // https://vitejs.dev/config/
+const backendTarget =
+  process.env.VITE_BACKEND_URL ?? process.env.BACKEND_URL ?? 'http://127.0.0.1:8090';
+
 const backendProxy = {
   '/api': {
-    target: 'http://127.0.0.1:8000',
+    target: backendTarget,
     changeOrigin: true,
   },
   '/health': {
-    target: 'http://127.0.0.1:8000',
+    target: backendTarget,
     changeOrigin: true,
   },
   '/uploads': {
-    target: 'http://127.0.0.1:8000',
+    target: backendTarget,
     changeOrigin: true,
   },
   '/outputs': {
-    target: 'http://127.0.0.1:8000',
+    target: backendTarget,
     changeOrigin: true,
   },
 } as const;

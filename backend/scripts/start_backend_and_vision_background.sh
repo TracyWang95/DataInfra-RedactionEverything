@@ -5,7 +5,7 @@
 # 与主后端分离进程，主后端通过 HAS_IMAGE_BASE_URL（默认 http://127.0.0.1:8081）调用。
 #
 # 依赖：
-#   - conda 环境 DataInfra；OCR 另需 requirements-ocr.lock；HaS Image 需权重与 requirements-vision.lock
+#   - conda 环境 DataInfraNew；OCR 另需 requirements-ocr.lock；HaS Image 需权重与 requirements-vision.lock
 #   - 主后端须已安装 backend/requirements.txt，否则 uvicorn 会因缺包退出（见 logs/backend.log）
 # 用法（在 backend 目录下）:
 #   ./scripts/start_backend_and_vision_background.sh
@@ -16,12 +16,26 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="${ROOT}/logs"
 mkdir -p "${LOG}"
 cd "${ROOT}"
 export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 
-CONDA_ENV="${CONDA_ENV:-DataInfra}"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/hf_mirror_env.sh"
+
+if [[ -f "${ROOT}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${ROOT}/.env"
+  set +a
+fi
+# 进程端口（非 pydantic Settings 字段）
+BACKEND_PORT="${BACKEND_PORT:-8090}"
+OCR_PORT="${OCR_PORT:-9082}"
+
+CONDA_ENV="${CONDA_ENV:-DataInfraNew}"
 if [[ -n "${PYTHON:-}" ]]; then
   PYTHON_BIN="${PYTHON}"
 elif command -v conda &>/dev/null; then
@@ -35,12 +49,15 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
 fi
 echo "[start] 使用 Python: ${PYTHON_BIN}"
 
-echo "[start] backend -> ${LOG}/backend.log (port 8000)"
-nohup "${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 >>"${LOG}/backend.log" 2>&1 &
+export OCR_PORT
+export OCR_BASE_URL="${OCR_BASE_URL:-http://127.0.0.1:${OCR_PORT}}"
+
+echo "[start] backend -> ${LOG}/backend.log (port ${BACKEND_PORT})"
+nohup "${PYTHON_BIN}" -m uvicorn app.main:app --host 0.0.0.0 --port "${BACKEND_PORT}" >>"${LOG}/backend.log" 2>&1 &
 echo $! >"${LOG}/backend.pid"
 
-echo "[start] ocr_server -> ${LOG}/ocr_server.log (port 8082)"
-nohup "${PYTHON_BIN}" scripts/ocr_server.py >>"${LOG}/ocr_server.log" 2>&1 &
+echo "[start] ocr_server (MinerU) -> ${LOG}/ocr_server.log (port ${OCR_PORT})"
+nohup env OCR_PORT="${OCR_PORT}" "${PYTHON_BIN}" scripts/ocr_server.py >>"${LOG}/ocr_server.log" 2>&1 &
 echo $! >"${LOG}/ocr_server.pid"
 
 echo "[start] has_image_server -> ${LOG}/has_image_server.log (port 8081)"
@@ -49,6 +66,6 @@ echo $! >"${LOG}/has_image_server.pid"
 
 sleep 1
 echo "[start] 已写入 PID: ${LOG}/backend.pid ${LOG}/ocr_server.pid ${LOG}/has_image_server.pid"
-echo "[start] 探活: curl -sS http://127.0.0.1:8000/health | head -c 200; echo"
-echo "[start]       curl -sS http://127.0.0.1:8082/health; echo"
+echo "[start] 探活: curl -sS http://127.0.0.1:${BACKEND_PORT}/health | head -c 200; echo"
+echo "[start]       curl -sS http://127.0.0.1:${OCR_PORT}/health; echo"
 echo "[start]       curl -sS http://127.0.0.1:8081/health; echo"

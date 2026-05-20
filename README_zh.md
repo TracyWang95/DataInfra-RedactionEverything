@@ -71,7 +71,7 @@ RedactionEverything 的定位不是一个只做文本 PII 的轻量过滤器，�
 | 任务中心 | 查看任务状态、进度、继续审阅、查看详情和删除；运行中任务需先取消后删除 |
 | 处理结果 | 查看已处理文件、批量树状结果、单文件结果、分页选择和打包下载 |
 | 文本语义识别 | HaS Text 按清单中的 NER 标签识别实体，不依赖内置穷举映射 |
-| OCR + HaS | 图像和扫描件先抽取文字块，再用 HaS Text 做语义识别并回写坐标 |
+| OCR + HaS | 图像和扫描件由 MinerU（或 PaddleOCR-VL）抽取文字块，再用 HaS Text 做语义识别并回写坐标 |
 | HaS Image YOLO | 检测人脸、指纹、证件、银行卡、印章、二维码、屏幕等视觉区域 |
 | VLM checklist | 作为图像管道补充能力，默认聚焦签字等需要视觉语义判断的区域 |
 | 配置清单 | 内置通用、法律、金融、医疗清单，也支持自定义文本、图像和兜底项 |
@@ -88,66 +88,125 @@ RedactionEverything 的定位不是一个只做文本 PII 的轻量过滤器，�
 | Node.js | 24 LTS |
 | Python | 3.11 |
 | GPU | NVIDIA GPU，建议 16 GB 显存用于完整图像管道 |
-| CUDA | 按 Paddle / vLLM / llama.cpp 的本地版本匹配 |
+| CUDA | 与本地 PyTorch / llama.cpp / MinerU 构建匹配 |
+| Conda（Linux 推荐） | 例如 `DataInfraNew`，OCR 与后端共用；HaS Text / VLM 可用独立进程 |
 
 模型权重、真实样本、上传文件、运行数据库和导出结果不随仓库提交。请按自己的本地路径配置。
 
-### 本地一键启动（Windows + WSL）
+### Linux 本地启动（Conda，推荐 MinerU 分支）
 
-本地完整模型链路建议从仓库根目录启动：
+本分支默认使用 **MinerU** 作为 OCR 微服务（不再依赖 PaddleOCR-VL）。典型端口如下（若本机 8082 被 MinIO 等占用，OCR 使用 **9082**；若 8000 已被其他 vLLM 占用，后端 API 使用 **8090**）：
+
+| 服务 | 端口 | 说明 |
+|---|---:|---|
+| 后端 API | 8090 | FastAPI |
+| 前端 | 3000 | Vite dev |
+| HaS Text NER | **8088** | `HaS_Text_0209`（llama-server），**不要**误连 8000 上的通用大模型 |
+| HaS Image | 8081 | YOLO11 |
+| MinerU OCR | **9082** | 独立进程 `scripts/ocr_server.py` |
+| GLM VLM | 8091 | llama-server + 本地 GGUF |
+| 其他 vLLM（可选） | 8000 | 与本项目 HaS NER **分离** |
+
+**1. 准备环境与配置**
+
+```bash
+conda activate DataInfraNew
+cd backend
+pip install -r requirements.txt
+pip install -r requirements-ocr.lock    # MinerU OCR 微服务
+pip install -r requirements-vision.lock # HaS Image 微服务
+
+cp ../.env.example .env  # 再按下方示例修改端口与 URL
+```
+
+`backend/.env` 示例（勿把仅用于子进程的环境变量写入会导致 pydantic 报错的字段）：
+
+```env
+OCR_BASE_URL=http://127.0.0.1:9082
+HAS_LLAMACPP_BASE_URL=http://127.0.0.1:8088/v1
+HAS_TEXT_MODEL_NAME=HaS_Text_0209
+HAS_IMAGE_BASE_URL=http://127.0.0.1:8081
+VLM_BASE_URL=http://127.0.0.1:8091/v1
+OCR_STRUCTURE_ENABLED=false
+AUTH_ENABLED=false
+```
+
+**2. 模型资源（首次）**
+
+```bash
+cd backend
+# HaS Image 权重（hf-mirror）
+HF_MIRROR_BASE=https://hf-mirror.com ./scripts/download_has_image_weights.sh
+# MinerU pipeline（ModelScope，可选离线）
+python scripts/download_mineru_models_modelscope.py
+# GLM VLM GGUF（llama-server 无 HTTPS，需先 wget 到本地）
+./scripts/download_vlm_gguf.sh
+```
+
+国内下载默认走 [hf-mirror.com](https://hf-mirror.com)；各启动脚本会加载 `scripts/hf_mirror_env.sh`。
+
+**3. 一键重启本地栈**
+
+```bash
+cd backend
+chmod +x scripts/*.sh
+./scripts/restart_all_local.sh
+```
+
+脚本会依次检查/启动：HaS Text @8088、可选 vLLM @8000（`gpu-memory-utilization=0.70` 为 VLM 留显存）、MinerU @9082、HaS Image @8081、GLM VLM @8091、后端 @8090。
+
+**4. 启动前端**
+
+```bash
+cd frontend
+npm ci
+BACKEND_URL=http://127.0.0.1:8090 npm run dev -- --host 0.0.0.0
+```
+
+打开 http://localhost:3000 ，在健康面板确认 OCR、HaS Text、HaS Image、VLM 为在线后再识别。
+
+**分进程启动（调试用）**
+
+```bash
+./scripts/run_has_text_llama_server.sh   # 8088，必开
+./scripts/run_ocr_server_conda.sh        # 9082 MinerU
+./scripts/run_vlm_llama_server.sh        # 8091，需本地 GGUF
+./scripts/start_backend_and_vision_background.sh
+```
+
+停止：`./scripts/stop_all_local.sh`
+
+**识别无结果时请先检查：** `/health/services` 中 OCR 为 online；**HaS Text 必须指向 8088 的 HaS_Text**，若 `HAS_LLAMACPP_BASE_URL` 指向 8000 上的 Qwen，OCR 有字但 NER 实体数为 0，页面上也会空白。
+
+### 本地一键启动（Windows + WSL，原版 Paddle 链路）
+
+仍可使用仓库根目录的 Windows 混合启动（WSL 内 PaddleOCR-VL + vLLM）：
 
 ```bash
 npm run dev
 ```
 
-这个入口会按固定顺序启动本地服务：WSL 中的 vLLM 模型服务和 OCR 包装服务、Windows 上的 llama.cpp VLM、HaS Image、后端 API，最后启动前端。脚本会先执行模型预热，只有 HaS Text、PaddleOCR-VL、PP-StructureV3、HaS Image 和 GLM VLM 全部预热成功后，才会输出：
+该入口会启动 WSL 中的 vLLM 与 PaddleOCR 包装、Windows 上的 llama.cpp VLM、HaS Image、后端与前端。MinerU 分支在 Linux 上更推荐上一节的 Conda 方式。
 
-```text
-[dev] ready: http://localhost:3000
-```
+关闭服务：`npm run stop`
 
-关闭所有本地服务：
-
-```bash
-npm run stop
-```
-
-如果 WSL localhost 转发不可用，启动脚本会自动使用 WSL IP 连接 vLLM/OCR 服务，避免前端服务探测显示离线。模型服务应保持 GPU/CUDA 推理；`/health/services` 中任一模型出现 CPU fallback 风险时，应先修正环境再处理文件。
-
-### 手动启动后端
+### 手动启动后端（通用）
 
 ```bash
 cd backend
-python -m venv .venv
-.venv/Scripts/activate
+python -m venv .venv   # 或 conda activate <env>
 pip install -r requirements.txt
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8090
 ```
-
-后端启动后可以检查：
 
 ```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/health/services
-```
-
-### 手动启动前端
-
-```bash
-cd frontend
-npm ci
-npm run dev -- --host 0.0.0.0 --port 3000
-```
-
-打开：
-
-```text
-http://localhost:3000
+curl http://127.0.0.1:8090/health
+curl http://127.0.0.1:8090/health/services
 ```
 
 ### Docker
 
-仓库保留 Dockerfile 和 compose 配置，适合做后端、前端和模型服务容器化。生产环境部署前请确认 `.env`、模型挂载、GPU runtime、认证和反向代理配置。
+仓库保留 Dockerfile 和 compose 配置（`Dockerfile.ocr` 已适配 MinerU 依赖）。生产环境部署前请确认 `.env`、模型挂载、GPU runtime、认证和反向代理配置；`OCR_BASE_URL` 需指向 compose 内的 `ocr` 服务（默认 8082，与 Linux 本机 9082 开发端口可不同）。
 
 ---
 
@@ -166,7 +225,7 @@ http://localhost:3000
         |                      |                      |
 +-------v--------+     +-------v--------+     +-------v--------+
 | 文本语义管道   |     | OCR + HaS 管道 |     | 视觉区域管道   |
-| HaS Text NER   |     | OCR text boxes |     | YOLO / VLM     |
+| HaS Text NER   |     | MinerU OCR boxes |     | YOLO / VLM     |
 +-------+--------+     +-------+--------+     +-------+--------+
         |                      |                      |
         +----------------------+----------------------+
@@ -184,29 +243,43 @@ http://localhost:3000
 
 ## 模型服务
 
-默认本地端口如下：
+### MinerU 分支（Linux Conda，当前默认）
 
-| 服务 | 默认端口 | 说明 |
+| 服务 | 端口 | 说明 |
 |---|---:|---|
-| 后端 API | 8000 | 上传、任务、配置、识别、导出 |
+| 后端 API | 8090 | 上传、任务、配置、识别、导出 |
 | 前端 | 3000 | 浏览器工作台 |
-| HaS Text | 8080 | OpenAI 兼容接口，文本 NER |
+| HaS Text | **8088** | llama-server + `HaS_Text_0209_0.6B_Q4_K_M.gguf`，文本 NER |
 | HaS Image | 8081 | YOLO11 视觉区域检测 |
-| PaddleOCR-VL | 8082 | OCR、版面和文字框 |
-| VLM | 8090 | OpenAI 兼容接口，视觉语义补充 |
+| MinerU OCR | **9082** | `scripts/ocr_server.py`，文档 OCR 与文字框 |
+| GLM VLM | **8091** | llama-server + GLM-4.6V-Flash GGUF，签字等 checklist |
 
-常用环境变量：
+### 原版 Paddle 链路（Windows `npm run dev`）
+
+| 服务 | 端口 | 说明 |
+|---|---:|---|
+| 后端 API | 8000 | FastAPI |
+| HaS Text | 8080 | vLLM / llama.cpp |
+| HaS Image | 8081 | YOLO11 |
+| PaddleOCR-VL | 8082 | OCR 微服务 |
+| VLM | 8090 | 视觉语义 |
+
+### 环境变量（MinerU / Linux 示例）
 
 ```env
-OCR_BASE_URL=http://127.0.0.1:8082
-HAS_TEXT_RUNTIME=vllm
-HAS_TEXT_VLLM_BASE_URL=http://127.0.0.1:8080/v1
+OCR_BASE_URL=http://127.0.0.1:9082
+OCR_PORT=9082
+HAS_LLAMACPP_BASE_URL=http://127.0.0.1:8088/v1
+HAS_TEXT_MODEL_NAME=HaS_Text_0209
 HAS_IMAGE_BASE_URL=http://127.0.0.1:8081
-VLM_BASE_URL=http://127.0.0.1:8090
-VLM_MODEL_NAME=GLM-4.6V-Flash-Q4
+VLM_BASE_URL=http://127.0.0.1:8091/v1
+VLM_MODEL_NAME=GLM-4.6V-Flash-Q4_K_M
+OCR_STRUCTURE_ENABLED=false
 ```
 
-显存紧张时，优先调整上下文、最大生成长度、并发和图像尺寸；不要让关键模型静默回退到 CPU，否则网页会表现为长时间无结果或服务探测离线。
+可选：与本机其他 vLLM 共存时，用 `VLLM_GPU_MEMORY_UTILIZATION=0.70` 启动 HaS Text 以外的模型服务（见 `scripts/run_has_text_vllm.sh`），为 MinerU 与 GLM VLM 留出显存。
+
+显存紧张时，优先降低 vLLM 显存占用、调小 VLM 上下文，或关闭签字（VLM）仅保留 OCR+HaS 与 HaS Image；不要让关键模型静默回退到 CPU，否则页面会长时间无结果或服务显示降级。
 
 ---
 
@@ -216,15 +289,16 @@ RedactionEverything 是编排层和产品层，不声明拥有第三方模型权
 
 | 组件 | 上游模型或项目 | 用途 |
 |---|---|---|
-| PaddleOCR-VL | [PaddlePaddle/PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 文档 OCR、版面理解、文字框和页面结构抽取 |
-| HaS Text | [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B)，可选 [xuanwulab/HaS_4.0_0.6B_GGUF](https://huggingface.co/xuanwulab/HaS_4.0_0.6B_GGUF) | 文本和 OCR 文本块的语义 NER |
+| MinerU | [opendatalab/MinerU](https://github.com/opendatalab/MinerU)（pipeline 权重经 ModelScope / HF） | 文档 OCR、版面与文字框（本分支默认，`backend/scripts/ocr_server.py`） |
+| PaddleOCR-VL（可选） | [PaddlePaddle/PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 原版 Windows/WSL 链路仍可使用 |
+| HaS Text | [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B)，推荐 GGUF [HaS_Text_0209_0.6B_Q4_K_M](https://huggingface.co/xuanwulab/HaS_4.0_0.6B_GGUF) | 文本和 OCR 文本块的语义 NER |
 | HaS Image | [xuanwulab/HaS_Image_0209_FP32](https://huggingface.co/xuanwulab/HaS_Image_0209_FP32) | 基于 YOLO11 的视觉隐私区域分割 |
 | GLM VLM | [zai-org/GLM-4.6V-Flash](https://huggingface.co/zai-org/GLM-4.6V-Flash)，本地 llama.cpp 部署可使用兼容 GGUF 量化版本，例如 [unsloth/GLM-4.6V-Flash-GGUF](https://huggingface.co/unsloth/GLM-4.6V-Flash-GGUF) | 通过 rubric/checklist 做视觉语义识别，当前默认聚焦签字 |
 | YOLO 运行时 | [Ultralytics YOLO](https://github.com/ultralytics/ultralytics) | HaS Image 实例分割运行框架 |
 | llama.cpp 运行时 | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | GGUF 权重的本地 OpenAI 兼容 VLM 服务 |
-| vLLM 运行时 | [vLLM](https://github.com/vllm-project/vllm) | HaS Text 和 PaddleOCR-VL 的本地 OpenAI 兼容服务 |
+| vLLM 运行时 | [vLLM](https://github.com/vllm-project/vllm) | 可选；与 HaS Text（8088）分离，勿把通用大模型当作 NER 后端 |
 
-感谢 PaddlePaddle、腾讯玄武实验室、Z.ai、Unsloth、Ultralytics、llama.cpp、vLLM 以及开源模型社区。正是这些模型和运行时项目，让本地优先的文档匿名化能够在消费级 GPU 上落地。
+感谢 OpenDataLab（MinerU）、PaddlePaddle、腾讯玄武实验室、Z.ai、Unsloth、Ultralytics、llama.cpp、vLLM 以及开源模型社区。正是这些模型和运行时项目，让本地优先的文档匿名化能够在消费级 GPU 上落地。
 
 ---
 
@@ -234,7 +308,7 @@ RedactionEverything 默认坚持本地或内网闭环推理，原因是匿名化
 
 图像管道中的 VLM 不是为了替代 HaS Image YOLO11，而是作为补充能力存在。当前 YOLO11 视觉检测覆盖人脸、指纹、证件、银行卡、印章、二维码、屏幕等常见可视区域，但没有单独训练签字目标检测模型；签字、手写签署痕迹这类目标更依赖视觉语义判断，所以默认使用 GLM-4.6V-Flash Q4 量化模型，通过 rubric/checklist 方式识别签名区域。
 
-这也带来明确的资源取舍：完整本地链路同时包含 PaddleOCR-VL、HaS Text、HaS Image YOLO 和 GLM VLM 四路模型。即使启动脚本已经做了预热、GPU 探测、上下文压缩和 VLM 串行调度，16GB 显存以下的设备仍可能因为显存压力、KV cache、图像页数或并发请求而出现速度下降。建议完整图像管道使用 16GB 及以上 NVIDIA GPU；如果文件场景不需要识别签名，可以在配置清单或单次处理页面关闭 VLM/签字识别项，只保留 OCR+HaS 与 HaS Image，以获得更稳定的速度和显存余量。
+这也带来明确的资源取舍：完整本地链路可同时包含 MinerU OCR、HaS Text、HaS Image YOLO 和 GLM VLM 四路模型（另加可选的大型 vLLM）。即使做了预热、GPU 探测和 VLM 串行调度，16GB 显存以下仍可能因 KV cache 或并发而变慢。建议完整图像管道使用 16GB 及以上 NVIDIA GPU；与同卡大模型共存时，将 vLLM 的 `--gpu-memory-utilization` 调到约 **0.70**，并为 HaS Text 使用独立 8088 端口。若不需要签字识别，可在清单中关闭 VLM，只保留 OCR+HaS 与 HaS Image。
 
 更大尺寸的本地 VLM 通常会带来更好的视觉语义理解，但部署门槛也更高。项目默认配置优先保证个人工作站、单卡笔记本和内网机器能够运行，而不是追求最大模型规模。
 
@@ -262,7 +336,7 @@ RedactionEverything 默认坚持本地或内网闭环推理，原因是匿名化
 | 前端 | React 19、TypeScript、Vite、Tailwind CSS、Radix UI、Zustand |
 | 后端 | FastAPI、Pydantic、SQLite、本地文件存储 |
 | 文本识别 | HaS Text，vLLM 或 llama.cpp OpenAI 兼容服务 |
-| OCR | PaddleOCR-VL / PP-Structure 相关能力 |
+| OCR | MinerU pipeline（默认）；可选 PaddleOCR-VL / PP-Structure |
 | 视觉检测 | HaS Image YOLO11、VLM checklist |
 | 导出 | 文本、图片、PDF、Word 处理与批量打包 |
 
@@ -274,7 +348,14 @@ RedactionEverything 默认坚持本地或内网闭环推理，原因是匿名化
 backend/
   app/          FastAPI 应用、任务队列、识别编排、脱敏和导出
   config/       内置识别清单和行业预设
-  scripts/      本地模型服务启动与预热脚本
+  scripts/
+    ocr_server.py                 MinerU OCR 微服务
+    run_ocr_server_conda.sh       启动 OCR（conda DataInfraNew）
+    run_has_text_llama_server.sh  HaS Text NER @8088
+    run_vlm_llama_server.sh       GLM VLM @8091
+    run_has_text_vllm.sh          可选 vLLM（勿替代 HaS NER）
+    restart_all_local.sh / stop_all_local.sh
+    download_* / hf_mirror_env.sh 模型下载与国内镜像
 
 frontend/
   src/          React 工作台、任务中心、处理结果、单次处理、批量处理和配置清单

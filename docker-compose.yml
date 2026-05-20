@@ -74,7 +74,7 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ── PaddleOCR-VL 微服务（端口 8082）— GPU ──────────────
+  # ── MinerU OCR 微服务（端口 8082）— GPU ────────────────
   ocr:
     build:
       context: ./backend

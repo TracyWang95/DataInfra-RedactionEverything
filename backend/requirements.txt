@@ -21,15 +21,8 @@ httpx>=0.28.0
 nvidia-ml-py>=12.535.133
 aiofiles>=24.1.0
 
-# Local app/model environment. PaddlePaddle GPU is installed explicitly by
-# `npm run setup` from the official CUDA wheel index, and is repeated here so
-# `pip install -r backend/requirements.txt` keeps the app venv complete.
-# vLLM intentionally lives in .venv-vllm because its Torch/CUDA stack conflicts
-# with Paddle/PaddleX when installed into the same environment.
---extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
-paddlepaddle-gpu==3.3.0
-paddleocr[doc-parser]==3.5.0
-llama-cpp-python[server]>=0.3.16
+# OCR / 视觉模型在独立微服务中运行（MinerU @8082、HaS Image @8081），主后端不直接依赖
+# paddleocr / ultralytics。本地启动 OCR：conda activate DataInfraNew && pip install -r requirements-ocr.lock
 
 # Utility libraries
 PyJWT>=2.12.0

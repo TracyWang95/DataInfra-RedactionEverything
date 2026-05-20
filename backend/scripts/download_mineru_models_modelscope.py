@@ -25,8 +25,15 @@ def _backend_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def main() -> int:
+def _apply_china_mirror_env() -> None:
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    os.environ.setdefault("HUGGINGFACE_HUB_ENDPOINT", os.environ["HF_ENDPOINT"])
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
     os.environ.setdefault("MODELSCOPE_DOMAIN", "www.modelscope.cn")
+
+
+def main() -> int:
+    _apply_china_mirror_env()
 
     backend = _backend_root()
     default_dest = backend / "models" / "mineru"

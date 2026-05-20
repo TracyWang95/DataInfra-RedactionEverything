@@ -23,9 +23,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKEND_ROOT = os.path.dirname(SCRIPT_DIR)
+ROOT = SCRIPT_DIR
+if BACKEND_ROOT not in sys.path:
+    sys.path.insert(0, BACKEND_ROOT)
 
 from app.core.has_image_categories import (  # noqa: E402
     class_index_to_slug,
@@ -103,7 +105,7 @@ def _default_weights() -> str:
     optional_pt = os.path.join(workspace, "has_models", "sensitive_seg_best.pt")
     if os.path.isfile(optional_pt):
         return optional_pt
-    return os.path.join(ROOT, "models", "has_image", "sensitive_seg_best.pt")
+    return os.path.join(BACKEND_ROOT, "models", "has_image", "sensitive_seg_best.pt")
 
 
 def init_model() -> None:
