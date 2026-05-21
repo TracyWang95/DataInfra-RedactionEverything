@@ -513,6 +513,115 @@ def _augment_amount_entities_from_ocr(
     return augmented
 
 
+def _blocks_same_visual_line(left: OCRTextBlock, right: OCRTextBlock) -> bool:
+    left_top = float(left.top)
+    right_top = float(right.top)
+    left_bottom = left_top + max(1.0, float(left.height))
+    right_bottom = right_top + max(1.0, float(right.height))
+    overlap = min(left_bottom, right_bottom) - max(left_top, right_top)
+    if overlap > 0 and overlap / max(1.0, min(float(left.height), float(right.height))) >= 0.35:
+        return True
+    left_center = left_top + float(left.height) / 2
+    right_center = right_top + float(right.height) / 2
+    return abs(left_center - right_center) <= max(float(left.height), float(right.height)) * 0.65
+
+
+def _should_join_visual_line_blocks(left: OCRTextBlock, right: OCRTextBlock) -> bool:
+    if not _blocks_same_visual_line(left, right):
+        return False
+    gap = int(right.left) - int(left.left + left.width)
+    if gap < 0:
+        return False
+    typical_height = max(1, int(max(left.height, right.height)))
+    return gap <= max(28, int(typical_height * 3.2))
+
+
+def _is_plain_cjk_or_alnum(text: str) -> bool:
+    compact = _compact_text(text)
+    return bool(compact) and all(ch.isalnum() or "\u4e00" <= ch <= "\u9fff" for ch in compact)
+
+
+def _cjk_count(text: str) -> int:
+    return sum(1 for ch in _compact_text(text) if "\u4e00" <= ch <= "\u9fff")
+
+
+def _should_bridge_short_cjk_prefix(left: OCRTextBlock, right: OCRTextBlock) -> bool:
+    left_text = _compact_text(left.text)
+    right_text = _compact_text(right.text)
+    if not (2 <= len(left_text) <= 6 and 4 <= len(right_text) <= 24):
+        return False
+    if len(left_text + right_text) > 30:
+        return False
+    if not (_is_plain_cjk_or_alnum(left_text) and _is_plain_cjk_or_alnum(right_text)):
+        return False
+    if any(ch.isdigit() for ch in left_text):
+        return False
+    return _cjk_count(left_text) >= 2 and _cjk_count(right_text) >= 3
+
+
+def _join_visual_line_text(left: str, right: str) -> str:
+    if _is_plain_cjk_or_alnum(left) and _is_plain_cjk_or_alnum(right):
+        return f"{_compact_text(left)}{_compact_text(right)}"
+    return f"{str(left).strip()} {str(right).strip()}".strip()
+
+
+def _union_ocr_blocks(blocks: list[OCRTextBlock], text: str) -> OCRTextBlock:
+    left = min(int(block.left) for block in blocks)
+    top = min(int(block.top) for block in blocks)
+    right = max(int(block.left + block.width) for block in blocks)
+    bottom = max(int(block.top + block.height) for block in blocks)
+    return OCRTextBlock(
+        text=text,
+        polygon=[
+            [left, top],
+            [right, top],
+            [right, bottom],
+            [left, bottom],
+        ],
+        confidence=min(float(block.confidence) for block in blocks) * 0.95,
+    )
+
+
+def reconstruct_visual_line_blocks(ocr_blocks: list[OCRTextBlock]) -> list[OCRTextBlock]:
+    """Create entity-agnostic virtual lines from adjacent OCR blocks."""
+    typical_height = _infer_typical_textline_height(ocr_blocks) or 0
+    text_blocks = [
+        block
+        for block in ocr_blocks
+        if _compact_text(block.text)
+        and not str(block.text or "").lstrip().startswith("<table")
+        and not (
+            typical_height
+            and block.height > typical_height * 2.4
+            and block.width < block.height * 1.8
+        )
+    ]
+    if len(text_blocks) < 2:
+        return []
+
+    virtual_blocks: list[OCRTextBlock] = []
+    seen: set[str] = set()
+    ordered_blocks = sorted(text_blocks, key=lambda item: (item.left, item.top))
+    for left in ordered_blocks:
+        right_candidates = [
+            right
+            for right in ordered_blocks
+            if right.left > left.left
+            and _should_join_visual_line_blocks(left, right)
+            and _should_bridge_short_cjk_prefix(left, right)
+        ]
+        if not right_candidates:
+            continue
+        right = min(right_candidates, key=lambda item: item.left - (left.left + left.width))
+        text = _join_visual_line_text(str(left.text or ""), str(right.text or ""))
+        compact = _compact_text(text)
+        if compact and compact not in seen:
+            seen.add(compact)
+            virtual_blocks.append(_union_ocr_blocks([left, right], text))
+
+    return virtual_blocks
+
+
 def _add_has_text_duration(
     stage_status: dict[str, Any] | None,
     key: str,
@@ -1463,6 +1572,7 @@ async def run_has_text_analysis(
         prepare_start = time.perf_counter()
         selected_type_ids = [_canonical_image_text_type(getattr(vt, "id", "")) for vt in (vision_types or [])]
         candidate_blocks = _filter_blocks_for_has_text(ocr_blocks, selected_type_ids)
+        _record_has_text_metric(stage_status, "has_text_reconstructed_lines", 0)
         has_payload = _build_has_text_payload(
             candidate_blocks,
             max_chars=settings.HAS_VISION_MAX_TEXT_CHARS,
@@ -1631,6 +1741,36 @@ async def run_has_text_analysis(
                 for type_id in DEFAULT_HAS_TEXT_TYPE_IDS
             }
 
+        bridge_ner_result: dict[str, list[str]] = {}
+        bridge_blocks = reconstruct_visual_line_blocks(candidate_blocks)
+        _record_has_text_metric(stage_status, "has_text_reconstructed_lines", len(bridge_blocks))
+        if bridge_blocks:
+            bridge_payload = _build_has_text_payload(
+                bridge_blocks,
+                max_chars=min(settings.HAS_VISION_MAX_TEXT_CHARS, 1200),
+                max_block_chars=settings.HAS_VISION_MAX_BLOCK_CHARS,
+            )
+            bridge_text = bridge_payload.content
+            if bridge_text.strip():
+                cached_bridge = _get_cached_has_text_ner(has_client, bridge_text, chinese_types)
+                if cached_bridge is not None:
+                    bridge_ner_result = cached_bridge
+                else:
+                    lock = _get_has_text_ner_lock()
+                    async with lock:
+                        cached_bridge = _get_cached_has_text_ner(has_client, bridge_text, chinese_types)
+                        if cached_bridge is not None:
+                            bridge_ner_result = cached_bridge
+                        else:
+                            model_start = time.perf_counter()
+                            result = await asyncio.to_thread(has_client.ner, bridge_text, chinese_types)
+                            _add_has_text_duration(
+                                stage_status,
+                                "has_text_model_ms",
+                                round((time.perf_counter() - model_start) * 1000),
+                            )
+                            bridge_ner_result = result if isinstance(result, dict) else {}
+
         entities = []
         min_len_by_type = {
             "PERSON": 2,
@@ -1638,7 +1778,17 @@ async def run_has_text_analysis(
             "ADDRESS": 4,
         }
 
-        for entity_type, entity_list in ner_result.items():
+        merged_ner_result = dict(ner_result)
+        for entity_type, entity_list in bridge_ner_result.items():
+            if not entity_list:
+                continue
+            merged_ner_result.setdefault(entity_type, [])
+            for text in entity_list:
+                clean_text = _compact_text(text)
+                if clean_text and clean_text not in merged_ner_result[entity_type]:
+                    merged_ner_result[entity_type].append(clean_text)
+
+        for entity_type, entity_list in merged_ner_result.items():
             if not entity_list:
                 continue
 
@@ -1650,6 +1800,8 @@ async def run_has_text_analysis(
 
             for entity_text in entity_list:
                 text = entity_text.strip() if entity_text else ""
+                if normalized_type in {"COMPANY_NAME", "BANK_NAME", "BANK_ACCOUNT", "AMOUNT"}:
+                    text = _compact_text(text)
                 if len(text) < min_len:
                     logger.debug("HaS skipped too short: '%s' (%s)", text, normalized_type)
                     continue
@@ -2085,6 +2237,9 @@ def match_entities_to_ocr(
                 expanded_blocks.append(block)
         else:
             expanded_blocks.append(block)
+    reconstructed_blocks = reconstruct_visual_line_blocks(expanded_blocks)
+    reconstructed_block_ids = {id(block) for block in reconstructed_blocks}
+    expanded_blocks.extend(reconstructed_blocks)
     typical_line_height = _infer_typical_textline_height(expanded_blocks)
     standalone_amount_signatures = {
         signature
@@ -2177,7 +2332,13 @@ def match_entities_to_ocr(
                         width=sub_width,
                         height=sub_height,
                         confidence=1.0,
-                        source="table_cell_match" if is_table_virtual else "text_match",
+                        source=(
+                            "table_cell_match"
+                            if is_table_virtual
+                            else "visual_line_match"
+                            if id(block) in reconstructed_block_ids
+                            else "text_match"
+                        ),
                     ))
                     logger.debug(
                         "MATCH '%s' in '%s...' @ (%d, %d, %d, %d)",

@@ -126,7 +126,16 @@ class HaSClient:
         if not choices or not isinstance(choices, list) or len(choices) == 0:
             logger.error("HaS 模型返回无 choices: %.200s", str(data))
             return ""
-        message = choices[0].get("message", {})
+        choice = choices[0]
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "length":
+            logger.warning(
+                "HaS model response was truncated by max_tokens=%s",
+                payload.get("max_tokens"),
+            )
+        elif finish_reason and finish_reason not in {"stop", "eos_token"}:
+            logger.info("HaS model finish_reason=%s", finish_reason)
+        message = choice.get("message", {})
         return message.get("content", "")
 
     @staticmethod
@@ -135,6 +144,53 @@ class HaSClient:
             key: list(value) if isinstance(value, list) else value
             for key, value in result.items()
         }
+
+    @staticmethod
+    def _try_parse_json_object(input_text: str) -> tuple[str, dict[str, Any] | None]:
+        raw = str(input_text or "").strip()
+        if not raw:
+            return "empty", None
+
+        fenced = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.IGNORECASE).strip()
+        fenced = re.sub(r"\s*```$", "", fenced).strip()
+        start = fenced.find("{")
+        end = fenced.rfind("}")
+
+        candidates: list[tuple[str, str]] = [("direct", raw)]
+        if fenced != raw:
+            candidates.append(("fenced", fenced))
+        if start >= 0 and end > start:
+            candidates.append(("substring", fenced[start:end + 1]))
+
+        seen: set[str] = set()
+        for mode, candidate in candidates:
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                parsed = json.loads(candidate)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+            if isinstance(parsed, dict):
+                return mode, parsed
+
+        try:
+            from json_repair import repair_json
+        except Exception:
+            return "failed", None
+
+        for mode, candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                repaired = repair_json(candidate, return_objects=False)
+                parsed = json.loads(repaired)
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                return f"json_repair:{mode}", parsed
+
+        return "failed", None
 
     @classmethod
     def clear_shared_ner_cache(cls) -> None:
@@ -300,7 +356,7 @@ Never output empty arrays. Do not return requested types with no matches. Do not
 If nothing matches, return {{}}.
 <text>{text}</text>"""
         configured_max_tokens = int(settings.HAS_NER_MAX_TOKENS)
-        desired_max_tokens = max(256, len(types) * 32 + len(text) // 4)
+        desired_max_tokens = max(512, len(types) * 96 + len(text) // 3)
         # Keep the completion budget inside the locally served HaS context
         # window. The default dev profile serves HaS Text with 8K context.
         prompt_token_estimate = max(1, len(prompt) // 2)
@@ -317,31 +373,35 @@ If nothing matches, return {{}}.
         try:
             started = time.perf_counter()
             response = self._call_model(messages, max_tokens=max_tokens)
-            # 解析JSON响应
-            result = json.loads(response)
-            if not isinstance(result, dict):
-                logger.warning("HaS NER 返回非字典类型: %s", type(result).__name__)
+            parse_mode, result = self._try_parse_json_object(response)
+            if result is None:
+                logger.warning("HaS NER response could not be parsed as JSON: %.200s", response)
+                if type_guidance is None and len(types) > 24:
+                    from app.core.config import settings
+                    target = max(320, int(settings.HAS_NER_TYPE_BATCH_TARGET_TOKENS))
+                    batch_size = max(8, min(24, target // 40))
+                    merged: dict[str, list[str]] = {}
+                    for start in range(0, len(types), batch_size):
+                        part = self.ner(text, types[start:start + batch_size], None)
+                        for key, values in (part or {}).items():
+                            if not values:
+                                continue
+                            bucket = merged.setdefault(key, [])
+                            for value in values:
+                                if value not in bucket:
+                                    bucket.append(value)
+                    if merged:
+                        self._set_cached_ner(cache_key, merged)
+                        return merged
                 return {}
             logger.info(
-                "HaS NER parsed %d type buckets in %dms",
+                "HaS NER parsed %d type buckets via %s in %dms",
                 len(result),
+                parse_mode,
                 round((time.perf_counter() - started) * 1000),
             )
             self._set_cached_ner(cache_key, result)
             return result
-        except json.JSONDecodeError:
-            # 尝试从响应中提取JSON
-            match = re.search(r'\{.*\}', response, re.DOTALL)
-            if match:
-                try:
-                    parsed = json.loads(match.group())
-                    if isinstance(parsed, dict):
-                        self._set_cached_ner(cache_key, parsed)
-                        return parsed
-                except json.JSONDecodeError:
-                    pass
-            logger.warning("HaS NER 响应无法解析为 JSON: %.200s", response)
-            return {}
         except Exception as e:
             logger.error("HaS NER 失败: %s", e)
             return {}
