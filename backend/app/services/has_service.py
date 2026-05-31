@@ -13,13 +13,13 @@ HaS (Hide And Seek) 本地匿名化模型服务
 import asyncio
 import logging
 import re
-
-logger = logging.getLogger(__name__)
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
+from app.core.gpu_inference_gate import shared_gpu_inference_slot
 from app.models.schemas import Entity
 from app.models.type_mapping import canonical_type_id
-from app.core.gpu_inference_gate import shared_gpu_inference_slot
 from app.services.has_client import HaSClient
 
 # 类型别名，兼容 EntityTypeConfig 和 CustomEntityType
