@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type SetStateAction } from 'react';
 import { useT } from '@/i18n';
 import {
   Dialog,
@@ -110,12 +110,34 @@ export function EntityTypeDialog({
 }: EntityTypeDialogProps) {
   const t = useT();
   const effectiveTaxonomy = useMemo(() => getEffectiveTaxonomy(taxonomy), [taxonomy]);
-  const [form, setForm] = useState<EntityTypeForm>(() => buildDefaultForm(initial, effectiveTaxonomy));
-
-  useEffect(() => {
-    if (!open) return;
-    setForm(buildDefaultForm(initial, effectiveTaxonomy));
-  }, [effectiveTaxonomy, initial, open]);
+  const defaultForm = useMemo(
+    () => buildDefaultForm(initial, effectiveTaxonomy),
+    [effectiveTaxonomy, initial],
+  );
+  const formKey = useMemo(
+    () =>
+      [
+        open ? 'open' : 'closed',
+        mode,
+        initial?.name ?? '',
+        initial?.data_domain ?? '',
+        initial?.generic_target ?? '',
+        effectiveTaxonomy
+          .map(
+            (domain) =>
+              `${domain.value}:${domain.default_target}:${domain.targets
+                .map((target) => target.value)
+                .join(',')}`,
+          )
+          .join('|'),
+      ].join('::'),
+    [effectiveTaxonomy, initial, mode, open],
+  );
+  const [formState, setFormState] = useState<{ key: string; value: EntityTypeForm }>(() => ({
+    key: formKey,
+    value: defaultForm,
+  }));
+  const rawForm = formState.key === formKey ? formState.value : defaultForm;
 
   const dataDomainOptions = useMemo(
     () => effectiveTaxonomy.map(({ value, label }) => ({ value, label })),
@@ -128,18 +150,28 @@ export function EntityTypeDialog({
   );
 
   const genericTargetOptions = useMemo(() => {
-    return domainByValue.get(form.data_domain)?.targets ?? effectiveTaxonomy[0].targets;
-  }, [domainByValue, effectiveTaxonomy, form.data_domain]);
+    return domainByValue.get(rawForm.data_domain)?.targets ?? effectiveTaxonomy[0].targets;
+  }, [domainByValue, effectiveTaxonomy, rawForm.data_domain]);
 
-  useEffect(() => {
-    if (!open || genericTargetOptions.some((option) => option.value === form.generic_target)) {
-      return;
+  const form = useMemo(() => {
+    if (genericTargetOptions.some((option) => option.value === rawForm.generic_target)) {
+      return rawForm;
     }
-    const nextGenericTarget = domainByValue.get(form.data_domain)?.default_target ?? genericTargetOptions[0]?.value;
-    if (nextGenericTarget) {
-      setForm((current) => ({ ...current, generic_target: nextGenericTarget }));
-    }
-  }, [domainByValue, form.data_domain, form.generic_target, genericTargetOptions, open]);
+    const nextGenericTarget =
+      domainByValue.get(rawForm.data_domain)?.default_target ?? genericTargetOptions[0]?.value;
+    return nextGenericTarget ? { ...rawForm, generic_target: nextGenericTarget } : rawForm;
+  }, [domainByValue, genericTargetOptions, rawForm]);
+
+  const setForm = useCallback(
+    (next: SetStateAction<EntityTypeForm>) => {
+      setFormState((current) => {
+        const base = current.key === formKey ? current.value : defaultForm;
+        const value = typeof next === 'function' ? next(base) : next;
+        return { key: formKey, value };
+      });
+    },
+    [defaultForm, formKey],
+  );
 
   const canSubmit = Boolean(
     form.name.trim() && form.data_domain.trim() && form.generic_target.trim(),

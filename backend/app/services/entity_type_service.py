@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.config import settings
 from app.core.persistence import load_json, save_json
 from app.core.safe_regex import RegexTimeoutError, safe_compile, safe_finditer
+from app.core.tenant_config import tenant_store_path
 from app.models.type_mapping import TYPE_ID_ALIASES, canonical_type_id
 
 # ── 数据模型 ──────────────────────────────────────────────
@@ -325,11 +326,22 @@ def normalize_custom_entity_type(config: EntityTypeConfig) -> EntityTypeConfig:
 
 # ── 持久化 ────────────────────────────────────────────────
 
-def _load_entity_types() -> dict[str, EntityTypeConfig]:
+def _entity_types_store_path(owner_id: str | None = None) -> str:
+    return tenant_store_path(owner_id, settings.ENTITY_TYPES_STORE_PATH, "entity_types.json")
+
+
+def _default_entity_types() -> dict[str, EntityTypeConfig]:
+    return {
+        k: v.model_copy() if hasattr(v, "model_copy") else v
+        for k, v in PRESET_ENTITY_TYPES.items()
+    }
+
+
+def _load_entity_types(owner_id: str | None = None) -> dict[str, EntityTypeConfig]:
     """Load entity types from disk, merging with presets."""
-    raw = load_json(settings.ENTITY_TYPES_STORE_PATH, default=None)
+    raw = load_json(_entity_types_store_path(owner_id), default=None)
     if raw is None or not isinstance(raw, dict):
-        return {k: v.model_copy() if hasattr(v, "model_copy") else v for k, v in PRESET_ENTITY_TYPES.items()}
+        return _default_entity_types()
     merged: dict[str, EntityTypeConfig] = {}
     for key, preset in PRESET_ENTITY_TYPES.items():
         if key in raw:
@@ -355,8 +367,11 @@ def _load_entity_types() -> dict[str, EntityTypeConfig]:
     return merged
 
 
-def _persist_entity_types() -> None:
-    save_json(settings.ENTITY_TYPES_STORE_PATH, entity_types_db)
+def _persist_entity_types(
+    db: dict[str, EntityTypeConfig] | None = None,
+    owner_id: str | None = None,
+) -> None:
+    save_json(_entity_types_store_path(owner_id), db if db is not None else entity_types_db)
 
 
 # 内存存储（启动时从磁盘恢复）
@@ -366,32 +381,43 @@ _persist_entity_types()
 
 # ── 公共查询 ──────────────────────────────────────────────
 
-def get_enabled_types() -> list[EntityTypeConfig]:
+def _db_for_owner(owner_id: str | None = None) -> dict[str, EntityTypeConfig]:
+    return entity_types_db if owner_id is None else _load_entity_types(owner_id)
+
+
+def get_enabled_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
     """获取所有启用的实体类型"""
-    return [t for t in entity_types_db.values() if t.enabled]
+    db = _db_for_owner(owner_id)
+    return [t for t in db.values() if t.enabled]
 
 
-def get_default_generic_types() -> list[EntityTypeConfig]:
+def get_default_generic_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
     """获取通用默认配置中的启用实体类型。"""
     return [
         t
-        for t in entity_types_db.values()
+        for t in _db_for_owner(owner_id).values()
         if t.enabled and t.default_enabled and is_default_generic_entity_type_id(t.id)
     ]
 
 
-def get_regex_types() -> list[EntityTypeConfig]:
+def get_regex_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
     """获取使用正则识别的类型"""
-    return [t for t in entity_types_db.values() if t.enabled and t.regex_pattern]
+    db = _db_for_owner(owner_id)
+    return [t for t in db.values() if t.enabled and t.regex_pattern]
 
 
-def get_llm_types() -> list[EntityTypeConfig]:
+def get_llm_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
     """获取使用LLM识别的类型"""
-    return [t for t in entity_types_db.values() if t.enabled and t.use_llm]
+    db = _db_for_owner(owner_id)
+    return [t for t in db.values() if t.enabled and t.use_llm]
 
 
-def resolve_requested_entity_types(entity_type_ids: list[str]) -> list[EntityTypeConfig]:
+def resolve_requested_entity_types(
+    entity_type_ids: list[str],
+    owner_id: str | None = None,
+) -> list[EntityTypeConfig]:
     """Resolve selected IDs exactly; custom items remain first-class NER tags."""
+    db = _db_for_owner(owner_id)
     resolved: list[EntityTypeConfig] = []
     seen: set[str] = set()
 
@@ -407,9 +433,9 @@ def resolve_requested_entity_types(entity_type_ids: list[str]) -> list[EntityTyp
         if not direct_id:
             continue
 
-        type_config = entity_types_db.get(direct_id)
+        type_config = db.get(direct_id)
         if type_config is None:
-            type_config = entity_types_db.get(canonical_type_id(direct_id))
+            type_config = db.get(canonical_type_id(direct_id))
         if type_config is None:
             continue
 
@@ -419,8 +445,13 @@ def resolve_requested_entity_types(entity_type_ids: list[str]) -> list[EntityTyp
 
 # ── 业务方法 ──────────────────────────────────────────────
 
-def list_types(enabled_only: bool = False, page: int = 1, page_size: int = 0) -> EntityTypesResponse:
-    types = list(entity_types_db.values())
+def list_types(
+    enabled_only: bool = False,
+    page: int = 1,
+    page_size: int = 0,
+    owner_id: str | None = None,
+) -> EntityTypesResponse:
+    types = list(_db_for_owner(owner_id).values())
     if enabled_only:
         types = [t for t in types if t.enabled]
     types.sort(key=lambda x: x.order)
@@ -432,11 +463,16 @@ def list_types(enabled_only: bool = False, page: int = 1, page_size: int = 0) ->
     return EntityTypesResponse(custom_types=page_items, total=total, page=page, page_size=page_size)
 
 
-def get_type(type_id: str) -> EntityTypeConfig | None:
-    return entity_types_db.get(type_id)
+def get_type(type_id: str, owner_id: str | None = None) -> EntityTypeConfig | None:
+    return _db_for_owner(owner_id).get(type_id)
 
 
-def create_type(request: CreateEntityTypeRequest) -> EntityTypeConfig:
+def create_type(
+    request: CreateEntityTypeRequest,
+    owner_id: str | None = None,
+) -> EntityTypeConfig:
+    global entity_types_db
+    db = _db_for_owner(owner_id)
     type_id = f"custom_{uuid.uuid4().hex[:8]}"
     coref_enabled = bool(request.coref_enabled)
     data_domain, generic_target = normalize_text_taxonomy(
@@ -464,13 +500,21 @@ def create_type(request: CreateEntityTypeRequest) -> EntityTypeConfig:
         enabled=True,
         order=200,
     )
-    entity_types_db[type_id] = new_type
-    _persist_entity_types()
+    db[type_id] = new_type
+    if owner_id is None:
+        entity_types_db = db
+    _persist_entity_types(db, owner_id)
     return new_type
 
 
-def update_type(type_id: str, request: UpdateEntityTypeRequest) -> EntityTypeConfig | None:
-    if type_id not in entity_types_db:
+def update_type(
+    type_id: str,
+    request: UpdateEntityTypeRequest,
+    owner_id: str | None = None,
+) -> EntityTypeConfig | None:
+    global entity_types_db
+    db = _db_for_owner(owner_id)
+    if type_id not in db:
         return None
     if type_id in PRESET_ENTITY_TYPES:
         raise ValueError("系统默认配置项由预设清单维护，不能在界面中修改")
@@ -478,7 +522,7 @@ def update_type(type_id: str, request: UpdateEntityTypeRequest) -> EntityTypeCon
         raise ValueError("L1 数据域必填")
     if request.generic_target is not None and not str(request.generic_target or "").strip():
         raise ValueError("L2 通用识别项必填")
-    existing = entity_types_db[type_id]
+    existing = db[type_id]
     update_data = request.model_dump(exclude_unset=True)
     next_data_domain = update_data.get("data_domain", existing.data_domain)
     next_generic_target = update_data.get("generic_target", existing.generic_target)
@@ -504,39 +548,51 @@ def update_type(type_id: str, request: UpdateEntityTypeRequest) -> EntityTypeCon
         update_data["tag_template"] = build_tag_template(next_name)
     for key, value in update_data.items():
         setattr(existing, key, value)
-    entity_types_db[type_id] = existing
-    _persist_entity_types()
+    db[type_id] = existing
+    if owner_id is None:
+        entity_types_db = db
+    _persist_entity_types(db, owner_id)
     return existing
 
 
-def delete_type(type_id: str) -> tuple[bool, str]:
+def delete_type(type_id: str, owner_id: str | None = None) -> tuple[bool, str]:
     """
     Returns (success, error_message).
     success=True  -> deleted OK
     success=False -> error_message explains why
     """
-    if type_id not in entity_types_db:
+    global entity_types_db
+    db = _db_for_owner(owner_id)
+    if type_id not in db:
         return False, "实体类型不存在"
     if type_id in PRESET_ENTITY_TYPES:
         return False, "预置类型不能删除，只能禁用"
-    del entity_types_db[type_id]
-    _persist_entity_types()
+    del db[type_id]
+    if owner_id is None:
+        entity_types_db = db
+    _persist_entity_types(db, owner_id)
     return True, ""
 
 
-def toggle_type(type_id: str) -> bool | None:
+def toggle_type(type_id: str, owner_id: str | None = None) -> bool | None:
     """Returns new enabled state, or None if not found."""
-    if type_id not in entity_types_db:
-        return None
-    entity_types_db[type_id].enabled = not entity_types_db[type_id].enabled
-    _persist_entity_types()
-    return entity_types_db[type_id].enabled
-
-
-def reset_types() -> None:
     global entity_types_db
-    entity_types_db = PRESET_ENTITY_TYPES.copy()
-    _persist_entity_types()
+    db = _db_for_owner(owner_id)
+    if type_id not in db:
+        return None
+    db[type_id].enabled = not db[type_id].enabled
+    if owner_id is None:
+        entity_types_db = db
+    _persist_entity_types(db, owner_id)
+    return db[type_id].enabled
+
+
+def reset_types(owner_id: str | None = None) -> None:
+    global entity_types_db
+    db = _default_entity_types()
+    if owner_id is None:
+        entity_types_db = db
+    _persist_entity_types(db, owner_id)
 
 
 def test_regex(pattern: str, test_text: str) -> RegexTestResult:
@@ -567,6 +623,6 @@ def test_regex(pattern: str, test_text: str) -> RegexTestResult:
 # so other layers don't couple to the module-level mutable dict.
 # ---------------------------------------------------------------------------
 
-def get_entity_types_db() -> dict[str, EntityTypeConfig]:
+def get_entity_types_db(owner_id: str | None = None) -> dict[str, EntityTypeConfig]:
     """Return the in-memory entity-types dictionary."""
-    return entity_types_db
+    return _db_for_owner(owner_id)

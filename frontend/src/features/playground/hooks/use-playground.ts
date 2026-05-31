@@ -87,7 +87,7 @@ export function usePlayground() {
         blocked.map((key) => serviceLabel(health, key)).join(', '),
       );
     },
-    [health, healthChecking],
+    [health, healthChecking, latestSelectedTypesRef],
   );
 
   const fileCtx = usePlaygroundFile({

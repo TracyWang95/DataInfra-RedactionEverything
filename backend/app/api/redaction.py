@@ -151,6 +151,7 @@ async def detect_sensitive_regions(
             has_request=request is not None,
             force=force,
             include_result_image=include_result_image,
+            owner_id=owner_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))

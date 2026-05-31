@@ -9,6 +9,7 @@
 [![License](https://img.shields.io/badge/license-Personal%20Use-blue.svg)](./LICENSE)
 [![CI](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml/badge.svg)](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#贡献)
+[![GitHub Stars](https://img.shields.io/github/stars/TracyWang95/DataInfra-RedactionEverything?style=flat&logo=github&label=Stars)](https://github.com/TracyWang95/DataInfra-RedactionEverything/stargazers)
 
 **语言：** [English](./README.md) | 中文
 
@@ -20,11 +21,14 @@
   <a href="#项目简介">项目简介</a> &middot;
   <a href="#项目定位">项目定位</a> &middot;
   <a href="#核心能力">核心能力</a> &middot;
+  <a href="#近期已验证更新">近期更新</a> &middot;
   <a href="#快速开始">快速开始</a> &middot;
   <a href="#系统架构">系统架构</a> &middot;
   <a href="#模型服务">模型服务</a> &middot;
   <a href="#模型与致谢">模型与致谢</a> &middot;
   <a href="#技术栈">技术栈</a> &middot;
+  <a href="#多租户部署">多租户</a> &middot;
+  <a href="#用户隔离">用户隔离</a> &middot;
   <a href="#安全与部署">安全与部署</a> &middot;
   <a href="#许可证">许可证</a>
 </p>
@@ -75,6 +79,35 @@ RedactionEverything 的定位不是一个只做文本 PII 的轻量过滤器，�
 | VLM checklist | 作为图像管道补充能力，默认聚焦签字等需要视觉语义判断的区域 |
 | 配置清单 | 内置通用、法律、金融、医疗清单，也支持自定义文本、图像和兜底项 |
 | 本地部署 | 前端、后端、模型服务都可以在本机或内网 GPU 环境中运行 |
+
+---
+
+## 近期已验证更新
+
+当前分支完成了一轮面向演示、客户部署和真实文档召回的稳定性优化。下面这些改动是通用工程方案，不是针对某张图片、某个公司名或某个字段写死规则：
+
+| 方向 | 更新 |
+|---|---|
+| 用户与租户隔离 | 识别项、配置清单、视觉 pipeline、文件、任务、复核草稿、历史结果、预览、导出和清理操作都按登录用户隔离；`super_admin` 保留系统配置和用户管理权限。 |
+| 单 GPU 调度 | OCR、HaS Image、HaS NER、VLM 等显存密集推理通过统一队列保护，避免 16 GB 单卡被并发请求打满；VLM 作为靠后的视觉语义补充阶段运行。 |
+| OCR 召回 | OCR 文本框坐标匹配、模糊匹配和视觉行级匹配增强，可召回间距较大或被切碎的公司/机构名称，不依赖写死公司名。 |
+| 表格语义召回 | 利用表头、单元格和数字列语义召回单价、合计、百分比、账户、合同金额等敏感值。 |
+| 印章与签字兜底 | HaS Image 仍是主视觉检测；本地红章/暗章兜底和 VLM/笔迹签字检测补充边缘章、骑缝章和手写签字。 |
+| NER 稳定性 | HaS NER 增加容错 JSON 解析、长实体分批和更高生成 token 限制，降低响应截断和解析失败概率。 |
+| UI/UX 稳定性 | 新用户首次登录进入开始页；设置页暴露管理员、运行配置和监控入口；批量复核/导出状态更清晰；窄屏无横向溢出；图片复核不再过早释放预览 `blob:` URL。 |
+| 真实数据验证 | 使用 `D:\ceshi` 真实文件跑完整 UI 批量流程：7/7 上传、识别、复核、匿名化和导出；共 271 个识别项；0 个失败文件；质量报告为 `ready_for_delivery`。 |
+
+本轮验证命令：
+
+```bash
+PYTHONPATH=backend pytest backend/tests -q
+
+cd frontend
+npm run lint
+npm run build
+```
+
+真实界面回归使用 Playwright 覆盖了批量上传、识别、复核、匿名化、ZIP 导出、质量报告导出、浏览器 console 错误和 390 px 窄屏布局。
 
 ---
 
@@ -282,10 +315,65 @@ frontend/
 
 ---
 
+## 多租户部署
+
+客户级租户隔离建议使用实例级隔离：每个租户一个 Docker Compose project，使用独立的 `.env`、域名、JWT 密钥、网络和 Docker volume。不要在不同租户之间共享 `DATA_DIR`、`UPLOAD_DIR`、`OUTPUT_DIR`、SQLite 存储、导出结果或 `JWT_SECRET_KEY`。
+
+PowerShell 示例：
+
+```powershell
+$env:BACKEND_ENV_FILE=".env.tenant-a"
+docker compose --env-file .env.tenant-a -p redaction-tenant-a --profile gpu up -d
+Remove-Item Env:\BACKEND_ENV_FILE
+
+$env:BACKEND_ENV_FILE=".env.tenant-b"
+docker compose --env-file .env.tenant-b -p redaction-tenant-b --profile gpu up -d
+Remove-Item Env:\BACKEND_ENV_FILE
+```
+
+生产环境建议基于 `.env.production.example` 为每个租户准备独立配置。每个租户应设置唯一的 `CORS_ORIGINS` 域名和 `JWT_SECRET_KEY`，敏感客户数据场景保持 `AUTH_ENABLED=true` 与 `FILE_ENCRYPTION_ENABLED=true`。`BACKEND_ENV_FILE` 必须指向同一个租户配置文件，避免后端容器误读共享本地 `.env`。
+
+后端任务队列使用 `JOB_CONCURRENCY` 控制并发识别/匿名化任务项。如果一张共享 GPU 最多允许 3 个并发任务项，应保证所有租户实例的 `JOB_CONCURRENCY` 之和不超过 3：
+
+| 部署形态 | 推荐设置 |
+|---|---|
+| 单租户独占 GPU | `JOB_CONCURRENCY=3` |
+| 两个租户共享一张 GPU | 按 SLA 拆成 `2 + 1` |
+| 三个租户共享一张 GPU | 每个租户 `JOB_CONCURRENCY=1` |
+
+共享 GPU 上要获得更稳定延迟，建议从 `BATCH_RECOGNITION_PAGE_CONCURRENCY=1`、`HAS_NER_MAX_PARALLEL_REQUESTS=1`、`VISION_DUAL_PIPELINE_PARALLEL=false` 开始，再根据实测延迟和显存余量逐步上调。
+
+---
+
+## 用户隔离
+
+同一公司内部署时，建议使用一个应用实例并创建多个本地用户。用户共享同一个访问地址和任务队列，但每个登录用户只能看到自己的文件、任务、复核草稿、导出、预览和清理范围。
+
+首次初始化登录页面会创建 `super_admin`。后续普通用户只能由超级管理员创建：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/users \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"username":"alice","password":"StrongPassw0rd!"}'
+```
+
+`JOB_CONCURRENCY=3` 表示当前应用实例最多同时处理 3 个后台任务项；额外用户请求会排队，不需要更换端口或重新部署。超级管理员可以在设置页的运行配置里调整并发，也可以调用管理员 API：
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/auth/concurrency \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-token>" \
+  -d '{"job_concurrency":3}'
+```
+
+---
+
 ## 安全与部署
 
 - 仓库只包含应用代码和默认配置，不包含本地 `.env`、模型权重、样本数据、上传文件、运行数据库、日志或导出结果。
 - 项目默认面向本地或内网部署；如需公网访问，请配置认证、访问控制、反向代理、TLS、日志留存和密钥轮换策略。
+- 认证支持多个本地用户。上传文件、批量任务、复核草稿、下载、预览、导出报告和清理操作都限定在当前登录用户名范围内。首次初始化用户是 `super_admin`；只有超级管理员可以创建用户或调整运行并发。
 - 默认识别由模型能力和配置清单驱动；正则仅作为用户自定义兜底能力保留。
 - 建议将模型、样本、任务数据和导出目录放在私有运行环境中管理，并用访问权限和备份策略单独保护。
 

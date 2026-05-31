@@ -115,7 +115,11 @@ async def parse_file(file_id: str) -> dict[str, Any]:
 # Hybrid NER
 # ---------------------------------------------------------------------------
 
-async def run_hybrid_ner(file_id: str, entity_type_ids: list[str] | None = None) -> dict[str, Any]:
+async def run_hybrid_ner(
+    file_id: str,
+    entity_type_ids: list[str] | None = None,
+    owner_id: str | None = None,
+) -> dict[str, Any]:
     """
     Run hybrid NER on parsed file. Returns NERResult-compatible values.
     Raises ValueError if file not found or not yet parsed.
@@ -129,6 +133,7 @@ async def run_hybrid_ner(file_id: str, entity_type_ids: list[str] | None = None)
         if not file_info:
             raise ValueError("文件不存在")
         snapshot = dict(file_info)
+    owner_id = owner_id or str(snapshot.get("owner_id") or "local_user")
 
     if "content" not in snapshot:
         raise ValueError("请先解析文件内容")
@@ -141,9 +146,9 @@ async def run_hybrid_ner(file_id: str, entity_type_ids: list[str] | None = None)
     from app.services.entity_type_service import get_default_generic_types, resolve_requested_entity_types
 
     if entity_type_ids is None:
-        entity_types = get_default_generic_types()
+        entity_types = get_default_generic_types(owner_id=owner_id)
     else:
-        entity_types = resolve_requested_entity_types(entity_type_ids)
+        entity_types = resolve_requested_entity_types(entity_type_ids, owner_id=owner_id)
 
     warnings: list[str] = []
     if len(content) > HybridNERService.MAX_TEXT_LENGTH:
@@ -199,7 +204,11 @@ async def run_hybrid_ner(file_id: str, entity_type_ids: list[str] | None = None)
     }
 
 
-async def run_default_ner(file_id: str, entity_type_ids: list[str] | None = None) -> dict[str, Any]:
+async def run_default_ner(
+    file_id: str,
+    entity_type_ids: list[str] | None = None,
+    owner_id: str | None = None,
+) -> dict[str, Any]:
     """Run NER with default or caller-specified entity types."""
     from app.services.hybrid_ner_service import perform_hybrid_ner
 
@@ -210,6 +219,7 @@ async def run_default_ner(file_id: str, entity_type_ids: list[str] | None = None
         if not file_info:
             raise ValueError("文件不存在")
         snapshot = dict(file_info)
+    owner_id = owner_id or str(snapshot.get("owner_id") or "local_user")
 
     if "content" not in snapshot:
         raise ValueError("请先解析文件内容")
@@ -220,9 +230,9 @@ async def run_default_ner(file_id: str, entity_type_ids: list[str] | None = None
     from app.services.entity_type_service import get_default_generic_types, resolve_requested_entity_types
 
     if entity_type_ids is None:
-        entity_types = get_default_generic_types()
+        entity_types = get_default_generic_types(owner_id=owner_id)
     else:
-        entity_types = resolve_requested_entity_types(entity_type_ids)
+        entity_types = resolve_requested_entity_types(entity_type_ids, owner_id=owner_id)
     try:
         entities = await perform_hybrid_ner(snapshot["content"], entity_types)
     except Exception as e:

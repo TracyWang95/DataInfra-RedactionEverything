@@ -15,6 +15,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from app.core.config import settings
+from app.core.gpu_inference_gate import shared_gpu_inference_slot
 from app.models.schemas import BoundingBox
 from app.services import model_config_service
 
@@ -113,6 +114,40 @@ def _is_signature_only(type_configs: list[Any]) -> bool:
     return _selected_type_ids(type_configs) == {"signature"}
 
 
+def _configured_checklist_lines(type_configs: list[Any]) -> list[str]:
+    lines: list[str] = ["Configured visual checklist from UI:"]
+    for item in type_configs:
+        type_id = str(getattr(item, "id", "")).strip()
+        name = str(getattr(item, "name", "") or type_id).strip()
+        lines.append(f"- type_id={type_id}; name={name}")
+        for index, row in enumerate(_type_checklist(item), start=1):
+            lines.append(f"  {index}. Check: {row['rule']}")
+            if row["positive_prompt"]:
+                lines.append(f"     Positive: {row['positive_prompt']}")
+            if row["negative_prompt"]:
+                lines.append(f"     Negative: {row['negative_prompt']}")
+        negative_enabled = bool(getattr(item, "negative_prompt_enabled", False))
+        negative = str(getattr(item, "negative_prompt", "") or "").strip()
+        if negative_enabled and negative:
+            lines.append(f"  Exclude: {negative}")
+    return lines
+
+
+def _output_contract_lines(type_configs: list[Any], coord_mode: int) -> list[str]:
+    allowed_ids = ", ".join(str(getattr(item, "id", "")).strip() for item in type_configs)
+    return [
+        'Schema: {"objects":[{"type_id":"<allowed type_id>","label":"<label>","box_2d":[xmin,ymin,xmax,ymax],"confidence":0.8,"rule_matched":"<type_id>#<rule_index>","text":""}]}',
+        f"Allowed type_id: {allowed_ids}",
+        f"Coordinates are integers in 0..{coord_mode}, origin top-left.",
+        "Use one tight box per visible instance, around the ink/stroke/object pixels only.",
+        "Do not merge separate instances into one box. Do not box nearby printed text, guide lines, table borders, seals, fingerprints, or blank background unless the configured type explicitly asks for them.",
+        "If the visual evidence is ambiguous or only a form field label is visible, return no object for that area.",
+        "Max 40 objects.",
+        'If none, return {"objects":[]}.',
+        "Return JSON only, no prose.",
+    ]
+
+
 def _few_shot_messages(type_configs: list[Any]) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
     remaining = 5
@@ -176,55 +211,28 @@ class VlmVisionService:
     def build_prompt(self, type_configs: list[Any]) -> str:
         coord_mode = int(settings.VLM_COORD_MODE)
         if _is_signature_only(type_configs):
-            return "\n".join(
-                [
-                    "Task: detect handwritten signer names/signatures only.",
-                    "Important visual distinction:",
-                    "- Printed text has regular font strokes and a straight baseline, such as 公司名称、法定代表人/授权代表（签字）：、日期.",
-                    "- A signature is irregular freehand ink, often larger, cursive, slanted, and may overlap the edge of a red seal.",
-                    "- In signature blocks, the target is the freehand name AFTER the printed label, not the printed label itself.",
-                    "- Box only the handwritten ink strokes. Do not include the printed label before it.",
-                    "- Do not detect circular or semicircular seals/stamps, including black stamp fragments.",
-                    "Ignore red seals, black seals, printed labels, company names, dates, QR codes, table lines, blank fields, and explanatory text.",
-                    "Find every visible freehand signer name/signature. Return JSON only, no prose.",
-                    '{"objects":[{"type_id":"signature","label":"signature","box_2d":[xmin,ymin,xmax,ymax],"confidence":0.8,"text":""}]}',
-                    f"Coordinates are 0..{coord_mode} relative to this image.",
-                ]
-            )
+            lines = [
+                "Task: detect handwritten signer names/signatures only.",
+                "Important visual distinction:",
+                "- Printed text has regular font strokes and a straight baseline, such as 公司名称、法定代表人/授权代表（签字）：、日期.",
+                "- A signature is irregular freehand ink, often larger, cursive, slanted, and may overlap the edge of a red seal.",
+                "- In signature blocks, the target is the freehand name AFTER the printed label, not the printed label itself.",
+                "- Box only the handwritten ink strokes. Do not include the printed label before it.",
+                "- Do not detect circular or semicircular seals/stamps, including black stamp fragments.",
+                "- If the page has multiple party signature blocks, such as left/right purchaser/supplier or甲方/乙方 blocks, inspect each block independently and return every handwritten signature.",
+                "- Signatures may overlap red seals; do not reject black freehand strokes only because a red seal is nearby.",
+                "Ignore red seals, black seals, printed labels, company names, dates, QR codes, table lines, blank fields, and explanatory text.",
+            ]
+            lines.extend(_configured_checklist_lines(type_configs))
+            lines.extend(_output_contract_lines(type_configs, coord_mode))
+            return "\n".join(lines)
         lines: list[str] = [
             "只检测清单中明确要求的视觉目标。只返回紧凑 JSON，不要解释，不要 markdown。",
             "必须同时满足正向规则，并避开负向规则；不确定时不要输出候选框。",
             "不要根据文字标签、空白栏位或上下文推测目标存在，必须能在图像中看到实际目标笔迹。",
-            "Checklist:",
         ]
-        for item in type_configs:
-            type_id = str(getattr(item, "id", "")).strip()
-            name = str(getattr(item, "name", "") or type_id).strip()
-            lines.append(f"- type_id={type_id}; name={name}")
-            for index, row in enumerate(_type_checklist(item), start=1):
-                lines.append(f"  {index}. Check: {row['rule']}")
-                if row["positive_prompt"]:
-                    lines.append(f"     Positive: {row['positive_prompt']}")
-                if row["negative_prompt"]:
-                    lines.append(f"     Negative: {row['negative_prompt']}")
-            negative_enabled = bool(getattr(item, "negative_prompt_enabled", False))
-            negative = str(getattr(item, "negative_prompt", "") or "").strip()
-            if negative_enabled and negative:
-                lines.append(f"  Exclude: {negative}")
-
-        allowed_ids = ", ".join(str(getattr(item, "id", "")) for item in type_configs)
-        lines.extend(
-            [
-                'Schema: {"objects":[{"type_id":"signature","label":"signature","box_2d":[xmin,ymin,xmax,ymax],"confidence":0.8,"rule_matched":"signature#1","text":""}]}',
-                f"Allowed type_id: {allowed_ids}",
-                f"Coordinates are integers in 0..{coord_mode}, origin top-left.",
-                "Use one tight box per visible instance, around the ink/stroke pixels only.",
-                "Do not merge separate instances into one box. Do not box nearby printed text, guide lines, table borders, seals, fingerprints, or blank background.",
-                "If the visual evidence is ambiguous or only a form field label is visible, return no object for that area.",
-                "Max 40 objects.",
-                'If none, return {"objects":[]}.',
-            ],
-        )
+        lines.extend(_configured_checklist_lines(type_configs))
+        lines.extend(_output_contract_lines(type_configs, coord_mode))
         return "\n".join(lines)
 
     def _encode_view(
@@ -341,46 +349,47 @@ class VlmVisionService:
         boxes: list[BoundingBox] = []
         raw_responses: list[str] = []
         async with _vlm_request_semaphore:
-            async with httpx.AsyncClient(timeout=float(settings.VLM_TIMEOUT), trust_env=False) as client:
-                for view in views:
-                    image_base64 = base64.b64encode(view.image_data).decode("ascii")
-                    view_prompt = (
-                        f"{prompt}\nDetection view: {view.name}. "
-                        "Coordinates must be relative to the supplied image for this request."
-                    )
-                    payload = {
-                        **base_payload,
-                        "messages": [
-                            *_few_shot_messages(type_configs),
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
-                                    },
-                                    {"type": "text", "text": view_prompt},
-                                ],
-                            },
-                        ],
-                    }
-                    response = await client.post(url, headers=headers, json=payload)
-                    response.raise_for_status()
-                    data = response.json()
-                    content = str(data.get("choices", [{}])[0].get("message", {}).get("content", ""))
-                    raw_responses.append(f"[{view.name}] {content}")
-                    parsed = _extract_json_payload(content)
-                    view_boxes = self._objects_to_boxes(
-                        parsed.get("objects") or [],
-                        type_configs,
-                        view,
-                        page,
-                    )
-                    for bbox in view_boxes:
-                        if str(view.name).startswith("signature_") and str(bbox.type).lower() == "signature":
-                            boxes = [existing for existing in boxes if not self._is_duplicate(bbox, existing)]
-                        if not any(self._is_duplicate(bbox, existing) for existing in boxes):
-                            boxes.append(bbox)
+            async with shared_gpu_inference_slot("GLM VLM"):
+                async with httpx.AsyncClient(timeout=float(settings.VLM_TIMEOUT), trust_env=False) as client:
+                    for view in views:
+                        image_base64 = base64.b64encode(view.image_data).decode("ascii")
+                        view_prompt = (
+                            f"{prompt}\nDetection view: {view.name}. "
+                            "Coordinates must be relative to the supplied image for this request."
+                        )
+                        payload = {
+                            **base_payload,
+                            "messages": [
+                                *_few_shot_messages(type_configs),
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"},
+                                        },
+                                        {"type": "text", "text": view_prompt},
+                                    ],
+                                },
+                            ],
+                        }
+                        response = await client.post(url, headers=headers, json=payload)
+                        response.raise_for_status()
+                        data = response.json()
+                        content = str(data.get("choices", [{}])[0].get("message", {}).get("content", ""))
+                        raw_responses.append(f"[{view.name}] {content}")
+                        parsed = _extract_json_payload(content)
+                        view_boxes = self._objects_to_boxes(
+                            parsed.get("objects") or [],
+                            type_configs,
+                            view,
+                            page,
+                        )
+                        for bbox in view_boxes:
+                            if str(view.name).startswith("signature_") and str(bbox.type).lower() == "signature":
+                                boxes = [existing for existing in boxes if not self._is_duplicate(bbox, existing)]
+                            if not any(self._is_duplicate(bbox, existing) for existing in boxes):
+                                boxes.append(bbox)
         boxes = self._refine_signature_boxes(img, boxes)
         detail_signature_boxes = [
             box
