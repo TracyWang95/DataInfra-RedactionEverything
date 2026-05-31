@@ -4,6 +4,7 @@
 /** Centralized localStorage / sessionStorage key constants */
 export const STORAGE_KEYS = {
   AUTH_TOKEN: 'auth_token',
+  CURRENT_USER: 'datainfraRedaction:currentUser',
   LOCALE: 'locale',
   ONBOARDING_COMPLETED: 'onboarding_completed',
   OCR_HAS_TYPES: 'ocrHasTypes',

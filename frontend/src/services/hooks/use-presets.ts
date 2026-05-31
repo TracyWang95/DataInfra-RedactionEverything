@@ -11,16 +11,23 @@ import {
   type RecognitionPreset,
 } from '@/services/presetsApi';
 import { queryKeys } from '@/lib/query-keys';
+import { useAuth } from '@/features/auth/auth-context';
 
 /** Shared query-key constant so invalidation is consistent across the app. */
-export const PRESETS_QUERY_KEY = queryKeys.presets.all();
+export const PRESETS_QUERY_KEY = queryKeys.presets.root();
+
+function usePresetOwnerKey(): string {
+  const { status } = useAuth();
+  return status?.authenticated && status.username ? status.username.toLowerCase() : 'anonymous';
+}
 
 // ── Queries ────────────────────────────────────────────────────────────────
 
 /** Fetch all recognition presets with caching via react-query. */
 export function usePresets() {
+  const ownerKey = usePresetOwnerKey();
   return useQuery<RecognitionPreset[]>({
-    queryKey: PRESETS_QUERY_KEY,
+    queryKey: queryKeys.presets.all(ownerKey),
     queryFn: fetchPresets,
   });
 }
@@ -28,7 +35,8 @@ export function usePresets() {
 /** Returns a callback to invalidate the presets cache. */
 export function useInvalidatePresets() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: PRESETS_QUERY_KEY });
+  const ownerKey = usePresetOwnerKey();
+  return () => qc.invalidateQueries({ queryKey: queryKeys.presets.all(ownerKey) });
 }
 
 // ── Mutations ──────────────────────────────────────────────────────────────
@@ -36,10 +44,11 @@ export function useInvalidatePresets() {
 /** Create a new preset and invalidate the presets cache on success. */
 export function useCreatePreset() {
   const qc = useQueryClient();
+  const ownerKey = usePresetOwnerKey();
   return useMutation({
     mutationFn: (body: PresetPayload) => createPreset(body),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: PRESETS_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: queryKeys.presets.all(ownerKey) });
     },
   });
 }
@@ -47,11 +56,12 @@ export function useCreatePreset() {
 /** Update an existing preset and invalidate the presets cache on success. */
 export function useUpdatePreset() {
   const qc = useQueryClient();
+  const ownerKey = usePresetOwnerKey();
   return useMutation({
     mutationFn: ({ id, patch }: { id: string; patch: Partial<PresetPayload> }) =>
       updatePreset(id, patch),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: PRESETS_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: queryKeys.presets.all(ownerKey) });
     },
   });
 }
@@ -59,10 +69,11 @@ export function useUpdatePreset() {
 /** Delete a preset and invalidate the presets cache on success. */
 export function useDeletePreset() {
   const qc = useQueryClient();
+  const ownerKey = usePresetOwnerKey();
   return useMutation({
     mutationFn: (id: string) => deletePreset(id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: PRESETS_QUERY_KEY });
+      void qc.invalidateQueries({ queryKey: queryKeys.presets.all(ownerKey) });
     },
   });
 }

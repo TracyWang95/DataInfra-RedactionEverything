@@ -9,7 +9,10 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { useT } from './i18n';
 import { SUSPENSE_SPINNER_DELAY_MS, ROUTE_PREFETCH_DELAY_MS } from './constants/timing';
 import { AuthPage } from './features/auth/auth-page';
-import { sanitizeNextPath } from './features/auth/auth-page';
+import {
+  isRegisterAuthSearch,
+  resolveAuthNext,
+} from './features/auth/auth-routing';
 import { useAuth } from './features/auth/auth-context';
 
 const Playground = React.lazy(() =>
@@ -157,11 +160,15 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function AuthRoute() {
   const location = useLocation();
   const { loading, status } = useAuth();
-  const next = sanitizeNextPath(new URLSearchParams(location.search).get('next'));
+  const next = resolveAuthNext(location.search);
+  const isRegisterRoute = isRegisterAuthSearch(location.search);
 
   if (loading) return <FullPageSpinner />;
   if (!status) return <AuthStatusErrorPage />;
-  if (!status.auth_enabled || status.authenticated) return <Navigate to={next} replace />;
+  if (!status.auth_enabled || status.authenticated) {
+    const shouldUseHome = status.authenticated && isRegisterRoute;
+    return <Navigate to={shouldUseHome ? '/' : next} replace />;
+  }
 
   return (
     <ErrorBoundary>

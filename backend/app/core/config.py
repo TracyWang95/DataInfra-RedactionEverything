@@ -164,6 +164,7 @@ class Settings(BaseSettings):
     # Run OCR+HaS and HaS Image sequentially by default. On a single shared GPU,
     # parallel page-internal inference has higher tail latency in practice.
     VISION_DUAL_PIPELINE_PARALLEL: bool = True
+    SERIALIZE_SHARED_GPU_MODELS: bool = True
     # PP-StructureV3 table fallback exposed by the same OCR microservice.
     # It is slower than PaddleOCR-VL, so the backend only calls it for pages
     # that look table-heavy or where VL produced too few text boxes.

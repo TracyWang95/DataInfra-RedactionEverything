@@ -18,6 +18,7 @@ from app.core.has_image_categories import (
     normalize_visual_slug,
 )
 from app.core.persistence import load_json, save_json
+from app.core.tenant_config import tenant_store_path
 
 # ── 数据模型 ──────────────────────────────────────────────
 
@@ -231,16 +232,23 @@ def merge_pipeline_disk_snapshot(raw: dict | None) -> dict[str, PipelineConfig]:
 
 # ── 持久化 ────────────────────────────────────────────────
 
-def _load_pipelines() -> dict[str, PipelineConfig]:
-    raw = load_json(settings.PIPELINE_STORE_PATH, default=None)
+def _pipeline_store_path(owner_id: str | None = None) -> str:
+    return tenant_store_path(owner_id, settings.PIPELINE_STORE_PATH, "pipelines.json")
+
+
+def _load_pipelines(owner_id: str | None = None) -> dict[str, PipelineConfig]:
+    raw = load_json(_pipeline_store_path(owner_id), default=None)
     return merge_pipeline_disk_snapshot(raw if isinstance(raw, dict) else None)
 
 
-def _persist_pipelines() -> None:
+def _persist_pipelines(
+    db: dict[str, PipelineConfig] | None = None,
+    owner_id: str | None = None,
+) -> None:
     save_json(
-        settings.PIPELINE_STORE_PATH,
+        _pipeline_store_path(owner_id),
         {
-            **pipelines_db,
+            **(db if db is not None else pipelines_db),
             PIPELINE_MIGRATIONS_KEY: {
                 HAS_IMAGE_PAPER_DEFAULT_DISABLED_MIGRATION: True,
             },
@@ -255,11 +263,21 @@ _persist_pipelines()
 
 # ── 公共查询 ──────────────────────────────────────────────
 
-def get_pipeline_types_for_mode(mode: str, *, enabled_only: bool = True) -> list[PipelineTypeConfig]:
+def _pipelines_for_owner(owner_id: str | None = None) -> dict[str, PipelineConfig]:
+    return pipelines_db if owner_id is None else _load_pipelines(owner_id)
+
+
+def get_pipeline_types_for_mode(
+    mode: str,
+    *,
+    enabled_only: bool = True,
+    owner_id: str | None = None,
+) -> list[PipelineTypeConfig]:
     """获取指定模式下的类型配置。默认只返回启用项；显式选择校验可读取全部项。"""
-    if mode not in pipelines_db:
+    db = _pipelines_for_owner(owner_id)
+    if mode not in db:
         return []
-    types = pipelines_db[mode].types
+    types = db[mode].types
     if enabled_only:
         types = [t for t in types if t.enabled]
     return list(types)
@@ -267,95 +285,142 @@ def get_pipeline_types_for_mode(mode: str, *, enabled_only: bool = True) -> list
 
 # ── 业务方法 ──────────────────────────────────────────────
 
-def list_pipelines(enabled_only: bool = False) -> list[PipelineConfig]:
-    pipelines = list(pipelines_db.values())
+def list_pipelines(
+    enabled_only: bool = False,
+    owner_id: str | None = None,
+) -> list[PipelineConfig]:
+    pipelines = list(_pipelines_for_owner(owner_id).values())
     if enabled_only:
         pipelines = [p for p in pipelines if p.enabled]
     return pipelines
 
 
-def get_pipeline(mode: str) -> PipelineConfig | None:
-    return pipelines_db.get(mode)
+def get_pipeline(mode: str, owner_id: str | None = None) -> PipelineConfig | None:
+    return _pipelines_for_owner(owner_id).get(mode)
 
 
-def toggle_pipeline(mode: str) -> bool | None:
+def toggle_pipeline(mode: str, owner_id: str | None = None) -> bool | None:
     """Returns new enabled state, or None if not found."""
-    if mode not in pipelines_db:
+    global pipelines_db
+    db = _pipelines_for_owner(owner_id)
+    if mode not in db:
         return None
-    pipelines_db[mode].enabled = not pipelines_db[mode].enabled
-    _persist_pipelines()
-    return pipelines_db[mode].enabled
+    db[mode].enabled = not db[mode].enabled
+    if owner_id is None:
+        pipelines_db = db
+    _persist_pipelines(db, owner_id)
+    return db[mode].enabled
 
 
-def get_pipeline_types(mode: str, enabled_only: bool = True) -> list[PipelineTypeConfig] | None:
+def get_pipeline_types(
+    mode: str,
+    enabled_only: bool = True,
+    owner_id: str | None = None,
+) -> list[PipelineTypeConfig] | None:
     """Returns sorted types list, or None if pipeline not found."""
-    if mode not in pipelines_db:
+    db = _pipelines_for_owner(owner_id)
+    if mode not in db:
         return None
-    types = pipelines_db[mode].types
+    types = db[mode].types
     if enabled_only:
         types = [t for t in types if t.enabled]
     return sorted(types, key=lambda t: t.order)
 
 
-def add_pipeline_type(mode: str, type_config: PipelineTypeConfig) -> tuple[PipelineTypeConfig | None, str]:
+def add_pipeline_type(
+    mode: str,
+    type_config: PipelineTypeConfig,
+    owner_id: str | None = None,
+) -> tuple[PipelineTypeConfig | None, str]:
     """Returns (created_type, error_message)."""
-    if mode not in pipelines_db:
+    global pipelines_db
+    db = _pipelines_for_owner(owner_id)
+    if mode not in db:
         return None, "Pipeline 不存在"
     validation_error = _validate_pipeline_type_for_mode(mode, type_config)
     if validation_error:
         return None, validation_error
     type_config = _canonicalize_pipeline_type_for_mode(mode, type_config)
-    existing_ids = [t.id for t in pipelines_db[mode].types]
+    existing_ids = [t.id for t in db[mode].types]
     if type_config.id in existing_ids:
         return None, "类型 ID 已存在"
-    pipelines_db[mode].types.append(type_config)
-    _persist_pipelines()
+    db[mode].types.append(type_config)
+    if owner_id is None:
+        pipelines_db = db
+    _persist_pipelines(db, owner_id)
     return type_config, ""
 
 
-def update_pipeline_type(mode: str, type_id: str, type_config: PipelineTypeConfig) -> tuple[PipelineTypeConfig | None, str]:
+def update_pipeline_type(
+    mode: str,
+    type_id: str,
+    type_config: PipelineTypeConfig,
+    owner_id: str | None = None,
+) -> tuple[PipelineTypeConfig | None, str]:
     """Returns (updated_type, error_message)."""
-    if mode not in pipelines_db:
+    global pipelines_db
+    db = _pipelines_for_owner(owner_id)
+    if mode not in db:
         return None, "Pipeline 不存在"
     validation_error = _validate_pipeline_type_for_mode(mode, type_config)
     if validation_error:
         return None, validation_error
     type_config = _canonicalize_pipeline_type_for_mode(mode, type_config)
-    for i, t in enumerate(pipelines_db[mode].types):
+    for i, t in enumerate(db[mode].types):
         if t.id == type_id:
-            pipelines_db[mode].types[i] = type_config
-            _persist_pipelines()
+            db[mode].types[i] = type_config
+            if owner_id is None:
+                pipelines_db = db
+            _persist_pipelines(db, owner_id)
             return type_config, ""
     return None, "类型不存在"
 
 
-def toggle_pipeline_type(mode: str, type_id: str) -> tuple[bool | None, str]:
+def toggle_pipeline_type(
+    mode: str,
+    type_id: str,
+    owner_id: str | None = None,
+) -> tuple[bool | None, str]:
     """Returns (new_enabled_state, error_message). None means not found."""
-    if mode not in pipelines_db:
+    global pipelines_db
+    db = _pipelines_for_owner(owner_id)
+    if mode not in db:
         return None, "Pipeline 不存在"
-    for t in pipelines_db[mode].types:
+    for t in db[mode].types:
         if t.id == type_id:
             t.enabled = not t.enabled
-            _persist_pipelines()
+            if owner_id is None:
+                pipelines_db = db
+            _persist_pipelines(db, owner_id)
             return t.enabled, ""
     return None, "类型不存在"
 
 
-def delete_pipeline_type(mode: str, type_id: str) -> tuple[bool, str]:
+def delete_pipeline_type(
+    mode: str,
+    type_id: str,
+    owner_id: str | None = None,
+) -> tuple[bool, str]:
     """Returns (success, error_message)."""
-    if mode not in pipelines_db:
+    global pipelines_db
+    db = _pipelines_for_owner(owner_id)
+    if mode not in db:
         return False, "Pipeline 不存在"
     preset_ids = [t.id for t in PRESET_PIPELINES.get(mode, PipelineConfig(
         mode=PipelineMode.OCR_HAS, name="", description="", types=[]
     )).types]
     if type_id in preset_ids:
         return False, "预置类型不能删除，只能禁用"
-    pipelines_db[mode].types = [t for t in pipelines_db[mode].types if t.id != type_id]
-    _persist_pipelines()
+    db[mode].types = [t for t in db[mode].types if t.id != type_id]
+    if owner_id is None:
+        pipelines_db = db
+    _persist_pipelines(db, owner_id)
     return True, ""
 
 
-def reset_pipelines() -> None:
+def reset_pipelines(owner_id: str | None = None) -> None:
     global pipelines_db
-    pipelines_db = {k: v.model_copy(deep=True) for k, v in PRESET_PIPELINES.items()}
-    _persist_pipelines()
+    db = {k: v.model_copy(deep=True) for k, v in PRESET_PIPELINES.items()}
+    if owner_id is None:
+        pipelines_db = db
+    _persist_pipelines(db, owner_id)

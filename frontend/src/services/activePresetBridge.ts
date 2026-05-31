@@ -1,6 +1,8 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import { scopedStorageKey } from '@/lib/storage';
+
 const K_TEXT = 'datainfraRedaction:activePresetTextId';
 const K_TEXT_LEGACY = 'legalRedaction:activePresetTextId';
 const K_VISION = 'datainfraRedaction:activePresetVisionId';
@@ -10,8 +12,10 @@ const ACTIVE_PRESET_EVENT = 'datainfra-redaction-active-preset';
 
 export function getActivePresetTextId(): string | null {
   try {
-    const a = localStorage.getItem(K_TEXT);
+    const scoped = scopedStorageKey(K_TEXT);
+    const a = localStorage.getItem(scoped);
     if (a && a.length > 0) return a;
+    if (scoped !== K_TEXT) return null;
     const b = localStorage.getItem(K_TEXT_LEGACY);
     return b && b.length > 0 ? b : null;
   } catch {
@@ -21,12 +25,13 @@ export function getActivePresetTextId(): string | null {
 
 export function setActivePresetTextId(id: string | null): void {
   try {
+    const scoped = scopedStorageKey(K_TEXT);
     if (id) {
-      localStorage.setItem(K_TEXT, id);
-      localStorage.setItem(K_TEXT_LEGACY, id);
+      localStorage.setItem(scoped, id);
+      if (scoped === K_TEXT) localStorage.setItem(K_TEXT_LEGACY, id);
     } else {
-      localStorage.removeItem(K_TEXT);
-      localStorage.removeItem(K_TEXT_LEGACY);
+      localStorage.removeItem(scoped);
+      if (scoped === K_TEXT) localStorage.removeItem(K_TEXT_LEGACY);
     }
     window.dispatchEvent(new CustomEvent(ACTIVE_PRESET_EVENT));
   } catch {
@@ -36,8 +41,10 @@ export function setActivePresetTextId(id: string | null): void {
 
 export function getActivePresetVisionId(): string | null {
   try {
-    const a = localStorage.getItem(K_VISION);
+    const scoped = scopedStorageKey(K_VISION);
+    const a = localStorage.getItem(scoped);
     if (a && a.length > 0) return a;
+    if (scoped !== K_VISION) return null;
     const b = localStorage.getItem(K_VISION_LEGACY);
     return b && b.length > 0 ? b : null;
   } catch {
@@ -47,12 +54,13 @@ export function getActivePresetVisionId(): string | null {
 
 export function setActivePresetVisionId(id: string | null): void {
   try {
+    const scoped = scopedStorageKey(K_VISION);
     if (id) {
-      localStorage.setItem(K_VISION, id);
-      localStorage.setItem(K_VISION_LEGACY, id);
+      localStorage.setItem(scoped, id);
+      if (scoped === K_VISION) localStorage.setItem(K_VISION_LEGACY, id);
     } else {
-      localStorage.removeItem(K_VISION);
-      localStorage.removeItem(K_VISION_LEGACY);
+      localStorage.removeItem(scoped);
+      if (scoped === K_VISION) localStorage.removeItem(K_VISION_LEGACY);
     }
     window.dispatchEvent(new CustomEvent(ACTIVE_PRESET_EVENT));
   } catch {

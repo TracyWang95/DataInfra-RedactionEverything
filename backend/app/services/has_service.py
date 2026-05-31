@@ -19,6 +19,7 @@ from typing import Any
 
 from app.models.schemas import Entity
 from app.models.type_mapping import canonical_type_id
+from app.core.gpu_inference_gate import shared_gpu_inference_slot
 from app.services.has_client import HaSClient
 
 # 类型别名，兼容 EntityTypeConfig 和 CustomEntityType
@@ -311,12 +312,13 @@ class HaSService:
                 if not batch_chinese_types:
                     return {}
                 async with semaphore:
-                    return await asyncio.to_thread(
-                        self.client.ner,
-                        content,
-                        batch_chinese_types,
-                        type_guidance=self._convert_entity_types_to_guidance(batch),
-                    )
+                    async with shared_gpu_inference_slot("HaS Text NER batch"):
+                        return await asyncio.to_thread(
+                            self.client.ner,
+                            content,
+                            batch_chinese_types,
+                            type_guidance=self._convert_entity_types_to_guidance(batch),
+                        )
 
             batch_results = await asyncio.gather(
                 *(run_batch(batch) for batch in batches),

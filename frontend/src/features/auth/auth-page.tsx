@@ -10,23 +10,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useT } from '@/i18n';
+import { resolveAuthMode, resolveAuthNext, type AuthMode } from './auth-routing';
 import { useAuth } from './auth-context';
-
-export function sanitizeNextPath(next: string | null | undefined): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//')) return '/';
-  return next;
-}
-
-function resolveNext(search: string): string {
-  return sanitizeNextPath(new URLSearchParams(search).get('next'));
-}
 
 export function AuthPage() {
   const t = useT();
   const location = useLocation();
   const navigate = useNavigate();
   const { status, login, setup, register } = useAuth();
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<AuthMode>(() => resolveAuthMode(location.search));
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -35,7 +27,21 @@ export function AuthPage() {
 
   const needsSetup = status?.password_set === false;
   const isRegister = !needsSetup && mode === 'register';
-  const next = useMemo(() => resolveNext(location.search), [location.search]);
+  const next = useMemo(() => resolveAuthNext(location.search), [location.search]);
+
+  function switchMode(nextMode: AuthMode) {
+    setError(null);
+    setConfirmPassword('');
+    setMode(nextMode);
+    const params = new URLSearchParams(location.search);
+    if (nextMode === 'register') {
+      params.set('mode', 'register');
+    } else {
+      params.delete('mode');
+    }
+    const search = params.toString();
+    navigate(`${location.pathname}${search ? `?${search}` : ''}`, { replace: true });
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -157,11 +163,7 @@ export function AuthPage() {
                 <button
                   type="button"
                   className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
-                  onClick={() => {
-                    setError(null);
-                    setConfirmPassword('');
-                    setMode(isRegister ? 'login' : 'register');
-                  }}
+                  onClick={() => switchMode(isRegister ? 'login' : 'register')}
                 >
                   {isRegister ? t('auth.register.switchToLogin') : t('auth.login.switchToRegister')}
                 </button>

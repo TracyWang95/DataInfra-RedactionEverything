@@ -48,7 +48,8 @@ export const queryKeys = {
 
   // ── Presets ───────────────────────────────────────────────────────────────
   presets: {
-    all: () => ['presets'] as const,
+    root: () => ['presets'] as const,
+    all: (ownerId?: string | null) => ['presets', ownerId ?? 'anonymous'] as const,
   },
 
   // ── Batch preview entity map ─────────────────────────────────────────────

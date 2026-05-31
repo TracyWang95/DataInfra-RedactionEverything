@@ -618,7 +618,7 @@ function ReviewImageContentInner({
                 : `${selectedReviewBoxCount}/${visibleReviewBoxes.length} ${t('batchWizard.step4.selected')}`}
             </span>
           </div>
-          {/* Spacer — matches the internal toolbar of ImageBBoxEditor so both
+          {/* Spacer matches the internal toolbar of ImageBBoxEditor so both
             image panes have identical top offsets and the two renders align
             pixel-for-pixel along the top and bottom edges. */}
           <div

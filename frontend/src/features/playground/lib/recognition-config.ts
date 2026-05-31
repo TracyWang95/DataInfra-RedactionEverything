@@ -3,7 +3,7 @@
 
 import { t } from '@/i18n';
 import { isHasImageModelTypeId } from '@/services/defaultRedactionPreset';
-import { getStorageItem, setStorageItem } from '@/lib/storage';
+import { getScopedStorageItem, setScopedStorageItem } from '@/lib/storage';
 import { buildDefaultPipelineTypeIds } from '@/services/defaultRedactionPreset';
 import type { SelectionTone } from '@/ui/selectionPalette';
 import type { EntityTypeConfig, PipelineConfig, VisionTypeConfig } from '../types';
@@ -50,8 +50,8 @@ export interface CachedRecognitionConfig {
   pipelines: PipelineConfig[];
 }
 
-export function getCachedRecognitionConfig(): CachedRecognitionConfig | null {
-  const cached = getStorageItem<unknown>(RECOGNITION_CONFIG_CACHE_KEY, null);
+export function getCachedRecognitionConfig(ownerId?: string | null): CachedRecognitionConfig | null {
+  const cached = getScopedStorageItem<unknown>(RECOGNITION_CONFIG_CACHE_KEY, null, ownerId);
   if (!isRecognitionPayload(cached)) return null;
 
   if (Date.now() - cached.savedAt > RECOGNITION_CONFIG_CACHE_TTL_MS) {
@@ -64,14 +64,17 @@ export function getCachedRecognitionConfig(): CachedRecognitionConfig | null {
   };
 }
 
-export function updateRecognitionConfigCache(payload: Partial<CachedRecognitionConfig>): void {
-  const cached = getCachedRecognitionConfig();
-  setStorageItem(RECOGNITION_CONFIG_CACHE_KEY, {
+export function updateRecognitionConfigCache(
+  payload: Partial<CachedRecognitionConfig>,
+  ownerId?: string | null,
+): void {
+  const cached = getCachedRecognitionConfig(ownerId);
+  setScopedStorageItem(RECOGNITION_CONFIG_CACHE_KEY, {
     version: RECOGNITION_CONFIG_CACHE_VERSION,
     savedAt: Date.now(),
     entityTypes: payload.entityTypes ?? cached?.entityTypes ?? [],
     pipelines: payload.pipelines ?? cached?.pipelines ?? [],
-  });
+  }, ownerId);
 }
 
 export function buildVisionSelectionSignature(pipelines: PipelineConfig[]): string {

@@ -21,6 +21,7 @@ RedactionEverything is a local-first redaction workbench for sensitive informati
   <a href="#overview">Overview</a> &middot;
   <a href="#positioning">Positioning</a> &middot;
   <a href="#features">Features</a> &middot;
+  <a href="#latest-validated-updates">Latest Updates</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#architecture">Architecture</a> &middot;
   <a href="#model-services">Model Services</a> &middot;
@@ -78,6 +79,35 @@ The distinction is scope, not rhetoric:
 | VLM checklist | Adds visual-semantic coverage for targets that are hard to express as fixed object detection classes, with signature detection enabled by default. |
 | Configurable schemas | Built-in general, legal, finance, and healthcare presets; custom text, image, VLM, and fallback items are supported. |
 | Local deployment | Frontend, backend, and model services can run on a local or intranet GPU workstation. |
+
+---
+
+## Latest Validated Updates
+
+The current branch includes a broad stability pass focused on demo readiness, customer deployment, and real-document recall. The changes are general engineering improvements rather than document-specific rules:
+
+| Area | Update |
+|---|---|
+| User and tenant isolation | Recognition items, presets, vision pipeline settings, files, jobs, review drafts, history, previews, exports, and cleanup actions are scoped to the authenticated user. `super_admin` keeps system configuration and user-management privileges. |
+| Single-GPU scheduling | GPU-heavy inference is guarded by a shared queue so OCR, HaS Image, HaS NER, and VLM work do not overload a single 16 GB GPU. VLM runs as a late supplemental stage for visual-semantic gaps. |
+| OCR recall | OCR text boxes now use stronger coordinate matching, fuzzy matching, and visual-line matching so spaced or fragmented organization names can be recovered without hard-coding a company name. |
+| Table semantic recall | Table headers, cells, and numeric columns are used to recover semantically sensitive values such as unit prices, totals, percentages, accounts, and contract amounts. |
+| Seal and signature fallback | HaS Image remains the primary visual detector; local red/dark seal fallback and VLM/stroke-based signature checks supplement edge seals, seam seals, and handwritten signatures. |
+| NER robustness | HaS NER responses are parsed with tolerant JSON recovery, long entity lists are chunked, and generation limits are raised to reduce truncation failures. |
+| UI/UX reliability | New users land on the Start page, settings expose admin/runtime/monitoring controls, batch review and export states are clearer, narrow-screen layouts avoid horizontal overflow, and image review no longer revokes preview `blob:` URLs too early. |
+| Validation evidence | A real UI batch run over `D:\ceshi` covered TXT, DOCX, image, and scanned PDF files: 7/7 uploaded, recognized, reviewed, redacted, and exported; 271 detections; 0 failed files; quality report `ready_for_delivery`. |
+
+Validation commands used for this pass:
+
+```bash
+PYTHONPATH=backend pytest backend/tests -q
+
+cd frontend
+npm run lint
+npm run build
+```
+
+The UI regression was run with Playwright against the local services and checked batch upload, recognition, review, redaction, ZIP export, quality-report export, console errors, and 390 px narrow-screen overflow.
 
 ---
 

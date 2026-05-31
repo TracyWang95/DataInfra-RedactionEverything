@@ -696,7 +696,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.step1.retryPresetsLoading': '重试中...',
   'batchWizard.step2.dropHint': '拖放多个文件，或点击选择',
   'batchWizard.step2.dropHintSmart':
-    '支持 Word (.docx)、PDF、图片 (.jpg .png)，系统自动识别文件类型',
+    '支持 Word (.docx)、文本 (.txt)、PDF、图片 (.jpg .png)，系统自动识别文件类型',
   'batchWizard.step2.dropHintImage': '支持图片 (.jpg .png) 和扫描件 PDF',
   'batchWizard.step2.dropHintText': '支持 Word (.docx .doc) 和 PDF 文档',
   'batchWizard.step2.jobLinked': '当前任务工单',

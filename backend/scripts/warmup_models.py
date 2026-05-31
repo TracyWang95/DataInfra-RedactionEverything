@@ -39,6 +39,46 @@ def _white_pixel_png_base64() -> str:
     return _png_base64(Image.new("RGB", (1, 1), "white"))
 
 
+def _signature_warmup_image_base64() -> str:
+    image = Image.new("RGB", (427, 640), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((42, 68, 385, 568), outline=(220, 220, 220), width=2)
+    draw.text((72, 120), "Company: Example Technology Co., Ltd.", fill="black")
+    draw.text((72, 180), "Representative (signature):", fill="black")
+    draw.line((72, 248, 345, 248), fill=(150, 150, 150), width=2)
+    draw.line((170, 232, 206, 214), fill=(40, 40, 40), width=3)
+    draw.line((206, 214, 232, 238), fill=(40, 40, 40), width=3)
+    draw.line((232, 238, 285, 206), fill=(40, 40, 40), width=3)
+    draw.line((285, 206, 330, 226), fill=(40, 40, 40), width=3)
+    draw.ellipse((238, 176, 346, 284), outline=(210, 38, 38), width=4)
+    draw.text((72, 318), "Date: 2026-05-26", fill="black")
+    return _png_base64(image)
+
+
+def _signature_warmup_prompt() -> str:
+    try:
+        from app.services.pipeline_service import get_pipeline_types_for_mode
+        from app.services.vlm_vision_service import VlmVisionService
+
+        type_configs = [
+            item
+            for item in get_pipeline_types_for_mode("vlm", enabled_only=True)
+            if getattr(item, "id", "") == "signature"
+        ]
+        if type_configs:
+            return (
+                VlmVisionService().build_prompt(type_configs)
+                + "\nDetection view: full. Coordinates must be relative to the supplied image for this request."
+            )
+    except Exception as exc:
+        print(f"[warmup] production signature prompt unavailable, using fallback: {exc}")
+    return (
+        "Task: detect handwritten signer names/signatures only. "
+        "Box only visible handwritten ink strokes, not printed labels, company names, dates, seals, or blank lines. "
+        'Return JSON only: {"objects":[{"type_id":"signature","label":"签字","box_2d":[0,0,0,0],"confidence":0.8}]}'
+    )
+
+
 def _table_png_base64() -> str:
     image = Image.new("RGB", (640, 420), "white")
     draw = ImageDraw.Draw(image)
@@ -137,7 +177,7 @@ def warmup_ocr_structure() -> bool:
 
 
 def warmup_vlm() -> bool:
-    print("[warmup] GLM VLM ...")
+    print("[warmup] GLM VLM production signature path ...")
     try:
         start = time.perf_counter()
         _post_json(
@@ -150,17 +190,17 @@ def warmup_vlm() -> bool:
                         "content": [
                             {
                                 "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{_white_pixel_png_base64()}"},
+                                "image_url": {"url": f"data:image/png;base64,{_signature_warmup_image_base64()}"},
                             },
                             {
                                 "type": "text",
-                                "text": 'Return compact JSON only: {"objects":[]}',
+                                "text": _signature_warmup_prompt(),
                             },
                         ],
                     },
                 ],
-                "max_tokens": 256,
-                "temperature": 0.0,
+                "max_tokens": 384,
+                "temperature": 0.1,
                 "top_p": 0.6,
                 "stream": False,
                 "chat_template_kwargs": {"enable_thinking": False},

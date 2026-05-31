@@ -82,6 +82,13 @@ export interface ReviewDataState {
   reviewImagePreviewLoading: boolean;
 }
 
+const IMAGE_BLOB_REVOKE_DELAY_MS = 30_000;
+
+function revokeImageBlobUrlLater(url: string) {
+  if (!url.startsWith('blob:')) return;
+  window.setTimeout(() => URL.revokeObjectURL(url), IMAGE_BLOB_REVOKE_DELAY_MS);
+}
+
 interface PreviewImageResponse {
   image_base64?: string;
 }
@@ -255,6 +262,8 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
   const pageImageCacheRef = useRef<Map<string, string>>(new Map());
   const [rerunRecognitionLoading, setRerunRecognitionLoading] = useState(false);
   const [reviewImagePreviewLoading, setReviewImagePreviewLoading] = useState(false);
+  const reviewFileId = reviewFile?.file_id ?? '';
+  const reviewFileIsImageMode = reviewFile?.isImageMode === true;
 
   useEffect(() => {
     pageImageCacheRef.current.clear();
@@ -373,14 +382,14 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
 
     return () => {
       cancelled = true;
-      if (currentBlobUrl.startsWith('blob:')) URL.revokeObjectURL(currentBlobUrl);
+      revokeImageBlobUrlLater(currentBlobUrl);
     };
   }, [reviewFile, reviewCurrentPage, reviewTotalPages, setReviewOrigImageBlobUrl]);
 
   useLayoutEffect(() => {
-    if (step !== 4 || !reviewFile) return;
+    if (step !== 4 || !reviewFileId) return;
     setReviewLoading(true);
-  }, [step, reviewFile?.file_id, setReviewLoading]);
+  }, [step, reviewFileId, setReviewLoading]);
 
   const loadReviewData = useCallback(
     async (fileId: string, isImage: boolean) => {
@@ -629,18 +638,17 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
   );
 
   useEffect(() => {
-    if (step !== 4 || !reviewFile) {
+    if (step !== 4 || !reviewFileId) {
       autoLoadedReviewKeyRef.current = '';
       return;
     }
-    const isImage = reviewFile.isImageMode === true;
-    const key = `${reviewFile.file_id}:${reviewItemId ?? 'pending-item'}:${
-      isImage ? 'image' : 'text'
+    const key = `${reviewFileId}:${reviewItemId ?? 'pending-item'}:${
+      reviewFileIsImageMode ? 'image' : 'text'
     }`;
     if (autoLoadedReviewKeyRef.current === key) return;
     autoLoadedReviewKeyRef.current = key;
-    void loadReviewData(reviewFile.file_id, isImage);
-  }, [step, reviewFile?.file_id, reviewFile?.isImageMode, reviewItemId, loadReviewData]);
+    void loadReviewData(reviewFileId, reviewFileIsImageMode);
+  }, [step, reviewFileId, reviewFileIsImageMode, reviewItemId, loadReviewData]);
 
   const rerunCurrentItemRecognition = useCallback(async () => {
     if (!reviewFile) return;

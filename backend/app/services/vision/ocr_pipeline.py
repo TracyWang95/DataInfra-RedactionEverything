@@ -259,7 +259,7 @@ def _record_has_text_metric(
 
 
 def _compact_amount_candidate(text: str) -> str:
-    return _compact_text(text).strip("，,。.;；:：()（）[]【】")
+    return _compact_text(text).strip(" \t\r\n:：;；,，.。()（）[]【】$¥￥")
 
 
 def _amount_digit_count(text: str) -> int:
@@ -423,30 +423,31 @@ def _iter_probable_amount_tokens(text: str) -> list[str]:
             i += 1
             continue
 
-        digit_start = i
-        while i < len(raw) and raw[i].isdigit():
-            i += 1
-        digit_count = i - digit_start
-        if not 5 <= digit_count <= 9:
+        last_digit_end = i
+        saw_separator = False
+        while i < len(raw):
+            if raw[i].isdigit():
+                last_digit_end = i + 1
+                i += 1
+                continue
+            if raw[i] in ",，.． " and i + 1 < len(raw) and raw[i + 1].isdigit():
+                saw_separator = True
+                i += 1
+                continue
+            break
+
+        end = last_digit_end
+        candidate = _compact_amount_candidate(raw[start:end])
+        digit_count = _amount_digit_count(candidate)
+        if not (
+            5 <= digit_count <= 14
+            or (saw_separator and 4 <= digit_count <= 14)
+        ):
             i = start + 1
             continue
 
-        end = i
-        if i < len(raw) and raw[i] in ".,":
-            decimal_start = i + 1
-            decimal_end = decimal_start
-            while decimal_end < len(raw) and raw[decimal_end].isdigit():
-                decimal_end += 1
-            decimal_count = decimal_end - decimal_start
-            if 1 <= decimal_count <= 2:
-                end = decimal_end
-                i = decimal_end
-            elif decimal_count > 0:
-                i = start + 1
-                continue
-
         if _is_amount_token_before_boundary(raw, start) and _is_amount_token_after_boundary(raw, end):
-            tokens.append(raw[start:end])
+            tokens.append(candidate)
         i = max(start + 1, end)
     return tokens
 
@@ -458,7 +459,122 @@ def _is_probable_table_amount_token(text: str) -> bool:
     if any(ch.isalpha() for ch in compact):
         return False
     digits = _amount_digit_count(compact)
-    return 5 <= digits <= 9 and bool(_iter_probable_amount_tokens(compact))
+    return 5 <= digits <= 14 and bool(_iter_probable_amount_tokens(compact))
+
+
+_AMOUNT_TABLE_HEADER_KEYWORDS = (
+    "\u91d1\u989d",  # 金额
+    "\u5355\u4ef7",  # 单价
+    "\u5408\u4ef7",  # 合价
+    "\u603b\u4ef7",  # 总价
+    "\u4ef7\u6b3e",  # 价款
+    "\u4ef7\u683c",  # 价格
+    "\u8d39\u7528",  # 费用
+    "\u4eba\u6c11\u5e01",  # 人民币
+)
+
+_AMOUNT_TABLE_ROW_KEYWORDS = (
+    "\u5408\u8ba1",  # 合计
+    "\u603b\u8ba1",  # 总计
+    "\u5c0f\u8ba1",  # 小计
+    "\u91d1\u989d",  # 金额
+    "\u4eba\u6c11\u5e01",  # 人民币
+    "\u00a5",
+    "\uffe5",
+)
+
+
+def _has_any_compact_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    compact = _compact_text(text)
+    return any(keyword in compact for keyword in keywords)
+
+
+def _block_center_x(block: OCRTextBlock) -> float:
+    return float(block.left) + float(block.width) / 2
+
+
+def _block_center_y(block: OCRTextBlock) -> float:
+    return float(block.top) + float(block.height) / 2
+
+
+def _median_block_height(blocks: list[OCRTextBlock]) -> float:
+    heights = sorted(float(block.height) for block in blocks if block.height > 0)
+    if not heights:
+        return 12.0
+    return heights[(len(heights) - 1) // 2]
+
+
+def _group_blocks_into_visual_rows(blocks: list[OCRTextBlock]) -> list[list[OCRTextBlock]]:
+    relevant = [
+        block
+        for block in blocks
+        if str(block.text or "").strip()
+        and not str(block.text or "").lstrip().lower().startswith(("<table", "<html", "<div"))
+    ]
+    if not relevant:
+        return []
+
+    tolerance = max(8.0, _median_block_height(relevant) * 0.75)
+    rows: list[list[OCRTextBlock]] = []
+    row_centers: list[float] = []
+    for block in sorted(relevant, key=lambda item: (_block_center_y(item), item.left)):
+        center_y = _block_center_y(block)
+        best_index = None
+        best_distance = tolerance + 1
+        for index, row_center in enumerate(row_centers):
+            distance = abs(center_y - row_center)
+            if distance <= tolerance and distance < best_distance:
+                best_index = index
+                best_distance = distance
+        if best_index is None:
+            rows.append([block])
+            row_centers.append(center_y)
+            continue
+        rows[best_index].append(block)
+        row_centers[best_index] = sum(_block_center_y(item) for item in rows[best_index]) / len(rows[best_index])
+
+    for row in rows:
+        row.sort(key=lambda item: item.left)
+    return rows
+
+
+def _amount_table_column_ranges(rows: list[list[OCRTextBlock]]) -> list[tuple[float, float, float]]:
+    ranges: list[tuple[float, float, float]] = []
+    for row in rows:
+        if len(row) < 3:
+            continue
+        row_text = " ".join(block.text for block in row)
+        if not _has_any_compact_keyword(row_text, _AMOUNT_TABLE_HEADER_KEYWORDS):
+            continue
+        for block in row:
+            if not _has_any_compact_keyword(block.text, _AMOUNT_TABLE_HEADER_KEYWORDS):
+                continue
+            pad = max(12.0, float(block.width) * 0.45)
+            ranges.append((
+                max(0.0, float(block.left) - pad),
+                float(block.left + block.width) + pad,
+                float(block.top + block.height),
+            ))
+    return ranges
+
+
+def _is_in_amount_semantic_column(block: OCRTextBlock, ranges: list[tuple[float, float, float]]) -> bool:
+    center = _block_center_x(block)
+    top = float(block.top)
+    return any(left <= center <= right and top >= header_bottom - 8 for left, right, header_bottom in ranges)
+
+
+def _append_unique_amount_entity(
+    entities: list[dict[str, str]],
+    seen_digit_signatures: set[str],
+    token: str,
+) -> None:
+    candidate = _compact_amount_candidate(token)
+    signature = _amount_value_signature(candidate)
+    if not signature or signature in seen_digit_signatures or not _is_probable_table_amount_token(candidate):
+        return
+    seen_digit_signatures.add(signature)
+    entities.append({"type": "AMOUNT", "text": candidate, "source": "table_semantic"})
 
 
 def _is_standalone_amount_ocr_block(text: str) -> bool:
@@ -480,36 +596,53 @@ def _augment_amount_entities_from_ocr(
     ocr_blocks: list[OCRTextBlock],
     selected_type_ids: list[str],
 ) -> list[dict[str, str]]:
-    """Recover table amount cells that HaS may skip as contextless numbers."""
+    """Recover table amount cells from structural table context.
+
+    HaS Text owns semantic classification for running text. Table cells are
+    different: the amount semantics often live in the column header while the
+    data cell itself is only a number. Use OCR geometry plus table headers/total
+    rows to add those cells back without scanning arbitrary page numbers.
+    """
     if "AMOUNT" not in selected_type_ids:
         return entities
-    if not any(_canonical_image_text_type(entity.get("type")) == "AMOUNT" for entity in entities):
-        return entities
 
-    seen = {_compact_amount_candidate(str(entity.get("text", ""))) for entity in entities}
     seen_digit_signatures = {
         signature
         for entity in entities
         if _canonical_image_text_type(entity.get("type")) == "AMOUNT"
         for signature in [_amount_value_signature(str(entity.get("text", "")))]
-        if 5 <= len(signature) <= 9
+        if signature
     }
     augmented = list(entities)
+
+    rows = _group_blocks_into_visual_rows(ocr_blocks)
+    amount_columns = _amount_table_column_ranges(rows)
+    if not amount_columns and not any(
+        _has_any_compact_keyword(" ".join(block.text for block in row), _AMOUNT_TABLE_ROW_KEYWORDS)
+        for row in rows
+    ):
+        return entities
+
     for block in ocr_blocks:
-        text = str(block.text or "")
-        for token in _iter_probable_amount_tokens(text):
-            candidate = _compact_amount_candidate(token)
-            digit_signature = _amount_value_signature(candidate)
-            if (
-                candidate in seen
-                or digit_signature in seen_digit_signatures
-                or not _is_probable_table_amount_token(candidate)
-            ):
-                continue
-            seen.add(candidate)
-            seen_digit_signatures.add(digit_signature)
-            augmented.append({"type": "AMOUNT", "text": candidate})
-            logger.debug("OCR amount supplement found table amount candidate: %s", candidate)
+        if not amount_columns or not _is_in_amount_semantic_column(block, amount_columns):
+            continue
+        for token in _iter_probable_amount_tokens(str(block.text or "")):
+            before = len(augmented)
+            _append_unique_amount_entity(augmented, seen_digit_signatures, token)
+            if len(augmented) > before:
+                logger.debug("Table semantic amount column recalled: %s", token)
+
+    for row in rows:
+        row_text = " ".join(block.text for block in row)
+        if not _has_any_compact_keyword(row_text, _AMOUNT_TABLE_ROW_KEYWORDS):
+            continue
+        for block in row:
+            for token in _iter_probable_amount_tokens(str(block.text or "")):
+                before = len(augmented)
+                _append_unique_amount_entity(augmented, seen_digit_signatures, token)
+                if len(augmented) > before:
+                    logger.debug("Table semantic amount row recalled: %s", token)
+
     return augmented
 
 
@@ -1697,9 +1830,12 @@ async def run_has_text_analysis(
                             logger.info("HaS NER cache hit after local slot wait")
                         else:
                             model_start = time.perf_counter()
-                            ner_result = await asyncio.to_thread(
-                                has_client.ner, text_content, chinese_types
-                            )
+                            from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
+                            async with shared_gpu_inference_slot("OCR HaS Text NER"):
+                                ner_result = await asyncio.to_thread(
+                                    has_client.ner, text_content, chinese_types
+                                )
                             _record_has_text_metric(stage_status, "has_text_cache_status", "model_call")
                             _add_has_text_duration(
                                 stage_status,
@@ -2252,6 +2388,7 @@ def match_entities_to_ocr(
     for entity in entities:
         entity_text = entity.get("text", "").strip()
         entity_type = entity.get("type", "UNKNOWN")
+        entity_source = str(entity.get("source") or "").strip()
 
         if not entity_text:
             continue
@@ -2333,6 +2470,9 @@ def match_entities_to_ocr(
                         height=sub_height,
                         confidence=1.0,
                         source=(
+                            entity_source
+                            if entity_source == "table_semantic"
+                            else
                             "table_cell_match"
                             if is_table_virtual
                             else "visual_line_match"

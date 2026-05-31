@@ -30,7 +30,8 @@ import {
 } from '@/services/activePresetBridge';
 import { t, useI18n } from '@/i18n';
 import { STORAGE_KEYS } from '@/constants/storage-keys';
-import { getStorageItem, setStorageItem } from '@/lib/storage';
+import { getScopedStorageItem, setScopedStorageItem } from '@/lib/storage';
+import { useAuth } from '@/features/auth/auth-context';
 import { showToast } from '@/components/Toast';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import { localizePresetName } from '@/features/settings/lib/redaction-display';
@@ -45,7 +46,7 @@ import type { EntityTypeConfig, VisionTypeConfig, PipelineConfig } from '../type
 
 const RECOGNITION_FETCH_TIMEOUT_MS = 1_200;
 
-function resolveVisionSelectionsFromStorage(pipelines: PipelineConfig[]) {
+function resolveVisionSelectionsFromStorage(pipelines: PipelineConfig[], ownerId?: string | null) {
   const ocrHasTypeIds = pipelines
     .filter((pipeline) => pipeline.mode === 'ocr_has')
     .flatMap((pipeline) => pipeline.types.map((type) => type.id));
@@ -60,12 +61,13 @@ function resolveVisionSelectionsFromStorage(pipelines: PipelineConfig[]) {
   const defaultVlmTypeIds = buildDefaultPipelineTypeIds(pipelines, 'vlm');
 
   const visionSelectionSignature = buildVisionSelectionSignature(pipelines);
-  const savedOcrHasTypes = getStorageItem<string[] | null>(STORAGE_KEYS.OCR_HAS_TYPES, null);
-  const savedHasImageTypes = getStorageItem<string[] | null>(STORAGE_KEYS.HAS_IMAGE_TYPES, null);
-  const savedVlmTypes = getStorageItem<string[] | null>(STORAGE_KEYS.VLM_TYPES, null);
-  const savedVisionSelectionSignature = getStorageItem<string | null>(
+  const savedOcrHasTypes = getScopedStorageItem<string[] | null>(STORAGE_KEYS.OCR_HAS_TYPES, null, ownerId);
+  const savedHasImageTypes = getScopedStorageItem<string[] | null>(STORAGE_KEYS.HAS_IMAGE_TYPES, null, ownerId);
+  const savedVlmTypes = getScopedStorageItem<string[] | null>(STORAGE_KEYS.VLM_TYPES, null, ownerId);
+  const savedVisionSelectionSignature = getScopedStorageItem<string | null>(
     STORAGE_KEYS.VISION_SELECTION_SIGNATURE,
     null,
+    ownerId,
   );
   const canUseSavedVisionSelection = savedVisionSelectionSignature === visionSelectionSignature;
 
@@ -105,15 +107,17 @@ function resolveVisionSelectionsFromStorage(pipelines: PipelineConfig[]) {
 
 export function usePlaygroundRecognition() {
   const locale = useI18n((state) => state.locale);
+  const { status } = useAuth();
+  const ownerKey = status?.authenticated && status.username ? status.username.toLowerCase() : 'anonymous';
   const presetsQuery = usePresets();
   const invalidatePresets = useInvalidatePresets();
 
-  const cachedConfig = getCachedRecognitionConfig();
+  const cachedConfig = getCachedRecognitionConfig(ownerKey);
   const cachedEntityTypes = cachedConfig ? sortEntityTypes(cachedConfig.entityTypes) : [];
   const cachedPipelines = cachedConfig
     ? normalizeVisionPipelines(cachedConfig.pipelines as PipelineConfig[])
     : [];
-  const cachedVisionSelections = resolveVisionSelectionsFromStorage(cachedPipelines);
+  const cachedVisionSelections = resolveVisionSelectionsFromStorage(cachedPipelines, ownerKey);
 
   const [entityTypes, setEntityTypes] = useState<EntityTypeConfig[]>(cachedEntityTypes);
   const [textConfigState, setTextConfigState] = useState<ConfigLoadState>(cachedEntityTypes.length > 0 ? 'ready' : 'loading');
@@ -162,11 +166,13 @@ export function usePlaygroundRecognition() {
   }, [selectedTypes]);
 
   const localizedPlaygroundPresets = useMemo(
-    () =>
-      playgroundPresets.map((preset) => ({
+    () => {
+      void locale;
+      return playgroundPresets.map((preset) => ({
         ...preset,
         name: localizePresetName(preset, t),
-      })),
+      }));
+    },
     [playgroundPresets, locale],
   );
 
@@ -199,20 +205,20 @@ export function usePlaygroundRecognition() {
   const updateOcrHasTypes = useCallback((types: string[]) => {
     selectedOcrHasTypesRef.current = types;
     setSelectedOcrHasTypes(types);
-    setStorageItem(STORAGE_KEYS.OCR_HAS_TYPES, types);
-  }, []);
+    setScopedStorageItem(STORAGE_KEYS.OCR_HAS_TYPES, types, ownerKey);
+  }, [ownerKey]);
 
   const updateHasImageTypes = useCallback((types: string[]) => {
     selectedHasImageTypesRef.current = types;
     setSelectedHasImageTypes(types);
-    setStorageItem(STORAGE_KEYS.HAS_IMAGE_TYPES, types);
-  }, []);
+    setScopedStorageItem(STORAGE_KEYS.HAS_IMAGE_TYPES, types, ownerKey);
+  }, [ownerKey]);
 
   const updateVlmTypes = useCallback((types: string[]) => {
     selectedVlmTypesRef.current = types;
     setSelectedVlmTypes(types);
-    setStorageItem(STORAGE_KEYS.VLM_TYPES, types);
-  }, []);
+    setScopedStorageItem(STORAGE_KEYS.VLM_TYPES, types, ownerKey);
+  }, [ownerKey]);
 
   const clearPlaygroundTextPresetTracking = useCallback(() => {
     setPlaygroundPresetTextId(null);
@@ -238,7 +244,7 @@ export function usePlaygroundRecognition() {
       setActivePresetTextId(preset.id);
       setPresetApplySeq((s) => s + 1);
     },
-    [entityTypes],
+    [entityTypes, setSelectedTypes],
   );
 
   const applyVisionPresetToPlayground = useCallback(
@@ -297,7 +303,7 @@ export function usePlaygroundRecognition() {
       const preset = playgroundPresets.find((item) => item.id === id);
       if (preset) applyTextPresetToPlayground(preset);
     },
-    [playgroundDefaultTextTypeIds, playgroundPresets, applyTextPresetToPlayground],
+    [playgroundDefaultTextTypeIds, playgroundPresets, applyTextPresetToPlayground, setSelectedTypes],
   );
 
   const selectPlaygroundVisionPresetById = useCallback(
@@ -431,7 +437,7 @@ export function usePlaygroundRecognition() {
           const filtered = previous.filter((id) => validTypeIds.has(id));
           return filtered.length > 0 || previous.length === 0 ? filtered : defaultTypeIds;
         });
-        updateRecognitionConfigCache({ entityTypes: types });
+        updateRecognitionConfigCache({ entityTypes: types }, ownerKey);
       } catch (error) {
         if (import.meta.env.DEV) console.error('fetch entity types failed', error);
         if (!entityConfigLoadedRef.current) {
@@ -439,7 +445,7 @@ export function usePlaygroundRecognition() {
         }
       }
     },
-    [],
+    [ownerKey, setSelectedTypes],
   );
 
   const fetchVisionTypes = useCallback(async () => {
@@ -447,7 +453,7 @@ export function usePlaygroundRecognition() {
       const normalizedPipelines = normalizeVisionPipelines(
         (await fetchRecognitionPipelines(RECOGNITION_FETCH_TIMEOUT_MS)) as PipelineConfig[],
       );
-      const nextVisionSelections = resolveVisionSelectionsFromStorage(normalizedPipelines);
+      const nextVisionSelections = resolveVisionSelectionsFromStorage(normalizedPipelines, ownerKey);
       const nextVisionTypes = flattenVisionTypes(normalizedPipelines);
 
       setPipelines(normalizedPipelines);
@@ -457,15 +463,19 @@ export function usePlaygroundRecognition() {
       updateOcrHasTypes(nextVisionSelections.ocrHasTypes);
       updateHasImageTypes(nextVisionSelections.hasImageTypes);
       updateVlmTypes(nextVisionSelections.vlmTypes);
-      setStorageItem(STORAGE_KEYS.VISION_SELECTION_SIGNATURE, nextVisionSelections.visionSelectionSignature);
-      updateRecognitionConfigCache({ pipelines: normalizedPipelines });
+      setScopedStorageItem(
+        STORAGE_KEYS.VISION_SELECTION_SIGNATURE,
+        nextVisionSelections.visionSelectionSignature,
+        ownerKey,
+      );
+      updateRecognitionConfigCache({ pipelines: normalizedPipelines }, ownerKey);
     } catch (error) {
       if (import.meta.env.DEV) console.error('fetch vision pipelines failed', error);
       if (!visionConfigLoadedRef.current) {
         setVisionConfigState('unavailable');
       }
     }
-  }, [updateOcrHasTypes, updateHasImageTypes, updateVlmTypes]);
+  }, [ownerKey, updateOcrHasTypes, updateHasImageTypes, updateVlmTypes]);
 
   const loadRecognitionConfig = useCallback(
     async (preserveSelection = false) => {
@@ -493,6 +503,10 @@ export function usePlaygroundRecognition() {
   }, [fetchEntityTypes, loadRecognitionConfig]);
 
   const bridgeInitRef = useRef(false);
+  useEffect(() => {
+    bridgeInitRef.current = false;
+  }, [ownerKey]);
+
   useEffect(() => {
     if (bridgeInitRef.current) return;
     if (!playgroundPresets.length || !entityTypes.length) return;
@@ -541,7 +555,7 @@ export function usePlaygroundRecognition() {
         return previous.filter((id) => !ids.includes(id));
       });
     },
-    [clearPlaygroundTextPresetTracking],
+    [clearPlaygroundTextPresetTracking, setSelectedTypes],
   );
 
   const toggleVisionType = useCallback(

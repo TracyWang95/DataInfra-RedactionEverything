@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.core.has_image_categories import HAS_IMAGE_MODEL_SLUGS
 from app.core.persistence import load_json, save_json
+from app.core.tenant_config import tenant_store_path
 from app.models.schemas import (
     PresetCreate,
     PresetImportItem,
@@ -40,8 +41,12 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _load_store() -> list[dict[str, Any]]:
-    raw = load_json(settings.PRESET_STORE_PATH, default=None)
+def _preset_store_path(owner_id: str | None = None) -> str:
+    return tenant_store_path(owner_id, settings.PRESET_STORE_PATH, "presets.json")
+
+
+def _load_store(owner_id: str | None = None) -> list[dict[str, Any]]:
+    raw = load_json(_preset_store_path(owner_id), default=None)
     if raw is None:
         return []
     if isinstance(raw, list):
@@ -52,8 +57,8 @@ def _load_store() -> list[dict[str, Any]]:
     return []
 
 
-def _save_store(presets: list[dict[str, Any]]) -> None:
-    save_json(settings.PRESET_STORE_PATH, presets)
+def _save_store(presets: list[dict[str, Any]], owner_id: str | None = None) -> None:
+    save_json(_preset_store_path(owner_id), presets)
 
 
 def _enabled_entity_type_ids() -> set[str]:
@@ -67,12 +72,19 @@ def _enabled_entity_type_ids() -> set[str]:
     }
 
 
-def _enabled_pipeline_type_ids(group: str) -> set[str]:
+def _enabled_pipeline_type_ids(group: str, owner_id: str | None = None) -> set[str]:
     if group == "vlm":
         try:
             from app.services.pipeline_service import get_pipeline_types_for_mode
 
-            return {item.id for item in get_pipeline_types_for_mode("vlm", enabled_only=True)}
+            return {
+                item.id
+                for item in get_pipeline_types_for_mode(
+                    "vlm",
+                    enabled_only=True,
+                    owner_id=owner_id,
+                )
+            }
         except Exception:
             return set()
     raw = load_json(_PRESET_PIPELINE_TYPES_PATH, default={})
@@ -198,8 +210,12 @@ def _import_item_to_row(preset: PresetImportItem) -> dict[str, Any]:
     }
 
 
-def list_presets(page: int = 1, page_size: int = 0) -> PresetsListResponse:
-    presets = _merge_with_builtin_presets(_load_store())
+def list_presets(
+    page: int = 1,
+    page_size: int = 0,
+    owner_id: str | None = None,
+) -> PresetsListResponse:
+    presets = _merge_with_builtin_presets(_load_store(owner_id))
     all_out = [out for p in presets if (out := _to_out_or_none(p)) is not None]
     total = len(all_out)
     if page_size <= 0:
@@ -214,8 +230,8 @@ def list_presets(page: int = 1, page_size: int = 0) -> PresetsListResponse:
     )
 
 
-def create(payload: PresetCreate) -> PresetOut:
-    presets = _load_store()
+def create(payload: PresetCreate, owner_id: str | None = None) -> PresetOut:
+    presets = _load_store(owner_id)
     pid = str(uuid.uuid4())
     ts = _now_iso()
     row = {
@@ -234,15 +250,19 @@ def create(payload: PresetCreate) -> PresetOut:
         "updated_at": ts,
     }
     presets.append(row)
-    _save_store(presets)
+    _save_store(presets, owner_id)
     return _to_out(row)
 
 
-def update(preset_id: str, patch: PresetUpdate) -> PresetOut | None:
+def update(
+    preset_id: str,
+    patch: PresetUpdate,
+    owner_id: str | None = None,
+) -> PresetOut | None:
     """Returns updated PresetOut, or None if not found."""
     if is_builtin(preset_id):
         return None
-    presets = _load_store()
+    presets = _load_store(owner_id)
     for i, p in enumerate(presets):
         if p.get("id") != preset_id:
             continue
@@ -268,29 +288,29 @@ def update(preset_id: str, patch: PresetUpdate) -> PresetOut | None:
             p["replacementMode"] = patch.replacementMode
         p["updated_at"] = _now_iso()
         presets[i] = p
-        _save_store(presets)
+        _save_store(presets, owner_id)
         return _to_out(p)
     return None
 
 
-def delete(preset_id: str) -> bool:
+def delete(preset_id: str, owner_id: str | None = None) -> bool:
     """Returns True if deleted, False if not found."""
     if is_builtin(preset_id):
         return False
-    presets = _load_store()
+    presets = _load_store(owner_id)
     nxt = [p for p in presets if p.get("id") != preset_id]
     if len(nxt) == len(presets):
         return False
-    _save_store(nxt)
+    _save_store(nxt, owner_id)
     return True
 
 
-def export_all() -> dict:
-    data = _merge_with_builtin_presets(_load_store())
+def export_all(owner_id: str | None = None) -> dict:
+    data = _merge_with_builtin_presets(_load_store(owner_id))
     return {"presets": data, "exported_at": datetime.now(UTC).isoformat(), "version": "1.0"}
 
 
-def import_presets(request: PresetImportRequest) -> int:
+def import_presets(request: PresetImportRequest, owner_id: str | None = None) -> int:
     """Returns count of imported presets."""
     builtin_ids = _builtin_ids()
     incoming = [
@@ -299,7 +319,7 @@ def import_presets(request: PresetImportRequest) -> int:
         if p.id not in builtin_ids
     ]
     if request.merge:
-        existing = _load_store()
+        existing = _load_store(owner_id)
         existing_ids = {p.get("id") for p in existing if isinstance(p, dict)}
         imported_count = 0
         for p in incoming:
@@ -307,8 +327,8 @@ def import_presets(request: PresetImportRequest) -> int:
                 existing.append(p)
                 existing_ids.add(p.get("id"))
                 imported_count += 1
-        _save_store(existing)
+        _save_store(existing, owner_id)
         return imported_count
     else:
-        _save_store(incoming)
+        _save_store(incoming, owner_id)
     return len(incoming)

@@ -15,6 +15,7 @@ from collections import OrderedDict
 from threading import Lock
 
 import httpx
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -575,6 +576,15 @@ class VisionService:
                 status["stage_duration_ms"] = dict(self.last_has_image_stage_duration_ms)
             logger.info("%s found %d regions", label, len(boxes))
 
+        if self._signature_requested(vlm_types):
+            image_data = await get_image_data()
+            img = Image.open(io.BytesIO(image_data))
+            img = ImageOps.exif_transpose(img).convert("RGB")
+            signature_supplements = self._supplement_signatures_from_seal_context(img, all_boxes, page)
+            if signature_supplements:
+                logger.info("Signature seal-context supplement added %d regions", len(signature_supplements))
+                all_boxes.extend(signature_supplements)
+
         all_boxes = self._filter_visual_artifacts(all_boxes)
         all_boxes = self._deduplicate_boxes(all_boxes)
 
@@ -592,6 +602,157 @@ class VisionService:
         self.last_duration_ms = duration_ms
         logger.info("Dual pipeline total: %d regions, %.2fs", len(all_boxes), duration_ms["total"] / 1000)
         return all_boxes, result_image_base64
+
+    @staticmethod
+    def _signature_requested(vlm_types: list | None) -> bool:
+        return any(
+            str(getattr(item, "id", "") or getattr(item, "type", "") or item).strip().lower() == "signature"
+            for item in (vlm_types or [])
+        )
+
+    def _supplement_signatures_from_seal_context(
+        self,
+        image: Image.Image,
+        boxes: list[BoundingBox],
+        page: int,
+    ) -> list[BoundingBox]:
+        seal_boxes = [
+            box
+            for box in boxes
+            if self._norm_box_type(box.type) in {"official_seal", "seal", "stamp"}
+            and box.y >= 0.65
+            and box.width >= 0.10
+            and box.height >= 0.08
+        ]
+        if not seal_boxes:
+            return []
+
+        existing = [
+            box
+            for box in boxes
+            if self._norm_box_type(box.type) in {"signature", "handwriting", "approval_mark"}
+        ]
+        supplements: list[BoundingBox] = []
+        for seal in seal_boxes:
+            candidate = self._signature_candidate_near_seal(image, seal, page)
+            if candidate is None:
+                continue
+            if any(
+                self._calculate_iou(candidate, box) > 0.08
+                or self._calculate_smaller_overlap(candidate, box) >= 0.45
+                for box in [*existing, *supplements]
+            ):
+                continue
+            supplements.append(candidate)
+        return supplements
+
+    def _signature_candidate_near_seal(
+        self,
+        image: Image.Image,
+        seal: BoundingBox,
+        page: int,
+    ) -> BoundingBox | None:
+        width, height = image.size
+        if width <= 0 or height <= 0:
+            return None
+
+        x1 = max(0, int((seal.x + seal.width * 0.25) * width))
+        x2 = min(width, int((seal.x + seal.width * 1.48) * width))
+        y1 = max(0, int((seal.y + seal.height * 0.30) * height))
+        y2 = min(height, int((seal.y + seal.height * 1.12) * height))
+        if x2 - x1 < 24 or y2 - y1 < 18:
+            return None
+
+        crop = np.asarray(image.crop((x1, y1, x2, y2)).convert("RGB"))
+        mask = VlmVisionService._signature_stroke_mask(crop)
+        if int(mask.sum()) < max(18, int(mask.size * 0.0005)):
+            return None
+
+        row_clusters = self._active_mask_clusters(mask.sum(axis=1), max(2, int(mask.shape[1] * 0.006)), max_gap=5)
+        if not row_clusters:
+            return None
+
+        anchor_x = (seal.x + seal.width * 0.72) * width - x1
+        best: tuple[float, tuple[int, int], tuple[int, int], np.ndarray] | None = None
+        for row_start, row_end, row_pixels in row_clusters:
+            if row_start > mask.shape[0] * 0.82:
+                continue
+            row_mask = mask[row_start: row_end + 1, :]
+            col_clusters = self._active_mask_clusters(
+                row_mask.sum(axis=0),
+                max(2, int(row_mask.shape[0] * 0.05)),
+                max_gap=10,
+            )
+            for col_start, col_end, col_pixels in col_clusters:
+                center = (col_start + col_end) / 2
+                if center < anchor_x + max(16.0, seal.width * width * 0.05):
+                    continue
+                component = row_mask[:, col_start: col_end + 1]
+                ys, xs = np.where(component)
+                if len(xs) < 16 or len(ys) < 8:
+                    continue
+                component_width = int(xs.max() - xs.min() + 1)
+                component_height = int(ys.max() - ys.min() + 1)
+                if component_width < 18 or component_height < 8:
+                    continue
+                score = (
+                    float(col_pixels)
+                    + component_width * 4.0
+                    + component_height * 2.0
+                    - abs(center - anchor_x) * 0.15
+                    + float(row_pixels) * 0.05
+                )
+                if best is None or score > best[0]:
+                    best = (score, (row_start, row_end), (col_start, col_end), component)
+
+        if best is None:
+            return None
+
+        _score, (row_start, _row_end), (col_start, _col_end), component = best
+        ys, xs = np.where(component)
+        if len(xs) == 0 or len(ys) == 0:
+            return None
+
+        nx1 = max(0, x1 + col_start + int(xs.min()) - 8)
+        ny1 = max(0, y1 + row_start + int(ys.min()) - 8)
+        nx2 = min(width, x1 + col_start + int(xs.max()) + 12)
+        ny2 = min(height, y1 + row_start + int(ys.max()) + 12)
+        if nx2 <= nx1 or ny2 <= ny1:
+            return None
+        if (nx2 - nx1) < 18 or (ny2 - ny1) < 8:
+            return None
+
+        return BoundingBox(
+            id=f"signature_seal_{uuid.uuid4().hex[:8]}",
+            x=nx1 / width,
+            y=ny1 / height,
+            width=(nx2 - nx1) / width,
+            height=(ny2 - ny1) / height,
+            type="signature",
+            text="签字",
+            page=page,
+            confidence=0.78,
+            source="vlm",
+            source_detail="signature#seal_context:stroke_refined",
+            evidence_source="local_fallback",
+        )
+
+    @staticmethod
+    def _active_mask_clusters(values: np.ndarray, min_value: int, max_gap: int) -> list[tuple[int, int, int]]:
+        active = np.where(values >= min_value)[0]
+        if len(active) == 0:
+            return []
+        clusters: list[tuple[int, int, int]] = []
+        start = prev = int(active[0])
+        for raw_index in active[1:]:
+            index = int(raw_index)
+            if index - prev <= max_gap:
+                prev = index
+                continue
+            clusters.append((start, prev, int(values[start: prev + 1].sum())))
+            start = prev = index
+        clusters.append((start, prev, int(values[start: prev + 1].sum())))
+        return clusters
 
     def _filter_visual_artifacts(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """Drop visual false positives that lack enough target-specific evidence.
@@ -615,10 +776,20 @@ class VisionService:
             for box in boxes
             if self._norm_box_type(box.type) in {"official_seal", "seal", "stamp"}
         ]
+        seal_context_signature_boxes = [
+            box
+            for box in boxes
+            if self._norm_box_type(box.type) in {"signature", "handwriting", "approval_mark"}
+            and "seal_context" in str(box.source_detail or "").lower()
+        ]
         filtered: list[BoundingBox] = []
         removed = 0
         for box in boxes:
-            if self._is_scanner_mark_seal_artifact(box, machine_code_boxes) or self._is_signature_artifact(box, seal_boxes):
+            if self._is_scanner_mark_seal_artifact(box, machine_code_boxes) or self._is_signature_artifact(
+                box,
+                seal_boxes,
+                seal_context_signature_boxes,
+            ):
                 removed += 1
                 logger.info(
                     "Filtered visual artifact type=%s detail=%s box=(%.4f, %.4f, %.4f, %.4f)",
@@ -692,19 +863,35 @@ class VisionService:
         self,
         box: BoundingBox,
         seal_boxes: list[BoundingBox],
+        seal_context_signature_boxes: list[BoundingBox] | None = None,
     ) -> bool:
         if self._norm_box_type(box.type) not in {"signature", "handwriting", "approval_mark"}:
             return False
         if box.source != "vlm":
             return False
+        source_detail = str(box.source_detail or "").lower()
+        if (
+            "seal_context" not in source_detail
+            and ":full" in source_detail
+            and box.height < 0.022
+            and seal_context_signature_boxes
+        ):
+            center = box.x + box.width / 2
+            for context_box in seal_context_signature_boxes:
+                context_center = context_box.x + context_box.width / 2
+                if context_box.page == box.page and abs(center - context_center) <= 0.22:
+                    return True
+        stroke_refined = "stroke_refined" in source_detail or "signature_stroke_adjusted" in source_detail
+        if stroke_refined and box.width >= 0.025 and box.height >= 0.006:
+            return False
         # Printed text lines are usually very shallow; handwritten signatures
         # should have enough vertical stroke extent to be reviewed as a region.
-        if box.height < 0.025:
+        if box.height < 0.010:
             return True
         for seal in seal_boxes:
             if self._norm_box_type(seal.type) not in {"official_seal", "seal", "stamp"}:
                 continue
-            if self._calculate_smaller_overlap(box, seal) >= 0.25:
+            if self._calculate_smaller_overlap(box, seal) >= 0.65:
                 return True
         return False
 

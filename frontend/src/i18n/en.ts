@@ -816,7 +816,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step1.retryPresetsLoading': 'Retrying...',
   'batchWizard.step2.dropHint': 'Drop files here, or click to select',
   'batchWizard.step2.dropHintSmart':
-    'Supports Word (.docx), PDF, images (.jpg .png), auto-detects file type',
+    'Supports Word (.docx), text (.txt), PDF, images (.jpg .png), auto-detects file type',
   'batchWizard.step2.dropHintImage': 'Supports images (.jpg .png) and scanned PDFs',
   'batchWizard.step2.dropHintText': 'Supports Word (.docx .doc) and PDF documents',
   'batchWizard.step2.jobLinked': 'Current job',

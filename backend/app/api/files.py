@@ -347,7 +347,11 @@ async def hybrid_ner_extract(
             file_id,
             request.entity_type_ids,
         )
-        ner_result = await _fms.run_hybrid_ner(file_id, entity_type_ids=request.entity_type_ids)
+        ner_result = await _fms.run_hybrid_ner(
+            file_id,
+            entity_type_ids=request.entity_type_ids,
+            owner_id=owner_id,
+        )
     except ValueError as exc:
         detail = str(exc)
         if "不存在" in detail:
@@ -372,7 +376,7 @@ async def extract_entities(file_id: str, owner_id: str = Depends(require_auth)):
     """
     try:
         _fms.assert_file_owner(file_id, owner_id)
-        ner_result = await _fms.run_default_ner(file_id)
+        ner_result = await _fms.run_default_ner(file_id, owner_id=owner_id)
     except ValueError as exc:
         detail = str(exc)
         if "不存在" in detail:
@@ -405,6 +409,7 @@ async def extract_entities_with_config(
         ner_result = await _fms.run_default_ner(
             file_id,
             entity_type_ids=entity_type_ids if entity_type_ids else None,
+            owner_id=owner_id,
         )
     except ValueError as exc:
         detail = str(exc)

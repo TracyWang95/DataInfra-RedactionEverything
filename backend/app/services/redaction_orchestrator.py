@@ -327,6 +327,7 @@ async def detect_vision(
     force: bool = False,
     include_result_image: bool = True,
     merge_existing: bool = False,
+    owner_id: str | None = None,
     signature_selected_ocr_has_types: list[str] | None = None,
     signature_selected_has_image_types: list[str] | None = None,
     signature_selected_vlm_types: list[str] | None = None,
@@ -344,14 +345,25 @@ async def detect_vision(
         if not file_info:
             raise ValueError("文件不存在")
         snapshot = dict(file_info)
+    owner_id = owner_id or str(snapshot.get("owner_id") or "local_user")
 
     # 获取两个 Pipeline 的类型配置
-    from app.services.pipeline_service import get_pipeline_types_for_mode, pipelines_db
+    from app.services.pipeline_service import get_pipeline, get_pipeline_types_for_mode
 
-    all_ocr_has_types = get_pipeline_types_for_mode("ocr_has")
-    default_has_image_types = _default_has_image_types(get_pipeline_types_for_mode("has_image"))
-    selectable_has_image_types = get_pipeline_types_for_mode("has_image", enabled_only=False)
-    selectable_vlm_types = get_pipeline_types_for_mode("vlm", enabled_only=False)
+    all_ocr_has_types = get_pipeline_types_for_mode("ocr_has", owner_id=owner_id)
+    default_has_image_types = _default_has_image_types(
+        get_pipeline_types_for_mode("has_image", owner_id=owner_id)
+    )
+    selectable_has_image_types = get_pipeline_types_for_mode(
+        "has_image",
+        enabled_only=False,
+        owner_id=owner_id,
+    )
+    selectable_vlm_types = get_pipeline_types_for_mode(
+        "vlm",
+        enabled_only=False,
+        owner_id=owner_id,
+    )
 
     sel_ocr_ids: set[str] | None = None
     sel_img_ids: set[str] | None = None
@@ -411,19 +423,22 @@ async def detect_vision(
             )
             has_image_types = default_has_image_types
 
-    ocr_has_enabled = pipelines_db.get("ocr_has", None) and pipelines_db["ocr_has"].enabled and len(ocr_has_types) > 0
+    ocr_pipeline = get_pipeline("ocr_has", owner_id=owner_id)
+    image_pipeline = get_pipeline("has_image", owner_id=owner_id)
+    vlm_pipeline = get_pipeline("vlm", owner_id=owner_id)
+    ocr_has_enabled = bool(ocr_pipeline and ocr_pipeline.enabled and len(ocr_has_types) > 0)
     has_image_enabled = (
-        pipelines_db.get("has_image", None)
-        and pipelines_db["has_image"].enabled
+        image_pipeline
+        and image_pipeline.enabled
         and len(has_image_types) > 0
     )
     vlm_enabled = (
-        pipelines_db.get("vlm", None)
-        and pipelines_db["vlm"].enabled
+        vlm_pipeline
+        and vlm_pipeline.enabled
         and len(vlm_types) > 0
     )
 
-    if pipelines_db.get("ocr_has") and pipelines_db["ocr_has"].enabled and len(ocr_has_types) == 0:
+    if ocr_pipeline and ocr_pipeline.enabled and len(ocr_has_types) == 0:
         logger.info(
             "OCR+HaS 跳过：前端传入的类型列表为空（selected_ocr_has_types=[] 表示不跑文字 OCR）。"
             "若希望识别文字，请在侧栏勾选至少一类 OCR+HaS 类型，或清除 localStorage 键 ocrHasTypes 后刷新。"

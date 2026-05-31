@@ -701,6 +701,7 @@ export function useBatchWizard() {
           setCfg(mergedCfg);
           setFurthestStep((prev) => Math.max(prev, mergedFurthest) as Step);
           persistDraftFingerprint(mergedFurthest);
+          hydratedFromUrlRef.current = true;
           if (detail.status === 'draft') {
             const payload = buildJobConfigForWorker(mergedCfg, mode, mergedFurthest);
             try {
@@ -711,7 +712,6 @@ export function useBatchWizard() {
             }
           }
           if (hydrateGen !== batchHydrateGenRef.current) return;
-          hydratedFromUrlRef.current = true;
           return;
         }
 

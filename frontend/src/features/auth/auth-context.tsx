@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { AUTH_UNAUTHORIZED_EVENT, authFetch } from '@/services/api-client';
+import { STORAGE_KEYS } from '@/constants/storage-keys';
 
 export interface AuthStatus {
   auth_enabled: boolean;
@@ -72,6 +73,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     statusRef.current = status;
+    try {
+      if (status?.authenticated && status.username) {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, status.username.toLowerCase());
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      }
+    } catch {
+      // localStorage may be unavailable in restricted browsers.
+    }
   }, [status]);
 
   const runRefresh = useCallback((background = false): Promise<AuthStatus | null> => {
