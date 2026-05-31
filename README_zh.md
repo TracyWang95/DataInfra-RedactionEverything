@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-Personal%20Use-blue.svg)](./LICENSE)
 [![CI](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml/badge.svg)](https://github.com/TracyWang95/DataInfra-RedactionEverything/actions/workflows/ci.yml)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#贡献)
-[![GitHub Stars](https://img.shields.io/github/stars/TracyWang95/DataInfra-RedactionEverything?style=flat&logo=github&label=Stars)](https://github.com/TracyWang95/DataInfra-RedactionEverything/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/TracyWang95/DataInfra-RedactionEverything.svg?style=flat&logo=github&label=Stars&cacheSeconds=3600)](https://github.com/TracyWang95/DataInfra-RedactionEverything/stargazers)
 
 **语言：** [English](./README.md) | 中文
 
