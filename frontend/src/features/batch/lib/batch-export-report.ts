@@ -23,7 +23,7 @@ export type {
   JobExportReportZipSkipped,
 } from '@/types';
 
-export type BatchExportVisualEvidenceSource = 'hasImage' | 'fallback' | 'ocrHas' | 'table';
+export type BatchExportVisualEvidenceSource = 'visualFeature' | 'fallback' | 'ocrHas' | 'table';
 
 export interface BatchExportVisualEvidenceEntry {
   key: BatchExportVisualEvidenceSource;
@@ -91,10 +91,10 @@ export function buildBatchExportVisualEvidenceEntries(
     recordCount(evidence.evidence_source_counts, 'local_fallback'),
     recordCountIncluding(evidence.source_detail_counts, 'fallback'),
   ]);
-  const hasImageCount = firstPositiveCount([
-    normalizeCount(evidence.has_image_model),
-    recordCount(evidence.evidence_source_counts, 'has_image_model'),
-    Math.max(0, recordCount(evidence.source_counts, 'has_image') - fallbackCount),
+  const visualFeatureCount = firstPositiveCount([
+    normalizeCount(evidence.visual_features_model),
+    recordCount(evidence.evidence_source_counts, 'visual_features_model'),
+    Math.max(0, recordCount(evidence.source_counts, 'visual_features') - fallbackCount),
   ]);
   const ocrHasCount = firstPositiveCount([
     normalizeCount(evidence.ocr_has),
@@ -109,7 +109,7 @@ export function buildBatchExportVisualEvidenceEntries(
   ]);
 
   const entries: BatchExportVisualEvidenceEntry[] = [
-    { key: 'hasImage', count: hasImageCount },
+    { key: 'visualFeature', count: visualFeatureCount },
     { key: 'fallback', count: fallbackCount },
     { key: 'ocrHas', count: ocrHasCount },
     { key: 'table', count: tableCount },

@@ -1,7 +1,7 @@
 """
-图片匿名化模块
-处理图片/扫描件的区域匿名化（马赛克 / 高斯模糊 / 纯色填充）
-委托给 VisionService.apply_redaction 执行实际图像处理
+鍥剧墖鍖垮悕鍖栨ā鍧?
+澶勭悊鍥剧墖/鎵弿浠剁殑鍖哄煙鍖垮悕鍖栵紙椹禌鍏?/ 楂樻柉妯＄硦 / 绾壊濉厖锛?
+濮旀墭缁?VisionService.apply_redaction 鎵ц瀹為檯鍥惧儚澶勭悊
 """
 import logging
 from typing import Any
@@ -30,10 +30,8 @@ _VISUAL_BOX_TYPES = {
     "stamp",
 }
 _VISUAL_BOX_SOURCES = {
-    "has_image",
-    "has_image_model",
-    "vlm",
-    "vlm_model",
+    "visual_features",
+    "visual_feature_model",
     "local_fallback",
     "manual",
 }
@@ -161,9 +159,9 @@ def prepare_image_redaction(
 
 class ImageRedactorMixin:
     """
-    图片匿名化方法集合
-    设计为 mixin，由 Redactor 类继承使用
-    要求宿主类具有 self.vision_service 属性（VisionService 实例）
+    鍥剧墖鍖垮悕鍖栨柟娉曢泦鍚?
+    璁捐涓?mixin锛岀敱 Redactor 绫荤户鎵夸娇鐢?
+    瑕佹眰瀹夸富绫诲叿鏈?self.vision_service 灞炴€э紙VisionService 瀹炰緥锛?
     """
 
     async def _redact_image(
@@ -175,18 +173,18 @@ class ImageRedactorMixin:
         config: RedactionConfig,
     ) -> int:
         """
-        图片/扫描件匿名化：HaS Image 风格块级匿名化
-        马赛克 / 高斯模糊 / 纯色填充，与文本 replacement_mode 无关
+        鍥剧墖/鎵弿浠跺尶鍚嶅寲锛欻aS Image 椋庢牸鍧楃骇鍖垮悕鍖?
+        椹禌鍏?/ 楂樻柉妯＄硦 / 绾壊濉厖锛屼笌鏂囨湰 replacement_mode 鏃犲叧
 
         Args:
-            file_path: 输入文件路径
-            file_type: 文件类型（PDF_SCANNED 或 IMAGE）
-            selected_boxes: 选中的边界框列表
-            output_path: 输出文件路径
-            config: 匿名化配置
+            file_path: 杈撳叆鏂囦欢璺緞
+            file_type: 鏂囦欢绫诲瀷锛圥DF_SCANNED 鎴?IMAGE锛?
+            selected_boxes: 閫変腑鐨勮竟鐣屾鍒楄〃
+            output_path: 杈撳嚭鏂囦欢璺緞
+            config: 鍖垮悕鍖栭厤缃?
 
         Returns:
-            匿名化区域数量
+            鍖垮悕鍖栧尯鍩熸暟閲?
         """
         safe_boxes, method, strength, fill_color = prepare_image_redaction(selected_boxes, config)
 

@@ -5,7 +5,7 @@
 # Consider nvidia/cuda:12.x-runtime or PaddlePaddle official GPU image.
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
 paddlepaddle-gpu==3.3.0
-paddleocr[doc-parser]==3.5.0
+paddleocr[doc-parser]==3.6.0
 fastapi==0.136.1
 uvicorn==0.35.0
 httpx==0.28.1

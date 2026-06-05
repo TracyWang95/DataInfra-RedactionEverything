@@ -1,4 +1,4 @@
-﻿"""
+"""
 鎵归噺浠诲姟 Job / JobItem 鈥?SQLite锛圵AL锛夋寔涔呭寲銆?
 """
 from __future__ import annotations
@@ -24,6 +24,7 @@ class JobType(str, Enum):
     TEXT_BATCH = "text_batch"
     IMAGE_BATCH = "image_batch"
     SMART_BATCH = "smart_batch"
+    STRUCTURED_BATCH = "structured_batch"
 
 
 class JobStatus(str, Enum):
@@ -34,7 +35,7 @@ class JobStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    # 鍏煎鏃ф暟鎹鍙栵紙涓嶅仛鏂板啓鍏ワ級
+    # 鍏煎鏃ф暟鎹鍙栵紙涓嶅仛鏂板啓鍏ワ級
     RUNNING = "running"
     REDACTING = "redacting"
 
@@ -45,7 +46,7 @@ class JobItemStatus(str, Enum):
     AWAITING_REVIEW = "awaiting_review"
     COMPLETED = "completed"
     FAILED = "failed"
-    # 鍏煎鏃ф暟鎹鍙?
+    # 鍏煎鏃ф暟鎹鍙?
     QUEUED = "queued"
     PARSING = "parsing"
     NER = "ner"
@@ -59,7 +60,7 @@ class JobItemStatus(str, Enum):
 # State-machine: 绠€鍖栫増锛屽彧鏈夋牳蹇冭浆鎹?
 # ---------------------------------------------------------------------------
 
-# 鏂扮姸鎬?+ 鏃х姸鎬佸吋瀹癸細浠讳綍鏃т腑闂寸姸鎬侀兘鍙浆鍒版柊鐘舵€?
+# 鏂扮姸鎬?+ 鏃х姸鎬佸吋瀹癸細浠讳綍鏃т腑闂寸姸鎬侀兘鍙浆鍒版柊鐘舵€?
 _ALL_JOB = tuple(JobStatus)
 VALID_JOB_TRANSITIONS: dict[JobStatus, tuple[JobStatus, ...]] = {
     JobStatus.DRAFT:           (JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.CANCELLED),
@@ -69,7 +70,7 @@ VALID_JOB_TRANSITIONS: dict[JobStatus, tuple[JobStatus, ...]] = {
     JobStatus.COMPLETED:       (JobStatus.QUEUED,),
     JobStatus.FAILED:          (JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.CANCELLED),
     JobStatus.CANCELLED:       (),
-    # 鏃х姸鎬佸吋瀹癸細鍙互杞埌浠讳綍鏂扮姸鎬?
+    # 鏃х姸鎬佸吋瀹癸細鍙互杞埌浠讳綍鏂扮姸鎬?
     JobStatus.RUNNING:         _ALL_JOB,
     JobStatus.REDACTING:       _ALL_JOB,
 }
@@ -81,7 +82,7 @@ VALID_ITEM_TRANSITIONS: dict[JobItemStatus, tuple[JobItemStatus, ...]] = {
     JobItemStatus.AWAITING_REVIEW: (JobItemStatus.PROCESSING, JobItemStatus.COMPLETED, JobItemStatus.FAILED),
     JobItemStatus.COMPLETED:       (),
     JobItemStatus.FAILED:          (JobItemStatus.PENDING, JobItemStatus.PROCESSING),
-    # 鏃х姸鎬佸吋瀹癸細鍙互杞埌浠讳綍鏂扮姸鎬?
+    # 鏃х姸鎬佸吋瀹癸細鍙互杞埌浠讳綍鏂扮姸鎬?
     JobItemStatus.QUEUED:           _ALL_ITEM,
     JobItemStatus.PARSING:          _ALL_ITEM,
     JobItemStatus.NER:              _ALL_ITEM,
@@ -145,7 +146,7 @@ def _deep_merge_dict(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, A
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
-  job_type TEXT NOT NULL CHECK(job_type IN ('text_batch','image_batch','smart_batch')),
+  job_type TEXT NOT NULL CHECK(job_type IN ('text_batch','image_batch','smart_batch','structured_batch')),
   title TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL,
   skip_item_review INTEGER NOT NULL DEFAULT 0,
@@ -194,7 +195,7 @@ class JobStore:
         ensure_db_dir(self._path)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
-            # WAL 鑷姩 checkpoint 闃堝€硷紝闃叉 WAL 鏂囦欢鏃犻檺澧為暱
+            # WAL 鑷姩 checkpoint 闃堝€硷紝闃叉 WAL 鏂囦欢鏃犻檺澧為暱
             conn.execute("PRAGMA wal_autocheckpoint = 1000")
             cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(job_items)").fetchall()}
             if "review_draft_json" not in cols:
@@ -219,14 +220,15 @@ class JobStore:
             if "owner_id" not in job_cols:
                 conn.execute("ALTER TABLE jobs ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local_user'")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(owner_id)")
-            # Migrate CHECK constraint to include smart_batch
+            # Migrate CHECK constraint to include all current job types.
             try:
                 conn.execute(
                     "INSERT INTO jobs (id, job_type, status, created_at, updated_at) "
-                    "VALUES ('__test_smart', 'smart_batch', 'draft', '', '')"
+                    "VALUES ('__test_structured', 'structured_batch', 'draft', '', '')"
                 )
-                conn.execute("DELETE FROM jobs WHERE id = '__test_smart'")
+                conn.execute("DELETE FROM jobs WHERE id = '__test_structured'")
             except sqlite3.IntegrityError:
+                conn.rollback()
                 # Rebuild table with updated CHECK constraint.
                 # Wrap in IMMEDIATE transaction to prevent data loss on crash.
                 conn.execute("BEGIN IMMEDIATE")
@@ -235,7 +237,7 @@ class JobStore:
                     conn.execute("""
                         CREATE TABLE jobs (
                             id TEXT PRIMARY KEY,
-                            job_type TEXT NOT NULL CHECK(job_type IN ('text_batch','image_batch','smart_batch')),
+                            job_type TEXT NOT NULL CHECK(job_type IN ('text_batch','image_batch','smart_batch','structured_batch')),
                             title TEXT NOT NULL DEFAULT '',
                             status TEXT NOT NULL,
                             skip_item_review INTEGER NOT NULL DEFAULT 0,
@@ -932,10 +934,17 @@ class JobStore:
         repaired = 0
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, file_id, job_id FROM job_items WHERE status = ?",
+                """
+                SELECT ji.id, ji.file_id, ji.job_id, j.job_type
+                FROM job_items ji
+                JOIN jobs j ON j.id = ji.job_id
+                WHERE ji.status = ?
+                """,
                 (JobItemStatus.COMPLETED.value,),
             ).fetchall()
             for row in rows:
+                if row["job_type"] == JobType.STRUCTURED_BATCH.value:
+                    continue
                 fid = row["file_id"]
                 info = file_store.get(fid)
                 if info and info.get("output_path"):
@@ -948,7 +957,12 @@ class JobStore:
                 logging.getLogger(__name__).info("repair_completed_without_output: item %s (file %s) reset to awaiting_review", row["id"], fid)
             if repaired:
                 # Force affected jobs back because the public state machine does not allow this repair transition.
-                affected_jobs = set(row["job_id"] for row in rows if not (file_store.get(row["file_id"]) or {}).get("output_path"))
+                affected_jobs = set(
+                    row["job_id"]
+                    for row in rows
+                    if row["job_type"] != JobType.STRUCTURED_BATCH.value
+                    and not (file_store.get(row["file_id"]) or {}).get("output_path")
+                )
                 for jid in affected_jobs:
                     conn.execute(
                         "UPDATE jobs SET status = ?, updated_at = ? WHERE id = ?",
@@ -970,10 +984,17 @@ class JobStore:
         repaired_file_ids: set[str] = set()
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, file_id, job_id, error_message FROM job_items WHERE status = ?",
+                """
+                SELECT ji.id, ji.file_id, ji.job_id, ji.error_message, j.job_type
+                FROM job_items ji
+                JOIN jobs j ON j.id = ji.job_id
+                WHERE ji.status = ?
+                """,
                 (JobItemStatus.FAILED.value,),
             ).fetchall()
             for row in rows:
+                if row["job_type"] == JobType.STRUCTURED_BATCH.value:
+                    continue
                 err = str(row["error_message"] or "")
                 err_lower = err.lower()
                 if "file not found" not in err_lower and "not found" not in err_lower:
@@ -1105,10 +1126,13 @@ class JobStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, job_id, file_id, status, progress_stage, progress_updated_at, updated_at, performance_json
-                FROM job_items
-                WHERE status = ?
-                  AND COALESCE(progress_updated_at, updated_at) < ?
+                SELECT
+                    ji.id, ji.job_id, ji.file_id, ji.status, ji.progress_stage,
+                    ji.progress_updated_at, ji.updated_at, ji.performance_json, j.job_type
+                FROM job_items ji
+                JOIN jobs j ON j.id = ji.job_id
+                WHERE ji.status = ?
+                  AND COALESCE(ji.progress_updated_at, ji.updated_at) < ?
                 """,
                 (JobItemStatus.PROCESSING.value, cutoff),
             ).fetchall()
@@ -1153,7 +1177,9 @@ class JobStore:
                         "item_id": item_id,
                         "job_id": str(row["job_id"]),
                         "file_id": str(row["file_id"]),
-                        "task": "recognition",
+                        "task": "structured"
+                        if row["job_type"] == JobType.STRUCTURED_BATCH.value
+                        else "recognition",
                     }
                 )
                 logger.warning(

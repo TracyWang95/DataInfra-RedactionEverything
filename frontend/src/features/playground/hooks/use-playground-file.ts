@@ -43,10 +43,8 @@ export interface PendingFile {
 export interface UsePlaygroundFileOptions {
   /** Ref to latest selectedOcrHasTypes for use in async callbacks */
   latestOcrHasTypesRef: React.RefObject<string[]>;
-  /** Ref to latest selectedHasImageTypes for use in async callbacks */
-  latestHasImageTypesRef: React.RefObject<string[]>;
-  /** Ref to latest selectedVlmTypes for use in async callbacks */
-  latestVlmTypesRef?: React.RefObject<string[]>;
+  /** Ref to latest selectedVisualFeatureTypes for use in async callbacks */
+  latestVisualFeatureTypesRef: React.RefObject<string[]>;
   /** Ref to latest selectedTypes for use in async callbacks */
   latestSelectedTypesRef: React.RefObject<string[]>;
   /** Reset entity history */
@@ -235,20 +233,19 @@ export function usePlaygroundFile(options: UsePlaygroundFileOptions) {
         const isImage = fileType === 'image' || isScanned;
         if (isImage) {
           const ocrTypes = opts.latestOcrHasTypesRef.current;
-          const hiTypes = opts.latestHasImageTypesRef.current;
-          const vlmTypes = opts.latestVlmTypesRef?.current ?? [];
-          if (ocrTypes.length === 0 && hiTypes.length === 0 && vlmTypes.length === 0) {
+          const visualFeatureTypes = opts.latestVisualFeatureTypesRef.current;
+          if (ocrTypes.length === 0 && visualFeatureTypes.length === 0) {
             opts.setBoundingBoxes([]);
             opts.resetImageHistory();
             setStage('preview');
             return;
           }
           const vLabel =
-            ocrTypes.length > 0 && hiTypes.length > 0
+            ocrTypes.length > 0 && visualFeatureTypes.length > 0
               ? t('playground.loading.visionHybrid')
               : ocrTypes.length > 0
                 ? t('playground.loading.visionOcr')
-                : hiTypes.length > 0
+                : visualFeatureTypes.length > 0
                   ? t('playground.loading.visionImage')
                   : t('playground.loading.vision');
           setLoadingMessage(vLabel);
@@ -259,8 +256,7 @@ export function usePlaygroundFile(options: UsePlaygroundFileOptions) {
           const { totalBoxes } = await runVisionDetectionPages({
             fileId,
             ocrHasTypes: ocrTypes,
-            hasImageTypes: hiTypes,
-            vlmTypes,
+            visualFeatureTypes,
             totalPages,
             signal,
             label: vLabel,

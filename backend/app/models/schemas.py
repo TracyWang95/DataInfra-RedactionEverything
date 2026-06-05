@@ -18,4 +18,5 @@ from .file_schemas import *  # noqa: F401,F403
 from .job_schemas import *  # noqa: F401,F403
 from .preset_schemas import *  # noqa: F401,F403
 from .redaction_schemas import *  # noqa: F401,F403
+from .structured_schemas import *  # noqa: F401,F403
 from .vision_schemas import *  # noqa: F401,F403

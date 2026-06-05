@@ -19,7 +19,7 @@ interface HealthPanelProps {
 
 type ServiceKey = keyof ServicesHealth['services'];
 
-const serviceKeys: ServiceKey[] = ['paddle_ocr', 'has_ner', 'has_image', 'vlm'];
+const serviceKeys: ServiceKey[] = ['paddle_ocr', 'has_ner', 'visual_features'];
 
 function serviceDisplayStatus(status: ServiceStatus | 'offline' | 'checking') {
   return status === 'busy' ? 'online' : status;

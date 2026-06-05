@@ -40,7 +40,7 @@ export interface ReviewImageContentProps {
 
 function pipelineLabel(t: ReturnType<typeof useT>, key: string): string {
   if (key === 'ocr_has') return t('batchWizard.step4.pipelineOcrHas');
-  if (key === 'has_image') return t('batchWizard.step4.pipelineHasImage');
+  if (key === 'visual_features') return t('batchWizard.step4.pipelineVisualFeature');
   return formatSourceDetail(key) || key;
 }
 
@@ -75,7 +75,7 @@ interface SourceSummaryChip {
 }
 
 const SOURCE_SUMMARY_ORDER: readonly ReviewBoxSourceKind[] = [
-  'hasImage',
+  'visualFeature',
   'fallback',
   'ocrHas',
   'table',
@@ -94,14 +94,14 @@ function compactSourceDetail(
 }
 
 function sourceLabel(t: ReturnType<typeof useT>, key: ReviewBoxSourceKind): string {
-  if (key === 'hasImage') return t('batchWizard.step4.sourceHasImageModel');
+  if (key === 'visualFeature') return t('batchWizard.step4.sourceVisualFeatureModel');
   if (key === 'fallback') return t('batchWizard.step4.sourceFallbackDetector');
   if (key === 'ocrHas') return t('batchWizard.step4.sourceOcrHas');
   return t('batchWizard.step4.sourceTable');
 }
 
 function sourceTitle(t: ReturnType<typeof useT>, key: ReviewBoxSourceKind): string {
-  if (key === 'hasImage') return t('batchWizard.step4.sourceHasImageModelTitle');
+  if (key === 'visualFeature') return t('batchWizard.step4.sourceVisualFeatureModelTitle');
   if (key === 'fallback') return t('batchWizard.step4.sourceFallbackDetectorTitle');
   if (key === 'ocrHas') return t('batchWizard.step4.sourceOcrHasTitle');
   return t('batchWizard.step4.sourceTableTitle');
@@ -109,7 +109,7 @@ function sourceTitle(t: ReturnType<typeof useT>, key: ReviewBoxSourceKind): stri
 
 function sourceTone(key: ReviewBoxSourceKind): SourceBadge['tone'] {
   if (key === 'fallback') return 'fallback';
-  if (key === 'hasImage') return 'model';
+  if (key === 'visualFeature') return 'model';
   return key === 'ocrHas' ? 'ocr' : 'neutral';
 }
 

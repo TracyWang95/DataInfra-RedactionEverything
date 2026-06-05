@@ -112,8 +112,8 @@ export interface BoundingBox {
   text?: string;
   selected: boolean;
   confidence?: number;
-  source?: 'ocr_has' | 'has_image' | 'manual';
-  evidence_source?: 'ocr_has' | 'has_image_model' | 'local_fallback' | 'manual';
+  source?: 'ocr_has' | 'visual_features' | 'manual';
+  evidence_source?: 'ocr_has' | 'visual_feature_model' | 'local_fallback' | 'manual';
   source_detail?: string;
   warnings?: string[];
 }
@@ -137,7 +137,7 @@ export interface JobItemMini {
 
 export interface JobEmbedSummary {
   status: string;
-  job_type: 'text_batch' | 'image_batch' | 'smart_batch';
+  job_type: 'text_batch' | 'image_batch' | 'smart_batch' | 'structured_batch';
   items: JobItemMini[];
 
   first_awaiting_review_item_id?: string | null;
@@ -183,7 +183,7 @@ export interface BatchExportReportVisualReview {
 export interface BatchExportReportVisualEvidence {
   total_boxes?: number;
   selected_boxes?: number;
-  has_image_model?: number;
+  visual_features_model?: number;
   local_fallback?: number;
   ocr_has?: number;
   table_structure?: number;

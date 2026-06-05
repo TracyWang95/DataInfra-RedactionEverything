@@ -21,7 +21,7 @@ from app.core.file_validation import safe_path_in_dir
 from app.models.schemas import FileType, ParseResult
 
 if TYPE_CHECKING:
-    from app.services.hybrid_vision_service import OCRTextBlock
+    from app.services.ocr_has_vision_service import OCRTextBlock
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -474,7 +474,7 @@ class FileParser:
     async def get_pdf_page_text_blocks(self, file_path: str, page: int, dpi: int = 150):
         """Return native PDF text-layer blocks mapped into rendered-page pixels."""
         _validate_path(file_path)
-        from app.services.hybrid_vision_service import OCRTextBlock
+        from app.services.ocr_has_vision_service import OCRTextBlock
 
         self.last_pdf_page_text_blocks_cache_hit = False
         cache_key = self._pdf_page_cache_key(file_path, page, dpi)

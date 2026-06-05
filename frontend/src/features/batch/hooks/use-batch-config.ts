@@ -74,8 +74,7 @@ export interface BatchConfigState {
   onBatchVisionPresetChange: (id: string) => void;
   batchDefaultTextTypeIds: string[];
   batchDefaultOcrHasTypeIds: string[];
-  batchDefaultHasImageTypeIds: string[];
-  batchDefaultVlmTypeIds: string[];
+  batchDefaultVisualFeatureTypeIds: string[];
   setConfigLoadError: (msg: string) => void;
 }
 
@@ -139,16 +138,12 @@ export function useBatchConfig(
         const persisted = loadBatchWizardConfig(mode);
         const defaultTextTypeIds = buildDefaultTextTypeIds(types);
         const defaultOcrHasTypeIds = buildDefaultPipelineTypeIds(pipes, 'ocr_has');
-        const defaultHasImageTypeIds = buildDefaultPipelineTypeIds(pipes, 'has_image');
-        const defaultVlmTypeIds = buildDefaultPipelineTypeIds(pipes, 'vlm');
+        const defaultVisualFeatureTypeIds = buildDefaultPipelineTypeIds(pipes, 'visual_features');
         const ocrIds = pipes
           .filter((p) => p.mode === 'ocr_has' && p.enabled)
           .flatMap((p) => p.types.filter((tt) => tt.enabled).map((tt) => tt.id));
-        const hiIds = pipes
-          .filter((p) => p.mode === 'has_image' && p.enabled)
-          .flatMap((p) => p.types.filter((tt) => tt.enabled).map((tt) => tt.id));
-        const vlmIds = pipes
-          .filter((p) => p.mode === 'vlm' && p.enabled)
+        const visualIds = pipes
+          .filter((p) => p.mode === 'visual_features' && p.enabled)
           .flatMap((p) => p.types.filter((tt) => tt.enabled).map((tt) => tt.id));
 
         const presetList: RecognitionPreset[] = Array.isArray(presetResult.value)
@@ -176,24 +171,17 @@ export function useBatchConfig(
             ? defaultOcrHasTypeIds
             : persistedOcrHas
           : defaultOcrHasTypeIds;
-        const filteredHasImg = persisted?.hasImageTypes?.length
-          ? persisted.hasImageTypes.filter((id) => hiIds.includes(id))
-          : defaultHasImageTypeIds;
-        const filteredVlm = persisted?.vlmTypes?.length
-          ? persisted.vlmTypes.filter((id) => vlmIds.includes(id))
-          : defaultVlmTypeIds;
+        const filteredVisualFeatures = persisted?.visualFeatureTypes?.length
+          ? persisted.visualFeatureTypes.filter((id) => visualIds.includes(id))
+          : defaultVisualFeatureTypeIds;
         const ocrHas =
           persisted?.ocrHasTypes?.length && filteredOcrHas.length === 0
             ? defaultOcrHasTypeIds
             : filteredOcrHas;
-        const hasImg =
-          persisted?.hasImageTypes?.length && filteredHasImg.length === 0
-            ? defaultHasImageTypeIds
-            : filteredHasImg;
-        const vlm =
-          persisted?.vlmTypes?.length && filteredVlm.length === 0
-            ? defaultVlmTypeIds
-            : filteredVlm;
+        const visualFeatures =
+          persisted?.visualFeatureTypes?.length && filteredVisualFeatures.length === 0
+            ? defaultVisualFeatureTypeIds
+            : filteredVisualFeatures;
         const applyFetchedTextPresetWithFallback = (preset: RecognitionPreset) => {
           const applied = applyTextPresetFields(preset, types);
           return {
@@ -212,22 +200,18 @@ export function useBatchConfig(
               preset.ocrHasTypes.length > 0 && applied.ocrHasTypes.length === 0
                 ? [...defaultOcrHasTypeIds]
                 : applied.ocrHasTypes,
-            hasImageTypes:
-              preset.hasImageTypes.length > 0 && applied.hasImageTypes.length === 0
-                ? [...defaultHasImageTypeIds]
-                : applied.hasImageTypes,
-            vlmTypes:
-              (preset.vlmTypes ?? []).length > 0 && (applied.vlmTypes ?? []).length === 0
-                ? [...defaultVlmTypeIds]
-                : (applied.vlmTypes ?? []),
+            visualFeatureTypes:
+              (preset.visualFeatureTypes ?? []).length > 0 &&
+              applied.visualFeatureTypes.length === 0
+                ? [...defaultVisualFeatureTypeIds]
+                : applied.visualFeatureTypes,
           };
         };
 
         let next: BatchWizardPersistedConfig = {
           selectedEntityTypeIds,
           ocrHasTypes: ocrHas,
-          hasImageTypes: hasImg,
-          vlmTypes: vlm,
+          visualFeatureTypes: visualFeatures,
           replacementMode: persisted?.replacementMode ?? 'structured',
           imageRedactionMethod: persisted?.imageRedactionMethod ?? 'mosaic',
           imageRedactionStrength: persisted?.imageRedactionStrength ?? 75,
@@ -301,12 +285,8 @@ export function useBatchConfig(
     () => buildDefaultPipelineTypeIds(pipelines, 'ocr_has'),
     [pipelines],
   );
-  const batchDefaultHasImageTypeIds = useMemo(
-    () => buildDefaultPipelineTypeIds(pipelines, 'has_image'),
-    [pipelines],
-  );
-  const batchDefaultVlmTypeIds = useMemo(
-    () => buildDefaultPipelineTypeIds(pipelines, 'vlm'),
+  const batchDefaultVisualFeatureTypeIds = useMemo(
+    () => buildDefaultPipelineTypeIds(pipelines, 'visual_features'),
     [pipelines],
   );
 
@@ -331,22 +311,18 @@ export function useBatchConfig(
         preset.ocrHasTypes.length > 0 && applied.ocrHasTypes.length === 0
           ? [...batchDefaultOcrHasTypeIds]
           : applied.ocrHasTypes;
-      const recoveredImage =
-        preset.hasImageTypes.length > 0 && applied.hasImageTypes.length === 0
-          ? [...batchDefaultHasImageTypeIds]
-          : applied.hasImageTypes;
-      const recoveredVlm =
-        (preset.vlmTypes ?? []).length > 0 && (applied.vlmTypes ?? []).length === 0
-          ? [...batchDefaultVlmTypeIds]
-          : (applied.vlmTypes ?? []);
+      const recoveredVisualFeatures =
+        (preset.visualFeatureTypes ?? []).length > 0 &&
+        applied.visualFeatureTypes.length === 0
+          ? [...batchDefaultVisualFeatureTypeIds]
+          : applied.visualFeatureTypes;
       return {
         ...applied,
         ocrHasTypes: recoveredOcr,
-        hasImageTypes: recoveredImage,
-        vlmTypes: recoveredVlm,
+        visualFeatureTypes: recoveredVisualFeatures,
       };
     },
-    [batchDefaultHasImageTypeIds, batchDefaultOcrHasTypeIds, batchDefaultVlmTypeIds, pipelines],
+    [batchDefaultOcrHasTypeIds, batchDefaultVisualFeatureTypeIds, pipelines],
   );
 
   const isStep1Complete = useMemo(() => {
@@ -354,8 +330,7 @@ export function useBatchConfig(
     const anyTextSelected = cfg.selectedEntityTypeIds.length > 0;
     const anyVisionSelected =
       cfg.ocrHasTypes.length > 0 ||
-      cfg.hasImageTypes.length > 0 ||
-      (cfg.vlmTypes ?? []).length > 0;
+      cfg.visualFeatureTypes.length > 0;
     if (mode === 'text') return anyTextSelected;
     if (mode === 'image') return anyVisionSelected;
     return anyTextSelected || anyVisionSelected;
@@ -363,8 +338,7 @@ export function useBatchConfig(
     configLoaded,
     cfg.selectedEntityTypeIds,
     cfg.ocrHasTypes,
-    cfg.hasImageTypes,
-    cfg.vlmTypes,
+    cfg.visualFeatureTypes,
     confirmStep1,
     mode,
   ]);
@@ -416,8 +390,7 @@ export function useBatchConfig(
           ...c,
           presetVisionId: null,
           ocrHasTypes: [...batchDefaultOcrHasTypeIds],
-          hasImageTypes: [...batchDefaultHasImageTypeIds],
-          vlmTypes: [...batchDefaultVlmTypeIds],
+          visualFeatureTypes: [...batchDefaultVisualFeatureTypeIds],
         }));
         return;
       }
@@ -446,9 +419,8 @@ export function useBatchConfig(
     [
       applyTextPresetWithFallback,
       applyVisionPresetWithFallback,
-      batchDefaultHasImageTypeIds,
       batchDefaultOcrHasTypeIds,
-      batchDefaultVlmTypeIds,
+      batchDefaultVisualFeatureTypeIds,
       mode,
       presets,
     ],
@@ -482,8 +454,7 @@ export function useBatchConfig(
     onBatchVisionPresetChange,
     batchDefaultTextTypeIds,
     batchDefaultOcrHasTypeIds,
-    batchDefaultHasImageTypeIds,
-    batchDefaultVlmTypeIds,
+    batchDefaultVisualFeatureTypeIds,
     setConfigLoadError,
   };
 }

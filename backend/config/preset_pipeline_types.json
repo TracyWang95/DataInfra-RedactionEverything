@@ -1477,7 +1477,7 @@
       "generic_target": "GEN_DOCUMENT_RECORD"
     }
   ],
-  "has_image": [
+  "visual_features": [
     {
       "id": "face",
       "name": "人脸",
@@ -1630,6 +1630,23 @@
       "default_enabled": false
     },
     {
+      "id": "official_seal",
+      "name": "公章/印章区域",
+      "description": "公章、合同章、财务章、法院印章等视觉特征。",
+      "examples": [],
+      "color": "#A855F7",
+      "enabled": true,
+      "order": 9,
+      "data_domain": "visual_mark",
+      "coref_enabled": false,
+      "linkage_groups": [
+        "visual_mark_like"
+      ],
+      "generic_target": null,
+      "entity_type_ids": [],
+      "default_enabled": false
+    },
+    {
       "id": "physical_key",
       "name": "钥匙",
       "description": "实体钥匙",
@@ -1640,6 +1657,23 @@
       "data_domain": "asset_resource",
       "coref_enabled": false,
       "linkage_groups": [],
+      "generic_target": null,
+      "entity_type_ids": [],
+      "default_enabled": false
+    },
+    {
+      "id": "medical_wristband",
+      "name": "医用腕带",
+      "description": "医院腕带",
+      "examples": [],
+      "color": "#78716C",
+      "enabled": true,
+      "order": 10,
+      "data_domain": "pii",
+      "coref_enabled": false,
+      "linkage_groups": [
+        "identifier_like"
+      ],
       "generic_target": null,
       "entity_type_ids": [],
       "default_enabled": false
@@ -1656,6 +1690,23 @@
       "coref_enabled": false,
       "linkage_groups": [
         "account_like"
+      ],
+      "generic_target": null,
+      "entity_type_ids": [],
+      "default_enabled": false
+    },
+    {
+      "id": "qr_code",
+      "name": "二维码",
+      "description": "二维码",
+      "examples": [],
+      "color": "#0D9488",
+      "enabled": true,
+      "order": 11,
+      "data_domain": "credential_access",
+      "coref_enabled": false,
+      "linkage_groups": [
+        "visual_mark_like"
       ],
       "generic_target": null,
       "entity_type_ids": [],
@@ -1679,14 +1730,14 @@
       "default_enabled": false
     },
     {
-      "id": "official_seal",
-      "name": "公章/印章区域",
-      "description": "公章、合同章、财务章、法院印章等视觉区域。",
+      "id": "barcode",
+      "name": "条形码",
+      "description": "条形码",
       "examples": [],
-      "color": "#A855F7",
+      "color": "#059669",
       "enabled": true,
-      "order": 9,
-      "data_domain": "visual_mark",
+      "order": 12,
+      "data_domain": "credential_access",
       "coref_enabled": false,
       "linkage_groups": [
         "visual_mark_like"
@@ -1756,63 +1807,12 @@
       "default_enabled": false
     },
     {
-      "id": "medical_wristband",
-      "name": "医用腕带",
-      "description": "医院腕带",
-      "examples": [],
-      "color": "#78716C",
-      "enabled": true,
-      "order": 10,
-      "data_domain": "pii",
-      "coref_enabled": false,
-      "linkage_groups": [
-        "identifier_like"
-      ],
-      "generic_target": null,
-      "entity_type_ids": [],
-      "default_enabled": false
-    },
-    {
-      "id": "qr_code",
-      "name": "二维码",
-      "description": "二维码",
-      "examples": [],
-      "color": "#0D9488",
-      "enabled": true,
-      "order": 11,
-      "data_domain": "credential_access",
-      "coref_enabled": false,
-      "linkage_groups": [
-        "visual_mark_like"
-      ],
-      "generic_target": null,
-      "entity_type_ids": [],
-      "default_enabled": false
-    },
-    {
-      "id": "barcode",
-      "name": "条形码",
-      "description": "条形码",
-      "examples": [],
-      "color": "#059669",
-      "enabled": true,
-      "order": 12,
-      "data_domain": "credential_access",
-      "coref_enabled": false,
-      "linkage_groups": [
-        "visual_mark_like"
-      ],
-      "generic_target": null,
-      "entity_type_ids": [],
-      "default_enabled": false
-    },
-    {
       "id": "paper",
       "name": "纸质文档",
-      "description": "纸张文档区域。属于整页容器类，保留可选，但不作为系统默认勾选。",
+      "description": "纸质文档页面区域，作为视觉特征固定类启用。",
       "examples": [],
       "color": "#7C3AED",
-      "enabled": false,
+      "enabled": true,
       "order": 120,
       "data_domain": "document_record",
       "coref_enabled": false,
@@ -1820,13 +1820,11 @@
       "generic_target": null,
       "entity_type_ids": [],
       "default_enabled": false
-    }
-  ],
-  "vlm": [
+    },
     {
       "id": "signature",
       "name": "签字",
-      "description": "用视觉语言模型识别手写签名、签字姓名和签署栏中的真实手写签署笔迹。",
+      "description": "用LocateAnything识别手写签名、签字姓名和签署栏中的真实手写签署笔迹。",
       "examples": [
         "合同末页签字",
         "手写姓名",
@@ -1834,7 +1832,7 @@
       ],
       "color": "#2563EB",
       "enabled": true,
-      "order": 10,
+      "order": 220,
       "rules": [
         "识别真实可见的手写签名、签字姓名和签署栏中的真实手写签署笔迹。",
         "签署栏常见格式是公司名/盖章行在上方，“法定代表人/授权代表（签字）：”在下方；只框住签字标签后方或右侧的手写姓名或草签本身。",

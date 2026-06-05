@@ -2,7 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { NavLink, useLocation } from 'react-router-dom';
-import { RefreshCw, ShieldCheck } from 'lucide-react';
+import {
+  Database,
+  FileSpreadsheet,
+  PackageCheck,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  TableProperties,
+} from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth/auth-context';
@@ -36,6 +44,7 @@ interface NavItem {
   sublabel?: string;
   icon: React.FC<{ className?: string }>;
   end?: boolean;
+  children?: NavItem[];
 }
 
 export function AppSidebar() {
@@ -55,6 +64,38 @@ export function AppSidebar() {
       end: true,
     },
     { path: '/batch', label: t('nav.batch'), sublabel: t('nav.batch.sub'), icon: BatchIcon },
+    {
+      path: '/structured',
+      label: t('nav.structured'),
+      sublabel: t('nav.structured.sub'),
+      icon: Database,
+      children: [
+        {
+          path: '/structured/files',
+          label: t('nav.structured.files'),
+          sublabel: t('nav.structured.files.sub'),
+          icon: FileSpreadsheet,
+        },
+        {
+          path: '/structured/database',
+          label: t('nav.structured.database'),
+          sublabel: t('nav.structured.database.sub'),
+          icon: Server,
+        },
+        {
+          path: '/structured/datasets',
+          label: t('nav.structured.datasets'),
+          sublabel: t('nav.structured.datasets.sub'),
+          icon: TableProperties,
+        },
+        {
+          path: '/structured/delivery',
+          label: t('nav.structured.delivery'),
+          sublabel: t('nav.structured.delivery.sub'),
+          icon: PackageCheck,
+        },
+      ],
+    },
     { path: '/jobs', label: t('nav.jobs'), sublabel: t('nav.jobs.sub'), icon: JobsCenterIcon },
     {
       path: '/history',
@@ -92,7 +133,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="offcanvas" variant="inset">
-      <SidebarHeader className="h-[4.25rem] flex-row items-center gap-3 border-b border-sidebar-border px-4">
+      <SidebarHeader className="h-16 flex-row items-center gap-3 border-b border-sidebar-border px-4">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-[var(--shadow-sm)]">
           <ShieldCheck className="h-4 w-4" />
         </div>
@@ -106,14 +147,14 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="px-2 py-3">
+      <SidebarContent className="gap-0 px-2 py-1.5">
         <nav aria-label={t('layout.navLabel')}>
-          <SidebarGroup className="px-2 py-1">
-            <SidebarGroupLabel className="px-2 text-[11px] font-semibold tracking-[0.02em] text-sidebar-foreground/50">
+          <SidebarGroup className="px-2 py-0">
+            <SidebarGroupLabel className="h-6 px-2 text-[11px] font-semibold tracking-[0.02em] text-sidebar-foreground/50">
               {t('nav.group.workflow')}
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className="gap-1.5">
+              <SidebarMenu className="gap-0.5">
                 {workflowNavItems.map((item) => (
                   <SidebarNavItem key={item.path} item={item} pathname={location.pathname} />
                 ))}
@@ -121,14 +162,14 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
 
-          <SidebarSeparator className="my-2 bg-sidebar-border opacity-100" />
+          <SidebarSeparator className="my-1 bg-sidebar-border opacity-100" />
 
-          <SidebarGroup className="px-2 py-1">
-            <SidebarGroupLabel className="px-2 text-[11px] font-semibold tracking-[0.02em] text-sidebar-foreground/50">
+          <SidebarGroup className="px-2 py-0">
+            <SidebarGroupLabel className="h-6 px-2 text-[11px] font-semibold tracking-[0.02em] text-sidebar-foreground/50">
               {t('nav.group.config')}
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className="gap-1.5">
+              <SidebarMenu className="gap-0.5">
                 {configNavItems.map((item) => (
                   <SidebarNavItem key={item.path} item={item} pathname={location.pathname} />
                 ))}
@@ -138,7 +179,7 @@ export function AppSidebar() {
         </nav>
       </SidebarContent>
 
-      <SidebarFooter className="shrink-0 space-y-2 p-3">
+      <SidebarFooter className="shrink-0 p-2">
         <SidebarServiceStatus
           health={health}
           checking={checking}
@@ -152,6 +193,7 @@ export function AppSidebar() {
 
 function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string }) {
   const active = isNavActive(item, pathname);
+  const showChildren = active && item.children && item.children.length > 0;
 
   return (
     <SidebarMenuItem>
@@ -160,7 +202,7 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
         isActive={active}
         tooltip={item.label}
         className={cn(
-          'min-h-10 rounded-xl border border-transparent px-2.5 py-2 transition-all duration-150',
+          'min-h-8 rounded-xl border border-transparent px-2 py-1 transition-all duration-150',
           active &&
             'border-sidebar-border bg-sidebar-accent font-medium text-sidebar-foreground shadow-[var(--shadow-control)]',
         )}
@@ -174,15 +216,45 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
           <item.icon className="h-[16px] w-[16px] opacity-70" />
           {item.sublabel ? (
             <span className="flex min-w-0 flex-col gap-0.5 leading-snug">
-              <span className="truncate text-[13px] font-medium">{item.label}</span>
-              <span className="truncate text-[11px] font-normal opacity-45">{item.sublabel}</span>
+              <span className="truncate text-[12.5px] font-medium leading-tight">{item.label}</span>
+              <span className="truncate text-[10.5px] font-normal leading-tight opacity-45">{item.sublabel}</span>
             </span>
           ) : (
-            <span className="truncate text-[13px] font-medium">{item.label}</span>
+            <span className="truncate text-[12.5px] font-medium">{item.label}</span>
           )}
         </NavLink>
       </SidebarMenuButton>
+      {showChildren ? (
+        <div className="mt-0.5 grid gap-0.5 pl-5">
+          {item.children?.map((child) => (
+            <SidebarSubNavItem key={child.path} item={child} pathname={pathname} />
+          ))}
+        </div>
+      ) : null}
     </SidebarMenuItem>
+  );
+}
+
+function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string }) {
+  const active = isNavActive(item, pathname);
+  return (
+    <NavLink
+      to={item.path}
+      className={cn(
+        'grid min-h-7 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-sidebar-foreground/70 transition-all duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+        active && 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-[var(--shadow-control)]',
+      )}
+      aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
+      data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '')}`}
+    >
+      <item.icon className="h-[14px] w-[14px] opacity-65" />
+      <span className="min-w-0">
+        <span className="block truncate text-[12px] font-medium">{item.label}</span>
+        {item.sublabel ? (
+          <span className="sr-only">{item.sublabel}</span>
+        ) : null}
+      </span>
+    </NavLink>
   );
 }
 
@@ -197,8 +269,7 @@ function isNavActive(item: NavItem, pathname: string): boolean {
 const serviceOrder: Array<keyof ServicesHealth['services']> = [
   'paddle_ocr',
   'has_ner',
-  'has_image',
-  'vlm',
+  'visual_features',
 ];
 
 function SidebarServiceStatus({
@@ -239,7 +310,7 @@ function SidebarServiceStatus({
 
   return (
     <section
-      className="min-h-[9rem] min-w-0 overflow-hidden rounded-xl border border-sidebar-border bg-sidebar-accent px-3 py-2.5 text-sidebar-foreground shadow-[var(--shadow-sm)]"
+      className="min-h-0 min-w-0 overflow-hidden rounded-xl border border-sidebar-border bg-sidebar-accent px-2.5 py-2 text-sidebar-foreground shadow-[var(--shadow-sm)]"
       aria-label={t('health.sidebar.title')}
       data-testid="sidebar-service-status"
     >
@@ -253,8 +324,8 @@ function SidebarServiceStatus({
           })}
         />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{t('health.sidebar.title')}</p>
-          <p className="truncate text-[11px] font-medium text-sidebar-foreground/60">
+          <p className="truncate text-[13px] font-semibold">{t('health.sidebar.title')}</p>
+          <p className="truncate text-[10.5px] font-medium text-sidebar-foreground/60">
             {statusText}
             {roundTripMs != null ? ` · ${roundTripMs} ms` : ''}
           </p>
@@ -262,7 +333,7 @@ function SidebarServiceStatus({
         <button
           type="button"
           onClick={onRefresh}
-          className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-sidebar-foreground/60 transition hover:bg-sidebar-primary hover:text-sidebar-foreground"
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-sidebar-foreground/60 transition hover:bg-sidebar-primary hover:text-sidebar-foreground"
           title={t('health.refreshTitle')}
           aria-label={t('health.refreshTitle')}
           data-testid="health-refresh"
@@ -271,7 +342,7 @@ function SidebarServiceStatus({
         </button>
       </div>
 
-      <div className="mt-2.5 grid gap-1.5">
+      <div className="mt-1.5 grid grid-cols-2 gap-1">
         {services.map(({ key, service }) => {
           const status = displayStatus(service);
           const runtime = runtimeBadge(service, t);
@@ -280,13 +351,13 @@ function SidebarServiceStatus({
           return (
             <div
               key={key}
-              className="grid min-h-7 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 overflow-hidden rounded-lg bg-sidebar/45 px-2 py-1"
+              className="grid min-h-5 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden rounded-lg bg-sidebar/45 px-1.5 py-0.5"
             >
-              <span className="min-w-0 truncate text-[11px] font-medium" title={serviceName}>
+              <span className="min-w-0 truncate text-[10.5px] font-medium" title={serviceName}>
                 {serviceName}
               </span>
               <span
-                className={cn('shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold', {
+                className={cn('shrink-0 rounded-full px-1 py-0.5 text-[9.5px] font-semibold', {
                   'bg-[var(--success-surface)] text-[var(--success-foreground)]':
                     status === 'online',
                   'bg-[var(--warning-surface)] text-[var(--warning-foreground)]':
@@ -301,9 +372,9 @@ function SidebarServiceStatus({
         })}
       </div>
 
-      <div className="mt-2 grid min-h-7 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-2 py-1">
-        <span className="shrink-0 text-[11px] font-semibold">{t('health.gpuUsage')}</span>
-        <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
+      <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
+        <span className="shrink-0 text-[10.5px] font-semibold">{t('health.gpuUsage')}</span>
+        <span className="min-w-0 truncate text-right text-[10.5px] text-sidebar-foreground/70" title={gpuText}>
           {gpuText}
         </span>
       </div>

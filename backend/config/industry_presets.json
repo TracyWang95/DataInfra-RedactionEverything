@@ -69,7 +69,7 @@
       "TAX_ID",
       "PROJECT_NAME"
     ],
-    "hasImageTypes": [
+    "visualFeatureTypes": [
       "face",
       "fingerprint",
       "id_card",
@@ -80,9 +80,7 @@
       "mobile_screen",
       "monitor_screen",
       "qr_code",
-      "barcode"
-    ],
-    "vlmTypes": [
+      "barcode",
       "signature"
     ],
     "replacementMode": "structured",
@@ -224,7 +222,7 @@
       "CREDIT_CODE",
       "TAX_ID"
     ],
-    "hasImageTypes": [
+    "visualFeatureTypes": [
       "face",
       "fingerprint",
       "palmprint",
@@ -242,9 +240,7 @@
       "mobile_screen",
       "monitor_screen",
       "qr_code",
-      "barcode"
-    ],
-    "vlmTypes": [
+      "barcode",
       "signature"
     ],
     "replacementMode": "structured",
@@ -386,7 +382,7 @@
       "DEPARTMENT_NAME",
       "PROJECT_NAME"
     ],
-    "hasImageTypes": [
+    "visualFeatureTypes": [
       "face",
       "fingerprint",
       "id_card",
@@ -400,9 +396,7 @@
       "monitor_screen",
       "medical_wristband",
       "qr_code",
-      "barcode"
-    ],
-    "vlmTypes": [
+      "barcode",
       "signature"
     ],
     "replacementMode": "structured",

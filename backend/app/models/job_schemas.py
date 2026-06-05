@@ -42,7 +42,7 @@ __all__ = [
 
 
 class JobItemMini(BaseModel):
-    """列表嵌套用：与任务详情 CTA 解析一致的最小 item 字段"""
+    """鍒楄〃宓屽鐢細涓庝换鍔¤鎯?CTA 瑙ｆ瀽涓€鑷寸殑鏈€灏?item 瀛楁"""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -69,25 +69,25 @@ class JobProgress(BaseModel):
 
 
 class JobEmbedSummary(BaseModel):
-    """GET /files?embed_job=1 时按 job_id 去重注入，减少前端逐条 getJob"""
+    """GET /files?embed_job=1 鏃舵寜 job_id 鍘婚噸娉ㄥ叆锛屽噺灏戝墠绔€愭潯 getJob"""
 
     model_config = ConfigDict(extra="ignore")
 
     status: str
-    job_type: Literal["text_batch", "image_batch", "smart_batch"]
+    job_type: Literal["text_batch", "image_batch", "smart_batch", "structured_batch"]
     items: list[JobItemMini] = Field(default_factory=list)
     progress: JobProgress = Field(default_factory=JobProgress)
     wizard_furthest_step: int | None = Field(
         default=None,
-        description="来自任务 config，供历史页主 CTA 与任务中心「继续上传」一致",
+        description="Furthest configured wizard step stored in job config.",
     )
     first_awaiting_review_item_id: str | None = Field(
         default=None,
-        description="与 /jobs 列表 nav_hints 一致，待审 deep-link 用",
+        description="First item that is ready for review.",
     )
     batch_step1_configured: bool = Field(
         default=False,
-        description="config 已含识别项选择，与 nav_hints.batch_step1_configured 一致",
+        description="Whether recognition selections have been configured.",
     )
 
 
@@ -112,7 +112,7 @@ class NavHints(BaseModel):
 
 
 class JobResponse(BaseModel):
-    """任务摘要响应（_job_to_summary 返回值）"""
+    """浠诲姟鎽樿鍝嶅簲锛坃job_to_summary 杩斿洖鍊硷級"""
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -131,7 +131,7 @@ class JobResponse(BaseModel):
 
 
 class JobItemResponse(BaseModel):
-    """任务项响应"""
+    """Job item response."""
     model_config = ConfigDict(extra="ignore")
 
     id: str
@@ -168,7 +168,7 @@ class JobItemResponse(BaseModel):
 
 
 class JobListResponse(BaseModel):
-    """任务列表响应"""
+    """Job list response."""
     jobs: list[JobResponse]
     total: int
     page: int = 1
@@ -180,7 +180,7 @@ class JobListResponse(BaseModel):
 
 
 class JobProgressResponse(BaseModel):
-    """任务进度响应（含 status 字段）"""
+    """Job progress response."""
     model_config = ConfigDict(extra="ignore")
 
     status: str
@@ -200,12 +200,12 @@ class JobProgressResponse(BaseModel):
 
 
 class JobDetailResponse(JobResponse):
-    """任务详情+项列表响应（继承 JobResponse，追加 items）"""
+    """Job detail response with items."""
     items: list[JobItemResponse] = Field(default_factory=list)
 
 
 class JobDeleteResponse(BaseModel):
-    """任务删除响应"""
+    """Job delete response."""
     id: str
     deleted: bool = True
     deleted_item_count: int = 0
@@ -251,12 +251,12 @@ class JobExportReportVisualEvidence(BaseModel):
                 {
                     "total_boxes": 2,
                     "selected_boxes": 1,
-                    "has_image_model": 1,
+                    "visual_feature_model": 1,
                     "local_fallback": 0,
                     "ocr_has": 0,
                     "table_structure": 0,
                     "fallback_detector": 0,
-                    "source_counts": {"has_image": 1},
+                    "source_counts": {"visual_features": 1},
                     "evidence_source_counts": {},
                     "source_detail_counts": {},
                     "warnings_by_key": {},
@@ -273,7 +273,7 @@ class JobExportReportVisualEvidence(BaseModel):
         default=0,
         description="Bounding boxes with selected != false; source and warning counters below are based on these boxes.",
     )
-    has_image_model: int = Field(default=0, description="Selected boxes attributed to the primary HaS image model.")
+    visual_feature_model: int = Field(default=0, description="Selected boxes attributed to the primary HaS image model.")
     local_fallback: int = Field(default=0, description="Selected boxes attributed to local fallback evidence.")
     ocr_has: int = Field(default=0, description="Selected boxes attributed to OCR/HaS evidence.")
     table_structure: int = Field(default=0, description="Selected boxes attributed to table-structure evidence.")
@@ -281,7 +281,7 @@ class JobExportReportVisualEvidence(BaseModel):
     source_counts: dict[str, int] = Field(
         default_factory=dict,
         description="Selected bounding-box counts keyed by normalized source.",
-        examples=[{"has_image": 1, "ocr_has": 2}],
+        examples=[{"visual_features": 1, "ocr_has": 2}],
     )
     evidence_source_counts: dict[str, int] = Field(
         default_factory=dict,
@@ -385,12 +385,12 @@ class JobExportReportFile(BaseModel):
                     "visual_evidence": {
                         "total_boxes": 2,
                         "selected_boxes": 1,
-                        "has_image_model": 1,
+                        "visual_feature_model": 1,
                         "local_fallback": 0,
                         "ocr_has": 0,
                         "table_structure": 0,
                         "fallback_detector": 0,
-                        "source_counts": {"has_image": 1},
+                        "source_counts": {"visual_features": 1},
                         "evidence_source_counts": {},
                         "source_detail_counts": {},
                         "warnings_by_key": {},
@@ -428,7 +428,7 @@ class JobExportReportFile(BaseModel):
                     "visual_evidence": {
                         "total_boxes": 0,
                         "selected_boxes": 0,
-                        "has_image_model": 0,
+                        "visual_feature_model": 0,
                         "local_fallback": 0,
                         "ocr_has": 0,
                         "table_structure": 0,
@@ -556,12 +556,12 @@ class JobExportReportSummary(BaseModel):
                     "visual_evidence": {
                         "total_boxes": 2,
                         "selected_boxes": 1,
-                        "has_image_model": 1,
+                        "visual_feature_model": 1,
                         "local_fallback": 0,
                         "ocr_has": 0,
                         "table_structure": 0,
                         "fallback_detector": 0,
-                        "source_counts": {"has_image": 1},
+                        "source_counts": {"visual_features": 1},
                         "evidence_source_counts": {},
                         "source_detail_counts": {},
                         "warnings_by_key": {},
@@ -719,12 +719,12 @@ class JobExportReportResponse(BaseModel):
                         "visual_evidence": {
                             "total_boxes": 2,
                             "selected_boxes": 1,
-                            "has_image_model": 1,
+                            "visual_feature_model": 1,
                             "local_fallback": 0,
                             "ocr_has": 0,
                             "table_structure": 0,
                             "fallback_detector": 0,
-                            "source_counts": {"has_image": 1},
+                            "source_counts": {"visual_features": 1},
                             "evidence_source_counts": {},
                             "source_detail_counts": {},
                             "warnings_by_key": {},
@@ -759,12 +759,12 @@ class JobExportReportResponse(BaseModel):
                             "visual_evidence": {
                                 "total_boxes": 2,
                                 "selected_boxes": 1,
-                                "has_image_model": 1,
+                                "visual_feature_model": 1,
                                 "local_fallback": 0,
                                 "ocr_has": 0,
                                 "table_structure": 0,
                                 "fallback_detector": 0,
-                                "source_counts": {"has_image": 1},
+                                "source_counts": {"visual_features": 1},
                                 "evidence_source_counts": {},
                                 "source_detail_counts": {},
                                 "warnings_by_key": {},
@@ -799,7 +799,7 @@ class JobExportReportResponse(BaseModel):
 
 
 class ReviewDraftResponse(BaseModel):
-    """审核草稿响应"""
+    """Review draft response."""
     model_config = ConfigDict(extra="ignore")
 
     exists: bool
@@ -813,7 +813,7 @@ class ReviewDraftResponse(BaseModel):
 # ─── Job Request Models ───
 
 class JobCreateBody(BaseModel):
-    job_type: Literal["text_batch", "image_batch", "smart_batch"]
+    job_type: Literal["text_batch", "image_batch", "smart_batch", "structured_batch"]
     title: str = ""
     config: dict[str, Any] = Field(default_factory=dict)
     skip_item_review: bool = False
@@ -843,10 +843,11 @@ class ReviewCommitBody(ReviewDraftBody):
 
 
 class BatchDetailsBody(BaseModel):
-    """Request body for POST /jobs/batch-details — fetch multiple job details at once."""
+    """Request body for POST /jobs/batch-details 鈥?fetch multiple job details at once."""
     ids: list[str] = Field(..., min_length=0, max_length=50)
 
 
 class BatchDetailsResponse(BaseModel):
     """Response for POST /jobs/batch-details."""
     jobs: list[JobDetailResponse] = Field(default_factory=list)
+

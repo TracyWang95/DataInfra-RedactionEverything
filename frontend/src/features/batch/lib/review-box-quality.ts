@@ -13,7 +13,7 @@ export type ReviewBoxQualityIssue =
   | 'seamSeal'
   | 'warning';
 
-export type ReviewBoxSourceKind = 'hasImage' | 'fallback' | 'ocrHas' | 'table';
+export type ReviewBoxSourceKind = 'visualFeature' | 'fallback' | 'ocrHas' | 'table';
 
 export const REVIEW_BOX_QUALITY_ISSUE_ORDER: readonly ReviewBoxQualityIssue[] = [
   'fallback',
@@ -78,12 +78,12 @@ export function getReviewBoxSourceKind(box: EditorBox): ReviewBoxSourceKind | nu
     return 'ocrHas';
   }
   if (
-    sourceValues.has('has_image') ||
-    sourceValues.has('has_image_model') ||
-    sourceDetail === 'has_image' ||
-    sourceDetail.startsWith('has_image_')
+    sourceValues.has('visual_features') ||
+    sourceValues.has('visual_features_model') ||
+    sourceDetail === 'visual_features' ||
+    sourceDetail.startsWith('visual_features_')
   ) {
-    return 'hasImage';
+    return 'visualFeature';
   }
 
   return null;

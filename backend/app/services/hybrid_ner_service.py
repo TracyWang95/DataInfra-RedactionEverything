@@ -3,9 +3,9 @@
 涓夐樁娈垫灦鏋勶細HaS锛堟湰鍦版ā鍨嬶級 鈫?姝ｅ垯 鈫?浜ゅ弶楠岃瘉
 
 鏍稿績鐗圭偣锛?
-1. HaS 浼樺厛锛氫娇鐢ㄦ湰鍦?HaS 妯″瀷杩涜璇箟 NER
-2. 姝ｅ垯琛ュ厖锛氶珮缃俊搴︽ā寮忓尮閰嶏紙韬唤璇併€佹墜鏈哄彿绛夛級
-3. 鎸囦唬娑堣В锛氬悓涓€瀹炰綋缁熶竴鏍囪
+1. HaS 浼樺厛锛氫娇鐢ㄦ湰鍦?HaS 妯″瀷杩涜璇箟 NER
+2. 姝ｅ垯琛ュ厖锛氶珮缃俊搴︽ā寮忓尮閰嶏紙韬唤璇併€佹墜鏈哄彿绛夛級
+3. 鎸囦唬娑堣В锛氬悓涓€瀹炰綋缁熶竴鏍囪
 4. 浜ゅ弶楠岃瘉锛氬幓閲嶅悎骞讹紝鎻愰珮鍑嗙‘鐜?
 """
 
@@ -22,8 +22,8 @@ from app.models.schemas import Entity
 from app.models.type_mapping import canonical_type_id, linkage_groups_for_type
 from app.services.has_service import HaSService, has_service
 
-# 绫诲瀷鍒悕锛屽吋瀹?EntityTypeConfig 鍜?CustomEntityType
-EntityTypeConfig = Any  # 鍙渶瑕?id, name, regex_pattern, use_llm 绛夊瓧娈?
+# 绫诲瀷鍒悕锛屽吋瀹?EntityTypeConfig 鍜?CustomEntityType
+EntityTypeConfig = Any  # 鍙渶瑕?id, name, regex_pattern, use_llm 绛夊瓧娈?
 
 
 @dataclass
@@ -36,7 +36,7 @@ class HybridEntity:
     end: int
     confidence: float
     source: str  # regex / has
-    tag: str | None = None  # HaS鏍煎紡鏍囩
+    tag: str | None = None  # HaS鏍煎紡鏍囩
     coref_id: str | None = None  # 鎸囦唬娑堣ВID
 
 
@@ -47,18 +47,18 @@ class _HaSChunk:
 
 
 _ORG_ALIAS_SUFFIX_RE = re.compile(
-    r"(?:鏈夐檺璐ｄ换鍏徃|鑲′唤鏈夐檺鍏徃|鏈夐檺鍏徃|鍒嗗叕鍙竱鍏徃|闆嗗洟|淇濋櫓|閾惰|鏀|浜烘皯娉曢櫌|娉曢櫌|鍖婚櫌|寰嬪笀浜嬪姟鎵€)$"
+    r"(?:鏈夐檺璐ｄ换鍏徃|鑲′唤鏈夐檺鍏徃|鏈夐檺鍏徃|鍒嗗叕鍙竱鍏徃|闆嗗洟|淇濋櫓|閾惰|鏀|浜烘皯娉曢櫌|娉曢櫌|鍖婚櫌|寰嬪笀浜嬪姟鎵€)$"
 )
 _ORG_ALIAS_GENERIC_WORD_RE = re.compile(
-    r"(?:涓浗|涓崕|鐪亅甯倈鍖簗鍘縷鏈夐檺璐ｄ换|鑲′唤|鏈夐檺|鍏徃|鍒嗗叕鍙竱闆嗗洟|鎺ц偂|"
-    r"绉戞妧|鎶€鏈瘄璐告槗|瀹炰笟|璐骇|淇濋櫓|閾惰|鏀|浜烘皯|娉曢櫌|鍖婚櫌|寰嬪笀|浜嬪姟鎵€)"
+    r"(?:涓浗|涓崕|鐪亅甯倈鍖簗鍘縷鏈夐檺璐ｄ换|鑲′唤|鏈夐檺|鍏徃|鍒嗗叕鍙竱闆嗗洟|鎺ц偂|"
+    r"绉戞妧|鎶€鏈瘄璐告槗|瀹炰笟|璐骇|淇濋櫓|閾惰|鏀|浜烘皯|娉曢櫌|鍖婚櫌|寰嬪笀|浜嬪姟鎵€)"
 )
 
 
 class HybridNERService:
     """HaS-first NER service with optional user-defined fallback."""
 
-    # NER 鏂囨湰闀垮害涓婇檺锛岃秴杩囨鍊兼埅鏂互闃叉鍐呭瓨/鏃堕棿鐖嗙偢
+    # NER 鏂囨湰闀垮害涓婇檺锛岃秴杩囨鍊兼埅鏂互闃叉鍐呭瓨/鏃堕棿鐖嗙偢
     MAX_TEXT_LENGTH = 500_000
 
     # HaS Text owns L3 semantic text entities by default. L1/L2 metadata is
@@ -183,7 +183,7 @@ class HybridNERService:
         entity_types: list[EntityTypeConfig],
     ) -> list[Entity]:
         """
-        娣峰悎璇嗗埆涓诲叆鍙ｏ紙HaS 浠呬娇鐢?NER 鍗曟鎺ㄧ悊锛汬ide 妯″紡宸茬Щ闄わ級
+        娣峰悎璇嗗埆涓诲叆鍙ｏ紙HaS 浠呬娇鐢?NER 鍗曟鎺ㄧ悊锛汬ide 妯″紡宸茬Щ闄わ級
         """
         import time as _time
         _t0 = _time.perf_counter()
@@ -526,7 +526,7 @@ class HybridNERService:
             return []
         enabled_type_ids = enabled_type_ids or set()
 
-        # 1. 楠岃瘉瀹炰綋鏂囨湰鏄惁鍦ㄥ師鏂囦腑姝ｇ‘浣嶇疆
+        # 1. 楠岃瘉瀹炰綋鏂囨湰鏄惁鍦ㄥ師鏂囦腑姝ｇ‘浣嶇疆
         semantic_type_ids = self.HAS_SEMANTIC_TYPE_IDS
         entities = sorted(
             entities,
@@ -548,7 +548,7 @@ class HybridNERService:
                     used_positions.add((entity.start, entity.end))
                     continue
 
-            # 灏濊瘯閲嶆柊瀹氫綅锛堥伩寮€宸插崰鐢ㄤ綅缃級
+            # 灏濊瘯閲嶆柊瀹氫綅锛堥伩寮€宸插崰鐢ㄤ綅缃級
             start_index = 0
             while True:
                 found = text.find(entity.text, start_index)
@@ -566,7 +566,7 @@ class HybridNERService:
                     break
                 start_index = found + len(entity.text)
 
-        # 2. 鍘婚噸锛堜紭鍏堜繚鐣欓珮缃俊搴︿笌姝ｅ垯缁撴灉锛?
+        # 2. 鍘婚噸锛堜紭鍏堜繚鐣欓珮缃俊搴︿笌姝ｅ垯缁撴灉锛?
         def source_rank(source: str | None) -> int:
             order = {"regex": 3, "has": 2, "llm": 2, "manual": 1}
             return order.get(source or "", 0)
@@ -646,7 +646,7 @@ class HybridNERService:
                 text_type_to_coref[key] = f"coref_{coref_counter:03d}"
             entity.coref_id = text_type_to_coref[key]
 
-        # 4. 鎸変綅缃帓搴忓苟閲嶆柊鍒嗛厤ID
+        # 4. 鎸変綅缃帓搴忓苟閲嶆柊鍒嗛厤ID
         deduped.sort(key=lambda e: e.start)
         for i, entity in enumerate(deduped):
             entity.id = f"entity_{i}"
@@ -957,11 +957,11 @@ class HybridNERService:
             return "medical"
         if "寰嬪笀浜嬪姟鎵€" in compact or compact.endswith("浜嬪姟鎵€"):
             return "law_firm"
-        if "閾惰" in compact or "鏀" in compact:
+        if "閾惰" in compact or "鏀" in compact:
             return "bank"
         if "淇濋櫓" in compact:
             return "insurance"
-        if any(suffix in compact for suffix in ("鍏徃", "闆嗗洟", "鏈夐檺", "鑲′唤")):
+        if any(suffix in compact for suffix in ("鍏徃", "闆嗗洟", "鏈夐檺", "鑲′唤")):
             return "company"
         return None
 

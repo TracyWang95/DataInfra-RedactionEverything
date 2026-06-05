@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from app.services.hybrid_vision_service import SensitiveRegion
+from app.services.ocr_has_vision_service import SensitiveRegion
 
 logger = logging.getLogger(__name__)
 

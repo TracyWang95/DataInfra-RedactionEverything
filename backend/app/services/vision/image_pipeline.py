@@ -1,8 +1,8 @@
 """
-Image Pipeline - VLM / YOLO visual region detection and image manipulation.
+Image Pipeline - visual feature region refinement and image manipulation.
 
 Responsibilities:
-- Matching VLM detection results with OCR text blocks (coordinate refinement)
+- Matching visual feature regions with OCR text blocks (coordinate refinement)
 - Drawing detection boxes on images (debug/preview visualization)
 - Applying redaction (solid color overlay on sensitive regions)
 """
@@ -14,25 +14,25 @@ from difflib import SequenceMatcher
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.services.hybrid_vision_service import OCRTextBlock, SensitiveRegion
+from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# VLM-OCR matching (coordinate refinement)
+# Visual feature / OCR matching (coordinate refinement)
 # ---------------------------------------------------------------------------
 
-def match_ocr_to_vlm(
+def match_ocr_to_visual_regions(
     ocr_blocks: list[OCRTextBlock],
-    vlm_regions: list[SensitiveRegion],
+    visual_regions: list[SensitiveRegion],
     iou_threshold: float = 0.3,
 ) -> list[SensitiveRegion]:
     """
-    Refine VLM detection results using OCR text blocks.
+    Refine visual feature regions using OCR text blocks.
 
-    When a VLM region overlaps an OCR block (by IoU or text similarity), the
-    OCR block's precise coordinates are used instead.
+    When a visual region overlaps an OCR block (by IoU or text similarity), the
+    OCR block's more precise coordinates are used instead.
     """
     from app.services.vision.region_merger import calc_iou_boxes
 
@@ -47,15 +47,15 @@ def match_ocr_to_vlm(
 
     refined_regions: list[SensitiveRegion] = []
 
-    for vlm_region in vlm_regions:
-        vlm_box = (vlm_region.left, vlm_region.top, vlm_region.width, vlm_region.height)
+    for visual_region in visual_regions:
+        visual_box = (visual_region.left, visual_region.top, visual_region.width, visual_region.height)
 
         best_match: OCRTextBlock | None = None
         best_iou = 0.0
 
         for ocr_block in ocr_blocks:
             ocr_box = (ocr_block.left, ocr_block.top, ocr_block.width, ocr_block.height)
-            iou = calc_iou_boxes(vlm_box, ocr_box)
+            iou = calc_iou_boxes(visual_box, ocr_box)
 
             if iou > best_iou and iou >= iou_threshold:
                 best_iou = iou
@@ -63,15 +63,15 @@ def match_ocr_to_vlm(
 
         if not best_match:
             # IoU failed - fall back to text similarity
-            norm_vlm = normalize_text(vlm_region.text)
-            if norm_vlm:
+            norm_visual = normalize_text(visual_region.text)
+            if norm_visual:
                 for ocr_block in ocr_blocks:
                     norm_ocr = normalize_text(ocr_block.text)
-                    if norm_ocr and (norm_vlm in norm_ocr or norm_ocr in norm_vlm):
+                    if norm_ocr and (norm_visual in norm_ocr or norm_ocr in norm_visual):
                         best_match = ocr_block
                         break
                     if norm_ocr:
-                        ratio = SequenceMatcher(None, norm_vlm, norm_ocr).ratio()
+                        ratio = SequenceMatcher(None, norm_visual, norm_ocr).ratio()
                         if ratio >= 0.6:
                             best_match = ocr_block
                             break
@@ -79,17 +79,17 @@ def match_ocr_to_vlm(
         if best_match:
             refined_regions.append(SensitiveRegion(
                 text=best_match.text,
-                entity_type=vlm_region.entity_type,
+                entity_type=visual_region.entity_type,
                 left=best_match.left,
                 top=best_match.top,
                 width=best_match.width,
                 height=best_match.height,
-                confidence=max(vlm_region.confidence, best_match.confidence),
+                confidence=max(visual_region.confidence, best_match.confidence),
                 source="merged",
-                color=vlm_region.color,
+                color=visual_region.color,
             ))
         else:
-            refined_regions.append(vlm_region)
+            refined_regions.append(visual_region)
 
     return refined_regions
 

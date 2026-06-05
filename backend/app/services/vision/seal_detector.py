@@ -1,10 +1,4 @@
-"""Fallback visual detectors for official seals.
-
-HaS Image is still the primary visual model. This module covers a practical
-failure mode in scanned contracts: red or copied dark seals, corner stamps,
-and side seam stamps can be visually obvious but missed by the model or
-unavailable when the model process is unhealthy.
-"""
+"""Fallback visual detectors for official seals.\r\n\r\nPaddleOCR-VL and LocateAnything are the primary model paths. This module covers practical scanned-document seal cases that still benefit from lightweight image analysis when model confidence is low or unavailable.\r\n"""
 from __future__ import annotations
 
 import weakref
@@ -24,6 +18,7 @@ except Exception:
 _PREPARED_IMAGE_CACHE: list[tuple[weakref.ReferenceType[Image.Image], tuple[int, int], object, object]] = []
 _RED_WORK_MAX_SIDE = 1800
 _DARK_WORK_MAX_SIDE = 1800
+_LOCAL_SEAL_MAX_PAGE_ASPECT = 3.0
 
 
 @dataclass(frozen=True)
@@ -86,6 +81,8 @@ def detect_red_seal_regions(image: Image.Image, *, max_regions: int = 8) -> list
     img = ImageOps.exif_transpose(image).convert("RGB")
     original_w, original_h = img.size
     if original_w <= 0 or original_h <= 0:
+        return []
+    if _is_extreme_aspect_page(original_w, original_h):
         return []
 
     max_side = max(original_w, original_h)
@@ -325,6 +322,18 @@ def _find_blank_gutter(raw_roi, page_width: int, page_height: int) -> tuple[str,
     if best is None:
         return None
     return (best[1], best[2])
+
+
+def _is_extreme_aspect_page(width: int, height: int) -> bool:
+    """Return true for banner/screenshot-shaped images, not document pages.
+
+    The local color fallback is intentionally limited to document-like pages.
+    Extremely wide or tall UI screenshots often contain saturated red labels,
+    badges, and navigation text that are visually unlike seals but form valid
+    color components. Model-backed seal detections still run for those images.
+    """
+    short_side = max(1, min(width, height))
+    return max(width, height) / short_side > _LOCAL_SEAL_MAX_PAGE_ASPECT
 
 
 def _split_stacked_red_seal_box(
@@ -612,12 +621,35 @@ def _refine_large_dark_seal_box_by_circle(
         dark_ratio = float((circle_roi < 135).mean())
         if dark_ratio < 0.025:
             continue
+        if _has_dominant_dark_rule_line(circle_roi):
+            continue
         score = dark_ratio + min(radius / max(1, min_page_side), 0.20)
         candidates.append((score, (int(nx1), int(ny1), int(nbw), int(nbh))))
 
     if not candidates:
         return None
     return max(candidates, key=lambda item: item[0])[1]
+
+
+def _has_dominant_dark_rule_line(gray_roi) -> bool:
+    """Detect table/form rules that dominate a copied-seal circle candidate."""
+    deps = _vision_deps()
+    if deps is None:
+        return False
+    _cv2, np = deps
+
+    if gray_roi.size == 0:
+        return False
+    dark = gray_roi < 135
+    if not bool(dark.any()):
+        return False
+
+    height, width = dark.shape[:2]
+    if width <= 0 or height <= 0:
+        return False
+    row_coverage = float(dark.sum(axis=1).max()) / max(1, width)
+    col_coverage = float(dark.sum(axis=0).max()) / max(1, height)
+    return row_coverage >= 0.82 or col_coverage >= 0.82
 
 
 def _merge_nearby_boxes(boxes: list[tuple[int, int, int, int]], w: int, h: int) -> list[tuple[int, int, int, int]]:

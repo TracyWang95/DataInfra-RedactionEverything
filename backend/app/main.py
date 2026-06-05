@@ -1,5 +1,5 @@
 """
-匿名化数据基础设施 - FastAPI 应用入口
+鍖垮悕鍖栨暟鎹熀纭€璁炬柦 - FastAPI 搴旂敤鍏ュ彛
 """
 from __future__ import annotations
 
@@ -18,7 +18,17 @@ from starlette.responses import JSONResponse
 from starlette.types import Message
 
 from app.api import auth as auth_api
-from app.api import entity_types, files, jobs, model_config, ner_backend, presets, redaction, vision_pipeline
+from app.api import (
+    entity_types,
+    files,
+    jobs,
+    model_config,
+    ner_backend,
+    presets,
+    redaction,
+    structured,
+    vision_pipeline,
+)
 from app.api import safety as safety_api
 from app.core.auth import require_auth
 from app.core.config import settings
@@ -29,7 +39,7 @@ from app.core.health_checks import check_has_ner_health, check_ocr_health_sync, 
 from app.core.logging_config import setup_logging
 from app.models.schemas import HealthResponse
 
-# 生产环境用 JSON 格式；DEBUG 模式用文本格式（人类可读）
+# 鐢熶骇鐜鐢?JSON 鏍煎紡锛汥EBUG 妯″紡鐢ㄦ枃鏈牸寮忥紙浜虹被鍙锛?
 setup_logging(json_mode=settings.LOG_JSON and not settings.DEBUG, level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -99,7 +109,7 @@ def cleanup_orphan_files() -> int:
     if disk_count > 5 and not known_paths:
         logger.warning(
             "Orphan cleanup SKIPPED: disk has %d files but no file_store/job references were found. "
-            "Possible migration issue — refusing to delete.",
+            "Possible migration issue 鈥?refusing to delete.",
             disk_count,
         )
         return 0
@@ -179,12 +189,12 @@ async def lifespan(app: FastAPI):
     if _requeued:
         logger.info("Requeued %d failed items after repairing missing-file path records", _requeued)
 
-    # 3. 启动进程内任务队列
+    # 3. 鍚姩杩涚▼鍐呬换鍔￠槦鍒?
     from app.services.task_queue import TaskItem, get_task_queue
     _task_queue = get_task_queue()
     _task_queue.start()
 
-    # 恢复未完成的任务：根据 item 状态区分 recognition / redaction
+    # 鎭㈠鏈畬鎴愮殑浠诲姟锛氭牴鎹?item 鐘舵€佸尯鍒?recognition / redaction
     from app.services.job_store import JobItemStatus
     _all_jobs = _store.list_schedulable_jobs()
     _redispatched = 0
@@ -203,9 +213,10 @@ async def lifespan(app: FastAPI):
     for _j in _all_jobs:
         for _it in _store.list_items(_j["id"]):
             if _it["status"] in _recognition_statuses:
+                _task_type = "structured" if _j.get("job_type") == "structured_batch" else "recognition"
                 _task_queue.enqueue(TaskItem(
                     job_id=_j["id"], item_id=_it["id"], file_id=_it["file_id"],
-                    task_type="recognition",
+                    task_type=_task_type,
                 ))
                 _redispatched += 1
             elif _it["status"] in _redaction_statuses:
@@ -220,7 +231,7 @@ async def lifespan(app: FastAPI):
     # 4. Start periodic orphan cleanup
     _cleanup_task = asyncio.create_task(_periodic_cleanup())
 
-    # 5. Start periodic database backup (every hour) — all SQLite databases
+    # 5. Start periodic database backup (every hour) 鈥?all SQLite databases
     async def _periodic_backup():
         while True:
             await asyncio.sleep(3600)
@@ -268,7 +279,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="匿名化数据基础设施，支持 Word/PDF/图片等多格式文档的敏感信息自动识别与匿名化处理，基于 GB/T 37964-2019 国家标准",
+    description="鍖垮悕鍖栨暟鎹熀纭€璁炬柦锛屾敮鎸?Word/PDF/鍥剧墖绛夊鏍煎紡鏂囨。鐨勬晱鎰熶俊鎭嚜鍔ㄨ瘑鍒笌鍖垮悕鍖栧鐞嗭紝鍩轰簬 GB/T 37964-2019 鍥藉鏍囧噯",
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
@@ -374,27 +385,28 @@ from app.core.request_id import RequestIdMiddleware  # noqa: E402
 
 app.add_middleware(RequestIdMiddleware)
 
-# 确保上传和输出目录存在
+# 纭繚涓婁紶鍜岃緭鍑虹洰褰曞瓨鍦?
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
 
-# 注意：不再挂载 /uploads 和 /outputs 为 StaticFiles，
-# 因为 StaticFiles 会绕过 require_auth 认证中间件。
-# 所有文件访问统一通过 /api/v1/files/{file_id}/download 端点（已有认证保护）。
+# 娉ㄦ剰锛氫笉鍐嶆寕杞?/uploads 鍜?/outputs 涓?StaticFiles锛?
+# 鍥犱负 StaticFiles 浼氱粫杩?require_auth 璁よ瘉涓棿浠躲€?
+# 鎵€鏈夋枃浠惰闂粺涓€閫氳繃 /api/v1/files/{file_id}/download 绔偣锛堝凡鏈夎璇佷繚鎶わ級銆?
 
-# 注册路由
+# 娉ㄥ唽璺敱
 app.include_router(auth_api.router, prefix=settings.API_PREFIX)
 app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理"], dependencies=[Depends(require_auth)])
-app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["匿名化处理"], dependencies=[Depends(require_auth)])
+app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["redaction"], dependencies=[Depends(require_auth)])
 app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
 app.include_router(vision_pipeline.router, prefix=settings.API_PREFIX, tags=["图像识别Pipeline管理"], dependencies=[Depends(require_auth)])
 app.include_router(model_config.router, prefix=settings.API_PREFIX, tags=["推理模型配置"], dependencies=[Depends(require_auth)])
-app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本NER后端"], dependencies=[Depends(require_auth)])
-app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["识别配置预设"], dependencies=[Depends(require_auth)])
+app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["鏂囨湰NER鍚庣"], dependencies=[Depends(require_auth)])
+app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["璇嗗埆閰嶇疆棰勮"], dependencies=[Depends(require_auth)])
 app.include_router(jobs.router, prefix=settings.API_PREFIX, tags=["批量任务"], dependencies=[Depends(require_auth)])
+app.include_router(structured.router, prefix=settings.API_PREFIX, tags=["structured"], dependencies=[Depends(require_auth)])
 app.include_router(safety_api.router, prefix=settings.API_PREFIX, tags=["数据安全"], dependencies=[Depends(require_auth)])
 
-logger.info("presets API: GET/POST %s/presets (若前端仍 404，请重启本进程以加载最新路由)", settings.API_PREFIX)
+logger.info("presets API: GET/POST %s/presets (鑻ュ墠绔粛 404锛岃閲嶅惎鏈繘绋嬩互鍔犺浇鏈€鏂拌矾鐢?", settings.API_PREFIX)
 
 # Prometheus metrics endpoint
 from datetime import UTC  # noqa: E402, I001
@@ -405,9 +417,9 @@ async def metrics_view(request: Request):
     return await metrics_endpoint(request)
 
 
-@app.get("/", tags=["根路径"])
+@app.get("/", tags=["root"])
 async def root():
-    """API 根路径"""
+    """API root."""
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
@@ -415,58 +427,62 @@ async def root():
     }
 
 
-@app.get("/health", response_model=HealthResponse, tags=["健康检查"])
+@app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health_check():
-    """健康检查接口"""
+    """Basic health check."""
     return HealthResponse(
         status="healthy",
         version=settings.APP_VERSION,
     )
 
 
-@app.get("/health/services", tags=["健康检查"])
+@app.get("/health/services", tags=["health"])
 async def services_health():
-    """
-    各模型服务的真实健康状态
-    前端轮询此接口来显示服务状态
-    """
+    """Return model service health."""
+
+
+
     import asyncio
     import time
     from datetime import datetime
 
-    from app.core.health_checks import get_vlm_runtime_detail
+    from app.core.health_checks import get_visual_features_runtime_detail
     from app.services import model_config_service
 
     services = {}
 
-    # 在线程池中并行检查所有服务（避免阻塞事件循环）
+    # 鍦ㄧ嚎绋嬫睜涓苟琛屾鏌ユ墍鏈夋湇鍔★紙閬垮厤闃诲浜嬩欢寰幆锛?
     loop = asyncio.get_event_loop()
     t0 = time.perf_counter()
     ocr_url = f"{model_config_service.get_paddle_ocr_base_url()}/health"
     ocr_timeout = float(settings.OCR_HEALTH_PROBE_TIMEOUT)
-    vlm_base = model_config_service.get_vlm_base_url()
-    vlm_url = f"{vlm_base}/models" if vlm_base.rstrip("/").endswith("/v1") else f"{vlm_base}/v1/models"
-    ocr_result, has_result, has_image_result, vlm_result = await asyncio.gather(
+    visual_base = model_config_service.get_visual_features_base_url()
+    visual_models_url = (
+        f"{visual_base}/models"
+        if visual_base.rstrip("/").endswith("/v1")
+        else f"{visual_base}/v1/models"
+    )
+    ocr_result, has_result, visual_detect_result, visual_chat_result = await asyncio.gather(
         loop.run_in_executor(
             None,
-            lambda: check_ocr_health_sync(ocr_url, "PaddleOCR-VL-1.5-0.9B", ocr_timeout),
+            lambda: check_ocr_health_sync(ocr_url, "PaddleOCR-VL-1.6-0.9B", ocr_timeout),
         ),
         loop.run_in_executor(None, check_has_ner_health),
         loop.run_in_executor(
             None,
             lambda: check_service_health_sync(
-                f"{model_config_service.get_has_image_base_url()}/health",
-                "HaS Image YOLO",
-                service_kind="has_image",
+                f"{visual_base}/health",
+                "LocateAnything Visual Features",
+                service_kind="visual_features",
             ),
         ),
         loop.run_in_executor(
             None,
             lambda: check_service_health_sync(
-                vlm_url,
-                settings.VLM_MODEL_NAME,
+                visual_models_url,
+                settings.VISUAL_FEATURES_MODEL_NAME,
                 timeout=3.0,
-                service_kind="model",
+                service_kind="visual_features",
             ),
         ),
     )
@@ -479,11 +495,37 @@ async def services_health():
 
     services["paddle_ocr"] = ocr_result.as_service_payload()
     services["has_ner"] = has_result.as_service_payload()
-    services["has_image"] = has_image_result.as_service_payload()
-    services["vlm"] = vlm_result.as_service_payload()
-    if services["vlm"]["status"] == "online":
-        services["vlm"].setdefault("detail", {}).update(get_vlm_runtime_detail())
-    all_online = all(s["status"] == "online" for s in services.values())
+    visual_detect_payload = visual_detect_result.as_service_payload()
+    visual_chat_payload = visual_chat_result.as_service_payload()
+    if visual_chat_payload["status"] == "online":
+        visual_chat_payload.setdefault("detail", {}).update(get_visual_features_runtime_detail())
+    def combine_visual_status(*statuses: str) -> str:
+        if any(status == "offline" for status in statuses):
+            return "offline"
+        if any(status == "degraded" for status in statuses):
+            return "degraded"
+        if any(status == "checking" for status in statuses):
+            return "checking"
+        return "online"
+
+    visual_detail = {
+        "detect_endpoint": visual_detect_payload.get("status"),
+        "chat_endpoint": visual_chat_payload.get("status"),
+        "detect_detail": visual_detect_payload.get("detail", {}),
+        "chat_detail": visual_chat_payload.get("detail", {}),
+    }
+    services["visual_features"] = {
+        "name": "LocateAnything Visual Features",
+        "status": combine_visual_status(
+            str(visual_detect_payload.get("status") or "offline"),
+            str(visual_chat_payload.get("status") or "offline"),
+        ),
+        "detail": visual_detail,
+    }
+    all_online = all(
+        services[key]["status"] == "online"
+        for key in ("paddle_ocr", "has_ner", "visual_features")
+    )
 
     return {
         "all_online": all_online,
@@ -503,3 +545,4 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.DEBUG,
     )
+

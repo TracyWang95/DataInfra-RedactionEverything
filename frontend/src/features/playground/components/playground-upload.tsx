@@ -29,8 +29,7 @@ function serviceDisplayName(service: Service, t: Translate) {
   const rawName = service.name.toLowerCase();
   if (rawName.includes('paddle')) return t('health.service.paddle_ocr');
   if (rawName.includes('has text') || rawName.includes('has_')) return t('health.service.has_ner');
-  if (rawName.includes('has image') || rawName.includes('yolo')) return t('health.service.has_image');
-  if (rawName.includes('glm') || rawName.includes('vlm')) return t('health.service.vlm');
+  if (rawName.includes('visual') || rawName.includes('locate')) return t('health.service.visual_features');
   return service.name;
 }
 
@@ -44,9 +43,13 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
   const t = useT();
   const { health, checking } = useServiceHealth();
   const { dropzone, uploadIssue, recognition: rec } = ctx;
-  const selectedVlmTypes = rec.selectedVlmTypes ?? [];
+  const visualTypeCount =
+    rec.pipelines.find((pipeline) => pipeline.mode === 'visual_features')?.types.length ?? 0;
+  const selectedVisualTypeCount = rec.selectedVisualFeatureTypes.length;
   const services = health
-    ? Object.values(health.services).filter((service): service is Service => Boolean(service))
+    ? (['paddle_ocr', 'has_ner', 'visual_features'] as const)
+        .map((key) => health.services[key])
+        .filter((service): service is Service => Boolean(service))
     : [];
   const blockedServices = services.filter((service) => blockedServiceStatuses.has(service.status));
   const backendChecking = !health && checking;
@@ -183,12 +186,7 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
                   {t('playground.ocrShort')} {rec.selectedOcrHasTypes.length} /{' '}
                   {rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has')?.types.length ?? 0}
                   <span className="mx-2 text-border">|</span>
-                  {t('playground.hasImageShort')} {rec.selectedHasImageTypes.length} /{' '}
-                  {rec.pipelines.find((pipeline) => pipeline.mode === 'has_image')?.types.length ??
-                    0}
-                  <span className="mx-2 text-border">|</span>
-                  {t('playground.vlmShort')} {selectedVlmTypes.length} /{' '}
-                  {rec.pipelines.find((pipeline) => pipeline.mode === 'vlm')?.types.length ?? 0}
+                  {t('playground.visualFeatureShort')} {selectedVisualTypeCount} / {visualTypeCount}
                 </p>
               </div>
               <VisionPipelines rec={rec} />
@@ -204,7 +202,7 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
               data-testid="playground-type-summary"
             >
               {rec.typeTab === 'vision'
-                ? `${t('playground.ocrShort')} ${rec.selectedOcrHasTypes.length} / ${t('playground.hasImageShort')} ${rec.selectedHasImageTypes.length} / ${t('playground.vlmShort')} ${selectedVlmTypes.length}`
+                ? `${t('playground.ocrShort')} ${rec.selectedOcrHasTypes.length} / ${t('playground.visualFeatureShort')} ${selectedVisualTypeCount}`
                 : `${rec.selectedTypes.length} / ${rec.entityTypes.length} ${t('playground.selected')}`}
             </p>
           </div>

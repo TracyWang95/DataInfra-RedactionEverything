@@ -88,7 +88,7 @@ export function SettingsOnboardingPanel({
           title={t('settings.overview.reviewTitle')}
           description={t('settings.overview.reviewDesc').replace(
             '{paperHint}',
-            t('settings.redaction.paperOptInAria'),
+            t('settings.redaction.imageGroupHint'),
           )}
         />
         <div className="rounded-lg border border-border/70 bg-muted/15 px-2.5 py-2">

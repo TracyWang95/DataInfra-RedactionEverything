@@ -1,6 +1,6 @@
 """
-健康检查辅助函数
-同步探测外部 HTTP 服务状态（供 /health/services 在线程池中调用）。
+鍋ュ悍妫€鏌ヨ緟鍔╁嚱鏁?
+鍚屾鎺㈡祴澶栭儴 HTTP 鏈嶅姟鐘舵€侊紙渚?/health/services 鍦ㄧ嚎绋嬫睜涓皟鐢級銆?
 """
 from __future__ import annotations
 
@@ -109,12 +109,11 @@ def _apply_runtime_contract(detail: dict[str, Any], *, service_kind: str) -> Non
     )
     if service_kind == "model" and not has_runtime_signal:
         return
-    if service_kind == "has_image" and not has_runtime_signal:
-        # Backward compatibility for an already-running older HaS Image
-        # sidecar. A healthy legacy response proves reachability/readiness but
-        # not runtime device; do not convert that missing field into a false
-        # CPU-fallback alarm.
-        detail.setdefault("runtime", "ultralytics-yolo")
+    if service_kind == "visual_features" and not has_runtime_signal:
+        # A healthy LocateAnything response proves reachability/readiness but
+        # not the exact device; keep the service online while surfacing the
+        # runtime as unknown instead of claiming CPU fallback.
+        detail.setdefault("runtime", "locateanything")
         detail.setdefault("runtime_mode", "unknown")
         detail.setdefault("cpu_fallback_risk", False)
         return
@@ -126,8 +125,8 @@ def _apply_runtime_contract(detail: dict[str, Any], *, service_kind: str) -> Non
     if "runtime" not in detail:
         if service_kind == "ocr":
             detail["runtime"] = "paddleocr"
-        elif service_kind == "has_image":
-            detail["runtime"] = "ultralytics-yolo"
+        elif service_kind == "visual_features":
+            detail["runtime"] = "locateanything"
 
     if detail.get("runtime_mode") not in {"gpu", "cpu", "unknown"}:
         if gpu_available is True or device.startswith("gpu") or "cuda" in device:
@@ -149,7 +148,7 @@ def _apply_runtime_contract(detail: dict[str, Any], *, service_kind: str) -> Non
 
 
 def check_sync(url: str, default_name: str, timeout: float = 3.0) -> tuple:
-    """同步检查 HTTP 服务（供 /health/services 在线程池中调用）。复用连接池。"""
+    """Check an HTTP service synchronously for health endpoints."""
     try:
         resp = _health_check_client.get(url, timeout=timeout)
         if resp.status_code == 200:
@@ -161,7 +160,7 @@ def check_sync(url: str, default_name: str, timeout: float = 3.0) -> tuple:
                 name = data["data"][0].get("id", default_name)
             elif "models" in data and isinstance(data["models"], list) and data["models"]:
                 name = data["models"][0].get("name", default_name)
-            # 显式带 ready 字段时以布尔为准（OCR / HaS Image）；缺省则视为就绪
+            # Honor explicit ready flags; missing ready means the endpoint is usable.
             status = str(data.get("status", "")).lower()
             if status in _SERVING_STATUSES or status in _LOADING_STATUSES:
                 return name, True
@@ -351,21 +350,20 @@ def _has_text_runtime_detail() -> dict[str, Any]:
     return detail
 
 
-def get_vlm_runtime_detail() -> dict[str, Any]:
-    gpu_layers = _runtime_config_value("GLM_FLASH_N_GPU_LAYERS") or "auto"
-    device = _runtime_config_value("GLM_FLASH_DEVICE") or _runtime_config_value("HAS_TEXT_DEVICE")
+def get_visual_features_runtime_detail() -> dict[str, Any]:
+    device = _runtime_config_value("LOCATE_ANYTHING_DEVICE") or "cuda"
     provider = _infer_gpu_provider(device)
     return {
-        "runtime": "llama.cpp server",
+        "runtime": "transformers-locateanything",
         "runtime_mode": "gpu",
         "gpu_available": True,
         "gpu_enabled": True,
-        "gpu_layers": gpu_layers,
         "device": device if device else None,
         "gpu_provider": provider,
         "gpu_only_mode": True,
         "cpu_fallback_risk": False,
         "runtime_expectation": "cuda-gpu",
+        "max_new_tokens": int(_runtime_config_value("LOCATE_ANYTHING_MAX_NEW_TOKENS") or 8192),
     }
 
 

@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-import { type FC, useEffect, useState } from 'react';
+import { type FC, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -11,9 +11,9 @@ import { getEntityTypeName } from '@/config/entityTypes';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { getSelectionToneClasses, type SelectionTone } from '@/ui/selectionPalette';
-import { isHasImageModelTypeId } from '@/services/defaultRedactionPreset';
 import { localizeRecognitionTypeName } from '@/features/settings/lib/redaction-display';
 import type { usePlayground } from '../hooks/use-playground';
+import type { PipelineConfig, VisionTypeConfig } from '../types';
 
 type RecognitionCtx = ReturnType<typeof usePlayground>['recognition'];
 const CONFIG_TILE_PAGE_SIZE = 8;
@@ -282,18 +282,46 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   const t = useT();
   const [pipelinePages, setPipelinePages] = useState<Record<string, number>>({});
   const pageSize = VISION_PIPELINE_PAGE_SIZE;
+  const displayPipelines = useMemo(() => {
+    const ocrPipeline = rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has');
+    const visualPipeline = rec.pipelines.find((pipeline) => pipeline.mode === 'visual_features');
+    const visualTypes: VisionTypeConfig[] = (visualPipeline?.types ?? []).map((type) => ({
+      ...type,
+      pipelineMode: 'visual_features',
+    }));
+    const mergedPipelines: PipelineConfig[] = [];
+
+    if (ocrPipeline) {
+      mergedPipelines.push({
+        ...ocrPipeline,
+        types: ocrPipeline.types.map((type) => ({ ...type, pipelineMode: 'ocr_has' })),
+      });
+    }
+
+    if (visualPipeline) {
+      mergedPipelines.push({
+        mode: 'visual_features',
+        name: t('settings.pipelineDisplayName.image'),
+        description: t('settings.pipelineDescription.image'),
+        enabled: visualPipeline.enabled,
+        types: visualTypes,
+      });
+    }
+
+    return mergedPipelines;
+  }, [rec.pipelines, t]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- clamping page indices when pipeline data changes
     setPipelinePages((current) => {
       const next = { ...current };
-      rec.pipelines.forEach((pipeline) => {
+      displayPipelines.forEach((pipeline) => {
         const totalPages = Math.max(1, Math.ceil(pipeline.types.length / pageSize));
         next[pipeline.mode] = Math.min(next[pipeline.mode] ?? 1, totalPages);
       });
       return next;
     });
-  }, [pageSize, rec.pipelines]);
+  }, [displayPipelines, pageSize]);
 
   if (rec.visionConfigState === 'loading') {
     return (
@@ -316,7 +344,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
     );
   }
 
-  if (rec.visionConfigState === 'empty' || rec.pipelines.length === 0) {
+  if (rec.visionConfigState === 'empty' || displayPipelines.length === 0) {
     return (
       <ConfigEmptyState
         title={t('playground.visionConfigEmptyTitle')}
@@ -327,23 +355,16 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      {rec.pipelines.map((pipeline) => {
-        const isHasImage = pipeline.mode === 'has_image';
-        const isVlm = pipeline.mode === 'vlm';
-        const pipelineTypes = isHasImage
-          ? pipeline.types.filter((type) => isHasImageModelTypeId(type.id))
-          : pipeline.types;
-        const selectedSet = isHasImage
-          ? rec.selectedHasImageTypes
-          : isVlm
-            ? rec.selectedVlmTypes
-            : rec.selectedOcrHasTypes;
-        const recommendedIds = isHasImage
-          ? pipelineTypes.filter((type) => type.id !== 'paper').map((type) => type.id)
-          : pipelineTypes.map((type) => type.id);
+      {displayPipelines.map((pipeline) => {
+        const isVisualFeatures = pipeline.mode === 'visual_features';
+        const pipelineTypes = pipeline.types;
+        const selectedSet = isVisualFeatures
+          ? rec.selectedVisualFeatureTypes
+          : rec.selectedOcrHasTypes;
+        const recommendedIds = pipelineTypes.map((type) => type.id);
         const allSelected =
           recommendedIds.length > 0 && recommendedIds.every((id) => selectedSet.includes(id));
-        const tone: SelectionTone = isHasImage || isVlm ? 'visual' : 'semantic';
+        const tone: SelectionTone = isVisualFeatures ? 'visual' : 'semantic';
         const toneClasses = getSelectionToneClasses(tone);
         const totalPages = Math.max(1, Math.ceil(pipelineTypes.length / pageSize));
         const page = pipelinePages[pipeline.mode] ?? 1;
@@ -369,11 +390,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                     toneClasses.titleText,
                   )}
                 >
-                  {isVlm
-                    ? t('playground.vlmRange')
-                    : isHasImage
-                      ? t('playground.visualRegionRange')
-                      : t('playground.imageTextRange')}
+                  {isVisualFeatures ? t('playground.visualRegionRange') : t('playground.imageTextRange')}
                 </span>
                 <Badge
                   variant="secondary"
@@ -388,11 +405,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                   variant="secondary"
                   className="rounded-full border border-border/70 bg-background/70 px-2 py-0.5 text-[10px] font-medium text-muted-foreground shadow-none"
                 >
-                  {isVlm
-                    ? t('playground.vlmShort')
-                    : isHasImage
-                      ? t('playground.hasImageShort')
-                      : t('playground.ocrShort')}
+                  {isVisualFeatures ? t('playground.visualFeatureShort') : t('playground.ocrShort')}
                 </Badge>
               </div>
               <Button
@@ -403,19 +416,14 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                 onClick={() => {
                   rec.clearPlaygroundVisionPresetTracking();
                   if (allSelected) {
-                    if (isHasImage) {
-                      rec.updateHasImageTypes([]);
-                    } else if (isVlm) {
-                      rec.updateVlmTypes([]);
+                    if (isVisualFeatures) {
+                      rec.updateVisualFeatureTypes([]);
                     } else {
                       rec.updateOcrHasTypes([]);
                     }
                   } else {
-                    if (isHasImage) {
-                      const optionalSelected = selectedSet.filter((id) => id === 'paper');
-                      rec.updateHasImageTypes([...recommendedIds, ...optionalSelected]);
-                    } else if (isVlm) {
-                      rec.updateVlmTypes(recommendedIds);
+                    if (isVisualFeatures) {
+                      rec.updateVisualFeatureTypes(recommendedIds);
                     } else {
                       rec.updateOcrHasTypes(recommendedIds);
                     }
@@ -424,7 +432,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
               >
                 {allSelected
                   ? t('playground.clear')
-                  : isHasImage
+                  : isVisualFeatures
                     ? t('playground.selectRecommended')
                     : t('playground.selectAll')}
               </Button>
@@ -436,11 +444,14 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
             ) : (
               <div className={VISION_TILE_GRID_CLASS}>
                 {visibleTypes.map((type) => {
-                  const checked = selectedSet.includes(type.id);
-                  const isPaperOptIn = isHasImage && type.id === 'paper';
+                  const typeMode = type.pipelineMode ?? pipeline.mode;
+                  const checked =
+                    typeMode === 'visual_features'
+                      ? rec.selectedVisualFeatureTypes.includes(type.id)
+                      : rec.selectedOcrHasTypes.includes(type.id);
                   return (
                     <label
-                      key={type.id}
+                      key={`${typeMode}-${type.id}`}
                       className={cn(
                         CONFIG_BUBBLE_CLASS,
                         checked
@@ -452,26 +463,16 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                       <Checkbox
                         checked={checked}
                         onCheckedChange={() =>
-                          rec.toggleVisionType(type.id, pipeline.mode)
+                          rec.toggleVisionType(type.id, typeMode)
                         }
                         aria-label={
-                          isPaperOptIn
-                            ? t('playground.paperOptInAria')
-                            : localizeRecognitionTypeName(type, t)
+                          localizeRecognitionTypeName(type, t)
                         }
                         className="h-3.5 w-3.5"
                       />
                       <span className="min-w-0 truncate font-medium">
                         {localizeRecognitionTypeName(type, t)}
                       </span>
-                      {isPaperOptIn && (
-                        <span
-                          aria-hidden="true"
-                          className="ml-auto shrink-0 whitespace-nowrap rounded-full border border-violet-200 bg-background/80 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:border-violet-400/40 dark:text-violet-200"
-                        >
-                          {t('playground.paperOptInBadge')}
-                        </span>
-                      )}
                     </label>
                   );
                 })}

@@ -22,7 +22,7 @@ import type { FileListItem } from '@/types';
 export type Step = 1 | 2 | 3 | 4 | 5;
 
 export interface PipelineCfg {
-  mode: 'ocr_has' | 'has_image' | 'vlm';
+  mode: 'ocr_has' | 'visual_features';
   name: string;
   description: string;
   enabled: boolean;

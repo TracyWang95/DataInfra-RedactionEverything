@@ -67,6 +67,11 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+function wslEnvVar(name, fallback = '') {
+  const value = env[name] ?? fallback;
+  return `${name}=${shellQuote(value)}`;
+}
+
 function required(name) {
   const value = env[name];
   if (!value) throw new PublicStartupError('config');
@@ -104,7 +109,7 @@ const env = {
   CUDA_VISIBLE_DEVICES: fileEnv.CUDA_VISIBLE_DEVICES || process.env.CUDA_VISIBLE_DEVICES || '0',
   OCR_VL_BACKEND: fileEnv.OCR_VL_BACKEND || 'vllm-server',
   OCR_VLLM_URL: fileEnv.OCR_VLLM_URL || 'http://127.0.0.1:8118/v1',
-  OCR_VL_API_MODEL_NAME: fileEnv.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.5-0.9B',
+  OCR_VL_API_MODEL_NAME: fileEnv.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.6-0.9B',
 };
 
 const wslHost = process.platform === 'win32' ? getWslHost() : '127.0.0.1';
@@ -112,10 +117,8 @@ env.WSL_MODEL_HOST = wslHost;
 env.HAS_TEXT_RUNTIME = env.HAS_TEXT_RUNTIME || 'vllm';
 env.HAS_TEXT_VLLM_BASE_URL = preferWslUrl(env.HAS_TEXT_VLLM_BASE_URL, 8080, '/v1');
 env.OCR_BASE_URL = preferWslUrl(env.OCR_BASE_URL, 8082);
-
-for (const key of ['HAS_IMAGE_WEIGHTS', 'GLM_FLASH_SERVER_BIN', 'GLM_FLASH_MODEL_FOR_SERVER', 'GLM_FLASH_MMPROJ_FOR_SERVER']) {
-  if (env[key]) env[key] = wslToWin(env[key]);
-}
+env.LOCATE_ANYTHING_ENABLED = env.LOCATE_ANYTHING_ENABLED || '1';
+env.VISUAL_FEATURES_BASE_URL = preferWslUrl(env.VISUAL_FEATURES_BASE_URL, Number(env.LOCATE_ANYTHING_PORT || 8090));
 const winEnv = { ...env, PYTHONPATH: backendDir };
 
 const windowsVenv = env.WINDOWS_VENV_DIR || '.venv';
@@ -123,7 +126,7 @@ const windowsPython = env.WINDOWS_PYTHON || path.join(repoRoot, windowsVenv, 'Sc
 const appPython = path.posix.join(required('VENV_DIR'), 'bin', 'python');
 const vllmPython = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'python');
 const vllmBin = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'vllm');
-const glmPort = env.GLM_FLASH_PORT || '8090';
+const locatePort = env.LOCATE_ANYTHING_PORT || '8090';
 const children = [];
 
 function nvidiaDllDirs() {
@@ -240,14 +243,14 @@ async function startVllmServices() {
       `CUDA_VISIBLE_DEVICES=${cuda}`,
       shellQuote(vllmPython),
       shellQuote(vllmBin),
-      'serve PaddlePaddle/PaddleOCR-VL',
+      'serve PaddlePaddle/PaddleOCR-VL-1.6',
       '--host 0.0.0.0 --port 8118',
-      '--served-model-name PaddleOCR-VL-1.5-0.9B',
+      '--served-model-name PaddleOCR-VL-1.6-0.9B',
       '--trust-remote-code',
       ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 360000);
+  await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000);
 
   spawnWsl(
     'has-text-vllm',
@@ -264,7 +267,7 @@ async function startVllmServices() {
       ...splitArgs(env.HAS_TEXT_VLLM_EXTRA_ARGS).map(shellQuote),
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 360000);
+  await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 720000);
 }
 
 async function startOcrWrapper() {
@@ -278,13 +281,61 @@ async function startOcrWrapper() {
       `PYTHONPATH=${shellQuote(wslBackend)}`,
       `OCR_VL_BACKEND=${shellQuote(env.OCR_VL_BACKEND || 'vllm-server')}`,
       `OCR_VLLM_URL=${shellQuote(env.OCR_VLLM_URL || 'http://127.0.0.1:8118/v1')}`,
-      `OCR_VL_API_MODEL_NAME=${shellQuote(env.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.5-0.9B')}`,
+      `OCR_VL_API_MODEL_NAME=${shellQuote(env.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.6-0.9B')}`,
+      wslEnvVar('OCR_MAX_IMAGE_SIDE', '2048'),
+      wslEnvVar('OCR_MAX_NEW_TOKENS', '2048'),
+      wslEnvVar('OCR_VL_WARMUP', '1'),
+      wslEnvVar('OCR_STRUCTURE_ENABLED', '0'),
+      wslEnvVar('OCR_STRUCTURE_PRIMARY', '0'),
+      wslEnvVar('OCR_STRUCTURE_WARMUP', '0'),
+      wslEnvVar('OCR_STRUCTURE_RELEASE_AFTER_REQUEST', '0'),
       `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=${shellQuote(env.PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK || 'True')}`,
       shellQuote(appPython),
       'scripts/ocr_server.py',
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:8082/health`, (body) => body.ready === true, 'ocr-wrapper', 360000);
+  await waitJson(`http://${wslHost}:8082/health`, (body) => body.ready === true, 'ocr-wrapper', 720000);
+}
+
+async function startLocateAnything() {
+  const wslRoot = winToWsl(repoRoot);
+  const wslBackend = winToWsl(backendDir);
+  const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
+  const locateDeps = env.LOCATE_ANYTHING_DEPS || '/home/tracy/.cache/datainfra-redaction/locateanything-hf-deps';
+  const locatePythonPath = [locateDeps, path.posix.join(wslBackend, 'scripts'), wslBackend].join(':');
+  spawnWsl(
+    'locateanything',
+    [
+      `cd ${shellQuote(wslRoot)} &&`,
+      `CUDA_VISIBLE_DEVICES=${cuda}`,
+      'HF_HUB_OFFLINE=1',
+      'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True',
+      wslEnvVar('LOCATE_ANYTHING_MODEL_NAME', 'LocateAnything-3B'),
+      wslEnvVar('LOCATE_ANYTHING_MAX_IMAGE_SIDE', '1280'),
+      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE', '1280'),
+      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE', '1280'),
+      wslEnvVar('LOCATE_ANYTHING_MAX_NEW_TOKENS', '8192'),
+      wslEnvVar('LOCATE_ANYTHING_GENERATION_MODE', 'hybrid'),
+      wslEnvVar('LOCATE_ANYTHING_FAST_FIRST', '1'),
+      wslEnvVar('LOCATE_ANYTHING_FAST_FIRST_FALLBACK_ON_EMPTY', '1'),
+      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_TILE_FALLBACK_MAX_TILES', '1'),
+      wslEnvVar('LOCATE_ANYTHING_TEMPERATURE', '0.7'),
+      `PYTHONPATH=${shellQuote(locatePythonPath)}`,
+      shellQuote(vllmPython),
+      'backend/scripts/locate_anything_server.py',
+      '--model',
+      shellQuote(env.LOCATE_ANYTHING_MODEL || '/mnt/d/has_models/LocateAnything-3B-HF'),
+      '--backend',
+      shellQuote(env.LOCATE_ANYTHING_BACKEND || 'hf'),
+      '--host',
+      '0.0.0.0',
+      '--port',
+      shellQuote(locatePort),
+      '--dtype',
+      shellQuote(env.LOCATE_ANYTHING_DTYPE || 'bfloat16'),
+    ].join(' '),
+  );
+  await waitJson(`http://${wslHost}:${locatePort}/health`, (body) => body.ready === true, 'locateanything', 720000);
 }
 
 async function runWarmup() {
@@ -311,53 +362,13 @@ async function main() {
 
   await startVllmServices();
 
-  if ((env.GLM_FLASH_ENABLED || '1') !== '0') {
-    spawnLogged('glm-vlm', required('GLM_FLASH_SERVER_BIN'), [
-      '-m',
-      required('GLM_FLASH_MODEL_FOR_SERVER'),
-      '--mmproj',
-      required('GLM_FLASH_MMPROJ_FOR_SERVER'),
-      '--host',
-      '0.0.0.0',
-      '--port',
-      glmPort,
-      '-a',
-      env.GLM_FLASH_ALIAS || env.VLM_MODEL_NAME || 'GLM-4.6V-Flash-Q4',
-      '--jinja',
-      '-ngl',
-      env.GLM_FLASH_N_GPU_LAYERS || 'auto',
-      '--flash-attn',
-      'on',
-      '-fit',
-      'on',
-      '-c',
-      env.GLM_FLASH_N_CTX || '2048',
-      '-np',
-      env.GLM_FLASH_N_PARALLEL || '1',
-      '-ctk',
-      env.GLM_FLASH_CACHE_TYPE_K || 'q8_0',
-      '-ctv',
-      env.GLM_FLASH_CACHE_TYPE_V || 'q8_0',
-      '--temp',
-      '0.8',
-      '--top-p',
-      '0.6',
-      '--top-k',
-      '2',
-      '--repeat-penalty',
-      '1.1',
-      '--metrics',
-      '--device',
-      env.GLM_FLASH_DEVICE || 'CUDA0',
-      ...(env.GLM_FLASH_MMPROJ_OFFLOAD === '0' ? [] : ['--mmproj-offload']),
-    ]);
-    await waitJson(`http://127.0.0.1:${glmPort}/v1/models`, (body) => Array.isArray(body.data), 'glm-vlm', 360000);
+  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0') {
+    await startLocateAnything();
   }
 
   await startOcrWrapper();
 
-  spawnLogged('has-image', windowsPython, ['scripts/has_image_server.py'], { cwd: backendDir, env: winEnv });
-  await waitJson('http://127.0.0.1:8081/health', (body) => body.ready === true, 'has-image', 180000);
+  await waitJson(`${env.VISUAL_FEATURES_BASE_URL || `http://127.0.0.1:${locatePort}`}/health`, (body) => body.ready === true, 'visual-features', 180000);
 
   spawnLogged('backend', windowsPython, ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'], {
     cwd: backendDir,

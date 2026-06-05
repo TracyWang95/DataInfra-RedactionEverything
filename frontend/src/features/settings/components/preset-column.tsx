@@ -178,8 +178,7 @@ function PresetPreview({
   const showText = scope === 'text' && presetAppliesText(preset);
   const showVision = scope === 'vision' && presetAppliesVision(preset);
   const ocrPipeline = pipelines.find((pipeline) => pipeline.mode === 'ocr_has');
-  const imagePipeline = pipelines.find((pipeline) => pipeline.mode === 'has_image');
-  const vlmPipeline = pipelines.find((pipeline) => pipeline.mode === 'vlm');
+  const imagePipeline = pipelines.find((pipeline) => pipeline.mode === 'visual_features');
   const entityTypeById = useMemo(
     () => new Map(entityTypes.map((type) => [type.id, type])),
     [entityTypes],
@@ -192,11 +191,6 @@ function PresetPreview({
     () => new Map((imagePipeline?.types ?? []).map((type) => [type.id, type])),
     [imagePipeline?.types],
   );
-  const vlmTypeById = useMemo(
-    () => new Map((vlmPipeline?.types ?? []).map((type) => [type.id, type])),
-    [vlmPipeline?.types],
-  );
-
   const selectedRegexTypes = useMemo(
     () =>
       preset.selectedEntityTypeIds.filter((id) => {
@@ -274,32 +268,14 @@ function PresetPreview({
               </div>
             </div>
           )}
-          {preset.hasImageTypes.length > 0 && (
+          {(preset.visualFeatureTypes ?? preset.visualFeatureTypes ?? []).length > 0 && (
             <div>
               <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
-                {t('settings.redaction.imageGroup')} ({preset.hasImageTypes.length})
+                {t('settings.redaction.imageGroup')} ({(preset.visualFeatureTypes ?? preset.visualFeatureTypes ?? []).length})
               </p>
               <div className={presetPreviewChipGridClass}>
-                {preset.hasImageTypes.map((id) => {
+                {(preset.visualFeatureTypes ?? preset.visualFeatureTypes ?? []).map((id: string) => {
                   const type = imageTypeById.get(id);
-                  const label = type ? localizeRecognitionTypeName(type, t) : id;
-                  return (
-                    <span key={id} className={cn(presetPreviewChipClass, 'truncate')} title={label}>
-                      {label}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {(preset.vlmTypes ?? []).length > 0 && (
-            <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
-                {t('settings.redaction.vlmGroup')} ({(preset.vlmTypes ?? []).length})
-              </p>
-              <div className={presetPreviewChipGridClass}>
-                {(preset.vlmTypes ?? []).map((id) => {
-                  const type = vlmTypeById.get(id);
                   const label = type ? localizeRecognitionTypeName(type, t) : id;
                   return (
                     <span key={id} className={cn(presetPreviewChipClass, 'truncate')} title={label}>

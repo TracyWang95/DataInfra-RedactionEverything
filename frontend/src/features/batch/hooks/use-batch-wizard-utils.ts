@@ -92,8 +92,7 @@ export function defaultConfig(): BatchWizardPersistedConfig {
   return {
     selectedEntityTypeIds: [],
     ocrHasTypes: [],
-    hasImageTypes: [],
-    vlmTypes: [],
+    visualFeatureTypes: [],
     replacementMode: 'structured',
     imageRedactionMethod: 'mosaic',
     imageRedactionStrength: 75,
@@ -128,8 +127,7 @@ export function buildJobConfigForWorker(
   return {
     entity_type_ids: c.selectedEntityTypeIds,
     ocr_has_types: c.ocrHasTypes,
-    has_image_types: c.hasImageTypes,
-    vlm_types: c.vlmTypes ?? [],
+    visual_feature_types: Array.from(new Set(c.visualFeatureTypes)),
     replacement_mode: c.replacementMode,
     image_redaction_method: c.imageRedactionMethod,
     image_redaction_strength: c.imageRedactionStrength,
@@ -154,14 +152,10 @@ export function mergeJobConfigIntoWizardCfg(
       Array.isArray(jc.ocr_has_types) && (jc.ocr_has_types as string[]).length
         ? (jc.ocr_has_types as string[])
         : c.ocrHasTypes,
-    hasImageTypes:
-      Array.isArray(jc.has_image_types) && (jc.has_image_types as string[]).length
-        ? (jc.has_image_types as string[])
-        : c.hasImageTypes,
-    vlmTypes:
-      Array.isArray(jc.vlm_types) && (jc.vlm_types as string[]).length
-        ? (jc.vlm_types as string[])
-        : (c.vlmTypes ?? []),
+    visualFeatureTypes:
+      Array.isArray(jc.visual_feature_types) && (jc.visual_feature_types as string[]).length
+        ? (jc.visual_feature_types as string[])
+        : c.visualFeatureTypes,
     replacementMode:
       jc.replacement_mode === 'smart' ||
       jc.replacement_mode === 'mask' ||
@@ -235,21 +229,18 @@ export function applyVisionPresetFields(
   pipelines: PipelineCfg[],
 ): Pick<
   BatchWizardPersistedConfig,
-  'ocrHasTypes' | 'hasImageTypes' | 'vlmTypes' | 'presetVisionId'
+  'ocrHasTypes' | 'visualFeatureTypes' | 'presetVisionId'
 > {
   const ocrIds = pipelines
     .filter((pl) => pl.mode === 'ocr_has' && pl.enabled)
     .flatMap((pl) => pl.types.filter((tt) => tt.enabled).map((tt) => tt.id));
-  const hiIds = pipelines
-    .filter((pl) => pl.mode === 'has_image' && pl.enabled)
+  const visualIds = pipelines
+    .filter((pl) => pl.mode === 'visual_features' && pl.enabled)
     .flatMap((pl) => pl.types.filter((tt) => tt.enabled).map((tt) => tt.id));
-  const vlmIds = pipelines
-    .filter((pl) => pl.mode === 'vlm' && pl.enabled)
-    .flatMap((pl) => pl.types.filter((tt) => tt.enabled).map((tt) => tt.id));
+  const presetVisualIds = p.visualFeatureTypes ?? [];
   return {
     ocrHasTypes: p.ocrHasTypes.filter((id: string) => ocrIds.includes(id)),
-    hasImageTypes: p.hasImageTypes.filter((id: string) => hiIds.includes(id)),
-    vlmTypes: (p.vlmTypes ?? []).filter((id: string) => vlmIds.includes(id)),
+    visualFeatureTypes: presetVisualIds.filter((id: string) => visualIds.includes(id)),
     presetVisionId: p.id,
   };
 }

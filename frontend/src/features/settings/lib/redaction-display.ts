@@ -58,18 +58,14 @@ export function localizePipelineConfig<
   const nameKey =
     pipeline.mode === 'ocr_has'
       ? 'settings.pipelineDisplayName.ocr'
-      : pipeline.mode === 'has_image'
+      : pipeline.mode === 'visual_features'
         ? 'settings.pipelineDisplayName.image'
-        : pipeline.mode === 'vlm'
-          ? 'settings.pipelineDisplayName.vlm'
         : null;
   const descriptionKey =
     pipeline.mode === 'ocr_has'
       ? 'settings.pipelineDescription.ocr'
-      : pipeline.mode === 'has_image'
+      : pipeline.mode === 'visual_features'
         ? 'settings.pipelineDescription.image'
-        : pipeline.mode === 'vlm'
-          ? 'settings.pipelineDescription.vlm'
         : null;
 
   return {

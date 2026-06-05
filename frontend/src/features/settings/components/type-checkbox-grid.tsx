@@ -9,7 +9,6 @@ import {
   selectableCheckboxClass,
   type SelectionVariant,
 } from '@/ui/selectionClasses';
-import { isHasImageModelTypeId } from '@/services/defaultRedactionPreset';
 import { localizeRecognitionTypeName } from '../lib/redaction-display';
 import type { EntityTypeConfig, PipelineConfig } from '../hooks/use-entity-types';
 
@@ -20,7 +19,6 @@ const checkboxTileClass =
 
 function getPipelineLabel(pipelineMode: PipelineConfig['mode'], t: (key: string) => string) {
   if (pipelineMode === 'ocr_has') return t('settings.redaction.ocrGroup');
-  if (pipelineMode === 'vlm') return t('settings.redaction.vlmGroup');
   return t('settings.redaction.imageGroup');
 }
 
@@ -110,7 +108,6 @@ export function PipelineCheckboxGrid({
   pipeline,
   selectedOcr,
   selectedImg,
-  selectedVlm = [],
   onToggle,
   onSelectAll,
   onClear,
@@ -118,21 +115,16 @@ export function PipelineCheckboxGrid({
   pipeline: PipelineConfig;
   selectedOcr: string[];
   selectedImg: string[];
-  selectedVlm?: string[];
   onToggle: (mode: string, id: string) => void;
   onSelectAll?: (mode: string, ids: string[]) => void;
   onClear?: (mode: string, ids: string[]) => void;
 }) {
   const t = useT();
   const variant: SelectionVariant = pipeline.mode === 'ocr_has' ? 'semantic' : 'visual';
-  const selectedIds =
-    pipeline.mode === 'ocr_has' ? selectedOcr : pipeline.mode === 'vlm' ? selectedVlm : selectedImg;
+  const selectedIds = pipeline.mode === 'ocr_has' ? selectedOcr : selectedImg;
   const pipelineLabel = getPipelineLabel(pipeline.mode, t);
-  const imageHintId = pipeline.mode === 'has_image' ? 'settings-has-image-types-hint' : undefined;
-  const visibleTypes =
-    pipeline.mode === 'has_image'
-      ? pipeline.types.filter((type) => isHasImageModelTypeId(type.id))
-      : pipeline.types;
+  const imageHintId = pipeline.mode === 'visual_features' ? 'settings-has-image-types-hint' : undefined;
+  const visibleTypes = pipeline.types;
   const visibleIds = visibleTypes.map((type) => type.id);
 
   return (
@@ -143,7 +135,7 @@ export function PipelineCheckboxGrid({
           <span className="text-xs text-muted-foreground">({visibleTypes.length})</span>
         </p>
         <div className="flex min-w-0 items-center justify-end gap-2">
-          {pipeline.mode === 'has_image' && (
+          {pipeline.mode === 'visual_features' && (
             <p
               id={imageHintId}
               data-testid="settings-has-image-types-hint"
@@ -181,7 +173,7 @@ export function PipelineCheckboxGrid({
         role="group"
         aria-label={pipelineLabel}
         aria-describedby={imageHintId}
-        className={cn(checkboxGridClass, pipeline.mode === 'has_image' && 'bg-white')}
+        className={cn(checkboxGridClass, pipeline.mode === 'visual_features' && 'bg-white')}
       >
         {visibleTypes.length === 0 ? (
           <div className="col-span-full flex min-h-24 items-center justify-center rounded-xl border border-dashed border-border/70 bg-background/75 px-4 text-center text-xs leading-5 text-muted-foreground">
@@ -190,7 +182,6 @@ export function PipelineCheckboxGrid({
         ) : (
           visibleTypes.map((type) => {
             const active = selectedIds.includes(type.id);
-            const isPaperOptIn = pipeline.mode === 'has_image' && type.id === 'paper';
             const label = localizeRecognitionTypeName(type, t);
             return (
               <label
@@ -202,18 +193,10 @@ export function PipelineCheckboxGrid({
                   type="checkbox"
                   checked={active}
                   onChange={() => onToggle(pipeline.mode, type.id)}
-                  aria-label={isPaperOptIn ? t('settings.redaction.paperOptInAria') : label}
+                  aria-label={label}
                   className={cn('shrink-0', selectableCheckboxClass(variant, 'md'))}
                 />
                 <span className="min-w-0 truncate font-medium">{label}</span>
-                {isPaperOptIn && (
-                  <span
-                    aria-hidden="true"
-                    className="ml-auto shrink-0 rounded-full border border-violet-200 bg-background/80 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:border-violet-400/40 dark:text-violet-200"
-                  >
-                    {t('settings.redaction.paperOptInBadge')}
-                  </span>
-                )}
               </label>
             );
           })

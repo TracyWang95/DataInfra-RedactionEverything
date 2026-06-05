@@ -205,7 +205,7 @@ export function SettingsHub() {
             className="mt-0 flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
           >
             <div className={panelIntroClass} data-testid="settings-vision-intro">
-              {t('settings.pipelineDisplayName.ocr')} / {t('settings.pipelineDisplayName.image')} / VLM
+              {t('settings.pipelineDisplayName.ocr')} / {t('settings.pipelineDisplayName.image')}
             </div>
             <PipelineConfigPanel
               loading={pipelinesLoading}

@@ -33,7 +33,7 @@ import {
   getToneColor,
   type PipelineConfig,
   type PipelineTypeConfig,
-  type VlmFewShotSample,
+  type VisualFeatureFewShotSample,
 } from '../hooks/use-entity-types';
 import type { PipelineMode } from '@/services/defaultRedactionPreset';
 
@@ -61,7 +61,14 @@ type PipelineTypeForm = {
   samples: SampleForm[];
 };
 
-const MAX_VLM_SAMPLES = 5;
+type SettingsPipelineTab = Extract<PipelineMode, 'ocr_has' | 'visual_features'>;
+type DisplayPipelineType = PipelineTypeConfig & { pipelineMode: PipelineMode };
+type DisplayPipeline = Omit<PipelineConfig, 'mode' | 'types'> & {
+  mode: SettingsPipelineTab;
+  types: DisplayPipelineType[];
+};
+
+const MAX_VisualFeature_SAMPLES = 5;
 
 function localId() {
   return `local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -164,7 +171,7 @@ export function PipelineConfigPanel({
   onReset,
 }: PipelineConfigPanelProps) {
   const t = useT();
-  const [activeSub, setActiveSub] = useState<PipelineMode>('ocr_has');
+  const [activeSub, setActiveSub] = useState<SettingsPipelineTab>('ocr_has');
   const [dialogMode, setDialogMode] = useState<PipelineMode | null>(null);
   const [editing, setEditing] = useState<{ mode: string; type: PipelineTypeConfig } | null>(null);
   const [form, setForm] = useState<PipelineTypeForm>(() => emptyForm());
@@ -172,12 +179,32 @@ export function PipelineConfigPanel({
   const sampleInputRef = useRef<HTMLInputElement>(null);
 
   const ocrPipeline = pipelines.find((pipeline) => pipeline.mode === 'ocr_has');
-  const imagePipeline = pipelines.find((pipeline) => pipeline.mode === 'has_image');
-  const vlmPipeline = pipelines.find((pipeline) => pipeline.mode === 'vlm');
-  const activePipeline = pipelines.find((pipeline) => pipeline.mode === activeSub);
+  const visualPipeline = pipelines.find((pipeline) => pipeline.mode === 'visual_features');
   const ocrLabel = t('settings.pipelineDisplayName.ocr');
   const imageLabel = t('settings.pipelineDisplayName.image');
-  const vlmLabel = t('settings.pipelineDisplayName.vlm');
+  const ocrDisplayPipeline = useMemo<DisplayPipeline | undefined>(() => {
+    if (!ocrPipeline) return undefined;
+    return {
+      ...ocrPipeline,
+      mode: 'ocr_has',
+      types: ocrPipeline.types.map((type) => ({ ...type, pipelineMode: 'ocr_has' })),
+    };
+  }, [ocrPipeline]);
+  const visualDisplayPipeline = useMemo<DisplayPipeline | undefined>(() => {
+    if (!visualPipeline) return undefined;
+    return {
+      ...visualPipeline,
+      mode: 'visual_features',
+      name: imageLabel,
+      description: visualPipeline.description ?? '',
+      enabled: Boolean(visualPipeline.enabled),
+      types: visualPipeline.types.map((type) => ({
+        ...type,
+        pipelineMode: 'visual_features' as PipelineMode,
+      })),
+    };
+  }, [imageLabel, visualPipeline]);
+  const activePipeline = activeSub === 'visual_features' ? visualDisplayPipeline : ocrDisplayPipeline;
 
   const openCreate = (mode: PipelineMode) => {
     setEditing(null);
@@ -201,8 +228,9 @@ export function PipelineConfigPanel({
   const handleSave = async () => {
     if (!dialogMode || !form.name.trim()) return;
 
+    const useVisualChecklist = dialogMode === 'visual_features';
     const positiveRows =
-      dialogMode === 'vlm'
+      useVisualChecklist
         ? form.positivePrompts
         : form.rulesText.split('\n').map((line) => emptyPromptRow(line));
     const checklist = positiveRows
@@ -218,7 +246,7 @@ export function PipelineConfigPanel({
       .map((item) => item.text.trim())
       .filter(Boolean)
       .join('\n');
-    const samples: VlmFewShotSample[] = form.samples.map((sample) => ({
+    const samples: VisualFeatureFewShotSample[] = form.samples.map((sample) => ({
       type: sample.type,
       image: sample.image,
       label: sample.label.trim() || null,
@@ -282,7 +310,7 @@ export function PipelineConfigPanel({
 
   const handleSampleUpload = async (files: FileList | null) => {
     if (!files?.length) return;
-    const remaining = Math.max(0, MAX_VLM_SAMPLES - form.samples.length);
+    const remaining = Math.max(0, MAX_VisualFeature_SAMPLES - form.samples.length);
     const selectedFiles = Array.from(files)
       .filter((file) => file.type.startsWith('image/'))
       .slice(0, remaining);
@@ -298,7 +326,7 @@ export function PipelineConfigPanel({
     );
     setForm((current) => ({
       ...current,
-      samples: [...current.samples, ...nextSamples].slice(0, MAX_VLM_SAMPLES),
+      samples: [...current.samples, ...nextSamples].slice(0, MAX_VisualFeature_SAMPLES),
     }));
     if (sampleInputRef.current) sampleInputRef.current.value = '';
   };
@@ -319,13 +347,13 @@ export function PipelineConfigPanel({
     }));
   };
 
-  const imageModeActive = activeSub === 'has_image';
-  const vlmModeActive = activeSub === 'vlm';
-  const tone: SelectionTone = imageModeActive || vlmModeActive ? 'visual' : 'semantic';
+  const imageModeActive = activeSub === 'visual_features';
+  const tone: SelectionTone = imageModeActive ? 'visual' : 'semantic';
   const toneClasses = getSelectionToneClasses(tone);
-  const displayName = vlmModeActive ? vlmLabel : imageModeActive ? imageLabel : ocrLabel;
+  const displayName = imageModeActive ? imageLabel : ocrLabel;
   const activeCount = activePipeline?.types.length ?? 0;
   const totalPages = Math.max(1, Math.ceil(activeCount / RECOGNITION_PAGE_SIZE));
+  const visualChecklistDialog = dialogMode === 'visual_features';
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting pagination when active tab changes
@@ -346,7 +374,7 @@ export function PipelineConfigPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-hidden">
       <div className="flex shrink-0 items-center gap-2">
-        <Tabs value={activeSub} onValueChange={(value) => setActiveSub(value as PipelineMode)}>
+        <Tabs value={activeSub} onValueChange={(value) => setActiveSub(value as SettingsPipelineTab)}>
           <TabsList className="rounded-xl border border-border/70 bg-muted/40 p-1">
             <TabsTrigger
               value="ocr_has"
@@ -357,18 +385,14 @@ export function PipelineConfigPanel({
               <span className="ml-1 text-muted-foreground">({ocrPipeline?.types.length ?? 0})</span>
             </TabsTrigger>
             <TabsTrigger
-              value="has_image"
+              value="visual_features"
               className="whitespace-nowrap"
               data-testid="pipeline-tab-image"
             >
               {imageLabel}
               <span className="ml-1 text-muted-foreground">
-                ({imagePipeline?.types.length ?? 0})
+                ({visualDisplayPipeline?.types.length ?? 0})
               </span>
-            </TabsTrigger>
-            <TabsTrigger value="vlm" className="whitespace-nowrap" data-testid="pipeline-tab-vlm">
-              {vlmLabel}
-              <span className="ml-1 text-muted-foreground">({vlmPipeline?.types.length ?? 0})</span>
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -426,7 +450,7 @@ export function PipelineConfigPanel({
             <div className="grid h-full min-h-0 w-full flex-1 grid-cols-1 grid-rows-3 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {visibleTypes.map((type) => (
                 <article
-                  key={type.id}
+                  key={`${type.pipelineMode}-${type.id}`}
                   className="flex h-full min-h-0 overflow-hidden rounded-2xl border border-border/70 bg-[var(--surface-control)] px-3.5 py-3.5 shadow-[var(--shadow-sm)] transition-colors hover:border-border"
                 >
                   <div className="flex min-w-0 flex-1 flex-col gap-2.5">
@@ -441,7 +465,7 @@ export function PipelineConfigPanel({
                           size="icon"
                           variant="ghost"
                           className="size-6"
-                          onClick={() => openEdit(activePipeline.mode, type)}
+                          onClick={() => openEdit(type.pipelineMode, type)}
                           aria-label={t('common.edit')}
                           data-testid={`edit-pipeline-${type.id}`}
                         >
@@ -451,7 +475,7 @@ export function PipelineConfigPanel({
                           size="icon"
                           variant="ghost"
                           className="size-6 text-destructive hover:text-destructive"
-                          onClick={() => onDeleteType(activePipeline.mode, type.id)}
+                          onClick={() => onDeleteType(type.pipelineMode, type.id)}
                           aria-label={t('common.delete')}
                           data-testid={`delete-pipeline-${type.id}`}
                         >
@@ -504,9 +528,7 @@ export function PipelineConfigPanel({
             <DialogDescription>
               {dialogMode === 'ocr_has'
                 ? t('settings.pipelineTypeDescOcr')
-                : dialogMode === 'vlm'
-                  ? t('settings.pipelineTypeDescVlm')
-                  : t('settings.pipelineTypeDescImg')}
+                : t('settings.pipelineTypeDescImg')}
             </DialogDescription>
           </DialogHeader>
 
@@ -540,11 +562,11 @@ export function PipelineConfigPanel({
             </div>
 
             <p className="text-xs text-muted-foreground">{t('settings.saveHint')}</p>
-            {dialogMode === 'vlm' && (
+            {visualChecklistDialog && (
               <>
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
-                    <Label>{t('settings.vlmPositivePromptsLabel')}</Label>
+                    <Label>{t('settings.visualFeaturePositivePromptsLabel')}</Label>
                     <Button
                       type="button"
                       size="sm"
@@ -554,7 +576,7 @@ export function PipelineConfigPanel({
                       data-testid="pipeline-add-positive-row"
                     >
                       <Plus className="size-3.5" />
-                      {t('settings.vlmPromptAdd')}
+                      {t('settings.visualFeaturePromptAdd')}
                     </Button>
                   </div>
                   <div className="grid gap-2" data-testid="pipeline-type-positive-prompts">
@@ -568,8 +590,8 @@ export function PipelineConfigPanel({
                           onChange={(event) =>
                             updatePromptRow('positivePrompts', row.id, event.target.value)
                           }
-                          placeholder={t('settings.vlmPositivePromptPlaceholder')}
-                          aria-label={`${t('settings.vlmPositivePrompt')} ${index + 1}`}
+                          placeholder={t('settings.visualFeaturePositivePromptPlaceholder')}
+                          aria-label={`${t('settings.visualFeaturePositivePrompt')} ${index + 1}`}
                           data-testid={`pipeline-positive-prompt-${index}`}
                         />
                         <Button
@@ -578,7 +600,7 @@ export function PipelineConfigPanel({
                           variant="ghost"
                           className="size-8 self-start text-muted-foreground hover:text-destructive"
                           onClick={() => removePromptRow('positivePrompts', row.id)}
-                          aria-label={t('settings.vlmPromptRemove')}
+                          aria-label={t('settings.visualFeaturePromptRemove')}
                         >
                           <X className="size-4" />
                         </Button>
@@ -589,7 +611,7 @@ export function PipelineConfigPanel({
 
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
-                    <Label>{t('settings.vlmNegativePromptsLabel')}</Label>
+                    <Label>{t('settings.visualFeatureNegativePromptsLabel')}</Label>
                     <Button
                       type="button"
                       size="sm"
@@ -599,7 +621,7 @@ export function PipelineConfigPanel({
                       data-testid="pipeline-add-negative-row"
                     >
                       <Plus className="size-3.5" />
-                      {t('settings.vlmPromptAdd')}
+                      {t('settings.visualFeaturePromptAdd')}
                     </Button>
                   </div>
                   <div className="grid gap-2" data-testid="pipeline-type-negative-prompts">
@@ -613,8 +635,8 @@ export function PipelineConfigPanel({
                           onChange={(event) =>
                             updatePromptRow('negativePrompts', row.id, event.target.value)
                           }
-                          placeholder={t('settings.vlmNegativePromptPlaceholder')}
-                          aria-label={`${t('settings.vlmNegativePrompt')} ${index + 1}`}
+                          placeholder={t('settings.visualFeatureNegativePromptPlaceholder')}
+                          aria-label={`${t('settings.visualFeatureNegativePrompt')} ${index + 1}`}
                           data-testid={`pipeline-negative-prompt-${index}`}
                         />
                         <Button
@@ -623,7 +645,7 @@ export function PipelineConfigPanel({
                           variant="ghost"
                           className="size-8 self-start text-muted-foreground hover:text-destructive"
                           onClick={() => removePromptRow('negativePrompts', row.id)}
-                          aria-label={t('settings.vlmPromptRemove')}
+                          aria-label={t('settings.visualFeaturePromptRemove')}
                         >
                           <X className="size-4" />
                         </Button>
@@ -635,9 +657,9 @@ export function PipelineConfigPanel({
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex min-w-0 flex-col gap-1">
-                      <Label>{t('settings.vlmSamplesLabel')}</Label>
+                      <Label>{t('settings.visualFeatureSamplesLabel')}</Label>
                       <p className="text-xs text-muted-foreground">
-                        {t('settings.vlmSamplesHint')}
+                        {t('settings.visualFeatureSamplesHint')}
                       </p>
                     </div>
                     <Button
@@ -646,11 +668,11 @@ export function PipelineConfigPanel({
                       variant="outline"
                       className="h-8 gap-1.5 whitespace-nowrap"
                       onClick={() => sampleInputRef.current?.click()}
-                      disabled={form.samples.length >= MAX_VLM_SAMPLES}
+                      disabled={form.samples.length >= MAX_VisualFeature_SAMPLES}
                       data-testid="pipeline-upload-sample"
                     >
                       <Upload className="size-3.5" />
-                      {t('settings.vlmSamplesUpload')}
+                      {t('settings.visualFeatureSamplesUpload')}
                     </Button>
                     <input
                       ref={sampleInputRef}
@@ -670,7 +692,7 @@ export function PipelineConfigPanel({
                         >
                           <img
                             src={sample.image}
-                            alt={sample.filename || t('settings.vlmSampleAlt')}
+                            alt={sample.filename || t('settings.visualFeatureSampleAlt')}
                             className="h-[4.5rem] w-[4.5rem] rounded-lg border border-border/70 object-cover"
                           />
                           <div className="grid min-w-0 gap-2">
@@ -687,10 +709,10 @@ export function PipelineConfigPanel({
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="positive">
-                                  {t('settings.vlmSamplePositive')}
+                                  {t('settings.visualFeatureSamplePositive')}
                                 </SelectItem>
                                 <SelectItem value="negative">
-                                  {t('settings.vlmSampleNegative')}
+                                  {t('settings.visualFeatureSampleNegative')}
                                 </SelectItem>
                               </SelectContent>
                             </Select>
@@ -699,7 +721,7 @@ export function PipelineConfigPanel({
                               onChange={(event) =>
                                 updateSample(sample.id, { label: event.target.value })
                               }
-                              placeholder={t('settings.vlmSampleLabelPlaceholder')}
+                              placeholder={t('settings.visualFeatureSampleLabelPlaceholder')}
                               className="h-8 text-xs"
                             />
                           </div>
@@ -709,7 +731,7 @@ export function PipelineConfigPanel({
                             variant="ghost"
                             className="size-8 text-muted-foreground hover:text-destructive"
                             onClick={() => removeSample(sample.id)}
-                            aria-label={t('settings.vlmSampleRemove')}
+                            aria-label={t('settings.visualFeatureSampleRemove')}
                           >
                             <X className="size-4" />
                           </Button>

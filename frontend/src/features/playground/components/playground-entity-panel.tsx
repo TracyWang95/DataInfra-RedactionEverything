@@ -368,11 +368,9 @@ const BoxList: FC<{ boxes: BoundingBox[]; onToggle: (id: string) => void }> = ({
         const sourceLabel =
           box.source === 'ocr_has'
             ? t('playground.sourceOcr')
-            : box.source === 'has_image'
+            : box.source === 'visual_features'
               ? t('playground.sourceImage')
-              : box.source === 'vlm'
-                ? t('playground.sourceVlm')
-                : t('playground.sourceManual');
+              : t('playground.sourceManual');
 
         return (
           <div

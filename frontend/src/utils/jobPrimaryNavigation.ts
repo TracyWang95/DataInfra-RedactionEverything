@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-export type JobTypeForNav = 'text_batch' | 'image_batch' | 'smart_batch';
+export type JobTypeForNav = 'text_batch' | 'image_batch' | 'smart_batch' | 'structured_batch';
 
 export type PrimaryNavAction =
   | { kind: 'link'; label: string; to: string }
@@ -78,6 +78,7 @@ function resolveBatchRouteMode(
 }
 
 function batchBasePath(jobType: JobTypeForNav, jobConfig?: Record<string, unknown> | null): string {
+  if (jobType === 'structured_batch') return '/structured/delivery';
   return `/batch/${resolveBatchRouteMode(jobType, jobConfig)}`;
 }
 
@@ -135,6 +136,9 @@ export function inferWizardFloorFromBatchConfig(
   jobType: JobTypeForNav,
 ): 2 | null {
   if (!jobConfig || typeof jobConfig !== 'object') return null;
+  if (jobType === 'structured_batch') {
+    return Array.isArray(jobConfig.dataset_ids) && jobConfig.dataset_ids.length > 0 ? 2 : null;
+  }
   if (jobType === 'text_batch') {
     return Array.isArray(jobConfig.entity_type_ids) && jobConfig.entity_type_ids.length > 0
       ? 2
@@ -143,11 +147,11 @@ export function inferWizardFloorFromBatchConfig(
   if (jobType === 'smart_batch') {
     if (Array.isArray(jobConfig.entity_type_ids) && jobConfig.entity_type_ids.length > 0) return 2;
     if (Array.isArray(jobConfig.ocr_has_types) && jobConfig.ocr_has_types.length > 0) return 2;
-    if (Array.isArray(jobConfig.has_image_types) && jobConfig.has_image_types.length > 0) return 2;
+    if (Array.isArray(jobConfig.visual_features_types) && jobConfig.visual_features_types.length > 0) return 2;
     return null;
   }
   if (Array.isArray(jobConfig.ocr_has_types) && jobConfig.ocr_has_types.length > 0) return 2;
-  if (Array.isArray(jobConfig.has_image_types) && jobConfig.has_image_types.length > 0) return 2;
+  if (Array.isArray(jobConfig.visual_features_types) && jobConfig.visual_features_types.length > 0) return 2;
   return null;
 }
 
@@ -227,6 +231,27 @@ export function resolveJobPrimaryNavigation(input: {
   const { jobId, status, jobType, items, currentPage, navHints, jobConfig } = input;
   const labels = input.labels ?? DEFAULT_JOB_PRIMARY_NAVIGATION_LABELS;
   const itemCount = navHints?.item_count ?? items.length;
+  if (jobType === 'structured_batch') {
+    if (status === 'failed') {
+      return {
+        kind: 'link',
+        label: labels.viewFailureDetail,
+        to: `/jobs/${encodeURIComponent(jobId)}`,
+      };
+    }
+    if (status === 'completed') {
+      return {
+        kind: 'link',
+        label: labels.downloadRedactedResult,
+        to: `/structured/delivery?jobId=${encodeURIComponent(jobId)}`,
+      };
+    }
+    return {
+      kind: 'link',
+      label: status === 'draft' ? labels.continueConfig : labels.viewProgress,
+      to: `/structured/delivery?jobId=${encodeURIComponent(jobId)}`,
+    };
+  }
   const firstAwaiting =
     items.find((item) => item.status === 'awaiting_review')?.id ??
     navHints?.first_awaiting_review_item_id ??

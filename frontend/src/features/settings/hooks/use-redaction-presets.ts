@@ -44,6 +44,10 @@ function sortPresets(presets: RecognitionPreset[]): RecognitionPreset[] {
   });
 }
 
+type PresetFormState = PresetPayload & {
+  visualFeatureTypes: string[];
+};
+
 export function useRedactionPresets() {
   const t = useT();
   const [entityTypes, setEntityTypes] = useState<EntityTypeConfig[]>([]);
@@ -53,13 +57,12 @@ export function useRedactionPresets() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
-  const [presetForm, setPresetForm] = useState<PresetPayload>({
+  const [presetForm, setPresetForm] = useState<PresetFormState>({
     name: '',
     kind: 'full',
     selectedEntityTypeIds: [],
     ocrHasTypes: [],
-    hasImageTypes: [],
-    vlmTypes: [],
+    visualFeatureTypes: [],
     dataDomains: [],
     genericTargets: [],
     linkageGroups: [],
@@ -184,8 +187,7 @@ export function useRedactionPresets() {
       kind: 'text',
       selectedEntityTypeIds: buildDefaultTextTypeIds(effectiveEntityTypes),
       ocrHasTypes: [],
-      hasImageTypes: [],
-      vlmTypes: [],
+      visualFeatureTypes: [],
       replacementMode: 'structured',
       created_at: '',
       updated_at: '',
@@ -200,8 +202,7 @@ export function useRedactionPresets() {
       kind: 'vision',
       selectedEntityTypeIds: [],
       ocrHasTypes: buildDefaultPipelineTypeIds(effectivePipelines, 'ocr_has'),
-      hasImageTypes: buildDefaultPipelineTypeIds(effectivePipelines, 'has_image'),
-      vlmTypes: buildDefaultPipelineTypeIds(effectivePipelines, 'vlm'),
+      visualFeatureTypes: buildDefaultPipelineTypeIds(effectivePipelines, 'visual_features'),
       replacementMode: 'structured',
       created_at: '',
       updated_at: '',
@@ -240,11 +241,10 @@ export function useRedactionPresets() {
   }, [bridgeVision, visionPresets]);
 
   const buildDefaultForm = useCallback(
-    (kind: PresetKind = 'full'): PresetPayload => {
+    (kind: PresetKind = 'full'): PresetFormState => {
       const textIds = buildDefaultTextTypeIds(effectiveEntityTypes);
       const ocrIds = buildDefaultPipelineTypeIds(effectivePipelines, 'ocr_has');
-      const imageIds = buildDefaultPipelineTypeIds(effectivePipelines, 'has_image');
-      const vlmIds = buildDefaultPipelineTypeIds(effectivePipelines, 'vlm');
+      const imageIds = buildDefaultPipelineTypeIds(effectivePipelines, 'visual_features');
 
       if (kind === 'text') {
         return {
@@ -252,8 +252,7 @@ export function useRedactionPresets() {
           kind: 'text',
           selectedEntityTypeIds: textIds,
           ocrHasTypes: [],
-          hasImageTypes: [],
-          vlmTypes: [],
+          visualFeatureTypes: [],
           replacementMode: 'structured',
         };
       }
@@ -264,8 +263,7 @@ export function useRedactionPresets() {
           kind: 'vision',
           selectedEntityTypeIds: [],
           ocrHasTypes: ocrIds,
-          hasImageTypes: imageIds,
-          vlmTypes: vlmIds,
+          visualFeatureTypes: imageIds,
           replacementMode: 'structured',
         };
       }
@@ -275,8 +273,7 @@ export function useRedactionPresets() {
         kind: 'full',
         selectedEntityTypeIds: textIds,
         ocrHasTypes: ocrIds,
-        hasImageTypes: imageIds,
-        vlmTypes: vlmIds,
+        visualFeatureTypes: imageIds,
         replacementMode: 'structured',
       };
     },
@@ -299,8 +296,7 @@ export function useRedactionPresets() {
       kind: preset.kind ?? 'full',
       selectedEntityTypeIds: [...preset.selectedEntityTypeIds],
       ocrHasTypes: [...preset.ocrHasTypes],
-      hasImageTypes: [...preset.hasImageTypes],
-      vlmTypes: [...(preset.vlmTypes ?? [])],
+      visualFeatureTypes: Array.from(new Set(preset.visualFeatureTypes ?? [])),
       replacementMode: preset.replacementMode,
     });
     setModalOpen(true);
@@ -312,12 +308,19 @@ export function useRedactionPresets() {
       return;
     }
 
-    const normalized: PresetPayload =
-      presetForm.kind === 'text'
-        ? { ...presetForm, ocrHasTypes: [], hasImageTypes: [], vlmTypes: [], replacementMode: 'structured' }
-        : presetForm.kind === 'vision'
-          ? { ...presetForm, selectedEntityTypeIds: [], replacementMode: 'structured' }
-          : presetForm;
+    const visualFeatureTypes = Array.from(new Set(presetForm.visualFeatureTypes));
+    const normalized: PresetPayload = {
+      name: presetForm.name,
+      kind: presetForm.kind,
+      selectedEntityTypeIds:
+        presetForm.kind === 'vision' ? [] : presetForm.selectedEntityTypeIds,
+      ocrHasTypes: presetForm.kind === 'text' ? [] : presetForm.ocrHasTypes,
+      visualFeatureTypes: presetForm.kind === 'text' ? [] : visualFeatureTypes,
+      dataDomains: presetForm.dataDomains,
+      genericTargets: presetForm.genericTargets,
+      linkageGroups: presetForm.linkageGroups,
+      replacementMode: 'structured',
+    };
 
     setSaving(true);
     try {

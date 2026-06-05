@@ -14,7 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { TypeCheckboxGrid, PipelineCheckboxGrid } from './components/type-checkbox-grid';
-import type { PresetPayload } from '@/services/presetsApi';
+import type { PresetKind } from '@/services/presetsApi';
 import type { useRedactionPresets } from './hooks/use-redaction-presets';
 
 type RedactionState = ReturnType<typeof useRedactionPresets>;
@@ -22,12 +22,12 @@ type RedactionState = ReturnType<typeof useRedactionPresets>;
 export interface RedactionPresetDialogProps {
   modalOpen: boolean;
   editingPresetId: string | null;
-  presetForm: PresetPayload;
+  presetForm: RedactionState['presetForm'];
   saving: boolean;
   regexTypes: RedactionState['regexTypes'];
   semanticTypes: RedactionState['semanticTypes'];
   effectivePipelines: RedactionState['effectivePipelines'];
-  presetKindLabel: (kind?: PresetPayload['kind']) => string;
+  presetKindLabel: (kind?: PresetKind) => string;
   setPresetForm: RedactionState['setPresetForm'];
   setModalOpen: (open: boolean) => void;
   saveModal: () => Promise<void>;
@@ -68,8 +68,7 @@ export function RedactionPresetDialog({
   const setPipelineIds = (mode: string, ids: string[]) => {
     setPresetForm((current) => {
       if (mode === 'ocr_has') return { ...current, ocrHasTypes: ids };
-      if (mode === 'vlm') return { ...current, vlmTypes: ids };
-      return { ...current, hasImageTypes: ids };
+      return { ...current, visualFeatureTypes: ids };
     });
   };
 
@@ -148,8 +147,7 @@ export function RedactionPresetDialog({
                     key={pipeline.mode}
                     pipeline={pipeline}
                     selectedOcr={presetForm.ocrHasTypes}
-                    selectedImg={presetForm.hasImageTypes}
-                    selectedVlm={presetForm.vlmTypes ?? []}
+                    selectedImg={presetForm.visualFeatureTypes}
                     onToggle={(mode, id) =>
                       setPresetForm((current) => {
                         if (mode === 'ocr_has') {
@@ -158,18 +156,10 @@ export function RedactionPresetDialog({
                             : [...current.ocrHasTypes, id];
                           return { ...current, ocrHasTypes: next };
                         }
-                        if (mode === 'vlm') {
-                          const currentVlmTypes = current.vlmTypes ?? [];
-                          const next = currentVlmTypes.includes(id)
-                            ? currentVlmTypes.filter((item) => item !== id)
-                            : [...currentVlmTypes, id];
-                          return { ...current, vlmTypes: next };
-                        }
-
-                        const next = current.hasImageTypes.includes(id)
-                          ? current.hasImageTypes.filter((item) => item !== id)
-                          : [...current.hasImageTypes, id];
-                        return { ...current, hasImageTypes: next };
+                        const next = current.visualFeatureTypes.includes(id)
+                          ? current.visualFeatureTypes.filter((item) => item !== id)
+                          : [...current.visualFeatureTypes, id];
+                        return { ...current, visualFeatureTypes: next };
                       })
                     }
                     onSelectAll={setPipelineIds}

@@ -1,11 +1,17 @@
-"""
-推理模型配置 — 业务逻辑层
-（视觉：HaS Image 8081 微服务；与文本 NER 分离）
-"""
+"""Model runtime configuration for OCR and unified visual features."""
 
 from __future__ import annotations
 
 import logging
+import os
+import socket
+import subprocess
+import sys
+import time
+from typing import Any
+from urllib.parse import urlparse, urlunparse
+
+import httpx
 
 from app.core.config import settings
 from app.core.persistence import load_json, save_json
@@ -13,132 +19,168 @@ from app.models.schemas import ModelConfig, ModelConfigList
 
 logger = logging.getLogger(__name__)
 
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_WSL_SERVICE_CACHE: dict[tuple[str, int], tuple[float, str | None]] = {}
+_WSL_SERVICE_CACHE_TTL_SEC = 30.0
 
-# ── 默认 / 内置常量 ──────────────────────────────────────
-
-DEFAULT_CONFIGS = ModelConfigList(
-    configs=[
-        ModelConfig(
-            id="paddle_ocr_service",
-            name="PaddleOCR-VL 微服务 (8082)",
-            provider="local",
-            enabled=True,
-            base_url=settings.OCR_BASE_URL,
-            model_name="PaddleOCR-VL-1.5-0.9B",
-            temperature=0.8,
-            top_p=0.6,
-            max_tokens=4096,
-            enable_thinking=False,
-            description="PaddleOCR-VL OCR；基址与后端环境变量 OCR_BASE_URL 一致",
-        ),
-        ModelConfig(
-            id="has_image_service",
-            name="HaS Image 微服务 (8081)",
-            provider="local",
-            enabled=True,
-            base_url=settings.HAS_IMAGE_BASE_URL,
-            model_name="HaS-Image-YOLO11",
-            temperature=0.8,
-            top_p=0.6,
-            max_tokens=4096,
-            enable_thinking=False,
-            description="Ultralytics YOLO11 实例分割；权重由环境变量 HAS_IMAGE_WEIGHTS 指定",
-        ),
-        ModelConfig(
-            id="vlm_service",
-            name="VLM 视觉语义服务",
-            provider="custom",
-            enabled=True,
-            base_url=settings.VLM_BASE_URL,
-            model_name=settings.VLM_MODEL_NAME,
-            temperature=0.1,
-            top_p=0.6,
-            max_tokens=1024,
-            enable_thinking=False,
-            description="OpenAI 兼容视觉语言模型，用规则清单识别签字等自定义视觉特征。",
-        ),
-    ],
-    active_id="has_image_service",
-)
-
-# 内置视觉后端，禁止删除
-VISION_BUILTIN_IDS = frozenset({"paddle_ocr_service", "has_image_service", "vlm_service"})
-
-# 旧版条目，加载时剔除
-_LEGACY_VISION_IDS = frozenset({"local_glm", "zhipu_glm4v", "zhipu_glm"})  # kept for migration
+PADDLE_OCR_SERVICE_ID = "paddle_ocr_service"
+VISUAL_FEATURES_SERVICE_ID = "visual_features_service"
+_BUILTIN_IDS = frozenset({PADDLE_OCR_SERVICE_ID, VISUAL_FEATURES_SERVICE_ID})
 
 _SERVING_STATUSES = frozenset({"busy", "running", "processing", "inferencing"})
 _LOADING_STATUSES = frozenset({"loading", "starting", "warming_up", "warming-up"})
 _UNAVAILABLE_STATUSES = frozenset({"unavailable", "offline", "degraded", "error", "failed"})
 
 
-def _model_state_from_health_payload(data: dict) -> tuple[str, bool, bool]:
+def _visual_features_base_url() -> str:
+    return str(
+        getattr(settings, "VISUAL_FEATURES_BASE_URL", None)
+        or "http://127.0.0.1:8090"
+    )
+
+
+def _visual_features_model_name() -> str:
+    return str(
+        getattr(settings, "VISUAL_FEATURES_MODEL_NAME", None)
+        or "LocateAnything-3B"
+    )
+
+
+def _default_configs() -> ModelConfigList:
+    return ModelConfigList(
+        configs=[
+            ModelConfig(
+                id=PADDLE_OCR_SERVICE_ID,
+                name="PaddleOCR-VL 1.6",
+                provider="local",
+                enabled=True,
+                base_url=settings.OCR_BASE_URL,
+                model_name="PaddleOCR-VL-1.6-0.9B",
+                temperature=0.8,
+                top_p=0.6,
+                max_tokens=4096,
+                enable_thinking=False,
+                description="PaddleOCR-VL 1.6 OCR/layout service.",
+            ),
+            ModelConfig(
+                id=VISUAL_FEATURES_SERVICE_ID,
+                name="LocateAnything Visual Features",
+                provider="local",
+                enabled=True,
+                base_url=_visual_features_base_url(),
+                model_name=_visual_features_model_name(),
+                temperature=0.1,
+                top_p=0.6,
+                max_tokens=max(8192, int(getattr(settings, "LOCATE_ANYTHING_MAX_NEW_TOKENS", 8192) or 8192)),
+                enable_thinking=False,
+                description="LocateAnything unifies fixed visual classes and user-defined visual labels.",
+            ),
+        ],
+        active_id=VISUAL_FEATURES_SERVICE_ID,
+    )
+
+
+def _tcp_connects(host: str, port: int, timeout: float = 0.45) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _wsl_host_candidates() -> list[str]:
+    candidates: list[str] = []
+    for key in ("WSL_MODEL_HOST", "WSL_HOST"):
+        value = os.environ.get(key, "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+    if sys.platform == "win32":
+        try:
+            result = subprocess.run(
+                ["wsl.exe", "-e", "bash", "-lc", "hostname -I | awk '{print $1}'"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                encoding="utf-8",
+                errors="ignore",
+                text=True,
+                timeout=2.0,
+            )
+            value = (result.stdout or "").strip().split()[0] if result.stdout else ""
+            if value and value not in candidates:
+                candidates.append(value)
+        except Exception:
+            logger.debug("Unable to discover WSL host for model service", exc_info=True)
+    return candidates
+
+
+def _with_host(base_url: str, host: str) -> str:
+    parsed = urlparse(base_url)
+    if not parsed.hostname or parsed.port is None:
+        return base_url
+    if ":" in host and not host.startswith("["):
+        netloc = f"[{host}]:{parsed.port}"
+    else:
+        netloc = f"{host}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def resolve_localhost_service_base_url(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    host = parsed.hostname
+    port = parsed.port
+    if not host or port is None or host not in _LOCAL_HOSTS:
+        return base_url
+    if _tcp_connects(host, port):
+        return base_url
+
+    cache_key = (host, port)
+    now = time.monotonic()
+    cached = _WSL_SERVICE_CACHE.get(cache_key)
+    if cached and now - cached[0] < _WSL_SERVICE_CACHE_TTL_SEC:
+        cached_host = cached[1]
+        return _with_host(base_url, cached_host) if cached_host else base_url
+
+    for candidate in _wsl_host_candidates():
+        if _tcp_connects(candidate, port):
+            _WSL_SERVICE_CACHE[cache_key] = (now, candidate)
+            return _with_host(base_url, candidate)
+
+    _WSL_SERVICE_CACHE[cache_key] = (now, None)
+    return base_url
+
+
+def _model_state_from_payload(data: dict[str, Any]) -> tuple[str, bool]:
     status = str(data.get("status", "")).strip().lower()
     ready = bool(data["ready"]) if "ready" in data else True
     if status in _SERVING_STATUSES:
-        return "serving", True, ready
+        return "serving", True
     if status in _LOADING_STATUSES:
-        return "loading", True, ready
-    if status in _UNAVAILABLE_STATUSES:
-        return "not_ready", False, ready
-    if not ready:
-        return "not_ready", False, ready
-    return "ready", True, ready
+        return "loading", True
+    if status in _UNAVAILABLE_STATUSES or not ready:
+        return "not_ready", False
+    return "ready", True
 
 
-def _infer_gpu_provider(data: dict) -> str | None:
-    explicit = str(data.get("gpu_provider") or "").strip()
-    if explicit:
-        return explicit
-    device = str(data.get("device") or "").strip().lower()
-    if "vulkan" in device:
-        return "vulkan"
-    if "cuda" in device or device.startswith("gpu") or device.isdigit():
-        return "cuda"
-    if "metal" in device:
-        return "metal"
-    if "cpu" in device:
-        return "cpu"
-    if data.get("gpu_available") is False:
-        return "none"
-    if data.get("gpu_available") is True:
-        return "gpu"
-    return None
+def _model_name_from_payload(data: dict[str, Any], default_name: str) -> str:
+    if isinstance(data.get("model"), str):
+        return str(data["model"])
+    if isinstance(data.get("data"), list) and data["data"]:
+        value = data["data"][0].get("id")
+        if value:
+            return str(value)
+    if isinstance(data.get("models"), list) and data["models"]:
+        value = data["models"][0].get("name")
+        if value:
+            return str(value)
+    return default_name
 
 
-def _health_detail(
-    *,
-    provider: str,
-    base_url: str,
-    health_url: str,
-    data: dict,
-) -> dict:
-    model_state, service_online, ready = _model_state_from_health_payload(data)
-    detail = {
-        "provider": provider,
-        "base_url": base_url,
-        "health_url": health_url,
-        "model": data.get("model") or data.get("name"),
-        "ready": ready,
-        "service_online": service_online,
-        "model_state": model_state,
-    }
-    for key in (
-        "runtime",
-        "runtime_mode",
-        "device",
-        "gpu_available",
-        "gpu_only_mode",
-        "cpu_fallback_risk",
-        "structure_ready",
-        "weights",
-    ):
-        if key in data:
-            detail[key] = data[key]
-    gpu_provider = _infer_gpu_provider(data)
-    if gpu_provider:
-        detail["gpu_provider"] = gpu_provider
-    return detail
+def _json_endpoint(base_url: str, suffix: str) -> str:
+    base = str(base_url or "").rstrip("/")
+    if base.endswith("/v1"):
+        return f"{base}/{suffix.lstrip('/')}"
+    return f"{base}/v1/{suffix.lstrip('/')}"
 
 
 def _preflight_result(
@@ -148,450 +190,258 @@ def _preflight_result(
     message: str,
     provider: str,
     base_url: str,
-    detail: dict | None = None,
-) -> dict:
-    out = {
+    detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
         "success": success,
         "status": status,
         "message": message,
         "provider": provider,
         "base_url": base_url,
+        "detail": detail or {},
     }
-    if detail:
-        out["detail"] = detail
-    return out
 
 
-async def _probe_local_http_health(
-    *,
-    base_url: str,
-    provider: str,
-    default_model: str,
-    timeout: float,
-) -> dict:
-    import httpx
+async def _probe_http_runtime(config: ModelConfig, *, health_first: bool = True) -> dict[str, Any]:
+    base = resolve_localhost_service_base_url(config.base_url or "")
+    urls = [f"{base.rstrip('/')}/health", _json_endpoint(base, "models")]
+    if not health_first:
+        urls.reverse()
 
-    from app.core.health_checks import _tcp_port_open
-
-    base = base_url.rstrip("/")
-    health_url = f"{base}/health"
-    try:
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            resp = await client.get(health_url)
-    except httpx.TimeoutException:
-        if _tcp_port_open(health_url):
-            return _preflight_result(
-                success=True,
-                status="online",
-                message=f"{default_model} service is online at {base}; health probe timed out while the worker is occupied.",
-                provider=provider,
-                base_url=base,
-                detail={
-                    "provider": provider,
-                    "base_url": base,
-                    "health_url": health_url,
-                    "service_online": True,
-                    "model_state": "serving",
-                    "probe": "health_timeout_port_open",
-                },
-            )
-        return _preflight_result(
-            success=False,
-            status="offline",
-            message=f"Cannot connect to {default_model} service ({base}).",
-            provider=provider,
-            base_url=base,
-        )
-    except Exception:
-        logger.exception("Local model health probe failed for %s at %s", default_model, base)
-        return _preflight_result(
-            success=False,
-            status="offline",
-            message=f"Cannot connect to {default_model} service ({base}).",
-            provider=provider,
-            base_url=base,
-        )
-
-    if resp.status_code != 200:
-        return _preflight_result(
-            success=False,
-            status="degraded",
-            message=f"{default_model} /health returned HTTP {resp.status_code}",
-            provider=provider,
-            base_url=base,
-            detail={"provider": provider, "base_url": base, "health_url": health_url, "http_status": resp.status_code},
-        )
-
-    try:
-        data = resp.json()
-    except Exception:
-        return _preflight_result(
-            success=True,
-            status="online",
-            message=f"{default_model} service responded at {base}, but /health did not return JSON.",
-            provider=provider,
-            base_url=base,
-            detail={"provider": provider, "base_url": base, "health_url": health_url, "service_online": True},
-        )
-
-    if not isinstance(data, dict):
-        return _preflight_result(
-            success=True,
-            status="online",
-            message=f"{default_model} service responded at {base}, but /health returned non-object JSON.",
-            provider=provider,
-            base_url=base,
-            detail={"provider": provider, "base_url": base, "health_url": health_url, "service_online": True},
-        )
-
-    model = data.get("model") or data.get("name") or default_model
-    detail = _health_detail(provider=provider, base_url=base, health_url=health_url, data={**data, "model": model})
-    model_state = detail["model_state"]
-    if detail.get("cpu_fallback_risk"):
-        return _preflight_result(
-            success=False,
-            status="degraded",
-            message=f"{model} service is reachable at {base}, but CPU fallback risk is reported.",
-            provider=provider,
-            base_url=base,
-            detail=detail,
-        )
-    if model_state in {"serving", "loading"}:
-        return _preflight_result(
-            success=True,
-            status="online",
-            message=f"{model} service is online at {base}; model_state={model_state}.",
-            provider=provider,
-            base_url=base,
-            detail=detail,
-        )
-    if model_state != "ready":
-        return _preflight_result(
-            success=False,
-            status="degraded",
-            message=f"{model} service is reachable at {base}, but the model is not ready.",
-            provider=provider,
-            base_url=base,
-            detail=detail,
-        )
+    last_error = ""
+    async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
+        for url in urls:
+            try:
+                response = await client.get(url)
+                if response.status_code != 200:
+                    last_error = f"{response.status_code} {response.reason_phrase}"
+                    continue
+                data = response.json()
+                if not isinstance(data, dict):
+                    last_error = "non-object response"
+                    continue
+                state, ready = _model_state_from_payload(data)
+                model = _model_name_from_payload(data, config.model_name)
+                status = "online" if ready else "degraded"
+                return _preflight_result(
+                    success=ready,
+                    status=status,
+                    message=f"{model} service is {state} at {base}.",
+                    provider=config.provider,
+                    base_url=base,
+                    detail={
+                        "model": model,
+                        "model_state": state,
+                        "reachable": True,
+                        "ready": ready,
+                    },
+                )
+            except (httpx.HTTPError, OSError, ValueError, TypeError) as exc:
+                last_error = str(exc)
     return _preflight_result(
-        success=True,
-        status="online",
-        message=f"{model} is online and ready.",
-        provider=provider,
+        success=False,
+        status="offline",
+        message=f"{config.model_name} service is unreachable at {base}.",
+        provider=config.provider,
         base_url=base,
-        detail=detail,
+        detail={"reachable": False, "error": last_error},
     )
 
 
-# ── 内部工具 ─────────────────────────────────────────────
-
-def is_has_image_runtime_config(config: ModelConfig) -> bool:
+def is_visual_feature_runtime_config(config: ModelConfig) -> bool:
     return (
         config.enabled
-        and config.provider == "local"
-        and config.id not in {"paddle_ocr_service", "vlm_service"}
+        and config.id != PADDLE_OCR_SERVICE_ID
+        and config.provider in {"local", "custom", "openai"}
     )
+
+
+def _builtin_override(config: ModelConfig) -> ModelConfig:
+    if config.id == PADDLE_OCR_SERVICE_ID:
+        return config.model_copy(
+            update={
+                "name": "PaddleOCR-VL 1.6",
+                "enabled": True,
+                "base_url": settings.OCR_BASE_URL,
+                "model_name": "PaddleOCR-VL-1.6-0.9B",
+            }
+        )
+    if config.id == VISUAL_FEATURES_SERVICE_ID:
+        return config.model_copy(
+            update={
+                "name": "LocateAnything Visual Features",
+                "enabled": True,
+                "base_url": config.base_url or _visual_features_base_url(),
+                "model_name": config.model_name or _visual_features_model_name(),
+                "max_tokens": max(
+                    8192,
+                    int(config.max_tokens or 0),
+                    int(getattr(settings, "LOCATE_ANYTHING_MAX_NEW_TOKENS", 8192) or 8192),
+                ),
+            }
+        )
+    return config
 
 
 def _sanitize_model_config_list(raw: ModelConfigList) -> tuple[ModelConfigList, bool]:
-    kept = [
-        c
-        for c in raw.configs
-        if c.id not in _LEGACY_VISION_IDS and c.provider != "zhipu"
-    ]
-    changed = len(kept) != len(raw.configs)
+    changed = False
+    cleaned: list[ModelConfig] = []
     seen: set[str] = set()
-    merged: list[ModelConfig] = []
-    for d in DEFAULT_CONFIGS.configs:
-        match = next((c for c in kept if c.id == d.id), None)
-        if match:
-            merged.append(match)
-            seen.add(match.id)
-        else:
-            merged.append(d.model_copy(deep=True))
+
+    for config in raw.configs:
+        if config.provider == "zhipu":
             changed = True
-    for c in kept:
-        if c.id not in seen:
-            merged.append(c)
-            seen.add(c.id)
-    final_merged: list[ModelConfig] = []
-    for c in merged:
-        if c.id in VISION_BUILTIN_IDS and not c.enabled:
-            final_merged.append(c.model_copy(update={"enabled": True}))
+            continue
+        if config.id in seen:
             changed = True
-        else:
-            final_merged.append(c)
-    active_candidates = {c.id for c in final_merged if is_has_image_runtime_config(c)}
-    active = raw.active_id if raw.active_id in active_candidates else None
-    if active is None:
-        active = "has_image_service" if "has_image_service" in active_candidates else None
-        if active is None and active_candidates:
-            active = next(c.id for c in final_merged if c.id in active_candidates)
+            continue
+        seen.add(config.id)
+        cleaned.append(_builtin_override(config))
+
+    defaults = _default_configs()
+    for default in defaults.configs:
+        if default.id not in seen:
+            cleaned.insert(0 if default.id == PADDLE_OCR_SERVICE_ID else len(cleaned), default)
+            seen.add(default.id)
+            changed = True
+
+    active_id = raw.active_id
+    if active_id not in seen:
+        active_id = VISUAL_FEATURES_SERVICE_ID
         changed = True
-    out = ModelConfigList(configs=final_merged, active_id=active)
-    return out, changed
+    active = next((c for c in cleaned if c.id == active_id), None)
+    if active is None or not is_visual_feature_runtime_config(active):
+        active_id = VISUAL_FEATURES_SERVICE_ID
+        changed = True
 
+    return ModelConfigList(configs=cleaned, active_id=active_id), changed
 
-# ── 持久化 ────────────────────────────────────────────────
 
 def load_configs() -> ModelConfigList:
-    """加载配置；自动迁移并移除已废弃的 GLM 视觉配置项"""
     raw = load_json(settings.MODEL_CONFIG_PATH, default=None)
     if raw is not None:
         try:
-            lst = ModelConfigList(**raw)
-            lst, changed = _sanitize_model_config_list(lst)
+            configs, changed = _sanitize_model_config_list(ModelConfigList(**raw))
             if changed:
-                save_configs(lst)
-                logger.info("ModelConfig 已迁移：移除旧版 GLM 视觉配置，保留 HaS Image 等条目")
-            return lst
-        except Exception as e:
-            logger.error("ModelConfig 加载配置失败: %s", e)
-    return DEFAULT_CONFIGS.model_copy(deep=True)
+                save_configs(configs)
+            return configs
+        except Exception:
+            logger.warning("Unable to load model config; falling back to defaults.", exc_info=True)
+    return _sanitize_model_config_list(_default_configs())[0]
 
 
 def save_configs(configs: ModelConfigList) -> None:
-    """保存配置"""
     save_json(settings.MODEL_CONFIG_PATH, configs)
 
-
-# ── 业务方法 ──────────────────────────────────────────────
 
 def get_configs() -> ModelConfigList:
     return load_configs()
 
 
-def get_active() -> ModelConfig | None:
-    return get_active_has_image_config()
-
-
-def get_active_has_image_config() -> ModelConfig | None:
-    configs = load_configs()
-    if configs.active_id:
-        for cfg in configs.configs:
-            if cfg.id == configs.active_id and is_has_image_runtime_config(cfg):
-                return cfg
-    for cfg in configs.configs:
-        if is_has_image_runtime_config(cfg):
-            return cfg
-    return None
-
-
 def get_config(config_id: str) -> ModelConfig | None:
-    for cfg in load_configs().configs:
-        if cfg.id == config_id:
-            return cfg
+    for config in load_configs().configs:
+        if config.id == config_id:
+            return config
     return None
 
 
 def get_paddle_ocr_base_url() -> str:
-    config = get_config("paddle_ocr_service")
+    config = get_config(PADDLE_OCR_SERVICE_ID)
     if config and config.enabled and config.base_url:
-        return config.base_url.rstrip("/")
-    return settings.OCR_BASE_URL.rstrip("/")
+        return resolve_localhost_service_base_url(config.base_url)
+    return resolve_localhost_service_base_url(settings.OCR_BASE_URL)
 
 
-def get_has_image_base_url() -> str:
-    config = get_active_has_image_config()
+def get_active_visual_feature_config() -> ModelConfig | None:
+    configs = load_configs()
+    if configs.active_id:
+        active = get_config(configs.active_id)
+        if active and is_visual_feature_runtime_config(active):
+            return active
+    return get_config(VISUAL_FEATURES_SERVICE_ID)
+
+
+def get_visual_features_base_url() -> str:
+    config = get_active_visual_feature_config()
     if config and config.base_url:
-        return config.base_url.rstrip("/")
-    fallback = get_config("has_image_service")
-    if fallback and fallback.enabled and fallback.base_url:
-        return fallback.base_url.rstrip("/")
-    return settings.HAS_IMAGE_BASE_URL.rstrip("/")
+        return resolve_localhost_service_base_url(config.base_url)
+    return resolve_localhost_service_base_url(_visual_features_base_url())
 
 
-def get_vlm_config() -> ModelConfig | None:
-    config = get_config("vlm_service")
-    if config and config.enabled:
-        return config
-    return None
+def get_visual_features_config() -> ModelConfig | None:
+    return get_active_visual_feature_config()
 
 
-def get_vlm_base_url() -> str:
-    config = get_vlm_config()
-    if config and config.base_url:
-        return config.base_url.rstrip("/")
-    return settings.VLM_BASE_URL.rstrip("/")
+def get_active() -> ModelConfig | None:
+    return get_active_visual_feature_config()
 
 
 def set_active(config_id: str) -> tuple[bool, str]:
-    """Returns (success, error_or_active_id)."""
     configs = load_configs()
-    found = False
-    for cfg in configs.configs:
-        if cfg.id == config_id:
-            if not cfg.enabled:
-                return False, "该配置未启用"
-            if not is_has_image_runtime_config(cfg):
-                return False, "Config cannot be used as the active HaS Image /detect runtime"
-            found = True
-            break
-    if not found:
-        return False, "配置不存在"
+    target = next((config for config in configs.configs if config.id == config_id), None)
+    if target is None:
+        return False, "Config not found"
+    if not target.enabled:
+        return False, "Config is disabled"
+    if not is_visual_feature_runtime_config(target):
+        return False, "Only visual feature runtimes can be activated"
     configs.active_id = config_id
     save_configs(configs)
     return True, config_id
 
 
 def create_config(config: ModelConfig) -> tuple[bool, str]:
-    """Returns (success, error_message)."""
     configs = load_configs()
-    for cfg in configs.configs:
-        if cfg.id == config.id:
-            return False, "配置ID已存在"
+    if any(item.id == config.id for item in configs.configs):
+        return False, "Config id already exists"
     configs.configs.append(config)
     save_configs(configs)
     return True, ""
 
 
 def update_config(config_id: str, config: ModelConfig) -> tuple[ModelConfig | None, str]:
-    """Returns (updated_config_or_None, error_message)."""
     configs = load_configs()
-    if config_id in VISION_BUILTIN_IDS:
-        config.enabled = True
-    for i, cfg in enumerate(configs.configs):
-        if cfg.id == config_id:
-            config.id = config_id
-            configs.configs[i] = config
-            if configs.active_id == config_id and not is_has_image_runtime_config(config):
-                configs.active_id = next(
-                    (c.id for c in configs.configs if is_has_image_runtime_config(c)),
-                    None,
-                )
-            save_configs(configs)
-            return config, ""
-    return None, "配置不存在"
+    updated = config.model_copy(update={"id": config_id})
+    for index, current in enumerate(configs.configs):
+        if current.id != config_id:
+            continue
+        if config_id in _BUILTIN_IDS:
+            updated = _builtin_override(updated)
+        configs.configs[index] = updated
+        if configs.active_id == config_id and not is_visual_feature_runtime_config(updated):
+            configs.active_id = VISUAL_FEATURES_SERVICE_ID
+        save_configs(configs)
+        return updated, ""
+    return None, "Config not found"
 
 
 def delete_config(config_id: str) -> tuple[bool, str]:
-    """Returns (success, error_message)."""
+    if config_id in _BUILTIN_IDS:
+        return False, "Built-in model configs cannot be deleted"
     configs = load_configs()
-    if config_id in VISION_BUILTIN_IDS:
-        return False, "内置视觉后端（PaddleOCR-VL / HaS Image）不可删除"
-    if len(configs.configs) <= 1:
-        return False, "至少保留一个配置"
-    for i, cfg in enumerate(configs.configs):
-        if cfg.id == config_id:
-            configs.configs.pop(i)
-            if configs.active_id == config_id:
-                configs.active_id = None
-                for c in configs.configs:
-                    if is_has_image_runtime_config(c):
-                        configs.active_id = c.id
-                        break
-            save_configs(configs)
-            return True, ""
-    return False, "配置不存在"
+    next_configs = [config for config in configs.configs if config.id != config_id]
+    if len(next_configs) == len(configs.configs):
+        return False, "Config not found"
+    configs.configs = next_configs
+    if configs.active_id == config_id:
+        configs.active_id = VISUAL_FEATURES_SERVICE_ID
+    save_configs(configs)
+    return True, ""
 
 
 def reset_configs() -> None:
-    save_configs(DEFAULT_CONFIGS.model_copy(deep=True))
+    save_configs(_default_configs())
 
 
-# ── 健康探测 ──────────────────────────────────────────────
-
-async def _probe_paddle_ocr_health(base_override: str | None = None) -> dict:
-    """探测 PaddleOCR-VL：GET /health，检查 ready。"""
-    base = (base_override or settings.OCR_BASE_URL).rstrip("/")
-    timeout = float(getattr(settings, "OCR_HEALTH_PROBE_TIMEOUT", 45.0))
-    return await _probe_local_http_health(
-        base_url=base,
-        provider="local",
-        default_model="PaddleOCR-VL",
-        timeout=timeout,
-    )
+async def test_paddle_ocr() -> dict[str, Any]:
+    config = get_config(PADDLE_OCR_SERVICE_ID) or _default_configs().configs[0]
+    return await _probe_http_runtime(config, health_first=True)
 
 
-async def test_paddle_ocr() -> dict:
-    """与推理后端列表中 PaddleOCR-VL 条目的「测试」同源。"""
-    return await _probe_paddle_ocr_health(get_paddle_ocr_base_url())
-
-
-async def test_config(config_id: str) -> tuple[dict | None, str]:
-    """Returns (result_dict_or_None, error_message). None means config not found."""
-    configs = load_configs()
-
-    config = None
-    for cfg in configs.configs:
-        if cfg.id == config_id:
-            config = cfg
-            break
-
-    if not config:
-        return None, "配置不存在"
-
-    if config.id == "paddle_ocr_service":
-        base = (config.base_url or settings.OCR_BASE_URL).rstrip("/")
-        return await _probe_paddle_ocr_health(base), ""
-
-    try:
-        if config.provider == "local":
-            base = (config.base_url or "").rstrip("/")
-            if base:
-                return await _probe_local_http_health(
-                    base_url=base,
-                    provider=config.provider,
-                    default_model=config.model_name or config.name or "Local model service",
-                    timeout=10.0,
-                ), ""
-            return _preflight_result(
-                success=False,
-                status="offline",
-                message="Missing base_url",
-                provider=config.provider,
-                base_url="",
-            ), ""
-
-        elif config.provider in ["openai", "custom"]:
-            import httpx
-            headers = {}
-            if config.api_key:
-                headers["Authorization"] = f"Bearer {config.api_key}"
-            base = (config.base_url or "").rstrip("/")
-            if not base:
-                return _preflight_result(
-                    success=False,
-                    status="offline",
-                    message="Missing base_url",
-                    provider=config.provider,
-                    base_url="",
-                ), ""
-            async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
-                resp = await client.get(f"{base}/v1/models", headers=headers)
-            if resp.status_code == 200:
-                return _preflight_result(
-                    success=True,
-                    status="online",
-                    message="API model endpoint is reachable.",
-                    provider=config.provider,
-                    base_url=base,
-                    detail={"provider": config.provider, "base_url": base, "models_url": f"{base}/v1/models"},
-                ), ""
-            return _preflight_result(
-                success=False,
-                status="degraded",
-                message=f"API model endpoint returned HTTP {resp.status_code}",
-                provider=config.provider,
-                base_url=base,
-                detail={"provider": config.provider, "base_url": base, "models_url": f"{base}/v1/models", "http_status": resp.status_code},
-            ), ""
-
-        return _preflight_result(
-            success=False,
-            status="offline",
-            message="Unknown provider type",
-            provider=config.provider,
-            base_url=(config.base_url or "").rstrip("/"),
-        ), ""
-
-    except Exception:
-        logger.exception("Model config health check failed for %s", getattr(config, "id", "unknown"))
-        return _preflight_result(
-            success=False,
-            status="offline",
-            message="Model service health check failed.",
-            provider=getattr(config, "provider", "unknown"),
-            base_url=(getattr(config, "base_url", "") or "").rstrip("/"),
-        ), ""
+async def test_config(config_id: str) -> tuple[dict[str, Any] | None, str]:
+    config = get_config(config_id)
+    if config is None:
+        return None, "Config not found"
+    if config.id == PADDLE_OCR_SERVICE_ID:
+        return await test_paddle_ocr(), ""
+    return await _probe_http_runtime(config, health_first=(config.provider == "local")), ""

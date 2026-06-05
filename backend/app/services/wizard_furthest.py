@@ -6,12 +6,15 @@ from typing import Any
 
 def infer_batch_step1_configured(config: dict[str, Any], job_type: str) -> bool:
     """与前端 jobPrimaryNavigation 一致：已持久化识别项选择时视为可进入上传步（断点继续）。"""
+    if job_type == "structured_batch":
+        ids = config.get("dataset_ids") or []
+        return isinstance(ids, list) and len(ids) > 0
     if job_type == "text_batch":
         ids = config.get("entity_type_ids") or []
         return isinstance(ids, list) and len(ids) > 0
     ocr = config.get("ocr_has_types") or []
-    hi = config.get("has_image_types") or []
-    return (isinstance(ocr, list) and len(ocr) > 0) or (isinstance(hi, list) and len(hi) > 0)
+    visual = config.get("visual_feature_types") or []
+    return (isinstance(ocr, list) and len(ocr) > 0) or (isinstance(visual, list) and len(visual) > 0)
 
 
 def coerce_wizard_furthest_step(raw: Any) -> int | None:

@@ -39,14 +39,14 @@ export function JobStatusBadge({ status }: { status: string }) {
   );
 }
 
-export function JobTypeBadge({ jobType: _jobType }: { jobType: JobTypeApi }) {
+export function JobTypeBadge({ jobType }: { jobType: JobTypeApi }) {
   return (
     <Badge
       variant="secondary"
       className="shrink-0 whitespace-nowrap text-2xs font-semibold"
       data-testid="job-type-badge"
     >
-      {t('jobs.batchTask')}
+      {jobType === 'structured_batch' ? t('jobs.structuredTask') : t('jobs.batchTask')}
     </Badge>
   );
 }

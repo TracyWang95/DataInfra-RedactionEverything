@@ -32,6 +32,21 @@ const Jobs = React.lazy(() => import('./features/jobs').then((m) => ({ default: 
 const JobDetailPage = React.lazy(() =>
   import('./features/jobs').then((m) => ({ default: m.JobDetailPage })),
 );
+const Structured = React.lazy(() =>
+  import('./features/structured').then((m) => ({ default: m.Structured })),
+);
+const StructuredFiles = React.lazy(() =>
+  import('./features/structured').then((m) => ({ default: m.StructuredFiles })),
+);
+const StructuredDatabase = React.lazy(() =>
+  import('./features/structured').then((m) => ({ default: m.StructuredDatabase })),
+);
+const StructuredDatasets = React.lazy(() =>
+  import('./features/structured').then((m) => ({ default: m.StructuredDatasets })),
+);
+const StructuredDelivery = React.lazy(() =>
+  import('./features/structured').then((m) => ({ default: m.StructuredDelivery })),
+);
 const Settings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.Settings })),
 );
@@ -106,6 +121,7 @@ const prefetchRoutes = () => {
     () => import('./features/playground'),
     () => import('./features/home'),
     () => import('./features/batch'),
+    () => import('./features/structured'),
     () => import('./features/history'),
     () => import('./features/jobs'),
   ];
@@ -191,6 +207,11 @@ function BatchRoute() {
   );
 }
 
+function StructuredPoliciesCompatRoute() {
+  const location = useLocation();
+  return <Navigate to={`/structured/datasets${location.search}${location.hash}`} replace />;
+}
+
 export const router = createBrowserRouter([
   {
     path: '/setup',
@@ -251,6 +272,50 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'batch/:batchMode', element: <BatchRoute /> },
+      {
+        path: 'structured',
+        element: (
+          <LazyPage>
+            <Structured />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'structured/files',
+        element: (
+          <LazyPage>
+            <StructuredFiles />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'structured/database',
+        element: (
+          <LazyPage>
+            <StructuredDatabase />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'structured/datasets',
+        element: (
+          <LazyPage>
+            <StructuredDatasets />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'structured/policies',
+        element: <StructuredPoliciesCompatRoute />,
+      },
+      {
+        path: 'structured/delivery',
+        element: (
+          <LazyPage>
+            <StructuredDelivery />
+          </LazyPage>
+        ),
+      },
       {
         path: 'history',
         element: (

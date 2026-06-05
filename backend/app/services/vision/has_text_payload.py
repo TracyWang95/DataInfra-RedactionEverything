@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 
 from app.models.type_mapping import TYPE_ID_TO_CN, canonical_type_id, id_to_cn
-from app.services.hybrid_vision_service import OCRTextBlock
+from app.services.ocr_has_vision_service import OCRTextBlock
 
 logger = logging.getLogger("app.services.vision.ocr_pipeline")
 

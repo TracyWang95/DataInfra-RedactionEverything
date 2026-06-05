@@ -1,7 +1,7 @@
 """
 实体类型映射 —— 单一数据源
 
-统一维护中英文实体类型映射，消除 redactor / has_service / has_client / hybrid_vision_service 中的重复定义。
+统一维护中英文实体类型映射，消除 redactor / has_service / has_client / ocr_has_vision_service 中的重复定义。
 基于 GB/T 37964-2019《信息安全技术 个人信息去标识化指南》。
 """
 

@@ -36,12 +36,10 @@ export function usePlayground() {
   const { health, checking: healthChecking } = useServiceHealth();
 
   const latestOcrHasTypesRef = useRef(recognition.selectedOcrHasTypes);
-  const latestHasImageTypesRef = useRef(recognition.selectedHasImageTypes);
-  const latestVlmTypesRef = useRef(recognition.selectedVlmTypes);
+  const latestVisualFeatureTypesRef = useRef(recognition.selectedVisualFeatureTypes);
   const latestSelectedTypesRef = recognition.selectedTypesRef;
   latestOcrHasTypesRef.current = recognition.selectedOcrHasTypes;
-  latestHasImageTypesRef.current = recognition.selectedHasImageTypes;
-  latestVlmTypesRef.current = recognition.selectedVlmTypes;
+  latestVisualFeatureTypesRef.current = recognition.selectedVisualFeatureTypes;
 
   const entityCtx = usePlaygroundEntities();
 
@@ -69,11 +67,8 @@ export function usePlayground() {
           requiredServices.add('paddle_ocr');
           requiredServices.add('has_ner');
         }
-        if (latestHasImageTypesRef.current.length > 0) {
-          requiredServices.add('has_image');
-        }
-        if (latestVlmTypesRef.current.length > 0) {
-          requiredServices.add('vlm');
+        if (latestVisualFeatureTypesRef.current.length > 0) {
+          requiredServices.add('visual_features');
         }
       } else if (file.content && latestSelectedTypesRef.current.length > 0) {
         requiredServices.add('has_ner');
@@ -92,8 +87,7 @@ export function usePlayground() {
 
   const fileCtx = usePlaygroundFile({
     latestOcrHasTypesRef,
-    latestHasImageTypesRef,
-    latestVlmTypesRef,
+    latestVisualFeatureTypesRef,
     latestSelectedTypesRef,
     resetEntityHistory: entityCtx.entityHistory.reset,
     resetImageHistory: () => imageCtx.imageHistory.reset(),
@@ -128,13 +122,11 @@ export function usePlayground() {
   const allSelectedVisionTypes = useMemo(
     () => [
       ...recognition.selectedOcrHasTypes,
-      ...recognition.selectedHasImageTypes,
-      ...recognition.selectedVlmTypes,
+      ...recognition.selectedVisualFeatureTypes,
     ],
     [
       recognition.selectedOcrHasTypes,
-      recognition.selectedHasImageTypes,
-      recognition.selectedVlmTypes,
+      recognition.selectedVisualFeatureTypes,
     ],
   );
 
@@ -171,8 +163,7 @@ export function usePlayground() {
       await imageCtx.handleRerunNerImage(
         fileCtx.fileInfo.file_id,
         recognition.selectedOcrHasTypes,
-        recognition.selectedHasImageTypes,
-        recognition.selectedVlmTypes,
+        recognition.selectedVisualFeatureTypes,
         fileCtx.setIsLoading,
         fileCtx.setLoadingMessage,
       );

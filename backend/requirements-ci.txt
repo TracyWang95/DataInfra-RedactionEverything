@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # Lightweight dependency set for CI / GitHub Actions.
 #
-# Excludes heavy ML frameworks (PaddleOCR, PaddlePaddle, Ultralytics/YOLO),
+# Excludes heavy ML frameworks (PaddleOCR, PaddlePaddle, LocateAnything),
 # platform-specific packages (pywin32), and system-dependent libraries
 # (pdf2image needs poppler, nvidia-ml-py needs an NVIDIA driver).
 #
@@ -25,6 +25,7 @@ PyMuPDF==1.27.2.2
 Pillow>=12.2.0
 numpy>=2.0.0
 opencv-python-headless>=4.12.0
+openpyxl>=3.1.5
 # pdf2image excluded: requires system poppler
 # pywin32 excluded: Windows-only
 
@@ -40,6 +41,9 @@ aiofiles>=24.1.0
 # Utility libraries
 PyJWT>=2.12.0
 passlib[bcrypt]==1.7.4
+SQLAlchemy>=2.0.45
+PyMySQL>=1.1.1
+psycopg[binary]>=3.2.3
 
 # Observability
 python-json-logger>=2.0.0

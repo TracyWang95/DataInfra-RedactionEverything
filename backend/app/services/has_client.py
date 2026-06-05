@@ -69,11 +69,13 @@ class HaSClient:
     def __init__(
         self,
         base_url: str = None,
-        timeout: float = None
+        timeout: float = None,
+        max_retries: int | None = None,
     ):
         from app.core.config import settings
         self._base_url_override = base_url.rstrip("/") if base_url else None
         self.timeout = httpx.Timeout(timeout or settings.HAS_TIMEOUT)
+        self._max_retries = 2 if max_retries is None else max(0, int(max_retries))
         self._ner_cache_ttl_sec = settings.HAS_NER_CACHE_TTL_SEC
         self._ner_cache_max_items = settings.HAS_NER_CACHE_MAX_ITEMS
         self._ner_cache = self._SHARED_NER_CACHE
@@ -115,7 +117,7 @@ class HaSClient:
         started = time.perf_counter()
         response = retry_sync(
             self._do_chat_request, base, payload,
-            max_retries=2, base_delay=1.0,
+            max_retries=self._max_retries, base_delay=1.0,
             retryable_exceptions=RETRYABLE_HTTPX,
         )
         elapsed_ms = round((time.perf_counter() - started) * 1000)
@@ -208,6 +210,24 @@ class HaSClient:
             return canonical_type_id(value.upper())
 
         return value
+
+    @staticmethod
+    def _estimate_prompt_tokens(text: str) -> int:
+        """Conservative local estimate for vLLM context budgeting.
+
+        HaS prompts mix English instructions, Chinese type names, OCR Chinese,
+        JSON punctuation, and scanned text fragments. A len//2 estimate is too
+        optimistic for Chinese-heavy pages and can make vLLM reject the request
+        before inference starts.
+        """
+        ascii_chars = 0
+        non_ascii_chars = 0
+        for char in str(text or ""):
+            if ord(char) < 128:
+                ascii_chars += 1
+            else:
+                non_ascii_chars += 1
+        return max(1, ascii_chars // 4 + non_ascii_chars + 32)
 
     @classmethod
     def _normalize_ner_types(cls, entity_types: list[str] | None) -> list[str]:
@@ -334,6 +354,37 @@ class HaSClient:
         if cached is not None:
             return cached
 
+        from app.core.config import settings
+        if type_guidance is None:
+            configured_batch = max(1, int(settings.HAS_NER_MAX_TYPES_PER_REQUEST))
+            target = max(320, int(settings.HAS_NER_TYPE_BATCH_TARGET_TOKENS))
+            target_batch = max(8, min(24, target // 40))
+            batch_size = max(1, min(configured_batch, target_batch))
+            single_pass_max_types = max(batch_size, int(settings.HAS_NER_SINGLE_PASS_MAX_TYPES))
+            single_pass_max_chars = max(128, int(settings.HAS_NER_SINGLE_PASS_MAX_TEXT_CHARS))
+            should_single_pass = (
+                len(types) <= single_pass_max_types
+                and len(str(text or "")) <= single_pass_max_chars
+            )
+            if len(types) > batch_size and not should_single_pass:
+                logger.info(
+                    "HaS NER pre-batching %d types into chunks of %d",
+                    len(types),
+                    batch_size,
+                )
+                merged: dict[str, list[str]] = {}
+                for start in range(0, len(types), batch_size):
+                    part = self.ner(text, types[start:start + batch_size], None)
+                    for key, values in (part or {}).items():
+                        if not values:
+                            continue
+                        bucket = merged.setdefault(key, [])
+                        for value in values:
+                            if value not in bucket:
+                                bucket.append(value)
+                self._set_cached_ner(cache_key, merged)
+                return merged
+
         owns_request, request_event = self._begin_ner_request(cache_key)
         if not owns_request:
             if request_event is not None:
@@ -344,7 +395,6 @@ class HaSClient:
             logger.warning("HaS NER duplicate request finished without cacheable result")
             return {}
         types_str = json.dumps(types, ensure_ascii=False, separators=(",", ":"))
-        from app.core.config import settings
         guidance_block = f"\nType guidance:{guidance_text}" if guidance_text else ""
 
         # 与 HaS_Text_0209 模型卡 NER 模板一致（Specified types: 与 JSON 数组之间无空格）
@@ -356,12 +406,29 @@ Never output empty arrays. Do not return requested types with no matches. Do not
 If nothing matches, return {{}}.
 <text>{text}</text>"""
         configured_max_tokens = int(settings.HAS_NER_MAX_TOKENS)
-        desired_max_tokens = max(512, len(types) * 96 + len(text) // 3)
+        desired_max_tokens = max(640, min(configured_max_tokens, len(types) * 72 + len(text) // 2))
         # Keep the completion budget inside the locally served HaS context
-        # window. The default dev profile serves HaS Text with 8K context.
-        prompt_token_estimate = max(1, len(prompt) // 2)
-        context_room = int(settings.HAS_NER_CONTEXT_TOKENS) - prompt_token_estimate - 96
-        max_tokens = min(configured_max_tokens, desired_max_tokens, max(256, context_room))
+        # window. The 16 GB dev profile serves HaS Text with an 8K context so
+        # PaddleOCR-VL, PP-StructureV3 and LocateAnything can stay resident
+        # while giving OCR-derived NER enough completion budget.
+        context_tokens = max(512, int(settings.HAS_NER_CONTEXT_TOKENS))
+        prompt_token_estimate = self._estimate_prompt_tokens(prompt)
+        context_room = context_tokens - prompt_token_estimate - 160
+        completion_cap = max(384, min(configured_max_tokens, int(context_tokens * 0.65)))
+        max_tokens = min(
+            configured_max_tokens,
+            desired_max_tokens,
+            completion_cap,
+            max(64, context_room),
+        )
+        logger.info(
+            "HaS NER budget prompt_est=%d context=%d max_tokens=%d types=%d text_chars=%d",
+            prompt_token_estimate,
+            context_tokens,
+            max_tokens,
+            len(types),
+            len(text),
+        )
 
         messages = [
             {

@@ -8,6 +8,16 @@ const enBase: Record<string, string> = {
   'nav.playground.sub': 'Confirm results first',
   'nav.batch': 'Process Many Files',
   'nav.batch.sub': 'Mixed files by default',
+  'nav.structured': 'Structured Data',
+  'nav.structured.sub': 'Tables and databases',
+  'nav.structured.files': 'File Tables',
+  'nav.structured.files.sub': 'CSV / Excel / JSONL / SQLite',
+  'nav.structured.database': 'Databases',
+  'nav.structured.database.sub': 'Connect and discover',
+  'nav.structured.datasets': 'Dataset Policies',
+  'nav.structured.datasets.sub': 'Policies and preview',
+  'nav.structured.delivery': 'Delivery',
+  'nav.structured.delivery.sub': 'Jobs and exports',
   'nav.history': 'Results',
   'nav.jobs': 'Task Progress',
   'nav.jobs.sub': 'Review and export',
@@ -168,12 +178,10 @@ const enBase: Record<string, string> = {
   'health.sidebar.title': 'Services',
   'health.service.paddle_ocr': 'PaddleOCR',
   'health.service.has_ner': 'HaS Text',
-  'health.service.has_image': 'HaS Image',
-  'health.service.vlm': 'VLM',
+  'health.service.visual_features': 'Visual Elements',
   'health.openModelSettings': 'Open model settings',
   'health.impact.paddleOcr': 'Affects OCR, scanned PDFs, and image text extraction.',
   'health.impact.hasNer': 'Affects text semantic recognition and batch text jobs.',
-  'health.impact.hasImage': 'Affects image sensitive-region detection.',
 
   'offline.banner': 'Network disconnected. Some features may be unavailable.',
 
@@ -199,6 +207,8 @@ const enBase: Record<string, string> = {
 
   'page.batch.title': 'Process Many Files',
   'page.batch.sub': 'Create or resume a mixed-file batch by default',
+  'page.structured.title': 'Structured Data',
+  'page.structured.sub': 'De-identify tables, spreadsheets, and database exports',
   'page.start.title': 'Start Processing',
   'page.start.sub': 'Handle one file first, then move to batch processing',
   'page.batchText.title': 'Process Many Files',
@@ -416,6 +426,7 @@ const enBase: Record<string, string> = {
   'jobDetail.reject': 'Reject',
 
   'jobs.batchTask': 'Batch Task',
+  'jobs.structuredTask': 'Structured Task',
   'jobs.localExec': 'Local',
   'jobs.queueExec': 'Background Queue',
   'jobs.updatedAtUnknown': 'Update time unknown',
@@ -673,7 +684,7 @@ const enBase: Record<string, string> = {
   'settings.addType': 'New Recognition Item',
   'settings.pipelineTypeDescOcr': 'OCR + HaS · Same color as batch wizard "Image Text" (green)',
   'settings.pipelineTypeDescImg':
-    'HaS Image · Same color as batch wizard "Visual Features" (purple)',
+    'Visual elements · Same color as batch wizard "Visual Features" (purple)',
   'settings.saveHint':
     'After saving, items are displayed with the panel color scheme (green / purple), consistent with the batch wizard.',
   'settings.save': 'Save',
@@ -959,7 +970,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step4.qualityIssueLowConfidenceTitle':
     'Low model confidence; verify this region before keeping it selected.',
   'batchWizard.step4.qualityIssueFallbackTitle':
-    'Detected by a fallback rule, not the HaS Image model.',
+    'Detected by a fallback rule, not the visual element model.',
   'batchWizard.step4.qualityIssueTableStructureTitle':
     'Detected from table structure inference; check table boundaries and merged cells.',
   'batchWizard.step4.qualityIssueCoarseMarkupTitle':
@@ -973,8 +984,8 @@ const enBase: Record<string, string> = {
   'batchWizard.step4.qualityIssueWarningTitle': 'Recognition returned a warning for this region.',
   'batchWizard.step4.confidence': 'Confidence',
   'batchWizard.step4.source': 'Source',
-  'batchWizard.step4.sourceHasImageModel': 'HaS Image model',
-  'batchWizard.step4.sourceHasImageModelTitle': 'Detected by the HaS Image model pipeline.',
+  'batchWizard.step4.sourceVisualFeatureModel': 'Visual element model',
+  'batchWizard.step4.sourceVisualFeatureModelTitle': 'Detected by the LocateAnything visual element pipeline.',
   'batchWizard.step4.sourceOcrHas': 'OCR+HaS',
   'batchWizard.step4.sourceOcrHasTitle': 'Detected from OCR text and HaS entity matching.',
   'batchWizard.step4.sourceTable': 'Table',
@@ -988,7 +999,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step4.sourceSummaryChipTitle':
     '{source}: {count} detection regions on the current page.',
   'batchWizard.step4.pipelineOcrHas': 'OCR+HaS',
-  'batchWizard.step4.pipelineHasImage': 'HaS Image',
+  'batchWizard.step4.pipelineVisualFeature': 'Visual elements',
   'batchWizard.step4.pipelineRan': 'ran',
   'batchWizard.step4.pipelineSkipped': 'skipped',
   'batchWizard.step4.pipelineFailed': 'failed',
@@ -1061,7 +1072,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step5.visualIssueTableStructure': 'Table inference',
   'batchWizard.step5.visualEvidenceSummary': 'Visual sources',
   'batchWizard.step5.visualEvidenceFile': 'Visual sources for {name}',
-  'batchWizard.step5.visualSourceHasImage': 'HaS Image model',
+  'batchWizard.step5.visualSourceVisualFeature': 'Visual element model',
   'batchWizard.step5.visualSourceFallback': 'Fallback',
   'batchWizard.step5.visualSourceOcrHas': 'OCR+HaS',
   'batchWizard.step5.visualSourceTable': 'Table',
@@ -1199,7 +1210,6 @@ const enOverrides: Record<string, string> = {
   'health.openModelSettings': 'Open model settings',
   'health.impact.paddleOcr': 'Affects OCR, scanned PDFs, and image text extraction.',
   'health.impact.hasNer': 'Affects text semantic recognition and batch text jobs.',
-  'health.impact.hasImage': 'Affects image sensitive-region detection.',
   'health.modelServicesDownHint':
     'The main service is available, but some recognition services are not running. The matching capabilities will return empty results.',
   'health.modelServicesBusyHint':
@@ -1248,8 +1258,6 @@ const enOverrides: Record<string, string> = {
     'Scanned PDFs and images may miss text until OCR is healthy; text-only files and manual review can still continue.',
   'health.serviceNext.hasNer':
     'Semantic text labels may be missing until text recognition is healthy; use manual review or retry later.',
-  'health.serviceNext.hasImage':
-    'Image sensitive regions may be missing until image recognition is healthy; inspect images manually before export.',
   'safety.badge.short': 'Local only',
   'batchHub.kicker': 'Batch jobs',
   'batchHub.title': 'Create a mixed-file batch',
@@ -1451,9 +1459,8 @@ const enOverrides: Record<string, string> = {
   'playground.vision': 'Vision',
   'playground.ocrShort': 'OCR',
   'playground.imageShort': 'Image',
-  'playground.hasImageShort': 'HaS Image',
   'playground.imageTextRange': 'Image text',
-  'playground.visualRegionRange': 'Visual regions',
+  'playground.visualRegionRange': 'Visual elements',
   'playground.selected': 'selected',
   'playground.textPresetLabel': 'Text recognition list',
   'playground.saveAsTextPreset': 'Save text list',
@@ -1463,12 +1470,11 @@ const enOverrides: Record<string, string> = {
   'playground.fullPreset': 'Full',
   'playground.clear': 'Clear',
   'playground.selectRecommended': 'Select Recommended',
-  'playground.hasImageTypesHint':
-    'HaS Image keeps the fixed 21 visual classes. Paper is visible but opt-in, so it is off by default.',
+  'playground.visualFeatureTypesHint':
+    'LocateAnything provides 22 fixed visual element presets, with paper and signature enabled like the other preset items.',
   'playground.visualDetailsSummary': 'Visual label details',
-  'playground.paperOptInBadge': 'Opt-in',
-  'playground.paperOptInAria':
-    'Paper, opt-in. Off by default because it can broaden page-background detection.',
+  'playground.paperOptInBadge': 'Enabled',
+  'playground.paperOptInAria': 'Paper is part of the LocateAnything fixed visual element preset.',
   'playground.group.regex': 'Fixed format',
   'playground.group.llm': 'AI Semantic',
   'playground.group.semantic': 'Semantic recognition',
@@ -1535,8 +1541,8 @@ const enOverrides: Record<string, string> = {
   'playground.redactDisabledNoSelection':
     'All results are currently deselected. Select at least one item, or confirm that nothing needs redaction.',
   'playground.sourceOcr': 'OCR',
-  'playground.sourceImage': 'Image',
-  'playground.sourceVlm': 'Vision language',
+  'playground.sourceImage': 'Visual element',
+  'playground.sourceVisualFeature': 'Visual element',
   'playground.sourceManual': 'Manual',
   'playground.imageRegion': 'Image region',
   'playground.sourceRegex': 'Regex',
@@ -1641,9 +1647,9 @@ const enOverrides: Record<string, string> = {
   'settings.pipelineNamePlaceholder.ocr': 'For example: contract applicant name',
   'settings.pipelineNamePlaceholder.image': 'For example: face region',
   'settings.pipelineDisplayName.ocr': 'OCR + HaS',
-  'settings.pipelineDisplayName.image': 'HaS Image',
+  'settings.pipelineDisplayName.image': 'Visual elements',
   'settings.pipelineDescription.image':
-    'Use the fixed 21 HaS Image classes to detect faces, seals, documents, QR codes, receipts, and other supported visual sensitive regions.',
+    'Use LocateAnything fixed visual element presets to detect faces, seals, documents, QR codes, receipts, signatures, paper, and related visual regions.',
   'settings.textModel.infoTitle': 'Text NER service',
   'settings.textModel.infoDesc':
     'Configure the text recognition endpoint used by the product. Save to apply immediately, or test first with the current address.',
@@ -1691,9 +1697,9 @@ const enOverrides: Record<string, string> = {
   'settings.visionModel.dialog.desc':
     'Set the connection details for this vision inference backend.',
   'settings.visionModel.nameLabel': 'Display name',
-  'settings.visionModel.namePlaceholder': 'For example: HaS Image local 8081',
+  'settings.visionModel.namePlaceholder': 'For example: LocateAnything local 8090',
   'settings.visionModel.providerLabel': 'Provider',
-  'settings.visionModel.provider.local': 'Local HTTP (HaS Image /health)',
+  'settings.visionModel.provider.local': 'Local HTTP (LocateAnything /health)',
   'settings.visionModel.provider.openai': 'OpenAI-compatible (/v1/models)',
   'settings.visionModel.provider.custom': 'Custom HTTP',
   'settings.visionModel.modelLabel': 'Model identifier',
@@ -1740,12 +1746,12 @@ const enOverrides: Record<string, string> = {
   'settings.redaction.regexGroup': 'Fixed-format recognition items',
   'settings.redaction.semanticGroup': 'Semantic recognition items (HaS NER)',
   'settings.redaction.ocrGroup': 'Image text recognition items (OCR + HaS)',
-  'settings.redaction.imageGroup': 'Visual region recognition items (HaS Image)',
+  'settings.redaction.imageGroup': 'Visual elements (fixed classes)',
   'settings.redaction.imageGroupHint':
-    'HaS Image uses the fixed 21 visual classes. Paper is optional and off by default. Signatures and handwriting can still be found from OCR or local evidence, but they are not HaS Image classes.',
-  'settings.redaction.paperOptInBadge': 'Opt-in',
+    'LocateAnything locates the fixed visual preset group: the original 21 classes plus signature, for 22 enabled visual elements.',
+  'settings.redaction.paperOptInBadge': 'Enabled',
   'settings.redaction.paperOptInAria':
-    'Paper, opt-in. Off by default because it can broaden page-background detection.',
+    'Paper is part of the LocateAnything fixed visual element preset.',
   'settings.redaction.defaultNameText': 'Default text recognition list',
   'settings.redaction.defaultNameVision': 'Default image recognition list',
   'settings.redaction.defaultShort': 'Default',
@@ -1931,49 +1937,49 @@ Object.assign(enOverrides, {
   'jobNav.viewFailureDetail': 'View failure detail',
   'jobNav.taskCancelled': 'Task cancelled and cannot be edited',
   'jobNav.viewDetail': 'View detail',
-  'settings.redaction.vlmGroup': 'Visual semantic items (VLM)',
-  'settings.pipelineDisplayName.vlm': 'VLM semantic vision',
-  'settings.pipelineDescription.vlm':
+  'settings.redaction.visualFeatureGroup': 'Visual elements (custom checklist)',
+  'settings.pipelineDisplayName.visualFeature': 'Visual element checklist',
+  'settings.pipelineDescription.visualFeature':
     'Use a local vision-language model and checklist rules to detect signatures, handwriting, approval notes, and custom visual features.',
-  'settings.pipelineTypeDescVlm':
-    'Describe what the VLM should box using checklist rules. Put one rule per line.',
-  'settings.vlmRulesLabel': 'Detection checklist',
-  'settings.vlmRulesPlaceholder':
+  'settings.pipelineTypeDescVisualFeature':
+    'Describe what the VisualFeature should box using checklist rules. Put one rule per line.',
+  'settings.visualFeatureRulesLabel': 'Detection checklist',
+  'settings.visualFeatureRulesPlaceholder':
     'One rule per line, for example:\nDetect handwritten signatures\nBox only the ink strokes, not the empty signing cell',
-  'settings.vlmNegativeEnabled': 'Enable negative rules',
-  'settings.vlmNegativeLabel': 'Negative rules',
-  'settings.vlmNegativePlaceholder':
+  'settings.visualFeatureNegativeEnabled': 'Enable negative rules',
+  'settings.visualFeatureNegativeLabel': 'Negative rules',
+  'settings.visualFeatureNegativePlaceholder':
     'For example: printed names, empty signing cells, and table lines should not be returned.',
-  'settings.vlmChecklistLabel': 'Visual semantic checklist',
-  'settings.vlmChecklistAdd': 'Add row',
-  'settings.vlmChecklistRule': 'Checklist',
-  'settings.vlmChecklistPositive': 'Positive prompt',
-  'settings.vlmChecklistNegative': 'Negative prompt',
-  'settings.vlmChecklistRulePlaceholder': 'For example: detect handwritten signatures',
-  'settings.vlmChecklistPositivePlaceholder': 'Visual features that should match',
-  'settings.vlmChecklistNegativePlaceholder': 'Similar cases that should not match',
-  'settings.vlmChecklistRemove': 'Remove checklist row',
-  'settings.vlmPositivePromptsLabel': 'Positive prompts',
-  'settings.vlmNegativePromptsLabel': 'Negative prompts',
-  'settings.vlmPositivePrompt': 'Positive prompt',
-  'settings.vlmNegativePrompt': 'Negative prompt',
-  'settings.vlmPromptAdd': 'Add row',
-  'settings.vlmPromptRemove': 'Remove prompt row',
-  'settings.vlmPositivePromptPlaceholder': 'For example: detect handwritten signature ink',
-  'settings.vlmNegativePromptPlaceholder':
+  'settings.visualFeatureChecklistLabel': 'Visual element checklist',
+  'settings.visualFeatureChecklistAdd': 'Add row',
+  'settings.visualFeatureChecklistRule': 'Checklist',
+  'settings.visualFeatureChecklistPositive': 'Positive prompt',
+  'settings.visualFeatureChecklistNegative': 'Negative prompt',
+  'settings.visualFeatureChecklistRulePlaceholder': 'For example: detect handwritten signatures',
+  'settings.visualFeatureChecklistPositivePlaceholder': 'Visual features that should match',
+  'settings.visualFeatureChecklistNegativePlaceholder': 'Similar cases that should not match',
+  'settings.visualFeatureChecklistRemove': 'Remove checklist row',
+  'settings.visualFeaturePositivePromptsLabel': 'Positive prompts',
+  'settings.visualFeatureNegativePromptsLabel': 'Negative prompts',
+  'settings.visualFeaturePositivePrompt': 'Positive prompt',
+  'settings.visualFeatureNegativePrompt': 'Negative prompt',
+  'settings.visualFeaturePromptAdd': 'Add row',
+  'settings.visualFeaturePromptRemove': 'Remove prompt row',
+  'settings.visualFeaturePositivePromptPlaceholder': 'For example: detect handwritten signature ink',
+  'settings.visualFeatureNegativePromptPlaceholder':
     'For example: printed names, empty signing cells, and table lines should not match',
-  'settings.vlmSamplesLabel': 'Sample images',
-  'settings.vlmSamplesHint':
+  'settings.visualFeatureSamplesLabel': 'Sample images',
+  'settings.visualFeatureSamplesHint':
     'Up to 5 images, sent as few-shot references to the visual semantic model.',
-  'settings.vlmSamplesUpload': 'Upload samples',
-  'settings.vlmSamplePositive': 'Positive sample',
-  'settings.vlmSampleNegative': 'Negative sample',
-  'settings.vlmSampleLabelPlaceholder': 'Sample note',
-  'settings.vlmSampleRemove': 'Remove sample',
-  'settings.vlmSampleAlt': 'Sample image',
-  'playground.vlmShort': 'VLM',
-  'playground.vlmRange': 'Visual semantic features',
-  'batchWizard.step1.vlmTypes': 'Visual semantic features',
+  'settings.visualFeatureSamplesUpload': 'Upload samples',
+  'settings.visualFeatureSamplePositive': 'Positive sample',
+  'settings.visualFeatureSampleNegative': 'Negative sample',
+  'settings.visualFeatureSampleLabelPlaceholder': 'Sample note',
+  'settings.visualFeatureSampleRemove': 'Remove sample',
+  'settings.visualFeatureSampleAlt': 'Sample image',
+  'playground.visualFeatureShort': 'Visual elements',
+  'playground.visualFeatureRange': 'Visual element checklist',
+  'batchWizard.step1.visualFeatureTypes': 'Visual element checklist',
 });
 
 Object.assign(enOverrides, {
@@ -1993,6 +1999,21 @@ Object.assign(enOverrides, {
 });
 
 Object.assign(enOverrides, {
+  'playground.visualRegionRange': 'Visual features',
+  'playground.visualFeatureShort': 'Visual features',
+  'playground.visualFeatureRange': 'Visual features',
+  'health.service.visual_features': 'Visual feature service',
+  'history.previewImageRegion': 'Visual feature',
+  'entityGroup.visual': 'Visual features',
+  'settings.pipelineDisplayName.image': 'Visual features',
+  'settings.pipelineDisplayName.visualFeature': 'Visual features',
+  'settings.redaction.imageGroup': 'Visual features',
+  'settings.redaction.visualFeatureGroup': 'Visual features',
+  'settings.visualFeatureChecklistLabel': 'Visual feature checklist',
+  'batchWizard.step1.visualFeatureTypes': 'Visual features',
+});
+
+Object.assign(enOverrides, {
   'history.fileKindText': 'Text',
   'history.fileKindImage': 'Image',
   'history.fileKindMixed': 'Mixed',
@@ -2003,7 +2024,7 @@ Object.assign(enOverrides, {
 Object.assign(enOverrides, {
   'layout.switchToEnglish': 'English',
   'layout.switchToChinese': '中文',
-  'settings.redaction.imageGroup': 'Visual features (HaS Image)',
+  'settings.redaction.imageGroup': 'Visual elements',
   'settings.textPipelineIntro':
     'Text recognition now defaults to HaS model capability. Add a custom fallback only for confirmed bad cases.',
   'settings.addCustomFallback': 'Add custom fallback',
@@ -2036,12 +2057,12 @@ Object.assign(enOverrides, {
   'settings.redaction.regexGroup': 'Custom fallback',
   'settings.redaction.semanticGroup': 'HaS text recognition',
   'settings.redaction.dialogDesc':
-    'Recognition lists default to HaS text, OCR+HaS, and HaS Image. Custom fallbacks appear only when bad cases need them.',
+    'Recognition lists default to HaS text, OCR+HaS, and LocateAnything visual elements. Custom fallbacks appear only when bad cases need them.',
   'settings.pipelineDisplayName.ocr': 'OCR+HaS',
   'settings.pipelineDescription.ocr':
     'OCR extracts text and coordinates; HaS handles semantic recognition. The image pipeline does not use fallback expressions.',
-  'settings.pipelineDisplayName.image': 'HaS Image',
-  'settings.pipelineDescription.image': 'HaS Image / YOLO detects non-text visual regions.',
+  'settings.pipelineDisplayName.image': 'Visual elements',
+  'settings.pipelineDescription.image': 'LocateAnything detects fixed visual elements.',
   'playground.group.regex': 'Custom fallback',
   'playground.group.semantic': 'HaS text recognition',
   'playground.customFallbackEmpty':

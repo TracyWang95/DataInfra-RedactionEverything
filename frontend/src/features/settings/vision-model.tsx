@@ -137,7 +137,6 @@ export function VisionModel() {
                     config.enabled &&
                     config.provider === 'local' &&
                     config.id !== 'paddle_ocr_service' &&
-                    config.id !== 'vlm_service' &&
                     !isActive;
 
                   return (
