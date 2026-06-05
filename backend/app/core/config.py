@@ -254,9 +254,13 @@ class Settings(BaseSettings):
     # count, and the validator below clamps operator overrides to 1..4. Lower
     # this to 1 when GPU memory is already above 90% or model services are cold.
     BATCH_RECOGNITION_PAGE_CONCURRENCY: int = 2
-    # Run OCR/HaS and LocateAnything in parallel by default. Structure is no
-    # longer part of the default vision chain.
-    VISION_DUAL_PIPELINE_PARALLEL: bool = True
+    # Single-GPU safety: run OCR/HaS and LocateAnything SEQUENTIALLY by default.
+    # On one GPU, running both heavy VLMs at the same time causes ~5-10x slowdown
+    # from GPU contention (measured: 54s parallel vs ~10s serial on one file).
+    # Enabling parallel is only safe after both heavy GPU calls go through a
+    # single-GPU inference gate (not yet wired). Structure is no longer part of
+    # the default vision chain.
+    VISION_DUAL_PIPELINE_PARALLEL: bool = False
     SERIALIZE_SHARED_GPU_MODELS: bool = True
     # PP-StructureV3 table fallback exposed by the same OCR microservice.
     # PaddleOCR-VL 1.6 is the default OCR/layout path. Keep Structure disabled
