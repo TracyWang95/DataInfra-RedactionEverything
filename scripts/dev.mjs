@@ -132,6 +132,7 @@ const locatePort = env.LOCATE_ANYTHING_PORT || '8090';
 const ocrVlEnabled = !['0', 'false', 'no', 'off', ''].includes(
   String(env.OCR_VL_ENABLED ?? '0').trim().toLowerCase(),
 );
+winEnv.OCR_VL_ENABLED = ocrVlEnabled ? '1' : '0';
 const children = [];
 
 function nvidiaDllDirs() {
@@ -349,12 +350,20 @@ async function startLocateAnything() {
 }
 
 async function runWarmup() {
-  console.log('[dev] running warmup');
+  console.log('[dev] running warmup (best-effort)');
   const child = spawnLogged('warmup', windowsPython, ['scripts/warmup_models.py'], { cwd: backendDir, env: winEnv });
-  await new Promise((resolve, reject) => {
-    child.on('exit', (code) =>
-      code === 0 ? resolve() : reject(new PublicStartupError('warmup')),
-    );
+  // Warmup is a pre-load optimization, not a readiness gate: every service was
+  // already confirmed online via waitJson before this. A slow cold inference
+  // (e.g. the 3B LocateAnything first /detect) must NOT tear down a healthy
+  // stack, so treat warmup as best-effort and continue regardless of exit code.
+  await new Promise((resolve) => {
+    child.on('exit', (code) => {
+      if (code !== 0) {
+        console.log(`[dev] warmup exited code=${code}; continuing (models are up, first request may be slower)`);
+      }
+      resolve();
+    });
+    child.on('error', () => resolve());
   });
 }
 

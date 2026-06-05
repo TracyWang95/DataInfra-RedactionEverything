@@ -177,6 +177,9 @@ def warmup_has_text() -> bool:
 
 
 def warmup_paddle_ocr() -> bool:
+    if os.environ.get("OCR_VL_ENABLED", "1").strip().lower() in {"0", "false", "no", "off"}:
+        print("[warmup] [SKIP] PaddleOCR-VL disabled (PP-StructureV3-only mode)")
+        return True
     print("[warmup] PaddleOCR-VL ...")
     try:
         start = time.perf_counter()
