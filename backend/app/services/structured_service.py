@@ -48,27 +48,27 @@ class LoadedTable:
 _COLUMN_NAME_HINTS: list[tuple[str, str, str, float]] = [
     (r"(phone|mobile|tel|手机号|手机|电话|联系方式|联系电话)", "PHONE", "high", 0.95),
     (r"(email|mail|閭|鐢靛瓙閭欢)", "EMAIL", "high", 0.95),
-    (r"(id.?card|韬唤璇亅璇佷欢鍙穦璇佷欢鍙风爜|identity)", "ID_CARD", "critical", 0.95),
-    (r"(bank.?card|閾惰鍗鍗″彿|閾惰璐﹀彿|璐︽埛|璐﹀彿)", "BANK_CARD", "critical", 0.88),
+    (r"(id.?card|身份证|证件号|证件号码|identity)", "ID_CARD", "critical", 0.95),
+    (r"(bank.?card|银行卡号|银行账号|账户|账号)", "BANK_CARD", "critical", 0.88),
     (r"(password|passwd|pwd|密码|口令)", "USERNAME_PASSWORD", "critical", 0.98),
-    (r"(token|secret|key|api.?key|瀵嗛挜|浠ょ墝|鍑瘉)", "AUTH_SECRET", "critical", 0.96),
-    (r"(company|corp|org|鏈烘瀯|鍏徃|鍗曚綅|渚涘簲鍟唡瀹㈡埛|浼佷笟)", "ORG", "high", 0.86),
+    (r"(token|secret|key|api.?key|密钥|令牌|凭证)", "AUTH_SECRET", "critical", 0.96),
+    (r"(company|corp|org|机构|公司|单位|供应商|客户|企业)", "ORG", "high", 0.86),
     (
         r"(^name$|full.?name|customer.?name|user.?name|receiver.?name|contact.?name|person.?name|"
         r"employee.?name|staff.?name|agent.?name|account.?name|payer.?name|payee.?name|owner.?name|"
-        r"legal.?representative|濮撳悕|鑱旂郴浜簗瀹㈡埛鍚峾鐢ㄦ埛鍚峾鏀朵欢浜簗缁忓姙浜簗浠ｇ悊浜簗璐熻矗浜簗寮€鎴峰悕|璐︽埛鍚?",
+        r"legal.?representative|姓名|联系人|客户名|用户名|收件人|经办人|代理人|负责人|开户名|账户名",
         "PERSON",
         "high",
         0.72,
     ),
     (r"(address|addr|住址|地址|门牌|地区|省|市|区县)", "ADDRESS", "medium", 0.82),
-    (r"(amount|price|money|salary|fee|閲戦|浠锋牸|鍗曚环|鍚堣|浣欓|璐圭敤|鏀跺叆|鏀嚭)", "AMOUNT", "medium", 0.82),
+    (r"(amount|price|money|salary|fee|金额|价格|单价|合计|余额|费用|收入|支出)", "AMOUNT", "medium", 0.82),
     (r"(date|time|created|updated|生日|出生|日期|时间)", "DATE", "medium", 0.72),
     (r"(ip地址|ip$|ip_|ipaddress)", "IP_ADDRESS", "medium", 0.92),
     (r"(mac地址|mac$|mac_)", "MAC_ADDRESS", "medium", 0.9),
-    (r"(url|website|site|网址|链接)", "URL_WEBSITE", "medium", 0.88),
+    (r"(url|website|site|缃戝潃|閾炬帴)", "URL_WEBSITE", "medium", 0.88),
     (r"(license|plate|车牌)", "LICENSE_PLATE", "high", 0.84),
-    (r"(contract|鍚堝悓鍙穦璁㈠崟鍙穦鍗曟嵁鍙穦缂栧彿|娴佹按鍙?", "DOCUMENT_NUMBER", "medium", 0.7),
+    (r"(contract|合同号|订单号|单据号|编号|流水号)", "DOCUMENT_NUMBER", "medium", 0.7),
 ]
 
 _BUSINESS_DESCRIPTOR_COLUMN_PATTERNS = [
@@ -80,7 +80,7 @@ _BUSINESS_DESCRIPTOR_COLUMN_PATTERNS = [
         r")([_\-\s]|$)",
         re.I,
     ),
-    re.compile(r"(浜у搧|鍟嗗搧|鐗╂枡|璁惧|瑁呭|鍣ㄦ潗|鍨嬪彿|瑙勬牸|鍝佺墝|绫荤洰|鍝佺被|鏍囬|涓婚|椤圭洰|鏈嶅姟|濂楅|鏂规|鐗堟湰|鐘舵€亅绫诲瀷|绛夌骇|澶囨敞|鎽樿|鎻忚堪|璇存槑|鍐呭)"),
+    re.compile(r"(产品|商品|物料|设备|装备|器材|型号|规格|品牌|类目|品类|标题|主题|项目|服务|套餐|方案|版本|状态|类型|等级|备注|摘要|描述|说明|内容)"),
 ]
 
 _BUSINESS_DESCRIPTOR_BLOCK_TYPES = {
@@ -596,7 +596,7 @@ def is_number_like(value: Any) -> bool:
         return False
     if isinstance(value, int | float | Decimal):
         return True
-    text = str(value).strip().replace(",", "").replace("¥", "")
+    text = str(value).strip().replace(",", "").replace("楼", "")
     if not text:
         return False
     try:
@@ -811,7 +811,7 @@ def sample_looks_semantic(sample: str) -> bool:
         return False
     if re.search(r"[\u4e00-\u9fff]", text):
         return True
-    if re.search(r"[A-Za-z]+[\s·.'-]+[A-Za-z]+", text):
+    if re.search(r"[A-Za-z]+[\s路.'-]+[A-Za-z]+", text):
         return True
     if len(text) >= 16 and re.search(r"[A-Za-z]", text) and not re.fullmatch(r"[A-Za-z0-9_\-]+", text):
         return True
@@ -1466,7 +1466,7 @@ def mask_keep_edges(text: str, left: int, right: int) -> str:
 
 def generalize_value(text: str, *, entity_type: str) -> str:
     if entity_type == "DATE":
-        match = re.match(r"^(\d{4})[-/年](\d{1,2})", text)
+        match = re.match(r"^(\d{4})[-/骞碷(\d{1,2})", text)
         if match:
             return f"{match.group(1)}-{int(match.group(2)):02d}"
     if entity_type == "ADDRESS":
@@ -1476,7 +1476,7 @@ def generalize_value(text: str, *, entity_type: str) -> str:
 
 def bucket_value(text: str) -> str:
     try:
-        amount = Decimal(text.replace(",", "").replace("¥", ""))
+        amount = Decimal(text.replace(",", "").replace("楼", ""))
     except InvalidOperation:
         return "***"
     if amount < 1_000:

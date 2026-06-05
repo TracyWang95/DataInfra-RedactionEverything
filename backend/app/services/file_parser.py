@@ -509,7 +509,7 @@ class FileParser:
         doc = fitz.open(resolved)
         try:
             if page < 1 or page > len(doc):
-                raise ValueError(f"椤电爜瓒呭嚭鑼冨洿: {page}")
+                raise ValueError(f"页码超出范围: {page}")
 
             pdf_page = doc.load_page(page - 1)
             zoom = dpi / 72

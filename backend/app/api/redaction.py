@@ -1,6 +1,6 @@
 """
-鍖垮悕鍖栧鐞?API 璺敱
-澶勭悊鏂囨。鍖垮悕鍖栥€佸姣旂瓑鎿嶄綔
+匿名化处理 API 路由
+处理文档匿名化、对比等操作
 
 Thin routing layer 鈥?business logic lives in
 app.services.redaction_orchestrator.
@@ -43,11 +43,11 @@ async def execute_redaction(
     owner_id: str = Depends(require_auth),
 ):
     """
-    鎵ц鏂囨。鍖垮悕鍖?
+    执行文档匿名化
 
-    鏍规嵁鎻愪緵鐨勫疄浣撳垪琛ㄥ拰閰嶇疆锛屽鏂囨。杩涜鍖垮悕鍖栧鐞?
-    - 鏂囨湰绫绘枃妗? 鏇挎崲鏁忔劅鏂囨湰
-    - 鍥剧墖绫绘枃妗? 瀵规晱鎰熷尯鍩熸墽琛岄┈璧涘厠銆佹ā绯婃垨绾壊閬僵
+    根据提供的实体列表和配置，对文档进行匿名化处理
+    - 文本类文档: 替换敏感文本
+    - 图片类文档: 对敏感区域执行马赛克、模糊或纯色遮罩
     """
     scoped_idempotency_key = f"{owner_id}:{x_idempotency_key}" if x_idempotency_key else None
     cached = check_idempotency(scoped_idempotency_key)
@@ -101,9 +101,9 @@ async def preview_image_redaction(
 @router.get("/redaction/{file_id}/compare", response_model=CompareData)
 async def get_comparison(file_id: str, owner_id: str = Depends(require_auth)):
     """
-    鑾峰彇鍖垮悕鍖栧墠鍚庡姣旀暟鎹?
+    获取匿名化前后对比数据
 
-    杩斿洖鍘熷鍐呭鍜屽尶鍚嶅寲鍚庡唴瀹癸紝鐢ㄤ簬鍓嶇灞曠ず瀵规瘮瑙嗗浘
+    返回原始内容和匿名化后内容，用于前端展示对比视图
     """
     try:
         _fms.assert_file_owner(file_id, owner_id)

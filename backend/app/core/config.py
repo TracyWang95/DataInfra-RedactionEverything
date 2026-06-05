@@ -1,6 +1,6 @@
 """
 应用配置管理
-鏀寔浠庣幆澧冨彉閲忓拰 .env 鏂囦欢鍔犺浇閰嶇疆
+支持从环境变量和 .env 文件加载配置
 """
 import json
 import logging
@@ -173,8 +173,8 @@ def _load_or_create_jwt_secret(data_dir: str) -> str:
 class Settings(BaseSettings):
     """应用配置"""
 
-    # 搴旂敤鍩虹閰嶇疆
-    APP_NAME: str = "DataShield 鍖垮悕鍖栨暟鎹熀纭€璁炬柦"
+    # 应用基础配置
+    APP_NAME: str = "DataShield 匿名化数据基础设施"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
 
@@ -229,7 +229,7 @@ class Settings(BaseSettings):
     LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
     LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE: int = 1280
 
-    # 鏈湴鎸佷箙鍖栵紙绌轰覆 = 璺熼殢 DATA_DIR 鑷姩娲剧敓锛岃 model_validator锛?
+    # 本地持久化（空串 = 跟随 DATA_DIR 自动派生，见 model_validator）
     FILE_STORE_PATH: str = ""
     JOB_DB_PATH: str = ""
     PIPELINE_STORE_PATH: str = ""
@@ -237,15 +237,15 @@ class Settings(BaseSettings):
     ENTITY_TYPES_STORE_PATH: str = ""
     MODEL_CONFIG_PATH: str = ""
 
-    # PaddleOCR-VL 寰湇鍔￠厤缃紙鐙珛杩涚▼锛岀鍙?082锛?
+    # PaddleOCR-VL 微服务配置（独立进程，端口8082）
     OCR_BASE_URL: str = "http://127.0.0.1:8082"
-    # VL 鎺ㄧ悊甯?>120s锛堝ぇ鍥?CPU/鏄惧崱绻佸繖鏃讹級锛涘彲鐢ㄧ幆澧冨彉閲?OCR_TIMEOUT 瑕嗙洊
+    # VL 推理常 >120s（大图 CPU/显卡繁忙时）；可用环境变量 OCR_TIMEOUT 覆盖
     OCR_TIMEOUT: float = 360.0
     # PaddleOCR-VL generation budget. Long scanned contract pages can exceed
     # 512 tokens; keep this configurable so accuracy and latency can be tuned
     # per GPU.
     OCR_MAX_NEW_TOKENS: int = 2048
-    # 涓诲悗绔帰娴?OCR /health 鐨勮秴鏃讹紙绉掞級锛涢鍚姞杞芥ā鍨嬭緝鎱紝杩囩煭浼氳鏄剧ず銆岀绾裤€?
+    # 主后端探测 OCR /health 的超时（秒）；首次加载模型较慢，过短会被显示「离线」
     OCR_HEALTH_PROBE_TIMEOUT: float = 5.0
     BATCH_RECOGNITION_PAGE_TIMEOUT: float = 180.0
     # Per-file page-level concurrency for vision recognition. This is not batch
@@ -286,7 +286,7 @@ class Settings(BaseSettings):
     # True: OCR 服务离线时直接报错而非尝试 CPU 回退（防止超慢推理阻塞队列）
     OCR_REQUIRE_GPU: bool = False
 
-    # 鏂囨湰 NER锛欻aS Text锛堥粯璁?vLLM 8080/v1锛孫penAI 鍏煎锛沴lama.cpp 浠呬繚鐣欎负鏃ц皟璇曞叆鍙ｏ級
+    # 文本 NER：HaS Text（默认 vLLM 8080/v1，OpenAI 兼容；llama.cpp 仅保留为旧调试入口）
     HAS_LLAMACPP_BASE_URL: str = "http://127.0.0.1:8080/v1"
     HAS_MODEL_PATH: str = "./models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf"
     HAS_TEXT_RUNTIME: str = ""
@@ -319,7 +319,7 @@ class Settings(BaseSettings):
     # 鍏煎鏃х幆澧冨彉閲?HAS_BASE_URL
     HAS_BASE_URL: str | None = None
 
-    # 璁よ瘉閰嶇疆锛圝WT_SECRET_KEY 鑻ユ湭閫氳繃鐜鍙橀噺鎸囧畾锛屽垯鑷姩鎸佷箙鍖栧埌 data 鐩綍锛?
+    # 认证配置（JWT_SECRET_KEY 若未通过环境变量指定，则自动持久化到 data 目录）
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
@@ -434,7 +434,7 @@ class Settings(BaseSettings):
     def _validate_has_vision_min_text_chars_for_ner(cls, v: int) -> int:
         return max(1, min(10_000, v))
 
-    # 鍚庡彴宸ヤ綔寰幆 / 娓呯悊
+    # 后台工作循环 / 清理
     WORKER_LOOP_INTERVAL_SEC: float = 2.0
     ORPHAN_CLEANUP_AGE_SEC: int = 3600
 
@@ -457,16 +457,16 @@ class Settings(BaseSettings):
     def _validate_pdf_page_text_block_cache_pages(cls, v: int) -> int:
         return max(0, min(512, v))
 
-    # 鍖垮悕鍖栭厤缃?
+    # 匿名化配置
     DEFAULT_REPLACEMENT_MODE: Literal["smart", "mask", "custom"] = "smart"
 
-    # 鏂囦欢鍔犲瘑锛堥粯璁ゅ叧闂紱鍚敤鍚庝笂浼犳枃浠?AES-256-GCM 鍔犲瘑钀界洏锛?
+    # 文件加密（默认关闭；启用后上传文件 AES-256-GCM 加密落盘）
     FILE_ENCRYPTION_ENABLED: bool = False
 
     # 鐥呮瘨鎵弿锛堥渶 ClamAV daemon 鍦?CLAMD_HOST:CLAMD_PORT 鐩戝惉锛?
     VIRUS_SCAN_ENABLED: bool = False
 
-    # 鍙俊浠ｇ悊 IP / CIDR锛堝彧鏈?request.client.host 鍖归厤鏃舵墠淇′换 X-Forwarded-For锛?
+    # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）
     TRUSTED_PROXIES: list[str] = [
         "127.0.0.1",
         "::1",
@@ -475,7 +475,7 @@ class Settings(BaseSettings):
         "192.168.0.0/16",
     ]
 
-    # 缁撴瀯鍖栨棩蹇楋紙榛樿鐢熶骇 JSON锛孌EBUG 鏂囨湰锛?
+    # 结构化日志（默认生产 JSON，DEBUG 文本）
     LOG_JSON: bool = True
 
     @field_validator("DEBUG", mode="before")
@@ -522,7 +522,7 @@ class Settings(BaseSettings):
             self.MODEL_CONFIG_PATH = os.path.join(d, "model_config.json")
         else:
             self.MODEL_CONFIG_PATH = _resolve_local_path(self.MODEL_CONFIG_PATH)
-        # JWT 瀵嗛挜锛氫紭鍏堢幆澧冨彉閲忥紝鍚﹀垯浠?data 鐩綍鍔犺浇鎴栭娆＄敓鎴愬苟鎸佷箙鍖?
+        # JWT 密钥：优先环境变量，否则从 data 目录加载或首次生成并持久化
         if not self.JWT_SECRET_KEY:
             env_key = os.environ.get("JWT_SECRET_KEY", "") or os.environ.get("LEGAL_REDACTION_JWT_SECRET", "")
             if env_key:

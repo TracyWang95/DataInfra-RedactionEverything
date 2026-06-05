@@ -1,5 +1,5 @@
-"""
-鎵归噺浠诲姟 Job / JobItem 鈥?SQLite锛圵AL锛夋寔涔呭寲銆?
+﻿"""
+批量任务 Job / JobItem — SQLite（WAL）持久化。
 """
 from __future__ import annotations
 
@@ -30,23 +30,23 @@ class JobType(str, Enum):
 class JobStatus(str, Enum):
     DRAFT = "draft"
     QUEUED = "queued"
-    PROCESSING = "processing"           # 鍚堝苟鏃?running/redacting
+    PROCESSING = "processing"           # 合并旧 running/redacting
     AWAITING_REVIEW = "awaiting_review"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-    # 鍏煎鏃ф暟鎹鍙栵紙涓嶅仛鏂板啓鍏ワ級
+    # 兼容旧数据读取（不做新写入）
     RUNNING = "running"
     REDACTING = "redacting"
 
 
 class JobItemStatus(str, Enum):
     PENDING = "pending"
-    PROCESSING = "processing"           # 鍚堝苟鏃?queued/parsing/ner/vision/redacting
+    PROCESSING = "processing"           # 合并旧 queued/parsing/ner/vision/redacting
     AWAITING_REVIEW = "awaiting_review"
     COMPLETED = "completed"
     FAILED = "failed"
-    # 鍏煎鏃ф暟鎹鍙?
+    # 兼容旧数据读取
     QUEUED = "queued"
     PARSING = "parsing"
     NER = "ner"
@@ -57,10 +57,10 @@ class JobItemStatus(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# State-machine: 绠€鍖栫増锛屽彧鏈夋牳蹇冭浆鎹?
+# State-machine: 简化版，只有核心转换
 # ---------------------------------------------------------------------------
 
-# 鏂扮姸鎬?+ 鏃х姸鎬佸吋瀹癸細浠讳綍鏃т腑闂寸姸鎬侀兘鍙浆鍒版柊鐘舵€?
+# 新状态 + 旧状态兼容：任何旧中间状态都可转到新状态
 _ALL_JOB = tuple(JobStatus)
 VALID_JOB_TRANSITIONS: dict[JobStatus, tuple[JobStatus, ...]] = {
     JobStatus.DRAFT:           (JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.CANCELLED),
@@ -70,7 +70,7 @@ VALID_JOB_TRANSITIONS: dict[JobStatus, tuple[JobStatus, ...]] = {
     JobStatus.COMPLETED:       (JobStatus.QUEUED,),
     JobStatus.FAILED:          (JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.CANCELLED),
     JobStatus.CANCELLED:       (),
-    # 鏃х姸鎬佸吋瀹癸細鍙互杞埌浠讳綍鏂扮姸鎬?
+    # 旧状态兼容：可以转到任何新状态
     JobStatus.RUNNING:         _ALL_JOB,
     JobStatus.REDACTING:       _ALL_JOB,
 }
@@ -82,7 +82,7 @@ VALID_ITEM_TRANSITIONS: dict[JobItemStatus, tuple[JobItemStatus, ...]] = {
     JobItemStatus.AWAITING_REVIEW: (JobItemStatus.PROCESSING, JobItemStatus.COMPLETED, JobItemStatus.FAILED),
     JobItemStatus.COMPLETED:       (),
     JobItemStatus.FAILED:          (JobItemStatus.PENDING, JobItemStatus.PROCESSING),
-    # 鏃х姸鎬佸吋瀹癸細鍙互杞埌浠讳綍鏂扮姸鎬?
+    # 旧状态兼容：可以转到任何新状态
     JobItemStatus.QUEUED:           _ALL_ITEM,
     JobItemStatus.PARSING:          _ALL_ITEM,
     JobItemStatus.NER:              _ALL_ITEM,
@@ -195,7 +195,7 @@ class JobStore:
         ensure_db_dir(self._path)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
-            # WAL 鑷姩 checkpoint 闃堝€硷紝闃叉 WAL 鏂囦欢鏃犻檺澧為暱
+            # WAL 自动 checkpoint 阈值，防止 WAL 文件无限增长
             conn.execute("PRAGMA wal_autocheckpoint = 1000")
             cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(job_items)").fetchall()}
             if "review_draft_json" not in cols:

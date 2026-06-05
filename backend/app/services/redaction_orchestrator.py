@@ -1,11 +1,11 @@
 """
-鍖垮悕鍖栫紪鎺掓湇鍔″眰 鈥?浠?api/redaction.py 鎻愬彇銆?
+匿名化编排服务层 — 从 api/redaction.py 提取。
 
-鍦ㄨ矾鐢卞鐞嗗櫒涓庡簳灞?Redactor/VisionService 涔嬮棿鐨勭紪鎺掑眰锛?
+在路由处理器与底层 Redactor/VisionService 之间的编排层：
 - 匿名化执行与 file_store 更新
-- entity_map 绠＄悊涓庣増鏈拷韪?
-- 鎶ュ憡鐢熸垚锛堝疄浣?bbox 缁熻锛?
-- 瑙嗚妫€娴嬬紪鎺?
+- entity_map 管理与版本追踪
+- 报告生成（实体 bbox 统计）
+- 视觉检测编排
 """
 from __future__ import annotations
 
@@ -348,7 +348,7 @@ async def detect_vision(
         snapshot = dict(file_info)
     owner_id = owner_id or str(snapshot.get("owner_id") or "local_user")
 
-    # 鑾峰彇涓や釜 Pipeline 鐨勭被鍨嬮厤缃?
+    # 获取两个 Pipeline 的类型配置
     from app.services.pipeline_service import get_pipeline, get_pipeline_types_for_mode
 
     all_ocr_has_types = get_pipeline_types_for_mode("ocr_has", owner_id=owner_id)
@@ -633,14 +633,14 @@ def get_entity_types_list() -> list[dict[str, Any]]:
     """Return the built-in entity type reference list."""
     return [
         {"value": EntityType.PERSON.value, "label": "人名", "color": "#F59E0B"},
-        {"value": EntityType.ORG.value, "label": "鏈烘瀯/鍏徃", "color": "#3B82F6"},
-        {"value": EntityType.ID_CARD.value, "label": "韬唤璇佸彿", "color": "#EF4444"},
+        {"value": EntityType.ORG.value, "label": "机构/公司", "color": "#3B82F6"},
+        {"value": EntityType.ID_CARD.value, "label": "身份证号", "color": "#EF4444"},
         {"value": EntityType.PHONE.value, "label": "电话号码", "color": "#10B981"},
         {"value": EntityType.ADDRESS.value, "label": "地址", "color": "#8B5CF6"},
-        {"value": EntityType.BANK_CARD.value, "label": "閾惰鍗″彿", "color": "#EC4899"},
+        {"value": EntityType.BANK_CARD.value, "label": "银行卡号", "color": "#EC4899"},
         {"value": EntityType.CASE_NUMBER.value, "label": "案件编号", "color": "#6366F1"},
         {"value": EntityType.DATE.value, "label": "日期", "color": "#14B8A6"},
-        {"value": EntityType.AMOUNT.value, "label": "閲戦", "color": "#F97316"},
+        {"value": EntityType.AMOUNT.value, "label": "金额", "color": "#F97316"},
         {"value": EntityType.CUSTOM.value, "label": "自定义", "color": "#6B7280"},
     ]
 
@@ -651,17 +651,17 @@ def get_replacement_modes_list() -> list[dict[str, Any]]:
         {
             "value": ReplacementMode.SMART.value,
             "label": "智能替换",
-            "description": "灏嗘晱鎰熶俊鎭浛鎹负璇箟鍖栫殑鏍囪瘑锛屽 '褰撲簨浜虹敳'銆?鍏徃A'",
+            "description": "将敏感信息替换为语义化的标识，如 '当事人甲'、'公司A'",
         },
         {
             "value": ReplacementMode.STRUCTURED.value,
             "label": "结构化语义标签",
-            "description": "鐢ㄧ粨鏋勫寲鏍囩鏇挎崲鏁忔劅淇℃伅锛屼繚鐣欏眰绾ц涔変笌鎸囦唬鍏崇郴",
+            "description": "用结构化标签替换敏感信息，保留层级语义与指代关系",
         },
         {
             "value": ReplacementMode.MASK.value,
             "label": "掩码替换",
-            "description": "灏嗘晱鎰熶俊鎭浛鎹负 *** 鎴栭儴鍒嗛殣钘忥紝濡?'寮?*'銆?138****1234'",
+            "description": "将敏感信息替换为 *** 或部分隐藏，如 '张**'、'138****1234'",
         },
         {
             "value": ReplacementMode.CUSTOM.value,

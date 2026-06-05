@@ -1,5 +1,5 @@
 """
-鎵归噺浠诲姟 Worker锛氳瘑鍒摼璺笌瀹￠槄闂搁棬锛涘彲娉ㄥ叆 JobRunnerPorts 渚涙祴璇曘€?
+批量任务 Worker：识别链路与审阅闸门；可注入 JobRunnerPorts 供测试。
 """
 from __future__ import annotations
 
@@ -88,12 +88,12 @@ def _refresh_job_status(store: JobStore, job_id: str) -> None:
                       JobItemStatus.QUEUED.value, JobItemStatus.PARSING.value,
                       JobItemStatus.NER.value, JobItemStatus.VISION.value}
             if any(s in active for s in sts):
-                # 杩樻湁 item 鍦ㄨ窇锛屼笉鏍?FAILED
+                # 还有 item 在跑，不标 FAILED
                 pass
             elif all(s == JobItemStatus.FAILED.value for s in sts):
                 store.update_job_status(job_id, JobStatus.FAILED)
             else:
-                # 娣峰悎缁堟€侊紙failed + completed/awaiting_review锛?
+                # 混合终态（failed + completed/awaiting_review）
                 _walk_job_to(store, job_id, JobStatus.AWAITING_REVIEW)
         else:
             logger.warning("_refresh_job_status: job %s has unhandled item statuses %s, not changing status", job_id, sts)
@@ -187,7 +187,7 @@ async def _run_redaction(
     try:
         store.update_item_status(item_id, JobItemStatus.REDACTING)
         await ports.execute_redaction(file_id, cfg)
-        # 楠岃瘉鍖垮悕鍖栦骇鐗╋細output_path 蹇呴』瀛樺湪鎵嶆爣璁板畬鎴?
+        # 验证匿名化产物：output_path 必须存在才标记完成
         from app.services.file_operations import get_file_info as _get_fi
         _fi = _get_fi(file_id) or {}
         if not _fi.get("output_path"):
@@ -346,8 +346,8 @@ class DefaultJobRunnerPorts(JobRunnerPorts):
 
         fi = get_file_info(file_id)
         if not fi:
-            raise RuntimeError(f"鏂囦欢涓嶅瓨鍦? {file_id}")
-        # 鍓嶇宸叉墽琛屽尶鍚嶅寲鏃惰烦杩囷紝閬垮厤閲嶅鍐欐枃浠讹紱浠嶇敱 _run_redaction 灏?item 鏍囦负瀹屾垚
+            raise RuntimeError(f"文件不存在: {file_id}")
+        # 前端已执行匿名化时跳过，避免重复写文件；仍由 _run_redaction 将 item 标为完成
         if fi.get("output_path"):
             return
 

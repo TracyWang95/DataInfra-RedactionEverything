@@ -20,7 +20,7 @@ router = APIRouter()
 
 @router.get("/vision-pipelines", response_model=list[PipelineConfig])
 async def get_pipelines(enabled_only: bool = False, owner_id: str = Depends(require_auth)):
-    """鑾峰彇鎵€鏈?Pipeline 閰嶇疆"""
+    """获取所有 Pipeline 配置"""
     return pipeline_service.list_pipelines(enabled_only, owner_id=owner_id)
 
 
@@ -112,5 +112,5 @@ async def delete_pipeline_type(mode: str, type_id: str, owner_id: str = Depends(
 async def reset_pipelines(owner_id: str = Depends(require_auth)):
     """Reset all pipelines to defaults."""
     pipeline_service.reset_pipelines(owner_id=owner_id)
-    return {"message": "宸查噸缃负榛樿閰嶇疆"}
+    return {"message": "已重置为默认配置"}
 

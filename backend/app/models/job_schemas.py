@@ -42,7 +42,7 @@ __all__ = [
 
 
 class JobItemMini(BaseModel):
-    """鍒楄〃宓屽鐢細涓庝换鍔¤鎯?CTA 瑙ｆ瀽涓€鑷寸殑鏈€灏?item 瀛楁"""
+    """列表嵌套用：与任务详情 CTA 解析一致的最小 item 字段"""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -69,7 +69,7 @@ class JobProgress(BaseModel):
 
 
 class JobEmbedSummary(BaseModel):
-    """GET /files?embed_job=1 鏃舵寜 job_id 鍘婚噸娉ㄥ叆锛屽噺灏戝墠绔€愭潯 getJob"""
+    """GET /files?embed_job=1 时按 job_id 去重注入，减少前端逐条 getJob"""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -112,7 +112,7 @@ class NavHints(BaseModel):
 
 
 class JobResponse(BaseModel):
-    """浠诲姟鎽樿鍝嶅簲锛坃job_to_summary 杩斿洖鍊硷級"""
+    """任务摘要响应（_job_to_summary 返回值）"""
     model_config = ConfigDict(extra="ignore")
 
     id: str

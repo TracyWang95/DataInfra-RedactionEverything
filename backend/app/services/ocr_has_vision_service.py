@@ -148,10 +148,10 @@ class SensitiveRegion:
 class OCRTextBlock:
     """OCR text block with a cached bounding box."""
     text: str
-    polygon: list[list[float]]  # 鍥涜竟褰㈤《鐐?[[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+    polygon: list[list[float]]  # 四边形顶点 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
     confidence: float = 1.0
 
-    # 鏋勯€犲悗缂撳瓨鐨?bbox 鍊?
+    # 构造后缓存的 bbox 值
     _bbox_cache: tuple[int, int, int, int] = field(default=(0, 0, 0, 0), init=False, repr=False)
 
     def __post_init__(self):
@@ -188,8 +188,8 @@ class OcrHasVisionService:
     """PaddleOCR-VL, PP-StructureV3, and HaS Text semantic vision service."""
 
     def __init__(self):
-        self._ocr_service = None   # OCR HTTP 瀹㈡埛绔?
-        self._has_client = None    # HaS NER 瀹㈡埛绔?
+        self._ocr_service = None   # OCR HTTP 客户端
+        self._has_client = None    # HaS NER 客户端
         self._has_ready = False
         self.last_duration_ms: dict[str, Any] = {}
         self.last_ocr_blocks: list[OCRTextBlock] = []
@@ -394,32 +394,32 @@ class OcrHasVisionService:
         draw_result: bool = True,
     ) -> tuple[list[SensitiveRegion], str | None]:
         """
-        妫€娴嬫晱鎰熶俊鎭苟鍦ㄥ浘鍍忎笂缁樺埗
+        检测敏感信息并在图像上绘制
 
         娴佺▼锛?
         1. PaddleOCR 提取所有文字和精确坐标
-        2. HaS 鍒嗘瀽鏂囧瓧鍐呭锛岃瘑鍒晱鎰熷疄浣擄紙涓嶄緷璧栧潗鏍囷級
-        3. 鐢ㄦ枃瀛楀尮閰嶆妸鏁忔劅瀹炰綋鏄犲皠鍥?OCR 鍧愭爣
+        2. HaS 分析文字内容，识别敏感实体（不依赖坐标）
+        3. 用文字匹配把敏感实体映射回 OCR 坐标
 
         Args:
             image_bytes: 图像字节
-            vision_types: 鐢ㄦ埛鍚敤鐨勮瑙夌被鍨嬮厤缃垪琛?(VisionTypeConfig 瀵硅薄)
+            vision_types: 用户启用的视觉类型配置列表 (VisionTypeConfig 对象)
 
         Returns:
-            (鏁忔劅鍖哄煙鍒楄〃, base64缂栫爜鐨勫甫妗嗗浘鍍?
+            (敏感区域列表, base64编码的带框图像)
         """
         perf_start = time.perf_counter()
         duration_ms: dict[str, Any] = {}
         self.last_duration_ms = duration_ms
         self.last_ocr_blocks = []
 
-        # 鍑嗗鍥惧儚
+        # 准备图像
         prepare_start = time.perf_counter()
         image, width, height = self._prepare_image(image_bytes)
         duration_ms["prepare"] = round((time.perf_counter() - prepare_start) * 1000)
         logger.info("Image size: %dx%d", width, height)
 
-        # 鎶婄敤鎴烽厤缃浆鎹负绫诲瀷 ID 鍒楄〃
+        # 把用户配置转换为类型 ID 列表
         visual_entity_type_ids: list[str] = []
         if vision_types:
             requested_entity_type_ids = _canonicalize_image_text_types([t.id for t in vision_types])
@@ -499,7 +499,7 @@ class OcrHasVisionService:
                 duration_ms["has_ner"] = 0
                 logger.info("HaS NER skipped; selected vision types are visual-only")
 
-            # 3. 鏄犲皠瀹炰綋鍒?OCR 鍧愭爣
+            # 3. 映射实体到 OCR 坐标
             if entities:
                 match_start = time.perf_counter()
                 matched_regions = self._match_entities_to_ocr(ocr_blocks, entities)

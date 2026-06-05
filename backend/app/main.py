@@ -1,5 +1,5 @@
 """
-鍖垮悕鍖栨暟鎹熀纭€璁炬柦 - FastAPI 搴旂敤鍏ュ彛
+匿名化数据基础设施 - FastAPI 应用入口
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ from app.core.health_checks import check_has_ner_health, check_ocr_health_sync, 
 from app.core.logging_config import setup_logging
 from app.models.schemas import HealthResponse
 
-# 鐢熶骇鐜鐢?JSON 鏍煎紡锛汥EBUG 妯″紡鐢ㄦ枃鏈牸寮忥紙浜虹被鍙锛?
+# 生产环境用 JSON 格式；DEBUG 模式用文本格式（人类可读）
 setup_logging(json_mode=settings.LOG_JSON and not settings.DEBUG, level=logging.DEBUG if settings.DEBUG else logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
     if hasattr(_bl, 'db_path'):
         ensure_db_healthy(_bl.db_path)
 
-    # 0b. Run file-store migrations (JSON→SQLite, path normalization)
+    # 0b. Run file-store migrations (JSON鈫扴QLite, path normalization)
     from app.services.file_management_service import run_startup_migrations
     run_startup_migrations()
 
@@ -189,12 +189,12 @@ async def lifespan(app: FastAPI):
     if _requeued:
         logger.info("Requeued %d failed items after repairing missing-file path records", _requeued)
 
-    # 3. 鍚姩杩涚▼鍐呬换鍔￠槦鍒?
+    # 3. 启动进程内任务队列
     from app.services.task_queue import TaskItem, get_task_queue
     _task_queue = get_task_queue()
     _task_queue.start()
 
-    # 鎭㈠鏈畬鎴愮殑浠诲姟锛氭牴鎹?item 鐘舵€佸尯鍒?recognition / redaction
+    # 恢复未完成的任务：根据 item 状态区分 recognition / redaction
     from app.services.job_store import JobItemStatus
     _all_jobs = _store.list_schedulable_jobs()
     _redispatched = 0
@@ -279,7 +279,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="鍖垮悕鍖栨暟鎹熀纭€璁炬柦锛屾敮鎸?Word/PDF/鍥剧墖绛夊鏍煎紡鏂囨。鐨勬晱鎰熶俊鎭嚜鍔ㄨ瘑鍒笌鍖垮悕鍖栧鐞嗭紝鍩轰簬 GB/T 37964-2019 鍥藉鏍囧噯",
+    description="匿名化数据基础设施，支持 Word/PDF/图片等多格式文档的敏感信息自动识别与匿名化处理，基于 GB/T 37964-2019 国家标准",
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan,
@@ -385,28 +385,28 @@ from app.core.request_id import RequestIdMiddleware  # noqa: E402
 
 app.add_middleware(RequestIdMiddleware)
 
-# 纭繚涓婁紶鍜岃緭鍑虹洰褰曞瓨鍦?
+# 确保上传和输出目录存在
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
 
-# 娉ㄦ剰锛氫笉鍐嶆寕杞?/uploads 鍜?/outputs 涓?StaticFiles锛?
-# 鍥犱负 StaticFiles 浼氱粫杩?require_auth 璁よ瘉涓棿浠躲€?
-# 鎵€鏈夋枃浠惰闂粺涓€閫氳繃 /api/v1/files/{file_id}/download 绔偣锛堝凡鏈夎璇佷繚鎶わ級銆?
+# 注意：不再挂载 /uploads 和 /outputs 为 StaticFiles，
+# 因为 StaticFiles 会绕过 require_auth 认证中间件。
+# 所有文件访问统一通过 /api/v1/files/{file_id}/download 端点（已有鉴权保护）。
 
-# 娉ㄥ唽璺敱
+# 注册路由
 app.include_router(auth_api.router, prefix=settings.API_PREFIX)
 app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理"], dependencies=[Depends(require_auth)])
 app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["redaction"], dependencies=[Depends(require_auth)])
 app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
 app.include_router(vision_pipeline.router, prefix=settings.API_PREFIX, tags=["图像识别Pipeline管理"], dependencies=[Depends(require_auth)])
 app.include_router(model_config.router, prefix=settings.API_PREFIX, tags=["推理模型配置"], dependencies=[Depends(require_auth)])
-app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["鏂囨湰NER鍚庣"], dependencies=[Depends(require_auth)])
-app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["璇嗗埆閰嶇疆棰勮"], dependencies=[Depends(require_auth)])
+app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本NER后端"], dependencies=[Depends(require_auth)])
+app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["识别配置预设"], dependencies=[Depends(require_auth)])
 app.include_router(jobs.router, prefix=settings.API_PREFIX, tags=["批量任务"], dependencies=[Depends(require_auth)])
 app.include_router(structured.router, prefix=settings.API_PREFIX, tags=["structured"], dependencies=[Depends(require_auth)])
 app.include_router(safety_api.router, prefix=settings.API_PREFIX, tags=["数据安全"], dependencies=[Depends(require_auth)])
 
-logger.info("presets API: GET/POST %s/presets (鑻ュ墠绔粛 404锛岃閲嶅惎鏈繘绋嬩互鍔犺浇鏈€鏂拌矾鐢?", settings.API_PREFIX)
+logger.info("presets API: GET/POST %s/presets (若前端仍 404，请重启本进程以加载最新路由", settings.API_PREFIX)
 
 # Prometheus metrics endpoint
 from datetime import UTC  # noqa: E402, I001
@@ -451,7 +451,7 @@ async def services_health():
 
     services = {}
 
-    # 鍦ㄧ嚎绋嬫睜涓苟琛屾鏌ユ墍鏈夋湇鍔★紙閬垮厤闃诲浜嬩欢寰幆锛?
+    # 在线程池中并行检查所有服务（避免阻塞事件循环）
     loop = asyncio.get_event_loop()
     t0 = time.perf_counter()
     ocr_url = f"{model_config_service.get_paddle_ocr_base_url()}/health"

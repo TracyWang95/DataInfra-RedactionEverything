@@ -1,5 +1,5 @@
 """Vision recognition service.
-
+视觉识别服务
 The runtime combines OCR/HaS semantic regions with LocateAnything visual
 feature grounding.
 """
@@ -952,7 +952,7 @@ class VisionService:
             "签字",
             "签署",
             "签章",
-            "ҽʦ",
+            "医师",
             "医生",
             "护士",
             "代表",
@@ -965,7 +965,7 @@ class VisionService:
         if not any(term in compact for term in anchor_terms):
             return False
         role_terms = (
-            "ҽʦ",
+            "医师",
             "医生",
             "护士",
             "代表",
@@ -2328,7 +2328,7 @@ class VisionService:
             return await self._redact_pdf(
                 file_path, bounding_boxes, output_path, image_method, strength, fill_color
             )
-        raise ValueError(f"涓嶆敮鎸佺殑鏂囦欢绫诲瀷杩涜鍖垮悕鍖? {file_type}")
+        raise ValueError(f"不支持的文件类型进行匿名化: {file_type}")
 
     async def _redact_image(
         self,

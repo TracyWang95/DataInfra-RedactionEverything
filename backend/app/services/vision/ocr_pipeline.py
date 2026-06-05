@@ -48,7 +48,7 @@ TABLE_PRECISION_ENTITY_TYPES = {
     "CONTRACT_NO",
 }
 
-_AMOUNT_TOKEN_PREFIX_CHARS = frozenset("￥¥$€£")
+_AMOUNT_TOKEN_PREFIX_CHARS = frozenset("¥￥$€£")
 _AMOUNT_TOKEN_BEFORE_BLOCKERS = frozenset("_.")
 _AMOUNT_TOKEN_AFTER_BLOCKERS = frozenset("_.%")
 
@@ -259,7 +259,7 @@ def _record_has_text_metric(
 
 
 def _compact_amount_candidate(text: str) -> str:
-    return _compact_text(text).strip(" \t\r\n:：;；,，.。()（）[]【】￥¥$€£")
+    return _compact_text(text).strip(" \t\r\n:：;；,，.。()（）[]【】$¥￥")
 
 
 def _amount_digit_count(text: str) -> int:

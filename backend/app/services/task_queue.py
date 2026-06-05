@@ -1,8 +1,8 @@
 """
-杩涚▼鍐呭紓姝ヤ换鍔￠槦鍒椼€?
-
-鍗?GPU 涓茶澶勭悊锛屾棤璺ㄨ繘绋嬮棶棰樸€?
-闃熷垪杩愯鍦?FastAPI 涓昏繘绋嬬殑浜嬩欢寰幆涓紝submit 鍚庣珛鍗冲叆闃燂紝鍚庡彴閫愪釜娑堣垂銆?
+进程内异步任务队列。
+进程内异步任务队列。
+单 GPU 串行处理，无跨进程问题。
+队列运行在 FastAPI 主进程的事件循环中，submit 后立即入队，后台逐个消费。
 """
 from __future__ import annotations
 
@@ -233,13 +233,13 @@ class TaskItem:
 
 class SimpleTaskQueue:
     """
-    鍗曚緥寮傛浠诲姟闃熷垪銆?
+    单例异步任务队列。
 
     用法:
         queue = get_task_queue()
         queue.enqueue(TaskItem(job_id=..., item_id=..., file_id=...))
 
-    鍐呴儴缁存姢涓€涓?asyncio.Queue锛屼竴涓悗鍙?worker coroutine 閫愪釜娑堣垂銆?
+    内部维护一个 asyncio.Queue，一个后台 worker coroutine 逐个消费。
     """
 
     def __init__(self, concurrency: int = 1) -> None:
@@ -566,7 +566,7 @@ class SimpleTaskQueue:
         logger.info("worker-%d loop exited", worker_id)
 
     # ------------------------------------------------------------------
-    # 璇嗗埆娴佹按绾?
+    # 识别流水线
     # ------------------------------------------------------------------
 
     async def _run_recognition(self, task: TaskItem) -> None:
@@ -585,7 +585,7 @@ class SimpleTaskQueue:
             logger.warning("item %s not found, skip", task.item_id[:8])
             return
 
-        # 璺宠繃宸插畬鎴?/ 宸插彇娑堢殑锛圥ENDING 鍜?PROCESSING 鍏佽閲嶈瘯锛?
+        # 跳过已完成 / 已取消的（PENDING 和 PROCESSING 允许重试）
         skip_statuses = (
             JobItemStatus.AWAITING_REVIEW.value,
             JobItemStatus.COMPLETED.value,
@@ -595,7 +595,7 @@ class SimpleTaskQueue:
             logger.info("item %s already %s, skip", task.item_id[:8], item["status"])
             return
 
-        # 妫€鏌?job 鏄惁宸茶鍙栨秷
+        # 检查 job 是否已被取消
         if job.get("status") == JobStatus.CANCELLED.value:
             logger.info("job %s cancelled, skip item %s", task.job_id[:8], task.item_id[:8])
             return
@@ -603,7 +603,7 @@ class SimpleTaskQueue:
         cfg = json.loads(job.get("config_json") or "{}")
 
         try:
-            # 鏍囪澶勭悊涓?
+            # 标记处理中
             store.update_item_status(task.item_id, JobItemStatus.PROCESSING)
             self._try_update_job_status(store, task.job_id, JobStatus.PROCESSING)
 
@@ -813,7 +813,7 @@ class SimpleTaskQueue:
             merge_existing: bool = False,
             signature_ocr_types: list[str] | None = None,
             signature_visual_feature_types: list[str] | None = None,
-            stage_label: str = "瑙嗚璇嗗埆",
+            stage_label: str = "视觉识别",
         ) -> None:
             nonlocal active_pages, max_active_pages
             async with page_sem:
@@ -949,7 +949,7 @@ class SimpleTaskQueue:
             merge_existing: bool = False,
             signature_ocr_types: list[str] | None = None,
             signature_visual_feature_types: list[str] | None = None,
-            stage_label: str = "瑙嗚璇嗗埆",
+            stage_label: str = "视觉识别",
         ) -> None:
             page_tasks = {
                 asyncio.create_task(
@@ -1052,7 +1052,7 @@ class SimpleTaskQueue:
 
         if skip_review:
             # skip_item_review=true: 直接入队匿名化，不等人工审阅
-            # 浣跨敤 enqueue() 鑰岄潪鐩存帴 put_nowait()锛岀‘淇濆幓閲嶉€昏緫涓€鑷?
+            # 使用 enqueue() 而非直接 put_nowait()，确保去重逻辑一致
             logger.info("[queue] item=%s skip review, enqueue redaction", task.item_id[:8])
             self.enqueue(TaskItem(
                 job_id=task.job_id, item_id=task.item_id,
@@ -1269,7 +1269,7 @@ class SimpleTaskQueue:
         try:
             store.update_job_status(job_id, status)
         except (InvalidStatusTransition, KeyError, ValueError):
-            pass  # 鐘舵€佸凡鍓嶈繘鎴?job 涓嶅瓨鍦紝蹇界暐
+            pass  # 状态已前进或 job 不存在，忽略
 
     def _refresh_job_status(self, store, job_id: str) -> None:
         """Refresh the job status from item statuses."""
@@ -1287,7 +1287,7 @@ class SimpleTaskQueue:
         terminal = {JobItemStatus.AWAITING_REVIEW.value, JobItemStatus.COMPLETED.value, JobItemStatus.FAILED.value}
         try:
             if any(s in active for s in sts):
-                # 杩樻湁 item 鍦ㄨ窇鎴栨帓闃?鈥?job 淇濇寔娲昏穬鐘舵€?
+                # 还有 item 在跑或排队 — job 保持活跃状态
                 if any(s == JobItemStatus.PROCESSING.value for s in sts):
                     self._try_update_job_status(store, job_id, JobStatus.PROCESSING)
                 else:
@@ -1297,7 +1297,7 @@ class SimpleTaskQueue:
             elif all(s == JobItemStatus.FAILED.value for s in sts):
                 self._try_update_job_status(store, job_id, JobStatus.FAILED)
             elif all(s in terminal for s in sts):
-                # 娣峰悎缁堟€侊細鏈夊緟瀹?鈫?AWAITING_REVIEW锛屽惁鍒?COMPLETED锛堝惈閮ㄥ垎澶辫触锛?
+                # 混合终态：有待审 → AWAITING_REVIEW，否则 COMPLETED（含部分失败）
                 if any(s == JobItemStatus.AWAITING_REVIEW.value for s in sts):
                     self._try_update_job_status(store, job_id, JobStatus.AWAITING_REVIEW)
                 else:

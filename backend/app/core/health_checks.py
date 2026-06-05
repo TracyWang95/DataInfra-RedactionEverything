@@ -1,6 +1,6 @@
 """
-鍋ュ悍妫€鏌ヨ緟鍔╁嚱鏁?
-鍚屾鎺㈡祴澶栭儴 HTTP 鏈嶅姟鐘舵€侊紙渚?/health/services 鍦ㄧ嚎绋嬫睜涓皟鐢級銆?
+健康检查辅助函数
+同步探测外部 HTTP 服务状态（供 /health/services 在线程池中调用）。
 """
 from __future__ import annotations
 

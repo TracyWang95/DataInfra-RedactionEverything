@@ -1,5 +1,5 @@
 """
-Prometheus 鐩戞帶鎸囨爣 鈥?璇嗗埆/鍖垮悕鍖栧欢杩熴€侀敊璇巼銆侀槦鍒楁繁搴︺€?
+Prometheus 监控指标 — 识别/匿名化延迟、错误率、队列深度。
 
 /metrics 绔偣鐢?main.py 鎸傝浇銆?
 """
@@ -46,7 +46,7 @@ NER_ERRORS = Counter(
 )
 
 # ──────────────────────────────────────────────
-# 瑙嗚璇嗗埆
+# 视觉识别
 # ──────────────────────────────────────────────
 VISION_DURATION = Histogram(
     "redaction_vision_seconds",
@@ -56,7 +56,7 @@ VISION_DURATION = Histogram(
 )
 
 # ──────────────────────────────────────────────
-# 鍖垮悕鍖栨墽琛?
+# 匿名化执行
 # ──────────────────────────────────────────────
 REDACTION_DURATION = Histogram(
     "redaction_execute_seconds",

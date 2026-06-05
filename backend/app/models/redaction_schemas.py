@@ -32,13 +32,13 @@ class RedactionConfig(BaseModel):
         default=["PERSON", "PHONE", "ID_CARD"]
     )
     custom_entity_types: list[str] = Field(
-        default_factory=list, description="鍚敤鐨勮嚜瀹氫箟瀹炰綋绫诲瀷ID鍒楄〃"
+        default_factory=list, description="启用的自定义实体类型ID列表"
     )
     custom_replacements: dict[str, str] = Field(default_factory=dict)
     # Block-level image redaction is independent from text replacement_mode.
     image_redaction_method: Literal["mosaic", "blur", "fill"] | None = Field(
         default="mosaic",
-        description="鍥剧墖绫伙細椹禌鍏嬨€侀珮鏂ā绯娿€佺函鑹插～鍏咃紱鏈紶鏃跺浘鐗囬粯璁ゆ寜 mosaic/75 澶勭悊",
+        description="图片类：马赛克、高斯模糊、纯色填充；未传时图片默认按 mosaic/75 处理",
     )
     image_redaction_strength: int = Field(
         default=75,
@@ -61,13 +61,13 @@ class RedactionRequest(BaseModel):
 
 
 class PreviewEntityMapRequest(BaseModel):
-    """浠呴瑙堟浛鎹㈡槧灏勶紙涓嶈惤鐩橈級"""
+    """仅预览替换映射（不落盘）"""
     entities: list[Entity] = Field(default_factory=list)
     config: RedactionConfig = Field(default_factory=RedactionConfig)
 
 
 class PreviewEntityMapResponse(BaseModel):
-    entity_map: dict[str, str] = Field(default_factory=dict, description="涓?execute 涓€鑷寸殑鍘熸枃鈫掓浛鎹㈣〃")
+    entity_map: dict[str, str] = Field(default_factory=dict, description="与 execute 一致的原文→替换表")
 
 
 class PreviewImageRequest(BaseModel):
@@ -85,11 +85,11 @@ class NERRequest(BaseModel):
     """NER识别请求"""
     entity_types: list[str] = Field(
         default=["PERSON", "PHONE", "ID_CARD", "ORG", "CASE_NUMBER"],
-        description="瑕佽瘑鍒殑鍐呯疆瀹炰綋绫诲瀷"
+        description="要识别的内置实体类型"
     )
     custom_entity_type_ids: list[str] = Field(
         default_factory=list,
-        description="瑕佽瘑鍒殑鑷畾涔夊疄浣撶被鍨婭D鍒楄〃"
+        description="要识别的自定义实体类型ID列表"
     )
 
 
@@ -126,13 +126,13 @@ class RedactionReport(BaseModel):
     entity_type_distribution: dict[str, int] = Field(default_factory=dict, description="Entity counts by type")
     confidence_distribution: dict[str, int] = Field(
         default_factory=dict,
-        description="缃俊搴﹀垎甯冿細high(>0.8), medium(0.5-0.8), low(<0.5)"
+        description="置信度分布：high(>0.8), medium(0.5-0.8), low(<0.5)"
     )
     source_distribution: dict[str, int] = Field(
         default_factory=dict,
         description="Detection source distribution: ocr_has, visual_features, manual.",
     )
-    coverage_rate: float = Field(default=0.0, description="鍖垮悕鍖栬鐩栫巼锛堝凡鍖垮悕鍖?鎬昏瘑鍒級")
+    coverage_rate: float = Field(default=0.0, description="匿名化覆盖率（已匿名化/总识别）")
     redaction_mode: str = ""
     created_at: str = ""
 
