@@ -265,11 +265,11 @@ class Settings(BaseSettings):
     # PP-StructureV3 table fallback exposed by the same OCR microservice.
     # PaddleOCR-VL 1.6 is the default OCR/layout path. Keep Structure disabled
     # unless an operator explicitly wants the slower table supplement.
-    OCR_STRUCTURE_ENABLED: bool = False
+    OCR_STRUCTURE_ENABLED: bool = True
     OCR_STRUCTURE_MIN_VL_BOXES: int = 12
     # PaddleOCR-VL is the primary document OCR path. PP-StructureV3 can be
     # enabled as an opt-in table/layout supplement.
-    OCR_STRUCTURE_PRIMARY: bool = False
+    OCR_STRUCTURE_PRIMARY: bool = True
     OCR_STRUCTURE_PRIMARY_MIN_BOXES: int = 8
     OCR_MAX_IMAGE_SIDE: int = 2048
     # When PP-StructureV3 already returns enough text boxes, use it directly by
