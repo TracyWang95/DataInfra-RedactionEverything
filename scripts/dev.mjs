@@ -127,6 +127,11 @@ const appPython = path.posix.join(required('VENV_DIR'), 'bin', 'python');
 const vllmPython = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'python');
 const vllmBin = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'vllm');
 const locatePort = env.LOCATE_ANYTHING_PORT || '8090';
+// PaddleOCR-VL is optional. Default OFF: the text path uses PP-StructureV3,
+// so the heavy VL model is not started, freeing GPU memory for HaS / LocateAnything.
+const ocrVlEnabled = !['0', 'false', 'no', 'off', ''].includes(
+  String(env.OCR_VL_ENABLED ?? '0').trim().toLowerCase(),
+);
 const children = [];
 
 function nvidiaDllDirs() {
@@ -236,21 +241,25 @@ async function waitJson(url, predicate, label, timeoutMs = 240000) {
 async function startVllmServices() {
   const wslRoot = winToWsl(repoRoot);
   const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
-  spawnWsl(
-    'paddle-vllm',
-    [
-      `cd ${shellQuote(wslRoot)} &&`,
-      `CUDA_VISIBLE_DEVICES=${cuda}`,
-      shellQuote(vllmPython),
-      shellQuote(vllmBin),
-      'serve PaddlePaddle/PaddleOCR-VL-1.6',
-      '--host 0.0.0.0 --port 8118',
-      '--served-model-name PaddleOCR-VL-1.6-0.9B',
-      '--trust-remote-code',
-      ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
-    ].join(' '),
-  );
-  await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000);
+  if (ocrVlEnabled) {
+    spawnWsl(
+      'paddle-vllm',
+      [
+        `cd ${shellQuote(wslRoot)} &&`,
+        `CUDA_VISIBLE_DEVICES=${cuda}`,
+        shellQuote(vllmPython),
+        shellQuote(vllmBin),
+        'serve PaddlePaddle/PaddleOCR-VL-1.6',
+        '--host 0.0.0.0 --port 8118',
+        '--served-model-name PaddleOCR-VL-1.6-0.9B',
+        '--trust-remote-code',
+        ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
+      ].join(' '),
+    );
+    await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000);
+  } else {
+    console.log('[dev] PaddleOCR-VL (8118) skipped: text path uses PP-StructureV3 (set OCR_VL_ENABLED=1 to enable VL)');
+  }
 
   spawnWsl(
     'has-text-vllm',
@@ -279,12 +288,13 @@ async function startOcrWrapper() {
       `cd ${shellQuote(wslBackend)} &&`,
       `CUDA_VISIBLE_DEVICES=${cuda}`,
       `PYTHONPATH=${shellQuote(wslBackend)}`,
-      `OCR_VL_BACKEND=${shellQuote(env.OCR_VL_BACKEND || 'vllm-server')}`,
+      `OCR_VL_ENABLED=${shellQuote(ocrVlEnabled ? '1' : '0')}`,
+      `OCR_VL_BACKEND=${shellQuote(ocrVlEnabled ? (env.OCR_VL_BACKEND || 'vllm-server') : '')}`,
       `OCR_VLLM_URL=${shellQuote(env.OCR_VLLM_URL || 'http://127.0.0.1:8118/v1')}`,
       `OCR_VL_API_MODEL_NAME=${shellQuote(env.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.6-0.9B')}`,
       wslEnvVar('OCR_MAX_IMAGE_SIDE', '2048'),
       wslEnvVar('OCR_MAX_NEW_TOKENS', '2048'),
-      wslEnvVar('OCR_VL_WARMUP', '1'),
+      wslEnvVar('OCR_VL_WARMUP', ocrVlEnabled ? '1' : '0'),
       wslEnvVar('OCR_STRUCTURE_ENABLED', '1'),
       wslEnvVar('OCR_STRUCTURE_PRIMARY', '1'),
       wslEnvVar('OCR_STRUCTURE_WARMUP', '1'),

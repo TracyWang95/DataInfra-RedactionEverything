@@ -136,9 +136,23 @@ def trim_cuda_cache(label: str) -> None:
         pass
 
 
+def _vl_disabled() -> bool:
+    return str(os.environ.get("OCR_VL_ENABLED", "1")).strip().lower() in {"0", "false", "no", "off"}
+
+
 def init_ocr() -> None:
     global _vl, _ocr, _ready, _model_name
     _require_gpu_or_exit()
+
+    if _vl_disabled():
+        # Structure-only mode: PP-StructureV3 is the primary OCR path, so the
+        # heavy PaddleOCR-VL model is not loaded at all (frees GPU memory for
+        # HaS / LocateAnything). The /ocr (VL) endpoint returns 503; /structure works.
+        _vl = None
+        _ready = True
+        _model_name = "PP-StructureV3 (PaddleOCR-VL disabled)"
+        print("[OCR] PaddleOCR-VL disabled (OCR_VL_ENABLED=0); PP-StructureV3-only mode", flush=True)
+        return
 
     try:
         from paddleocr import PaddleOCRVL
@@ -661,6 +675,8 @@ async def health() -> dict[str, Any]:
 async def ocr_extract(request: OCRRequest) -> OCRResponse:
     if not _ready:
         raise HTTPException(status_code=503, detail="OCR service is not ready")
+    if _vl is None:
+        raise HTTPException(status_code=503, detail="PaddleOCR-VL is disabled; use /structure")
 
     start = time.perf_counter()
     try:
