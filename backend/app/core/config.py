@@ -262,6 +262,9 @@ class Settings(BaseSettings):
     # the default vision chain.
     VISION_DUAL_PIPELINE_PARALLEL: bool = False
     SERIALIZE_SHARED_GPU_MODELS: bool = True
+    # PaddleOCR-VL toggle. When false (structure-only deployments) the backend
+    # never calls the VL /ocr endpoint and routes all OCR through PP-StructureV3.
+    OCR_VL_ENABLED: bool = True
     # PP-StructureV3 table fallback exposed by the same OCR microservice.
     # PaddleOCR-VL 1.6 is the default OCR/layout path. Keep Structure disabled
     # unless an operator explicitly wants the slower table supplement.

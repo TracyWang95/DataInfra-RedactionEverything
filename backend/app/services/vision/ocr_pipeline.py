@@ -1164,10 +1164,13 @@ def run_paddle_ocr(
     needs_ocr_visual_regions = bool(selected & OCR_VISUAL_ENTITY_TYPES)
     needs_text_precision = adaptive_mode and bool(selected - OCR_VISUAL_ENTITY_TYPES)
 
-    use_structure_primary = (
-        settings.OCR_STRUCTURE_ENABLED
-        and settings.OCR_STRUCTURE_PRIMARY
-        and (not require_visual_regions or needs_ocr_visual_regions)
+    vl_disabled = not bool(getattr(settings, "OCR_VL_ENABLED", True))
+    use_structure_primary = settings.OCR_STRUCTURE_ENABLED and (
+        vl_disabled
+        or (
+            settings.OCR_STRUCTURE_PRIMARY
+            and (not require_visual_regions or needs_ocr_visual_regions)
+        )
     )
 
     primary_structure_blocks: list[OCRTextBlock] | None = None
@@ -1219,6 +1222,11 @@ def run_paddle_ocr(
                 len(primary_structure_blocks),
                 min_blocks,
             )
+
+    if vl_disabled:
+        # PaddleOCR-VL is disabled: never call /ocr (it would 503). Use whatever
+        # PP-StructureV3 produced (even if sparse) as the OCR result.
+        return (primary_structure_blocks or []), primary_structure_visual_regions
 
     blocks, visual_regions = _run_ocr_service(
         image,
