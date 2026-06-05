@@ -669,6 +669,7 @@ class VisionService:
 
         all_boxes = self._filter_visual_artifacts(all_boxes)
         all_boxes = self._deduplicate_boxes(all_boxes)
+        all_boxes = self._expand_signature_boxes(all_boxes)
 
         result_image_base64 = None
         if include_result_image:
@@ -1197,6 +1198,37 @@ class VisionService:
         if removed:
             self.last_warnings.append(f"visual artifact filter removed {removed} local seal candidate(s)")
         return filtered
+
+    @staticmethod
+    def _expand_signature_boxes(
+        boxes: list[BoundingBox],
+        margin: float = 0.18,
+    ) -> list[BoundingBox]:
+        """Pad handwritten-signature boxes so redaction covers the full stroke.
+
+        LocateAnything often boxes only the densest part of a signature, leaving
+        the rest of the handwritten mark uncovered ("signature not fully boxed").
+        For redaction we want the whole mark covered, so expand signature /
+        handwriting boxes by ``margin`` of their own size on each side, clamped
+        to the page. Other region types are returned unchanged.
+        """
+        if not boxes or margin <= 0:
+            return boxes
+        sig_types = {"signature", "handwriting", "approval_mark"}
+        result: list[BoundingBox] = []
+        for box in boxes:
+            if VisionService._norm_box_type(box.type) in sig_types:
+                dx = box.width * margin
+                dy = box.height * margin
+                nx = max(0.0, box.x - dx)
+                ny = max(0.0, box.y - dy)
+                nx2 = min(1.0, box.x + box.width + dx)
+                ny2 = min(1.0, box.y + box.height + dy)
+                box = box.model_copy(
+                    update={"x": nx, "y": ny, "width": nx2 - nx, "height": ny2 - ny}
+                )
+            result.append(box)
+        return result
 
     @staticmethod
     def _norm_box_type(value: str | None) -> str:
