@@ -363,7 +363,7 @@ docker compose --env-file .env.tenant-b -p redaction-tenant-b --profile gpu up -
 Remove-Item Env:\BACKEND_ENV_FILE
 ```
 
-Use per-tenant production env files based on `.env.production.example`. Set a unique `CORS_ORIGINS` domain and `JWT_SECRET_KEY` for each tenant, keep `AUTH_ENABLED=true`, and keep `FILE_ENCRYPTION_ENABLED=true` for sensitive customer data. `BACKEND_ENV_FILE` must point at the same tenant env file so the backend container does not load a shared local `.env`.
+Use per-tenant production env files based on `.env.production.example`. Set a unique `CORS_ORIGINS` domain and `JWT_SECRET_KEY` for each tenant, and keep `AUTH_ENABLED=true` for sensitive customer data. `BACKEND_ENV_FILE` must point at the same tenant env file so the backend container does not load a shared local `.env`.
 
 The backend job queue uses `JOB_CONCURRENCY` for concurrent recognition/redaction job items. If a shared GPU must be capped at three concurrent job items, keep the sum of `JOB_CONCURRENCY` across all tenant instances at or below 3:
 

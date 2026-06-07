@@ -363,7 +363,7 @@ docker compose --env-file .env.tenant-b -p redaction-tenant-b --profile gpu up -
 Remove-Item Env:\BACKEND_ENV_FILE
 ```
 
-使用基于 `.env.production.example` 的每租户生产环境文件。为每个租户设置唯一的 `CORS_ORIGINS` 域名与 `JWT_SECRET_KEY`，保持 `AUTH_ENABLED=true`，并对敏感客户数据保持 `FILE_ENCRYPTION_ENABLED=true`。`BACKEND_ENV_FILE` 必须指向同一个租户环境文件，避免后端容器加载共享的本地 `.env`。
+使用基于 `.env.production.example` 的每租户生产环境文件。为每个租户设置唯一的 `CORS_ORIGINS` 域名与 `JWT_SECRET_KEY`，并对敏感客户数据保持 `AUTH_ENABLED=true`。`BACKEND_ENV_FILE` 必须指向同一个租户环境文件，避免后端容器加载共享的本地 `.env`。
 
 后端任务队列用 `JOB_CONCURRENCY` 控制并发的识别/脱敏作业项。若共享 GPU 需限制为三个并发作业项，请让所有租户实例的 `JOB_CONCURRENCY` 之和不超过 3：
 

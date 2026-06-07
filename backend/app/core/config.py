@@ -459,10 +459,7 @@ class Settings(BaseSettings):
     # 匿名化配置
     DEFAULT_REPLACEMENT_MODE: Literal["smart", "mask", "custom"] = "smart"
 
-    # 文件加密（默认关闭；启用后上传文件 AES-256-GCM 加密落盘）
-    FILE_ENCRYPTION_ENABLED: bool = False
-
-    # 鐥呮瘨鎵弿锛堥渶 ClamAV daemon 鍦?CLAMD_HOST:CLAMD_PORT 鐩戝惉锛?
+    # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
     VIRUS_SCAN_ENABLED: bool = False
 
     # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）

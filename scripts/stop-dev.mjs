@@ -21,7 +21,6 @@ if (process.platform === 'win32') {
       'pkill -TERM -f "locate_anything_server.py" >/dev/null 2>&1 || true',
       'pkill -TERM -f "locate_anything_eval.py" >/dev/null 2>&1 || true',
       'pkill -TERM -f "locate_anything_tile_eval.py" >/dev/null 2>&1 || true',
-      'pkill -TERM -f "locateanything_load_sleep.py" >/dev/null 2>&1 || true',
       'sleep 2',
       'pkill -KILL -f "/home/tracy/.cache/datainfra-redaction/.venv-vllm/bin/vllm" >/dev/null 2>&1 || true',
       'pkill -KILL -f "PaddlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
@@ -30,7 +29,6 @@ if (process.platform === 'win32') {
       'pkill -KILL -f "locate_anything_server.py" >/dev/null 2>&1 || true',
       'pkill -KILL -f "locate_anything_eval.py" >/dev/null 2>&1 || true',
       'pkill -KILL -f "locate_anything_tile_eval.py" >/dev/null 2>&1 || true',
-      'pkill -KILL -f "locateanything_load_sleep.py" >/dev/null 2>&1 || true',
       'for port in 8080 8082 8090 8118; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
     ].join('; '),
   ]);
