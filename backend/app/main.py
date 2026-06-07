@@ -514,6 +514,23 @@ async def services_health():
         "detect_detail": visual_detect_payload.get("detail", {}),
         "chat_detail": visual_chat_payload.get("detail", {}),
     }
+    # Surface runtime fields at the top level so the service card renders a GPU
+    # badge for visual features, consistent with OCR/HaS (the frontend reads
+    # top-level detail.runtime_mode only).
+    visual_chat_detail = visual_chat_payload.get("detail", {}) or {}
+    visual_detect_detail = visual_detect_payload.get("detail", {}) or {}
+    for key in (
+        "runtime",
+        "runtime_mode",
+        "gpu_available",
+        "device",
+        "gpu_only_mode",
+        "cpu_fallback_risk",
+    ):
+        if key in visual_chat_detail:
+            visual_detail[key] = visual_chat_detail[key]
+        elif key in visual_detect_detail:
+            visual_detail[key] = visual_detect_detail[key]
     services["visual_features"] = {
         "name": "LocateAnything Visual Features",
         "status": combine_visual_status(
