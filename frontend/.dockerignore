@@ -1,0 +1,34 @@
+# Dependencies (npm ci in Dockerfile)
+node_modules/
+
+# Build output (built in Dockerfile)
+dist/
+build/
+
+# Test artifacts
+test-results/
+playwright-report/
+e2e-screenshots/
+output/
+*.png
+test-doc*.docx
+
+# Dev & IDE
+.vite/
+.vscode/
+.cursor/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Logs
+*.log
+
+# Playwright
+.playwright-cli/

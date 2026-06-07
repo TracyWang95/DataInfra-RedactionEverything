@@ -1,0 +1,13 @@
+{
+  "name": "datainfra-redaction-everything",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "stop": "node scripts/stop-dev.mjs",
+    "frontend:dev": "npm --prefix frontend run dev"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

@@ -1,0 +1,111 @@
+# Claude Code / AI assistant
+.claude/
+CLAUDE.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example
+!.env.production.example
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Build & cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+
+# Local data & outputs（运行时生成，不提交）
+backend/uploads/
+backend/outputs/
+backend/models/
+backend/data/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# 本地模型文件（用户自行下载）
+*.gguf
+*.bin
+*.safetensors
+
+# 调试日志
+debug.log
+logs/
+
+# 本地宣传材料与生成脚本（不入库）
+generate_qingjing_docx.py
+qingjing-dataset-platform-intro.docx
+wechat_article.md
+
+# 一次性历史清洗规则（勿提交）
+_filter_repo_replacements.txt
+
+# Playwright test results & screenshots
+frontend/test-results/
+frontend/*.png
+frontend/test-doc*.docx
+frontend/test-img.png
+
+# Vite cache
+frontend/.vite/
+
+# Playwright CLI artifacts
+.playwright-cli/
+frontend/.playwright-cli/
+backend/.playwright-cli/
+frontend/frontend-preview.log
+*.log
+
+# Temp data & fixtures
+tmp/
+data/*.json
+data/*.sqlite3
+data/*.migrated
+
+# Claude review-loop plugin
+.claude/review-loop.local.md
+.claude/review-loop-run-codex.sh
+.claude/review-loop-prompt.md
+.claude/review-loop.log
+reviews/
+
+# Claude Code / AI assistant artifacts
+.claude/skills/
+.mcp.json
+OPTIMIZATION_PLAN.md
+
+# Playwright screenshots and test artifacts
+output/
+frontend/output/
+frontend/playwright-report/
+
+# Temporary test scripts
+backend/test_*.py
+
+# Runtime data
+*.db
+*.db-journal
+*.db-wal

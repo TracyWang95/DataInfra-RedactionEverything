@@ -1,0 +1,169 @@
+# DataInfra-RedactionEverything docker compose
+#
+# CPU API/frontend only:
+#   docker compose up -d
+#
+# Full GPU model stack:
+#   docker compose --profile gpu up -d
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - path: ${BACKEND_ENV_FILE:-.env}
+        required: false
+    environment:
+      - DEBUG=${DEBUG:-false}
+      - DATA_DIR=/app/data
+      - UPLOAD_DIR=/app/uploads
+      - OUTPUT_DIR=/app/outputs
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - VIRUS_SCAN_ENABLED=${VIRUS_SCAN_ENABLED:-false}
+      - OCR_REQUIRE_GPU=${OCR_REQUIRE_GPU:-false}
+      - JOB_CONCURRENCY=${JOB_CONCURRENCY:-3}
+      - BATCH_RECOGNITION_PAGE_CONCURRENCY=${BATCH_RECOGNITION_PAGE_CONCURRENCY:-1}
+      - HAS_NER_MAX_PARALLEL_REQUESTS=${HAS_NER_MAX_PARALLEL_REQUESTS:-1}
+      - VISUAL_FEATURES_CONCURRENCY=${VISUAL_FEATURES_CONCURRENCY:-1}
+      - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-false}
+      - OCR_BASE_URL=http://ocr:8082
+      - HAS_LLAMACPP_BASE_URL=http://ner:8080/v1
+      - VISUAL_FEATURES_BASE_URL=http://visual-features:8090
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
+    volumes:
+      - backend-data:/app/data
+      - backend-uploads:/app/uploads
+      - backend-outputs:/app/outputs
+    networks:
+      - redaction-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - redaction-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  ocr:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ocr
+    ports:
+      - "${OCR_PORT:-8082}:8082"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - redaction-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8082/health').raise_for_status()"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    profiles:
+      - gpu
+    restart: unless-stopped
+
+  ner:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    ports:
+      - "${NER_PORT:-8080}:8080"
+    volumes:
+      - ./backend/models:/models
+    command: >
+      --host 0.0.0.0
+      --port 8080
+      -m /models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf
+      -ngl 99
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - redaction-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    profiles:
+      - gpu
+    restart: unless-stopped
+
+  visual-features:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.locateanything
+    ports:
+      - "${VISUAL_FEATURES_PORT:-8090}:8090"
+    environment:
+      - LOCATE_ANYTHING_MODEL=${LOCATE_ANYTHING_MODEL:-/models/locateanything/LocateAnything-3B-HF}
+      - LOCATE_ANYTHING_BACKEND=${LOCATE_ANYTHING_BACKEND:-hf}
+      - LOCATE_ANYTHING_DTYPE=${LOCATE_ANYTHING_DTYPE:-bfloat16}
+      - LOCATE_ANYTHING_PORT=8090
+      - LOCATE_ANYTHING_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_MAX_IMAGE_SIDE:-1280}
+      - LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE:-1280}
+      - LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE:-1280}
+      - LOCATE_ANYTHING_MAX_NEW_TOKENS=${LOCATE_ANYTHING_MAX_NEW_TOKENS:-8192}
+      - LOCATE_ANYTHING_GENERATION_MODE=${LOCATE_ANYTHING_GENERATION_MODE:-hybrid}
+    volumes:
+      - ./backend/models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - redaction-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8090/health').raise_for_status()"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    profiles:
+      - gpu
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-uploads:
+  backend-outputs:
+
+networks:
+  redaction-net:
+    driver: bridge

@@ -1,0 +1,120 @@
+DataInfra RedactionEverything Personal Use License 1.0
+
+Copyright (c) TracyWang95. All rights reserved except as expressly granted below.
+
+This license is designed for a source-available project with free personal use
+and separate commercial licensing for commercial, organizational, and
+production use.
+
+1. Definitions
+
+"Project" means the DataInfra RedactionEverything source code, documentation,
+configuration files, and related materials in this repository.
+
+"Individual" means a natural person acting on their own behalf, not on behalf
+of an employer, company, institution, government agency, or other organization.
+
+"Organization" means any company, partnership, institution, government agency,
+non-profit, team, department, or other legal entity, whether commercial or not.
+
+"Personal Use" means use by an Individual for their own non-commercial personal
+projects, learning, research, demonstrations, evaluation, or private experiments,
+provided the Project itself is not used for paid work, consulting delivery,
+freelance services, hosted services, commercial products, sublicensing, or an
+Organization's production use without a separate commercial agreement.
+
+"Production Use" means use in live business operations, internal operations,
+customer-facing workflows, regulated workflows, revenue-generating workflows,
+or processing real business, customer, patient, legal, financial, government,
+or institutional data.
+
+2. Individual License Grant
+
+If you are an Individual, you may use, copy, run, modify, and create derivative
+works of the Project for Personal Use at no charge.
+
+You may publish patches, forks, or pull requests for the purpose of discussion,
+review, or contribution, provided that you preserve copyright notices and this
+license file.
+
+3. Organization Evaluation Grant
+
+Organizations may view, clone, build, and evaluate the Project for internal
+assessment, security review, procurement review, compatibility testing, and
+proof-of-concept work.
+
+Organizations must obtain a separate written commercial license before any
+Production Use, redistribution, managed-service use, SaaS use, OEM use, or
+integration into commercial or institutional products or services.
+
+4. Commercial License Requirement
+
+A separate written commercial license is required for:
+
+- use by or for an Organization in production;
+- paid consulting, freelance, or commercial service delivery;
+- deployment inside a company, institution, government agency, or team;
+- use in customer-facing, regulated, or revenue-generating workflows;
+- providing the Project as a hosted service, managed service, API, appliance,
+  embedded feature, OEM component, or bundled product;
+- redistributing modified or unmodified copies outside the rights granted above;
+- support, SLA, warranty, indemnity, procurement, or custom delivery terms.
+
+Commercial license inquiries: wwang11@alumni.nd.edu
+
+5. Restrictions
+
+You may not:
+
+- remove or obscure copyright notices, attribution notices, or this license;
+- sell, sublicense, rent, lease, or redistribute the Project except as allowed
+  by this license or a separate written agreement;
+- offer the Project, modified or unmodified, as a hosted service or managed
+  service without a commercial license;
+- use the Project on behalf of an Organization for Production Use without a
+  commercial license;
+- use project names, logos, trademarks, or maintainer identities to imply
+  endorsement without written permission;
+- use the Project to violate applicable law or third-party rights.
+
+6. Data, Outputs, and Models
+
+You retain rights to your own input files, configuration data, recognition
+results, redacted outputs, and generated artifacts.
+
+This repository does not grant rights to third-party model weights, datasets,
+fonts, packages, or services. Those components are governed by their own
+licenses and terms.
+
+7. Contributions
+
+Unless otherwise agreed in writing, any contribution intentionally submitted to
+this repository may be included in the Project and licensed under this license
+and any future license offered by the project maintainer.
+
+8. No Warranty
+
+The Project is provided "AS IS", without warranties or conditions of any kind,
+express or implied, including warranties of merchantability, fitness for a
+particular purpose, non-infringement, accuracy, availability, or security.
+
+You are responsible for validating redaction quality, compliance requirements,
+deployment security, access control, model behavior, and output correctness for
+your own use case.
+
+9. Limitation of Liability
+
+To the maximum extent permitted by law, the copyright holder and contributors
+will not be liable for any indirect, incidental, special, consequential,
+exemplary, or punitive damages, or for loss of profits, data, goodwill, or
+business opportunities, arising from or related to the Project.
+
+10. Termination
+
+Your rights under this license terminate automatically if you violate its terms.
+Upon termination, you must stop using the Project under this license and remove
+unauthorized copies or deployments.
+
+11. No Implied Rights
+
+All rights not expressly granted by this license are reserved.

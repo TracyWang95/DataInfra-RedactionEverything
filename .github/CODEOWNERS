@@ -1,0 +1,12 @@
+# Default owner for everything
+* @TracyWang95
+
+# Backend
+/backend/ @TracyWang95
+
+# Frontend
+/frontend/ @TracyWang95
+
+# Security-sensitive files
+/SECURITY.md @TracyWang95
+/.github/ @TracyWang95

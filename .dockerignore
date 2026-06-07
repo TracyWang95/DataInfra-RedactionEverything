@@ -1,0 +1,53 @@
+.git
+.gitignore
+.github
+.claude
+.playwright-cli
+node_modules
+frontend/node_modules
+frontend/dist
+frontend/e2e-screenshots
+backend/__pycache__
+backend/.pytest_cache
+backend/tests
+backend/data
+backend/uploads
+backend/outputs
+*.log
+*.md
+!README.md
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+*.pyc
+*.pyo
+__pycache__
+.mypy_cache
+.ruff_cache
+*.egg-info
+dist
+build
+
+# Docker
+docker-compose.override.yml
+Dockerfile.dev
+
+# Misc
+*.sqlite3
+*.db
+.coverage
+htmlcov
+.pytest_cache

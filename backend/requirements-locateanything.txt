@@ -1,0 +1,13 @@
+fastapi>=0.136.1
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+httpx>=0.28.0
+Pillow==11.1.0
+numpy==1.25.0
+opencv-python-headless==4.11.0.86
+transformers==4.57.1
+peft>=0.13.0
+accelerate>=1.1.0
+safetensors>=0.4.5
+decord==0.6.0
+lmdb==1.7.5

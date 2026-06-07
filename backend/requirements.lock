@@ -1,0 +1,53 @@
+# Pinned dependency versions for DataInfra-RedactionEverything backend.
+# Keep in sync with requirements.txt. Re-generate after any dependency change
+# by running: pip freeze -r requirements.txt > requirements.lock
+#
+# Last updated: 2026-05-01
+
+# FastAPI framework
+fastapi==0.136.1
+uvicorn[standard]==0.35.0
+python-multipart==0.0.26
+
+# Data validation
+pydantic==2.12.5
+pydantic-settings==2.13.1
+
+# File processing
+python-docx==1.2.0
+PyMuPDF==1.27.2.2
+Pillow==12.2.0
+pdf2image==1.17.0
+pywin32==311 ; sys_platform == 'win32'
+
+# HTTP client
+httpx==0.28.1
+
+# GPU memory checks
+nvidia-ml-py==12.535.133
+aiofiles==24.1.0
+
+# Local app/model environment. vLLM is installed in .venv-vllm by npm run setup.
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
+paddlepaddle-gpu==3.3.0
+paddleocr[doc-parser]==3.6.0
+llama-cpp-python[server]>=0.3.16
+
+# Utility libraries
+PyJWT==2.12.0
+passlib[bcrypt]==1.7.4
+json-repair==0.58.0
+
+# Observability
+python-json-logger==2.0.4
+prometheus-client==0.21.1
+
+# Security
+cryptography==46.0.7
+
+# Runtime tools
+python-dotenv==1.2.2
+
+# Development tools (installed with requirements.txt and used in CI)
+pytest==9.0.3
+setuptools>=77,<81
