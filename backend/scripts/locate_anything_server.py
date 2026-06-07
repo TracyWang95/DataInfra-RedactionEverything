@@ -119,27 +119,31 @@ def _adaptive_image_sides(requested: int) -> list[int]:
 
 
 FIXED_VISUAL_PROMPTS: dict[str, str] = {
+    # Keep each description a short canonical noun phrase. Verbose "X or Y"
+    # variants widen the match surface in the joined detect prompt and cause
+    # over-detection (e.g. a plain page matched "national ID card"); the short
+    # form is the same lesson as the official_seal / signature prompts.
     "face": "human face",
     "fingerprint": "fingerprint",
     "palmprint": "palmprint",
-    "id_card": "identity card or national ID card",
-    "hk_macau_permit": "Hong Kong or Macau travel permit card",
+    "id_card": "ID card",
+    "hk_macau_permit": "travel permit card",
     "passport": "passport",
-    "employee_badge": "employee badge or work ID card",
-    "license_plate": "vehicle license plate",
-    "bank_card": "bank card or credit card",
+    "employee_badge": "employee badge",
+    "license_plate": "license plate",
+    "bank_card": "bank card",
     "physical_key": "physical key",
-    "receipt": "receipt or shopping receipt",
-    "shipping_label": "shipping label or delivery waybill",
+    "receipt": "receipt",
+    "shipping_label": "shipping label",
     "official_seal": "seal",
     "whiteboard": "whiteboard",
     "sticky_note": "sticky note",
-    "mobile_screen": "mobile phone screen",
-    "monitor_screen": "computer monitor screen",
+    "mobile_screen": "phone screen",
+    "monitor_screen": "computer monitor",
     "medical_wristband": "medical wristband",
     "qr_code": "QR code",
     "barcode": "barcode",
-    "paper": "paper document page",
+    "paper": "paper document",
     "signature": "signature",
 }
 
