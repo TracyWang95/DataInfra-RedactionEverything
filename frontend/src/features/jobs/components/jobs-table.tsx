@@ -238,7 +238,7 @@ export function JobsTable({
 
   return (
     <div
-      className="jobs-surface page-surface flex min-h-0 flex-1 flex-col overflow-hidden w-full rounded-[18px] border border-border/70 bg-card/95 shadow-[var(--shadow-md)]"
+      className="jobs-surface page-surface flex min-h-0 flex-1 flex-col overflow-hidden w-full rounded-[20px] border border-border/70 bg-card/95 shadow-[var(--shadow-md)]"
       data-testid="jobs-table-surface"
       aria-busy={loading || refreshing || tableLoading}
     >

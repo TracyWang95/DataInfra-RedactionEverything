@@ -92,8 +92,8 @@ export function buildBatchExportVisualEvidenceEntries(
     recordCountIncluding(evidence.source_detail_counts, 'fallback'),
   ]);
   const visualFeatureCount = firstPositiveCount([
-    normalizeCount(evidence.visual_features_model),
-    recordCount(evidence.evidence_source_counts, 'visual_features_model'),
+    normalizeCount(evidence.visual_feature_model),
+    recordCount(evidence.evidence_source_counts, 'visual_feature_model'),
     Math.max(0, recordCount(evidence.source_counts, 'visual_features') - fallbackCount),
   ]);
   const ocrHasCount = firstPositiveCount([

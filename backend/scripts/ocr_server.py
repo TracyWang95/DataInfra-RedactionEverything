@@ -34,6 +34,14 @@ _paddle_device = ""
 MAX_SIDE = int(os.environ.get("OCR_MAX_IMAGE_SIDE", "1600"))
 SEAL_TEXT = "[公章]"
 
+DEFAULT_CONFIDENCE = 0.9  # fallback confidence score when a box has none
+MAX_ITER_DEPTH = 8  # max recursion depth when walking nested OCR result objects
+NORMALIZED_COORD_MAX = 1.5  # if all coords <= this, treat them as already in [0,1] space
+MIN_BOX_SIZE = 1.0  # floor (px) for a box's width/height after clamping
+DEDUP_ROUND_DIGITS = 4  # rounding precision for the box dedup key
+SEAL_PAD_MIN = 4.0  # min padding (px) added around a stitched seal bbox
+SEAL_PAD_RATIO = 0.01  # padding as a fraction of the image's shorter side
+
 
 class OCRRequest(BaseModel):
     image: str = Field(..., description="Base64 image data")
@@ -56,7 +64,7 @@ class OCRBox(BaseModel):
     y: float
     width: float
     height: float
-    confidence: float = 0.9
+    confidence: float = DEFAULT_CONFIDENCE
     label: str = "text"
 
 
@@ -247,7 +255,7 @@ def get_structure_engine() -> Any | None:
 
         _structure = PPStructureV3(
             use_table_recognition=True,
-            use_seal_recognition=True,
+            use_seal_recognition=False,  # 公章由 LocateAnything 负责；关掉避免印章曲文被去扭曲后堆到左上角伪坐标
             use_formula_recognition=False,
             use_chart_recognition=False,
             use_region_detection=True,
@@ -261,7 +269,7 @@ def get_structure_engine() -> Any | None:
             text_det_unclip_ratio=1.5,
             text_rec_score_thresh=0.0,
         )
-        _model_name = "PaddleOCR-VL-1.6-0.9B + PP-StructureV3"
+        _model_name = "PaddleOCR-VL-1.6-0.9B + PP-StructureV3" if _vl is not None else "PP-StructureV3"
         print("[OCR] PP-StructureV3 loaded", flush=True)
         return _structure
     except Exception as exc:
@@ -318,7 +326,7 @@ def _has_items(value: Any) -> bool:
 
 
 def _iter_dicts(obj: Any, depth: int = 0) -> Iterable[dict]:
-    if depth > 8 or obj is None:
+    if depth > MAX_ITER_DEPTH or obj is None:
         return
     if isinstance(obj, dict):
         yield obj
@@ -360,7 +368,7 @@ def _iter_dicts(obj: Any, depth: int = 0) -> Iterable[dict]:
                 pass
 
 
-def _append_raw_box(raw: list[dict], text: str, box: Any, label: str, confidence: float = 0.9) -> None:
+def _append_raw_box(raw: list[dict], text: str, box: Any, label: str, confidence: float = DEFAULT_CONFIDENCE) -> None:
     content = str(text or "").strip()
     if not content:
         return
@@ -388,7 +396,7 @@ def _normalize_boxes(raw_boxes: list[dict], width: int, height: int) -> list[OCR
 
     max_x = max(float(box["box"][2]) for box in raw_boxes)
     max_y = max(float(box["box"][3]) for box in raw_boxes)
-    if max(max_x, max_y) <= 1.5:
+    if max(max_x, max_y) <= NORMALIZED_COORD_MAX:
         space_w, space_h = 1.0, 1.0
     else:
         space_w, space_h = float(width), float(height)
@@ -409,9 +417,15 @@ def _normalize_boxes(raw_boxes: list[dict], width: int, height: int) -> list[OCR
         x2 = max(0.0, min(x2, float(width)))
         y1 = max(0.0, min(y1, float(height)))
         y2 = max(0.0, min(y2, float(height)))
-        w = max(1.0, x2 - x1)
-        h = max(1.0, y2 - y1)
-        key = (raw["text"], round(x1 / width, 4), round(y1 / height, 4), round(w / width, 4), round(h / height, 4))
+        w = max(MIN_BOX_SIZE, x2 - x1)
+        h = max(MIN_BOX_SIZE, y2 - y1)
+        key = (
+            raw["text"],
+            round(x1 / width, DEDUP_ROUND_DIGITS),
+            round(y1 / height, DEDUP_ROUND_DIGITS),
+            round(w / width, DEDUP_ROUND_DIGITS),
+            round(h / height, DEDUP_ROUND_DIGITS),
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -422,7 +436,7 @@ def _normalize_boxes(raw_boxes: list[dict], width: int, height: int) -> list[OCR
                 y=y1 / height,
                 width=w / width,
                 height=h / height,
-                confidence=float(raw.get("confidence", 0.9) or 0.9),
+                confidence=float(raw.get("confidence", DEFAULT_CONFIDENCE) or DEFAULT_CONFIDENCE),
                 label=str(raw.get("label") or "text"),
             )
         )
@@ -475,7 +489,7 @@ def _extract_vl_parsing_boxes(outputs: Any) -> list[dict]:
                 continue
             if not content and label != "seal":
                 continue
-            _append_raw_box(raw, str(content or SEAL_TEXT), box, label or "text", 0.9)
+            _append_raw_box(raw, str(content or SEAL_TEXT), box, label or "text", DEFAULT_CONFIDENCE)
     return raw
 
 
@@ -495,7 +509,7 @@ def _extract_vl_spotting_boxes(outputs: Any) -> list[dict]:
         if not spotting:
             continue
         for poly, text in zip(spotting.get("rec_polys", []) or [], spotting.get("rec_texts", []) or [], strict=False):
-            _append_raw_box(raw, str(text or "").strip(), poly, "spotting", 0.9)
+            _append_raw_box(raw, str(text or "").strip(), poly, "spotting", DEFAULT_CONFIDENCE)
     return raw
 
 
@@ -545,7 +559,7 @@ def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
                 if label != "seal":
                     continue
                 coord = _first_value(box_info, "coordinate", "bbox", "box", "dt_polys", "rec_box")
-                _append_raw_box(raw, SEAL_TEXT, coord, "seal", float(_first_value(box_info, "score", "confidence") or 0.9))
+                _append_raw_box(raw, SEAL_TEXT, coord, "seal", float(_first_value(box_info, "score", "confidence") or DEFAULT_CONFIDENCE))
 
         seal_items = _first_value(item, "seal_res_list")
         if isinstance(seal_items, list):
@@ -554,7 +568,7 @@ def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
                     continue
                 outer = _first_value(seal, "coordinate", "bbox", "box", "seal_bbox", "dt_polys", "rec_box")
                 if outer:
-                    _append_raw_box(raw, SEAL_TEXT, outer, "seal", float(_first_value(seal, "score", "confidence") or 0.9))
+                    _append_raw_box(raw, SEAL_TEXT, outer, "seal", float(_first_value(seal, "score", "confidence") or DEFAULT_CONFIDENCE))
                     continue
                 seal_polys = _first_value(seal, "rec_polys", "dt_polys", "rec_boxes", "dt_boxes", "boxes")
                 if _has_items(seal_polys):
@@ -565,7 +579,7 @@ def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
                         y1 = min(part[1] for part in parts)
                         x2 = max(part[2] for part in parts)
                         y2 = max(part[3] for part in parts)
-                        pad = max(4.0, min(width, height) * 0.01)
+                        pad = max(SEAL_PAD_MIN, min(width, height) * SEAL_PAD_RATIO)
                         _append_raw_box(raw, SEAL_TEXT, [x1 - pad, y1 - pad, x2 + pad, y2 + pad], "seal")
 
         texts = _first_value(item, "rec_texts", "texts", "ocr_texts")
@@ -604,7 +618,7 @@ def extract_structure(image: Image.Image, request: StructureRequest) -> list[OCR
         outputs = engine.predict(
             temp_path,
             use_table_recognition=True,
-            use_seal_recognition=True,
+            use_seal_recognition=False,  # 公章由 LocateAnything 负责；关掉避免印章曲文被去扭曲后堆到左上角伪坐标
             use_formula_recognition=False,
             use_chart_recognition=False,
             use_region_detection=True,

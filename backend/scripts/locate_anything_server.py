@@ -36,14 +36,32 @@ DEFAULT_MIN_SIDE = int(os.environ.get("LOCATE_ANYTHING_MIN_IMAGE_SIDE", "1280"))
 DEFAULT_MAX_NEW_TOKENS = int(os.environ.get("LOCATE_ANYTHING_MAX_NEW_TOKENS", "8192"))
 DEFAULT_GENERATION_MODE = os.environ.get("LOCATE_ANYTHING_GENERATION_MODE", "hybrid")
 DEFAULT_TEMPERATURE = float(os.environ.get("LOCATE_ANYTHING_TEMPERATURE", "0.7"))
+# When set, the Qwen2 text backbone is served by vLLM (prompt-embeds) instead of
+# the in-process transformers model. This server then only runs the MoonViT
+# vision tower + mlp1 projector on GPU and posts the stitched embeds to vLLM.
+VLLM_LM_URL = os.environ.get("LOCATE_ANYTHING_VLLM_URL", "").strip()
+VLLM_LM_MODEL = os.environ.get("LOCATE_ANYTHING_VLLM_MODEL", "locate_qwen2_model")
+# Fixed seed pins the 0.7/0.9 open sampling so the same page yields the same boxes
+# on every click (reproducible) without collapsing to greedy. Tunable via env.
+VLLM_LM_SEED = int(os.environ.get("LOCATE_ANYTHING_VLLM_SEED", "1234"))
 FAST_FIRST_ENABLED = _env_flag("LOCATE_ANYTHING_FAST_FIRST", "1")
 FAST_FIRST_FALLBACK_ON_EMPTY = _env_flag("LOCATE_ANYTHING_FAST_FIRST_FALLBACK_ON_EMPTY", "1")
-SIGNATURE_TILE_FALLBACK_MAX_TILES = int(os.environ.get("LOCATE_ANYTHING_SIGNATURE_TILE_FALLBACK_MAX_TILES", "1"))
-SIGNATURE_MAX_SIDE = int(os.environ.get("LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE", str(min(DEFAULT_MAX_SIDE, 1280))))
-SIGNATURE_TILE_FALLBACK_MAX_SIDE = int(
-    os.environ.get("LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE", str(min(SIGNATURE_MAX_SIDE, 1280)))
-)
 VALID_GENERATION_MODES = {"fast", "hybrid", "slow"}
+
+# Smallest image side the adaptive-OOM retry will downscale to before giving up.
+ADAPTIVE_SIDE_FLOOR = 640
+# Descending candidate image sides tried on CUDA OOM (largest -> smallest).
+ADAPTIVE_SIDE_LADDER = [2048, 1920, 1792, 1600, 1536, 1280, 1024]
+# Cap on tokens the vLLM LM generates per detection completion.
+VLLM_MAX_TOKENS = 512
+# Network timeout (seconds) for a single vLLM completion request.
+VLLM_REQUEST_TIMEOUT_SECONDS = 120
+# Fixed confidence stamped on every LocateAnything box (model emits no score).
+LOCATEANYTHING_CONFIDENCE = 0.82
+# IoU at/above which two same-category boxes are treated as duplicates.
+DEDUPE_IOU_THRESHOLD = 0.55
+# Smaller-box containment ratio at/above which a box is dropped as a duplicate.
+DEDUPE_CONTAINMENT_THRESHOLD = 0.78
 
 
 def _normalize_generation_mode(value: str | None) -> str:
@@ -87,8 +105,8 @@ def _is_cuda_capacity_error(exc: BaseException) -> bool:
 
 
 def _adaptive_image_sides(requested: int) -> list[int]:
-    floor = max(640, min(DEFAULT_MIN_SIDE, requested))
-    candidates = [requested, 2048, 1920, 1792, 1600, 1536, 1280, 1024]
+    floor = max(ADAPTIVE_SIDE_FLOOR, min(DEFAULT_MIN_SIDE, requested))
+    candidates = [requested, *ADAPTIVE_SIDE_LADDER]
     result: list[int] = []
     for side in candidates:
         side = int(side)
@@ -113,7 +131,7 @@ FIXED_VISUAL_PROMPTS: dict[str, str] = {
     "physical_key": "physical key",
     "receipt": "receipt or shopping receipt",
     "shipping_label": "shipping label or delivery waybill",
-    "official_seal": "official seal stamp impression, company chop, or inked stamp mark. Do not locate handwritten signatures, printed labels, or table lines",
+    "official_seal": "seal",
     "whiteboard": "whiteboard",
     "sticky_note": "sticky note",
     "mobile_screen": "mobile phone screen",
@@ -122,31 +140,17 @@ FIXED_VISUAL_PROMPTS: dict[str, str] = {
     "qr_code": "QR code",
     "barcode": "barcode",
     "paper": "paper document page",
-    "signature": "handwritten signature or handwritten signer name; not printed labels, dates, seals, table lines, or plain printed text",
+    "signature": "signature",
 }
-
-PAGE_SCALE_CATEGORIES = {
-    "paper",
-    "receipt",
-    "shipping_label",
-    "id_card",
-    "hk_macau_permit",
-    "passport",
-    "bank_card",
-    "employee_badge",
-    "whiteboard",
-    "mobile_screen",
-    "monitor_screen",
-}
-
 
 CUSTOM_VISUAL_PROMPTS: dict[str, str] = {
-    "signature": (
-        "Locate all the instances that match the following description: actual visible handwritten "
-        "signatures or handwritten signer names in this document image. Do not locate printed labels, "
-        "dates, seals, table lines, horizontal rules, blank fields, regular printed text, or whole "
-        "signing areas. Use one tight box around each handwritten signature stroke only."
-    ),
+    # A short description matches the upstream demo's calling convention and far
+    # outperforms the verbose, negative-laden variant: the long prompt made the
+    # model emit <box>None</box> on faint signatures (e.g. the 1.tiff doctor
+    # signature), while "handwritten signature" recovers them without
+    # over-detecting on heavily handwritten forms (2.tiff stays at its 2 real
+    # signatures). Same lesson as the official_seal prompt.
+    "signature": "Locate all the instances that matches the following description: signature.",
 }
 
 
@@ -177,6 +181,11 @@ class LocateService:
         self.dtype = "bfloat16"
         self.ready = False
         self.lock = asyncio.Lock()
+        # vLLM-backend (prompt-embeds) state; populated by load_vision().
+        self.model: Any = None
+        self.processor: Any = None
+        self.embed: Any = None
+        self.image_token_index: int = -1
 
     def configure(self, model_path: str, backend: str, dtype: str) -> None:
         self.model_path = model_path
@@ -184,8 +193,211 @@ class LocateService:
         self.dtype = dtype
 
     def load(self) -> None:
-        self.worker = LocateAnythingWorker(self.model_path, backend=self.backend, dtype_name=self.dtype)
+        if VLLM_LM_URL:
+            self.load_vision()
+        else:
+            self.worker = LocateAnythingWorker(self.model_path, backend=self.backend, dtype_name=self.dtype)
+            self.ready = True
+
+    def load_vision(self) -> None:
+        """vLLM mode: keep only the MoonViT vision tower + mlp1 + embed_tokens on
+        GPU and free the Qwen2 decoder (vLLM serves it). Nothing of consequence
+        stays on CPU — extract_feature/mlp1 only touch the vision tower."""
+        import gc
+
+        import torch
+        from transformers import AutoModel, AutoProcessor
+
+        self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
+        model = AutoModel.from_pretrained(
+            self.model_path, dtype=torch.bfloat16, trust_remote_code=True, low_cpu_mem_usage=True
+        ).eval()
+        model.vision_model.to("cuda")
+        model.mlp1.to("cuda")
+        self.embed = model.language_model.model.embed_tokens.to("cuda")
+        self.image_token_index = int(model.image_token_index)
+        # Release the 36 idle decoder layers + lm_head from CPU RAM (~5GB). The
+        # embed_tokens module is already referenced by self.embed (on GPU), so it
+        # survives; the language_model shell/config is kept for safety.
+        model.language_model.model.layers = torch.nn.ModuleList()
+        model.language_model.lm_head = torch.nn.Identity()
+        gc.collect()
+        self.model = model
+        # MoonViT's bundled SDPA builds a dense [1,N,N] attention mask even for a
+        # single image, which forces F.scaled_dot_product_attention onto its slow
+        # math/mem-efficient backend. For one image (one sequence) that mask is
+        # all-True (redundant); passing attn_mask=None hits the fast fused kernel.
+        # Output is identical, only the kernel changes. flash_attn is not installed,
+        # so MoonViT otherwise runs this masked fallback on every page (~1.7s encode).
+        try:
+            import sys as _sys
+
+            import torch.nn.functional as _F
+
+            _vmod = _sys.modules.get(type(model.vision_model).__module__)
+            _funcs = getattr(_vmod, "VL_VISION_ATTENTION_FUNCTIONS", None)
+            if isinstance(_funcs, dict):
+                def _fast_sdpa(q, k, v, q_cu_seqlens=None, k_cu_seqlens=None):
+                    qt, kt, vt = q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1)
+                    if q_cu_seqlens is None or len(q_cu_seqlens) <= 2:
+                        attn_mask = None  # single image: full attention, fast fused kernel
+                    else:
+                        seq = q.shape[0]
+                        attn_mask = torch.zeros([1, seq, seq], device=q.device, dtype=torch.bool)
+                        for i in range(1, len(q_cu_seqlens)):
+                            attn_mask[..., q_cu_seqlens[i - 1]:q_cu_seqlens[i], q_cu_seqlens[i - 1]:q_cu_seqlens[i]] = True
+                    out = _F.scaled_dot_product_attention(qt, kt, vt, attn_mask, dropout_p=0.0)
+                    return out.transpose(0, 1).reshape(q.shape[0], -1)
+
+                _funcs["sdpa"] = _fast_sdpa
+                _vmod.sdpa_attention = _fast_sdpa  # flash fallback calls this global by name
+                print("[LocateAnything] MoonViT fast-SDPA (maskless single-image) patch applied", flush=True)
+        except Exception as exc:
+            print(f"[LocateAnything] MoonViT fast-SDPA patch skipped: {exc}", flush=True)
+        print(f"[LocateAnything] vLLM mode: vision tower on GPU, LM served by {VLLM_LM_URL}", flush=True)
         self.ready = True
+
+    def _encode_vit(self, image: Image.Image):
+        """Run the MoonViT vision tower once and return the projected image
+        embeddings. These depend only on the image, so they can be reused across
+        many category prompts (the text part of the prompt does not change them)."""
+        import numpy as np
+        import torch
+
+        messages = [
+            {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "locate"}]}
+        ]
+        text = self.processor.py_apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        images, videos = self.processor.process_vision_info(messages)
+        inputs = self.processor(text=[text], images=images, videos=videos, return_tensors="pt")
+        pixel_values = inputs["pixel_values"].to("cuda", torch.bfloat16)
+        ig = inputs.get("image_grid_hws", None)
+        if isinstance(ig, np.ndarray):
+            ig = torch.from_numpy(ig)
+        if ig is not None:
+            ig = ig.to("cuda", torch.int32)
+        with torch.no_grad():
+            vit = self.model.extract_feature(pixel_values, ig)
+            if isinstance(vit, list):
+                vit = torch.cat(vit, dim=0)
+            elif ig is not None:
+                vit = torch.cat(vit, dim=0)
+            vit = self.model.mlp1(vit)
+        return vit
+
+    def _build_prompt_embeds_b64(self, image: Image.Image, prompt: str, vit) -> str:
+        """Stitch the precomputed image embeds (vit) into the text-embed sequence
+        for `prompt` and serialize to base64 for vLLM prompt-embeds."""
+        import base64
+        import io
+
+        import torch
+
+        messages = [
+            {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}
+        ]
+        text = self.processor.py_apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        images, videos = self.processor.process_vision_info(messages)
+        inputs = self.processor(text=[text], images=images, videos=videos, return_tensors="pt")
+        input_ids = inputs["input_ids"].to("cuda")
+        with torch.no_grad():
+            emb = self.embed(input_ids).to(torch.bfloat16)
+            B, N, C = emb.shape
+            emb = emb.reshape(B * N, C)
+            idf = input_ids.reshape(B * N)
+            sel = idf == self.image_token_index
+            emb[sel] = vit.reshape(-1, C).to(emb.dtype)
+            emb = emb.reshape(B, N, C)
+        prompt_embeds = emb.squeeze(0).contiguous().to("cpu", torch.bfloat16)
+        buf = io.BytesIO()
+        torch.save(prompt_embeds, buf)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    def _vllm_complete_b64(self, prompt_embeds_b64: str) -> str:
+        """Greedy vLLM completion from a base64 prompt-embeds payload."""
+        import json
+        import urllib.request
+
+        body = {
+            "model": VLLM_LM_MODEL,
+            "max_tokens": VLLM_MAX_TOKENS,
+            # Open sampling (temp 0.7 / top_p 0.9), matching the upstream NVIDIA
+            # demo. Open decoding explores more candidate regions and recalls
+            # multi-instance targets (e.g. several seals) that greedy collapses
+            # away — recall is the priority here. The cost is that results vary
+            # slightly between runs; that is intentional. NOTE: repetition_penalty
+            # is omitted — with vLLM prompt-embeds there are no prompt token-ids, so
+            # the penalty kernel indexes out of bounds and triggers a CUDA assert.
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "seed": VLLM_LM_SEED,
+            "prompt_embeds": prompt_embeds_b64,
+            "skip_special_tokens": False,
+            "spaces_between_special_tokens": False,
+        }
+        req = urllib.request.Request(
+            VLLM_LM_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+        )
+        resp = json.loads(urllib.request.urlopen(req, timeout=VLLM_REQUEST_TIMEOUT_SECONDS).read())
+        return resp["choices"][0]["text"]
+
+    def _encode_and_generate(self, image: Image.Image, prompt: str) -> str:
+        vit = self._encode_vit(image)
+        return self._vllm_complete_b64(self._build_prompt_embeds_b64(image, prompt, vit))
+
+    async def _predict_boxes_vllm(
+        self, image: Image.Image, prompt: str, max_image_side: int
+    ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
+        if not self.ready:
+            raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
+        inference_image = _resize_for_inference(image, max_image_side)
+        async with self.lock:
+            answer = await asyncio.to_thread(self._encode_and_generate, inference_image, prompt)
+        boxes = _parse_boxes(answer, inference_image.width, inference_image.height)
+        return answer, boxes, (inference_image.width, inference_image.height)
+
+    async def predict_boxes_per_category(
+        self, image: Image.Image, categories: list[str], max_image_side: int = DEFAULT_MAX_SIDE
+    ) -> tuple[list[tuple[str, list[dict[str, Any]]]], tuple[int, int], str]:
+        """vLLM-mode multi-category detect with full recall.
+
+        LocateAnything's multi-instance recall collapses when many categories
+        share one prompt (e.g. 21 categories -> 0 seals, 1 category -> 4 seals),
+        so we run each category as its own single-category prompt. The expensive
+        MoonViT vision pass runs ONCE; the cheap vLLM generations are then issued
+        concurrently (the LM server batches them), keeping latency ~ one encode
+        plus a few batched generations rather than N full passes.
+        """
+        if not self.ready:
+            raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
+        inference_image = _resize_for_inference(image, max_image_side)
+        width, height = inference_image.width, inference_image.height
+        _t0 = time.perf_counter()
+        # Phase 1 (GPU, serialized): one vision encode + per-category prompt-embeds.
+        async with self.lock:
+            vit = await asyncio.to_thread(self._encode_vit, inference_image)
+            _t_enc = time.perf_counter()
+            payloads: list[tuple[str, str]] = []
+            for cat in categories:
+                b64 = await asyncio.to_thread(self._build_prompt_embeds_b64, inference_image, _detect_prompt([cat]), vit)
+                payloads.append((cat, b64))
+            _t_build = time.perf_counter()
+
+        # Phase 2 (network, concurrent): vLLM generations batch on the LM server.
+        async def _gen(cat: str, b64: str) -> tuple[str, list[dict[str, Any]], str]:
+            answer = await asyncio.to_thread(self._vllm_complete_b64, b64)
+            return cat, _parse_boxes(answer, width, height), answer
+
+        results = await asyncio.gather(*[_gen(cat, b64) for cat, b64 in payloads])
+        print(
+            f"[LA-timing] cats={len(categories)} size={width}x{height} "
+            f"encode={_t_enc - _t0:.2f}s build={_t_build - _t_enc:.2f}s "
+            f"generate={time.perf_counter() - _t_build:.2f}s total={time.perf_counter() - _t0:.2f}s",
+            flush=True,
+        )
+        per_category = [(cat, boxes) for cat, boxes, _ in results]
+        raw = "\n".join(f"[{cat}] {answer}" for cat, _, answer in results)
+        return per_category, (width, height), raw
 
     async def predict_boxes(
         self,
@@ -199,6 +411,8 @@ class LocateService:
         fast_first: bool | None = None,
         fallback_when_no_boxes: bool = True,
     ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
+        if VLLM_LM_URL:
+            return await self._predict_boxes_vllm(image, prompt, max_image_side)
         if self.worker is None or not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
         source_size = image.size
@@ -349,19 +563,6 @@ def _chat_prompt_for(prompt: str, allowed_ids: list[str]) -> tuple[str, str]:
     return type_id, f"Locate all the instances that match the following description: {description}."
 
 
-def _box_to_1000(box: dict[str, Any], width: int, height: int) -> list[int]:
-    x1 = float(box["x"])
-    y1 = float(box["y"])
-    x2 = x1 + float(box["width"])
-    y2 = y1 + float(box["height"])
-    return [
-        max(0, min(1000, round(x1 / max(1, width) * 1000))),
-        max(0, min(1000, round(y1 / max(1, height) * 1000))),
-        max(0, min(1000, round(x2 / max(1, width) * 1000))),
-        max(0, min(1000, round(y2 / max(1, height) * 1000))),
-    ]
-
-
 def _find_first_user_image_and_text(messages: list[dict[str, Any]]) -> tuple[Image.Image, str]:
     prompt_parts: list[str] = []
     image: Image.Image | None = None
@@ -387,24 +588,18 @@ def _find_first_user_image_and_text(messages: list[dict[str, Any]]) -> tuple[Ima
 
 
 def _detect_prompt(categories: list[str]) -> str:
-    prompts = []
+    # Match the upstream LocateAnything demo prompt verbatim: a single
+    # "Locate all the instances that matches the following description: ..." line
+    # with the per-category descriptions joined by </c>. The previous multi-line
+    # variant embedded a literal "<ref>signature</ref>" example that the model
+    # echoed back (returning a lone signature box instead of the seals), and its
+    # verbose negatives suppressed real detections.
+    descriptions = []
     for raw in categories:
         slug = _normalize_slug(raw)
-        desc = FIXED_VISUAL_PROMPTS.get(slug, slug.replace("_", " "))
-        prompts.append(f"{slug}: {desc}")
-    return (
-        "Locate all the instances that match the following descriptions. "
-        "For every returned box, put the exact category slug before the box, for example "
-        "<ref>signature</ref><box><x1><y1><x2><y2></box>. "
-        "Use tight boxes around the visible object. Do not return a whole document/page box "
-        "unless the category is itself a page-scale document, card, screen, label, receipt, or paper. "
-        "If an object is not clearly visible, omit it. "
-        f"Descriptions: {'</c>'.join(prompts)}."
-    )
-
-
-def _detect_prompt_for_signature() -> str:
-    return CUSTOM_VISUAL_PROMPTS["signature"]
+        descriptions.append(FIXED_VISUAL_PROMPTS.get(slug, slug.replace("_", " ")))
+    category_set_str = "</c>".join(descriptions)
+    return f"Locate all the instances that matches the following description: {category_set_str}."
 
 
 def _box_to_normalized(box: dict[str, Any], width: int, height: int, category: str) -> dict[str, Any] | None:
@@ -414,38 +609,15 @@ def _box_to_normalized(box: dict[str, Any], width: int, height: int, category: s
     h = max(0.0, min(1.0 - y, float(box["height"]) / max(1, height)))
     if not _accept_normalized_box(category, x, y, w, h):
         return None
-    return {"x": x, "y": y, "width": w, "height": h, "category": category, "confidence": 0.82}
-
-
-def _accept_category_pixels(image: Image.Image, box: dict[str, Any], category: str) -> bool:
-    return True
+    return {"x": x, "y": y, "width": w, "height": h, "category": category, "confidence": LOCATEANYTHING_CONFIDENCE}
 
 
 def _accept_normalized_box(category: str, x: float, y: float, w: float, h: float) -> bool:
-    if w <= 0 or h <= 0:
-        return False
-    area = w * h
-    slug = _normalize_slug(category)
-    if slug == "paper":
-        return area >= 0.05 and w >= 0.2 and h >= 0.2
-    if w < 0.004 or h < 0.004 or area < 0.000025:
-        return False
-    if slug not in PAGE_SCALE_CATEGORIES and area >= 0.50 and w >= 0.65 and h >= 0.65:
-        return False
-    if slug == "face":
-        aspect = w / max(h, 1e-6)
-        return 0.35 <= aspect <= 2.5 and area <= 0.35
-    if slug == "signature":
-        aspect = w / max(h, 1e-6)
-        # Signatures are small handwritten strokes. This removes page-wide lines,
-        # blank signing rows, and whole signing areas without relying on page layout.
-        return (
-            0.012 <= w <= 0.38
-            and 0.008 <= h <= 0.16
-            and 0.00012 <= area <= 0.035
-            and 0.6 <= aspect <= 16.0
-        )
-    return area <= 0.85
+    # Trust LA completely: detections are kept exactly as the model returns them.
+    # No thresholds, no magic numbers, no per-category geometry. The only thing
+    # rejected is a mathematically degenerate box (non-positive area) — that is
+    # malformed output, not a detection.
+    return w > 0 and h > 0
 
 
 def _box_iou(a: dict[str, Any], b: dict[str, Any]) -> float:
@@ -495,111 +667,15 @@ def _dedupe_boxes(boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         kept: list[dict[str, Any]] = []
         for item in ordered:
-            if any(_box_iou(item, existing) >= 0.55 or _box_containment(item, existing) >= 0.78 for existing in kept):
+            if any(
+                _box_iou(item, existing) >= DEDUPE_IOU_THRESHOLD
+                or _box_containment(item, existing) >= DEDUPE_CONTAINMENT_THRESHOLD
+                for existing in kept
+            ):
                 continue
             kept.append(item)
         kept_all.extend(kept)
     return sorted(kept_all, key=lambda item: (item.get("category", ""), float(item["y"]), float(item["x"])))
-
-
-def _signature_tile_specs(width: int, height: int) -> list[tuple[str, tuple[int, int, int, int]]]:
-    if width < 640 or height < 640 or SIGNATURE_TILE_FALLBACK_MAX_TILES <= 0:
-        return []
-    raw_specs = [
-        ("bottom_half", (0, height // 2, width, height)),
-        ("top_half", (0, 0, width, max(1, (height + 1) // 2))),
-        ("middle_band", (0, int(height * 0.25), width, max(1, int(height * 0.75)))),
-        ("bottom_third", (0, int(height * 0.62), width, height)),
-    ]
-    specs: list[tuple[str, tuple[int, int, int, int]]] = []
-    seen: set[tuple[int, int, int, int]] = set()
-    for name, (left, top, right, bottom) in raw_specs:
-        left = max(0, min(width - 1, int(left)))
-        top = max(0, min(height - 1, int(top)))
-        right = max(left + 1, min(width, int(right)))
-        bottom = max(top + 1, min(height, int(bottom)))
-        box = (left, top, right, bottom)
-        if box in seen:
-            continue
-        seen.add(box)
-        specs.append((name, box))
-        if len(specs) >= SIGNATURE_TILE_FALLBACK_MAX_TILES:
-            break
-    return specs
-
-
-async def _predict_signature_boxes_with_fallback(
-    image: Image.Image,
-    *,
-    generation_mode: str | None = None,
-    fast_first: bool | None = None,
-    use_fallback: bool = True,
-    max_image_side: int | None = None,
-) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
-    prompt = _detect_prompt_for_signature()
-    requested_mode = _normalize_generation_mode(generation_mode or "fast")
-    signature_max_side = max(640, int(max_image_side or SIGNATURE_MAX_SIDE))
-    answer, boxes, (width, height) = await service.predict_boxes(
-        image,
-        prompt,
-        max_image_side=signature_max_side,
-        generation_mode=requested_mode,
-        temperature=0.1,
-        fast_first=fast_first,
-        fallback_when_no_boxes=bool(use_fallback),
-    )
-    accepted = [
-        box
-        for box in boxes
-        if _box_to_normalized(box, width, height, "signature") is not None
-    ]
-    if accepted or not use_fallback:
-        return answer, accepted, (width, height)
-
-    raw_answers = [f"[full-{requested_mode}] {answer}"]
-    fallback_mode = _normalize_generation_mode(DEFAULT_GENERATION_MODE)
-    if fallback_mode != requested_mode:
-        fallback_answer, fallback_boxes, _ = await service.predict_boxes(
-            image,
-            prompt,
-            max_image_side=signature_max_side,
-            generation_mode=fallback_mode,
-            temperature=0.1,
-            fast_first=False,
-        )
-        raw_answers.append(f"[full-{fallback_mode}] {fallback_answer}")
-        fallback_accepted = [
-            box
-            for box in fallback_boxes
-            if _box_to_normalized(box, width, height, "signature") is not None
-        ]
-        if fallback_accepted:
-            return "\n".join(raw_answers), fallback_accepted, (width, height)
-
-    mapped: list[dict[str, Any]] = []
-    tile_max_side = min(signature_max_side, SIGNATURE_TILE_FALLBACK_MAX_SIDE)
-    for tile_name, (left, top, right, bottom) in _signature_tile_specs(width, height):
-        crop = image.crop((left, top, right, bottom))
-        tile_answer, tile_boxes, _tile_size = await service.predict_boxes(
-            crop,
-            prompt,
-            max_image_side=tile_max_side,
-            generation_mode=requested_mode,
-            temperature=0.1,
-            fast_first=False,
-            fallback_when_no_boxes=False,
-        )
-        raw_answers.append(f"[{tile_name}] {tile_answer}")
-        for box in tile_boxes:
-            mapped_box = {
-                **box,
-                "x": round(float(box["x"]) + left, 2),
-                "y": round(float(box["y"]) + top, 2),
-            }
-            if _box_to_normalized(mapped_box, width, height, "signature") is not None:
-                mapped.append(mapped_box)
-
-    return "\n".join(raw_answers), mapped, (width, height)
 
 
 def _category_from_label(label: str, categories: list[str]) -> str | None:
@@ -677,21 +753,19 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
     type_id, locate_prompt = _chat_prompt_for(prompt, allowed_ids)
     max_new_tokens = max(int(req.max_tokens or 0), DEFAULT_MAX_NEW_TOKENS)
     temperature = float(req.temperature if req.temperature is not None else DEFAULT_TEMPERATURE)
-    if type_id == "signature":
-        answer, boxes, (width, height) = await _predict_signature_boxes_with_fallback(image)
-    else:
-        answer, boxes, (width, height) = await service.predict_boxes(
-            image,
-            locate_prompt,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-        )
+    # Signature is detected like any other category (trust LA, no special path).
+    answer, boxes, (width, height) = await service.predict_boxes(
+        image,
+        locate_prompt,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+    )
     wants_json = "Schema:" in prompt or "Allowed type_id:" in prompt or '"objects"' in prompt
     if wants_json:
         normalized_objects: list[dict[str, Any]] = []
         for box in boxes:
             normalized = _box_to_normalized(box, width, height, type_id)
-            if normalized is not None and _accept_category_pixels(image, box, type_id):
+            if normalized is not None:
                 normalized_objects.append(normalized)
         normalized_objects = _dedupe_boxes(normalized_objects)
         objects = [
@@ -704,7 +778,7 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
                     max(0, min(1000, round((float(box["x"]) + float(box["width"])) * 1000))),
                     max(0, min(1000, round((float(box["y"]) + float(box["height"])) * 1000))),
                 ],
-                "confidence": 0.82,
+                "confidence": LOCATEANYTHING_CONFIDENCE,
                 "rule_matched": f"{type_id}#locateanything",
                 "text": str(box.get("label") or type_id),
             }
@@ -733,34 +807,37 @@ async def detect(req: DetectRequest) -> dict[str, Any]:
     start = time.perf_counter()
     raw_answers: list[str] = []
     out: list[dict[str, Any]] = []
-    signature_requested = "signature" in requested
-    general_requested = [item for item in requested if item != "signature"]
+    # Signature is now detected like every other visual category (per-category
+    # path). The old special-case tiling fallback mislocalized large/stylized
+    # signatures (boxing nearby seal/printed text); unifying it gives consistent
+    # behavior and lets the signature acceptance filter reject bad boxes instead
+    # of forcing a misplaced one.
+    general_requested = list(requested)
 
     if general_requested:
-        prompt = _detect_prompt(general_requested)
-        answer, boxes, (width, height) = await service.predict_boxes(image, prompt)
-        raw_answers.append(answer)
-        for box in boxes:
-            category = _category_from_label(str(box.get("label") or ""), general_requested)
-            if category is None:
-                continue
-            normalized = _box_to_normalized(box, width, height, category)
-            if normalized is not None and _accept_category_pixels(image, box, category):
-                out.append(normalized)
-
-    if signature_requested:
-        answer, boxes, (width, height) = await _predict_signature_boxes_with_fallback(
-            image,
-            generation_mode=req.generation_mode,
-            fast_first=req.fast_first,
-            use_fallback=req.signature_fallback,
-            max_image_side=req.max_image_side,
-        )
-        raw_answers.append(answer)
-        for box in boxes:
-            normalized = _box_to_normalized(box, width, height, "signature")
-            if normalized is not None:
-                out.append(normalized)
+        if VLLM_LM_URL:
+            # vLLM mode: one prompt per category (multi-category recall collapses),
+            # sharing a single vision encode. Boxes come back tagged by category.
+            per_category, (width, height), raw = await service.predict_boxes_per_category(
+                image, general_requested, max_image_side=req.max_image_side or DEFAULT_MAX_SIDE
+            )
+            raw_answers.append(raw)
+            for category, boxes in per_category:
+                for box in boxes:
+                    normalized = _box_to_normalized(box, width, height, category)
+                    if normalized is not None:
+                        out.append(normalized)
+        else:
+            prompt = _detect_prompt(general_requested)
+            answer, boxes, (width, height) = await service.predict_boxes(image, prompt)
+            raw_answers.append(answer)
+            for box in boxes:
+                category = _category_from_label(str(box.get("label") or ""), general_requested)
+                if category is None:
+                    continue
+                normalized = _box_to_normalized(box, width, height, category)
+                if normalized is not None:
+                    out.append(normalized)
 
     out = _dedupe_boxes(out)
     elapsed = time.perf_counter() - start

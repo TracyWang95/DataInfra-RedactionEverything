@@ -15,6 +15,24 @@ from app.models.type_mapping import canonical_type_id, cn_to_id
 
 logger = logging.getLogger(__name__)
 
+# 智能编号使用中文数字（零~十）的最大计数，超过则改用阿拉伯数字
+MAX_CHINESE_NUMERAL = 10
+# 结构化标签序号的零填充宽度，如 001
+STRUCTURED_INDEX_WIDTH = 3
+
+# 掩码模式：各类型触发部分掩码所需的最小文本长度，不足则整体掩码
+MASK_MIN_LEN_PERSON = 2  # 人名：保留姓
+MASK_MIN_LEN_PHONE = 11  # 电话：保留前3后4
+MASK_MIN_LEN_ID_CARD = 18  # 身份证：保留前6后4
+MASK_MIN_LEN_BANK_CARD = 16  # 银行卡：保留后4
+
+# 掩码模式：明文保留的前缀/后缀字符数
+MASK_KEEP_PREFIX_PHONE = 3  # 电话保留前3位
+MASK_KEEP_SUFFIX_PHONE = 4  # 电话保留后4位
+MASK_KEEP_PREFIX_ID_CARD = 6  # 身份证保留前6位
+MASK_KEEP_SUFFIX_ID_CARD = 4  # 身份证保留后4位
+MASK_KEEP_SUFFIX_BANK_CARD = 4  # 银行卡保留后4位
+
 
 def _raw_entity_type_id(entity_type: object) -> str:
     return entity_type.value if isinstance(entity_type, EntityType) else str(entity_type)
@@ -44,13 +62,6 @@ class RedactionContext:
     def set_custom_replacements(self, replacements: dict[str, str]):
         """设置自定义替换映射"""
         self.custom_replacements = replacements
-
-    def set_structured_mapping(self, mapping: dict[str, list[str]]):
-        """设置结构化标签映射（tag -> 原文列表）"""
-        for tag, values in mapping.items():
-            for value in values:
-                if value and value not in self.structured_tag_map:
-                    self.structured_tag_map[value] = tag
 
     def get_replacement(self, entity: Entity) -> str:
         """
@@ -104,7 +115,7 @@ class RedactionContext:
 
         # 使用中文数字编号
         chinese_nums = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九", "十"]
-        if count <= 10:
+        if count <= MAX_CHINESE_NUMERAL:
             num_str = chinese_nums[count]
         else:
             num_str = str(count)
@@ -119,26 +130,26 @@ class RedactionContext:
 
         if type_key == "PERSON":
             # 人名：保留姓，其他用 *
-            if length >= 2:
+            if length >= MASK_MIN_LEN_PERSON:
                 return text[0] + "*" * (length - 1)
             return "*"
 
         elif type_key == "PHONE":
             # 电话：保留前3后4
-            if length >= 11:
-                return text[:3] + "****" + text[-4:]
+            if length >= MASK_MIN_LEN_PHONE:
+                return text[:MASK_KEEP_PREFIX_PHONE] + "****" + text[-MASK_KEEP_SUFFIX_PHONE:]
             return "*" * length
 
         elif type_key == "ID_CARD":
             # 身份证：保留前6后4
-            if length >= 18:
-                return text[:6] + "********" + text[-4:]
+            if length >= MASK_MIN_LEN_ID_CARD:
+                return text[:MASK_KEEP_PREFIX_ID_CARD] + "********" + text[-MASK_KEEP_SUFFIX_ID_CARD:]
             return "*" * length
 
         elif type_key == "BANK_CARD":
             # 银行卡：保留后4
-            if length >= 16:
-                return "*" * (length - 4) + text[-4:]
+            if length >= MASK_MIN_LEN_BANK_CARD:
+                return "*" * (length - MASK_KEEP_SUFFIX_BANK_CARD) + text[-MASK_KEEP_SUFFIX_BANK_CARD:]
             return "*" * length
 
         else:
@@ -158,7 +169,7 @@ class RedactionContext:
                 self.type_counters[type_key] = 0
             self.type_counters[type_key] += 1
             index = self.type_counters[type_key]
-            return template.replace("{index}", f"{index:03d}")
+            return template.replace("{index}", f"{index:0{STRUCTURED_INDEX_WIDTH}d}")
 
         structured_map = {
             "PERSON": ("人物", "个人.姓名"),
@@ -188,17 +199,17 @@ class RedactionContext:
             builtin_type_name = structured_map.get(builtin_type_key or "")
             if builtin_type_name:
                 _, path = builtin_type_name
-                return f"<{label}[{index:03d}].{path}>"
-            return f"<{label}[{index:03d}].完整值>"
+                return f"<{label}[{index:0{STRUCTURED_INDEX_WIDTH}d}].{path}>"
+            return f"<{label}[{index:0{STRUCTURED_INDEX_WIDTH}d}].完整值>"
 
         type_name = structured_map.get(type_key)
         if type_name:
             category, path = type_name
-            return f"<{category}[{index:03d}].{path}>"
+            return f"<{category}[{index:0{STRUCTURED_INDEX_WIDTH}d}].{path}>"
 
         # 自定义或未知类型兜底
         label = self._get_type_label(type_key) or type_key
-        return f"<{label}[{index:03d}].完整名称>"
+        return f"<{label}[{index:0{STRUCTURED_INDEX_WIDTH}d}].完整名称>"
 
     def _get_tag_template(self, type_key: str) -> str | None:
         try:

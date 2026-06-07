@@ -346,7 +346,7 @@ function normalizeExportReportVisualEvidence(
   return {
     total_boxes: asNumber(rawEvidence.total_boxes),
     selected_boxes: asNumber(rawEvidence.selected_boxes),
-    visual_features_model: asNumber(rawEvidence.visual_features_model),
+    visual_feature_model: asNumber(rawEvidence.visual_feature_model),
     local_fallback: asNumber(rawEvidence.local_fallback),
     ocr_has: asNumber(rawEvidence.ocr_has),
     table_structure: asNumber(rawEvidence.table_structure),

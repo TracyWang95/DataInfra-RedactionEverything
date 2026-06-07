@@ -249,7 +249,7 @@ export function StructuredFiles() {
                 <Badge
                   variant="outline"
                   className={cn(
-                    'shrink-0 text-[10px]',
+                    'shrink-0',
                     reviewed
                       ? 'border-[var(--success-border)] text-[var(--success-foreground)]'
                       : 'border-[var(--warning-border)] bg-[var(--warning-surface)] text-[var(--warning-foreground)]',
@@ -394,7 +394,7 @@ export function StructuredDatabase() {
         </Button>
       }
     >
-      <section className="grid gap-2 xl:grid-cols-[minmax(23rem,0.78fr)_minmax(0,1.22fr)]">
+      <section className="grid gap-3 xl:grid-cols-[minmax(23rem,0.78fr)_minmax(0,1.22fr)]">
         <DatabaseConnectionCard
           payload={payload}
           connections={connectionsState.connections}
@@ -1056,7 +1056,7 @@ export function StructuredDelivery() {
         </Button>
       }
     >
-      <section className="grid items-start gap-2 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
+      <section className="grid items-start gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
         <DeliveryDatasetCard
           datasets={deliveryDatasetOptions}
           connections={connectionsState.connections}
@@ -1066,11 +1066,11 @@ export function StructuredDelivery() {
           onClear={handleClearSelection}
         />
         <Card className="page-surface border-border/70 shadow-[var(--shadow-control)]">
-          <CardHeader className="px-3 py-2">
+          <CardHeader className="px-4 py-3">
             <CardTitle className="text-sm">交付设置</CardTitle>
             <CardDescription>结构化任务会直接生成脱敏导出，不调用 OCR/VisualFeature。</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-2 px-3 pb-3 pt-0">
+          <CardContent className="grid gap-2 px-4 pb-4 pt-0">
             <Field label="包内文件格式">
               <Select
                 value={exportFormat}
@@ -1091,7 +1091,7 @@ export function StructuredDelivery() {
                 下载始终是 ZIP 交付包，包内包含所选格式文件和 quality-report.json。
               </p>
             </Field>
-            <div className="rounded-xl border border-border bg-muted/30 p-2.5 text-sm">
+            <div className="rounded-xl border border-border bg-muted/25 p-3 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">已选择</span>
                 <span className="font-semibold">{selectedDatasets.length} 个数据集</span>
@@ -1354,7 +1354,7 @@ function StructuredPathCard({
   ];
   return (
     <Card className="page-surface border-border/70 shadow-[var(--shadow-control)]">
-      <CardHeader className="px-4 py-2.5">
+      <CardHeader className="px-4 py-3">
         <CardTitle className="text-sm">治理路径</CardTitle>
         <CardDescription>数据源入口二选一，后续按字段策略闭环。</CardDescription>
       </CardHeader>
@@ -1372,7 +1372,7 @@ function StructuredPathCard({
             >
               <span
                 className={cn(
-                  'grid size-8 place-items-center rounded-lg border',
+                  'grid size-9 place-items-center rounded-xl border',
                   done ? 'border-[var(--success-border)] bg-[var(--success-surface)]' : 'border-border bg-muted/25',
                 )}
               >
@@ -1382,13 +1382,13 @@ function StructuredPathCard({
                 <span className="block truncate text-sm font-semibold">{title}</span>
                 <span className="block truncate text-xs text-muted-foreground">{desc}</span>
               </span>
-              <Badge variant="outline" className="rounded-full text-[10px]">
+              <Badge variant="outline" className="rounded-full">
                 {status}
               </Badge>
             </div>
           );
         })}
-        <div className="rounded-xl border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+        <div className="rounded-xl border border-border bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
           数据库连接是数据库来源的可选入口；当前已保存 {connectionCount} 条只读连接。
         </div>
       </CardContent>
@@ -1432,7 +1432,7 @@ function StructuredNextActionCard({
 
   return (
     <Card className="page-surface border-border/70 shadow-[var(--shadow-control)]">
-      <CardHeader className="px-4 py-2.5">
+      <CardHeader className="px-4 py-3">
         <CardTitle className="text-sm">下一步</CardTitle>
         <CardDescription>{description}</CardDescription>
       </CardHeader>
@@ -1481,7 +1481,7 @@ function StructuredSourceMixCard({
   const dbPct = total > 0 ? 100 - filePct : 0;
   return (
     <Card className="page-surface border-border/70 shadow-[var(--shadow-control)]">
-      <CardHeader className="px-4 py-2.5">
+      <CardHeader className="px-4 py-3">
         <CardTitle className="text-sm">数据源分布</CardTitle>
         <CardDescription>区分离线文件表与数据库登记对象。</CardDescription>
       </CardHeader>
@@ -1769,11 +1769,11 @@ function DatabaseConnectionCard({
   const activeDatasetCount = activeConnection ? Number(activeConnection.metadata?.dataset_count ?? 0) : 0;
   return (
     <Card className="page-surface border-border/70 shadow-[var(--shadow-control)]">
-      <CardHeader className="px-3 py-2.5">
+      <CardHeader className="px-4 py-3">
         <CardTitle className="text-sm">新建连接</CardTitle>
-        <CardDescription className="text-xs leading-5">建议使用只读账号。这里保存为新连接，不覆盖已保存连接。</CardDescription>
+        <CardDescription>建议使用只读账号。这里保存为新连接，不覆盖已保存连接。</CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-2.5 px-3 pb-3 pt-0">
+      <CardContent className="grid gap-2 px-4 pb-4 pt-0">
         <div className="grid gap-2 sm:grid-cols-2">
           <Field label="类型">
             <Select
@@ -2039,20 +2039,20 @@ function DiscoveredTablesCard({
 
   return (
     <Card className="page-surface border-border/70 shadow-[var(--shadow-control)]" data-testid="db-discovery-card">
-      <CardHeader className="flex-row items-start justify-between gap-3 px-3 py-2">
+      <CardHeader className="flex-row items-start justify-between gap-3 px-4 py-3">
         <div className="min-w-0">
           <CardTitle className="text-sm">{isRegisteredMode ? '已登记对象' : '发现结果'}</CardTitle>
-          <CardDescription className="text-xs leading-5">
+          <CardDescription>
             {isRegisteredMode
               ? '当前连接已登记的数据集，可直接进入策略或交付；需要刷新结构时再发现表/视图。'
               : '一个连接可能包含多个 schema、表和视图，先按 schema 定位，再登记需要治理的数据集。'}
           </CardDescription>
         </div>
-        <Badge variant="outline" className="shrink-0 rounded-full text-[10px]">
+        <Badge variant="outline" className="shrink-0 rounded-full">
           {isRegisteredMode ? `已登记 ${datasets.length}` : `${datasets.length} 个对象`}
         </Badge>
       </CardHeader>
-      <CardContent className="px-3 pb-3 pt-0">
+      <CardContent className="px-4 pb-4 pt-0">
         <div className="mb-2 grid gap-1.5 rounded-xl border border-border bg-muted/25 px-2.5 py-1.5" data-testid="db-discovery-summary">
           <div className="grid gap-2 sm:grid-cols-4">
             <DiscoveryMetric label="Schema" value={schemaSummaries.length} />
@@ -2174,7 +2174,7 @@ function DiscoveredTablesCard({
             <EmptyState icon={Database} text="当前筛选没有匹配的表或视图" />
           ) : (
             <table className="w-full table-fixed text-xs">
-              <thead className="bg-muted text-[11px] text-muted-foreground">
+              <thead className="bg-muted text-xs text-muted-foreground">
                 <tr>
                   <th className="w-10 px-2 py-1.5 text-left">{isRegisteredMode ? '状态' : '选择'}</th>
                   <th className="w-[18%] px-2 py-1.5 text-left">Schema</th>
@@ -2232,7 +2232,7 @@ function DiscoveredTablesCard({
                             </span>
                           </td>
                           <td className="px-2 py-1">
-                            <Badge variant="outline" className="text-[10px]">
+                            <Badge variant="outline">
                               {datasetTypeLabel(dataset)}
                             </Badge>
                           </td>
@@ -2241,7 +2241,7 @@ function DiscoveredTablesCard({
                             <span className="block truncate text-[10px]">{rowsText}</span>
                           </td>
                           <td className="px-2 py-1">
-                            <Badge variant="outline" className="text-[10px]">
+                            <Badge variant="outline">
                               {dataset.source_kind.toUpperCase()}
                             </Badge>
                           </td>
@@ -2438,7 +2438,7 @@ function PolicyCanvas({
       data-testid="structured-policy-canvas"
     >
       <CardContent className="grid gap-1.5 p-1.5 xl:grid-cols-[17rem_minmax(0,1fr)_15rem]">
-        <div className="grid min-h-16 content-center rounded-xl border border-border bg-muted/20 px-3 py-1.5">
+        <div className="grid min-h-16 content-center rounded-xl border border-border bg-muted/25 px-3 py-1.5">
           <span className="text-xs font-semibold text-muted-foreground">当前数据集</span>
           <span className="truncate text-sm font-semibold" title={dataset?.name}>
             {dataset?.name ?? '未选择'}
@@ -2609,11 +2609,11 @@ function DatasetPickerCard({
 
   return (
     <Card className="page-surface flex min-h-0 flex-col border-border/70 shadow-[var(--shadow-control)]">
-      <CardHeader className="px-3 py-2.5">
+      <CardHeader className="px-4 py-3">
         <CardTitle className="text-sm">数据集</CardTitle>
         <CardDescription>{listSummary}</CardDescription>
       </CardHeader>
-      <CardContent className="grid min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-2 px-3 pb-3 pt-0">
+      <CardContent className="grid min-h-0 flex-1 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-2 px-4 pb-3 pt-0">
         {scopeSummary ? (
           <div
             className="grid gap-1 rounded-xl border border-border bg-muted/25 px-2.5 py-1.5"
@@ -2621,12 +2621,12 @@ function DatasetPickerCard({
           >
             <span className="flex min-w-0 items-center justify-between gap-2">
               <span className="min-w-0">
-                <span className="block text-[10px] font-medium uppercase text-muted-foreground">{scopeSummary.eyebrow}</span>
+                <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">{scopeSummary.eyebrow}</span>
                 <span className="block truncate text-xs font-semibold" title={scopeSummary.title}>
                   {scopeSummary.title}
                 </span>
               </span>
-              <Badge variant="outline" className="shrink-0 text-[10px]">
+              <Badge variant="outline" className="shrink-0">
                 {scopeSummary.badge}
               </Badge>
             </span>
@@ -2801,7 +2801,7 @@ function ProfilePolicyCard({
 
   return (
     <Card className="page-surface flex min-h-0 flex-col border-border/70 shadow-[var(--shadow-control)]">
-      <CardHeader className="flex-row items-start justify-between gap-3 px-3 py-2">
+      <CardHeader className="flex-row items-start justify-between gap-3 px-4 py-3">
         <div className="min-w-0">
           <CardTitle className="truncate text-sm">{dataset ? dataset.name : '字段策略'}</CardTitle>
           {profile?.semantic_inference ? <SemanticInferenceSummary info={profile.semantic_inference} /> : null}
@@ -2853,7 +2853,7 @@ function ProfilePolicyCard({
           </div>
         ) : null}
       </CardHeader>
-      <CardContent className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-1 px-3 pb-2.5 pt-0">
+      <CardContent className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)_auto] gap-1 px-4 pb-3 pt-0">
         {profileColumns.length > 0 ? <PolicySummaryStrip columns={profileColumns} policy={policy} /> : null}
         <div className="min-h-0 overflow-hidden rounded-xl border border-border" data-testid="policy-table-frame">
           {profileColumns.length === 0 ? (
@@ -2862,8 +2862,8 @@ function ProfilePolicyCard({
               text={dataset ? '点击“生成字段策略”后开始复核' : '先选择数据集'}
             />
           ) : (
-            <table className="w-full table-fixed text-[11.5px]" data-testid="policy-table">
-              <thead className="sticky top-0 bg-muted text-[11px] text-muted-foreground">
+            <table className="w-full table-fixed text-xs" data-testid="policy-table">
+              <thead className="sticky top-0 bg-muted text-xs text-muted-foreground">
                 <tr>
                   <th className="w-[31%] px-2 py-1 text-left">字段</th>
                   <th className="w-[15%] px-2 py-1 text-left">实体</th>
@@ -2943,7 +2943,7 @@ function ProfilePolicyCard({
                               type="button"
                               variant="outline"
                               size="sm"
-                              className="h-6 shrink-0 px-2 text-[10px]"
+                              className="h-6 shrink-0 px-2 text-[11px]"
                               data-testid="policy-reset-recommendation"
                               onClick={() => onPolicyChange(updatePolicy(policy, column, profileToPolicy(column)))}
                             >
@@ -2997,7 +2997,7 @@ function ProfilePolicyCard({
               <Badge
                 variant="outline"
                 className={cn(
-                  'shrink-0 rounded-full text-[10px]',
+                  'shrink-0 rounded-full',
                   currentPageReviewed
                     ? 'border-[var(--success-border)] bg-[var(--success-surface)] text-[var(--success-foreground)]'
                     : 'border-[var(--warning-border)] bg-[var(--warning-surface)] text-[var(--warning-foreground)]',
@@ -3129,11 +3129,11 @@ function PreviewCard({
   const previewWarning = Boolean(preview && redactedColumnCount > 0 && previewStats.changedRedactedColumnCount === 0);
   return (
     <Card className="page-surface flex min-h-0 flex-col border-border/70 shadow-[var(--shadow-control)]">
-      <CardHeader className="px-3 py-2.5">
+      <CardHeader className="px-4 py-3">
         <CardTitle className="text-sm">脱敏预览</CardTitle>
         <CardDescription>{previewDescription}</CardDescription>
       </CardHeader>
-      <CardContent className="min-h-0 flex-1 px-3 pb-3 pt-0">
+      <CardContent className="min-h-0 flex-1 px-4 pb-3 pt-0">
         {!preview ? (
           <EmptyState icon={Eye} text={loading ? '正在生成脱敏预览' : '保存策略后查看脱敏字段预览'} />
         ) : (
@@ -3276,7 +3276,7 @@ function PolicySummaryStrip({
   ];
 
   return (
-    <div className="grid gap-1 rounded-xl border border-border bg-muted/20 px-2.5 py-1.5" data-testid="policy-summary">
+    <div className="grid gap-1 rounded-xl border border-border bg-muted/25 px-2.5 py-1.5" data-testid="policy-summary">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         {items.map((item) => (
           <span key={item.label} className="inline-flex items-center gap-1 text-[10.5px] text-muted-foreground">
@@ -3359,7 +3359,7 @@ function DeliveryChecklist({
     },
   ];
   return (
-    <div className="grid gap-1.5 rounded-xl border border-border bg-muted/20 p-1.5 sm:grid-cols-2">
+    <div className="grid gap-1.5 rounded-xl border border-border bg-muted/25 p-1.5 sm:grid-cols-2">
       {checks.map((check) => (
         <div key={check.label} className="flex min-w-0 items-center justify-between gap-2 rounded-lg bg-background px-2.5 py-1.5">
           <span className="flex min-w-0 items-center gap-2">
@@ -3516,7 +3516,7 @@ function DeliveryDatasetCard({
           <CardTitle className="text-sm">选择数据集</CardTitle>
           <CardDescription>只选择已复核的数据集；待复核表先回到策略页确认。</CardDescription>
         </div>
-        <Badge variant="outline" className="shrink-0 rounded-full text-[10px]">
+        <Badge variant="outline" className="shrink-0 rounded-full">
           已选 {effectiveSelectedCount}
         </Badge>
       </CardHeader>
@@ -3581,7 +3581,7 @@ function DeliveryDatasetCard({
                     <Badge
                       variant={reviewed ? 'outline' : 'secondary'}
                       className={cn(
-                        'shrink-0 text-[10px]',
+                        'shrink-0',
                         reviewed
                           ? 'border-[var(--success-border)] text-[var(--success-foreground)]'
                           : 'border-[var(--warning-border)] bg-[var(--warning-surface)] text-[var(--warning-foreground)]',
@@ -3788,7 +3788,7 @@ function DatasetIdentity({
         {primaryName}
       </span>
       <span className="mt-1 flex flex-wrap items-center gap-1 text-[10.5px] text-muted-foreground">
-        <Badge variant="outline" className="text-[10px]" title={dataset.source_kind}>
+        <Badge variant="outline" title={dataset.source_kind}>
           {dataset.source_kind.toUpperCase()}
         </Badge>
         {metaItems.filter((item): item is string => Boolean(item)).map((item, index) => (
@@ -3830,7 +3830,7 @@ function RiskBadge({ risk }: { risk: StructuredColumnProfile['risk_level'] }) {
     },
   }[risk];
   return (
-    <Badge variant="outline" className={cn('text-[10px]', meta.tone)} title={risk}>
+    <Badge variant="outline" className={cn(meta.tone)} title={risk}>
       {meta.label}
     </Badge>
   );
@@ -3847,7 +3847,7 @@ function SemanticInferenceSummary({
   const meta = semanticInferenceStatusMeta(status, matched);
   return (
     <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-      <Badge variant={meta.variant} className="text-[10px]">
+      <Badge variant={meta.variant}>
         {meta.label}
       </Badge>
       <span>{meta.detail}</span>

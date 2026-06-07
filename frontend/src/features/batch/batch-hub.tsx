@@ -91,15 +91,15 @@ export function BatchHub() {
     <div className="saas-page flex h-full min-h-0 overflow-hidden bg-background">
       <div className="page-shell-narrow !max-w-[min(100%,2048px)] !px-3 !py-3 sm:!px-4 2xl:!px-5">
         <div className="page-stack gap-3 overflow-hidden">
-          <section className="saas-panel flex shrink-0 flex-nowrap items-start justify-between gap-3 rounded-[18px] border-border/70 bg-card/95 p-3 shadow-[var(--shadow-control)]">
-            <div className="flex min-w-0 flex-col gap-1.5">
+          <section className="saas-panel flex shrink-0 flex-nowrap items-start justify-between gap-3 rounded-[20px] border-border/70 bg-card/95 p-3 shadow-[var(--shadow-control)]">
+            <div className="flex min-w-0 flex-col items-start gap-1.5">
               <span className="saas-kicker">{t('batchHub.kicker')}</span>
-              <h2
-                className="truncate text-2xl font-semibold leading-8"
+              <h1
+                className="truncate text-2xl font-semibold tracking-tight text-foreground"
                 data-testid="batch-hub-title"
               >
                 {t('batchHub.title')}
-              </h2>
+              </h1>
               <p className="max-w-4xl text-sm leading-6 text-muted-foreground">
                 {t('batchHub.desc')}
               </p>
@@ -231,7 +231,7 @@ function JourneyRail({ locale }: { locale: Locale }) {
       className="page-surface !flex-none border-border/70 shadow-[var(--shadow-control)]"
       data-testid="batch-journey-rail"
     >
-      <CardContent className="grid gap-2 p-2 sm:grid-cols-3">
+      <CardContent className="grid gap-2 p-3 sm:grid-cols-3">
         {copy.map(({ title, desc, cta, href, Icon }, index) => {
           const active = index === copy.length - 1;
 
@@ -251,7 +251,7 @@ function JourneyRail({ locale }: { locale: Locale }) {
               </span>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-semibold text-muted-foreground">
+                  <span className="text-xs font-semibold text-muted-foreground">
                     {String(index + 1).padStart(2, '0')}
                   </span>
                   <span className="truncate text-sm font-semibold">{title}</span>
@@ -268,7 +268,7 @@ function JourneyRail({ locale }: { locale: Locale }) {
                   </Link>
                 </Button>
               ) : (
-                <Badge variant="secondary" className="rounded-full px-2 py-0.5 text-[10px]">
+                <Badge variant="secondary" className="rounded-full px-2.5 py-0.5">
                   {cta}
                 </Badge>
               )}
@@ -318,14 +318,14 @@ function PrimaryBatchEntry({
                 </CardTitle>
                 <Badge
                   variant="secondary"
-                  className="shrink-0 rounded-full px-2 py-0.5 text-[10px]"
+                  className="shrink-0 rounded-full px-2.5 py-0.5"
                 >
                   {t('batchHub.liveBadge')}
                 </Badge>
                 {liveBlocked ? (
                   <Badge
                     variant="outline"
-                    className="shrink-0 rounded-full px-2 py-0.5 text-[10px]"
+                    className="shrink-0 rounded-full px-2.5 py-0.5"
                   >
                     {t('batchHub.demoBadge')}
                   </Badge>
@@ -342,14 +342,14 @@ function PrimaryBatchEntry({
           </p>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="rounded-full px-2.5 py-0.5 text-xs">
+            <Badge variant="secondary" className="rounded-full px-2.5 py-0.5">
               {journeyNote}
             </Badge>
             {item.tagKeys.map((tagKey) => (
               <Badge
                 key={tagKey}
                 variant="outline"
-                className="rounded-full px-2.5 py-0.5 text-xs whitespace-nowrap"
+                className="rounded-full px-2.5 py-0.5 whitespace-nowrap"
               >
                 {t(tagKey)}
               </Badge>
@@ -368,9 +368,8 @@ function PrimaryBatchEntry({
             </p>
           ) : null}
           <Button
-            size="sm"
             variant="default"
-            className="h-10 w-full justify-between rounded-xl whitespace-nowrap"
+            className="w-full justify-between rounded-xl whitespace-nowrap"
             onClick={onOpenLive}
             disabled={liveBlocked}
             aria-describedby={liveBlockedReason ? blockedReasonId : undefined}

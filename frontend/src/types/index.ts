@@ -183,7 +183,7 @@ export interface BatchExportReportVisualReview {
 export interface BatchExportReportVisualEvidence {
   total_boxes?: number;
   selected_boxes?: number;
-  visual_features_model?: number;
+  visual_feature_model?: number;
   local_fallback?: number;
   ocr_has?: number;
   table_structure?: number;

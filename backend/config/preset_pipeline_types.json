@@ -76,7 +76,7 @@
       "order": 40,
       "data_domain": "pii",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "identifier_like",
         "person_like"
@@ -175,7 +175,7 @@
       "order": 90,
       "data_domain": "address_location",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "address_like"
       ],
@@ -196,7 +196,7 @@
       "order": 100,
       "data_domain": "credential_access",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "credential_like"
       ],
@@ -217,7 +217,7 @@
       "order": 110,
       "data_domain": "credential_access",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "credential_like"
       ],
@@ -257,7 +257,7 @@
       "order": 130,
       "data_domain": "account_transaction",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "account_like"
       ],
@@ -278,7 +278,7 @@
       "order": 135,
       "data_domain": "account_transaction",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "account_like",
         "organization_like"
@@ -300,7 +300,7 @@
       "order": 140,
       "data_domain": "account_transaction",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "account_like"
       ],
@@ -321,7 +321,7 @@
       "order": 150,
       "data_domain": "credential_access",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "credential_like"
       ],
@@ -341,7 +341,7 @@
       "order": 160,
       "data_domain": "credential_access",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "credential_like"
       ],
@@ -361,7 +361,7 @@
       "order": 170,
       "data_domain": "credential_access",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "credential_like"
       ],
@@ -405,7 +405,7 @@
       "order": 181,
       "data_domain": "organization_subject",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "organization_like"
       ],
@@ -448,7 +448,7 @@
       "order": 183,
       "data_domain": "organization_subject",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "organization_like"
       ],
@@ -469,7 +469,7 @@
       "order": 184,
       "data_domain": "organization_subject",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "organization_like"
       ],
@@ -491,7 +491,7 @@
       "order": 185,
       "data_domain": "organization_subject",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "organization_like"
       ],
@@ -512,7 +512,7 @@
       "order": 186,
       "data_domain": "asset_resource",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_NAME"
@@ -530,7 +530,7 @@
       "order": 187,
       "data_domain": "organization_subject",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "identifier_like",
         "organization_like"
@@ -551,7 +551,7 @@
       "order": 188,
       "data_domain": "organization_subject",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "identifier_like",
         "organization_like"
@@ -594,7 +594,7 @@
       "order": 205,
       "data_domain": "pii",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "date_like"
       ],
@@ -615,7 +615,7 @@
       "order": 210,
       "data_domain": "time_event",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "date_like"
       ],
@@ -636,7 +636,7 @@
       "order": 220,
       "data_domain": "pii",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_ATTRIBUTE_STATUS"
@@ -655,7 +655,7 @@
       "order": 230,
       "data_domain": "pii",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_ATTRIBUTE_STATUS"
@@ -673,7 +673,7 @@
       "order": 240,
       "data_domain": "pii",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_ATTRIBUTE_STATUS"
@@ -692,7 +692,7 @@
       "order": 250,
       "data_domain": "pii",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_ATTRIBUTE_STATUS"
@@ -711,7 +711,7 @@
       "order": 260,
       "data_domain": "pii",
       "coref_enabled": false,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_ATTRIBUTE_STATUS"
@@ -808,7 +808,7 @@
       "order": 310,
       "data_domain": "custom_extension",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "identifier_like"
       ],
@@ -829,7 +829,7 @@
       "order": 312,
       "data_domain": "document_record",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "identifier_like"
       ],
@@ -849,7 +849,7 @@
       "order": 320,
       "data_domain": "asset_resource",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "identifier_like"
       ],
@@ -868,7 +868,7 @@
       "order": 330,
       "data_domain": "asset_resource",
       "coref_enabled": true,
-      "default_enabled": true,
+      "default_enabled": false,
       "linkage_groups": [
         "identifier_like"
       ],
@@ -1272,10 +1272,11 @@
     {
       "id": "MED_RECORD_ID",
       "name": "病历号",
-      "description": "门诊号、住院号、病历号、就诊卡号、检查申请号等医疗记录编号。",
+      "description": "门诊号、就诊卡号、病历号、检查申请号等医疗记录编号。只表示医疗记录编号本身，住院号、登记号见专门类型。",
       "examples": [
         "病历号MR20260001",
-        "住院号ZY123456",
+        "门诊号MZ20260318",
+        "就诊卡号JZ20260101",
         "检查申请号LAB20260509"
       ],
       "color": "#F43F5E",
@@ -1475,6 +1476,46 @@
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_DOCUMENT_RECORD"
+    },
+    {
+      "id": "REGISTRATION_NO",
+      "name": "登记号",
+      "description": "挂号登记号、就诊登记号等登记编号。只表示登记号本身，不包含病历号、住院号等已有专门类型。",
+      "examples": [
+        "登记号DJ2026050001",
+        "挂号登记号GH20260318"
+      ],
+      "color": "#F43F5E",
+      "enabled": true,
+      "order": 651,
+      "data_domain": "document_record",
+      "coref_enabled": true,
+      "default_enabled": false,
+      "linkage_groups": [
+        "identifier_like"
+      ],
+      "entity_type_ids": [],
+      "generic_target": "GEN_NUMBER_CODE"
+    },
+    {
+      "id": "INPATIENT_NO",
+      "name": "住院号",
+      "description": "住院号、入院登记号等住院编号。只表示住院号本身，不包含病历号、登记号等已有专门类型。",
+      "examples": [
+        "住院号ZY123456",
+        "入院号RY20260509"
+      ],
+      "color": "#F43F5E",
+      "enabled": true,
+      "order": 652,
+      "data_domain": "document_record",
+      "coref_enabled": true,
+      "default_enabled": false,
+      "linkage_groups": [
+        "identifier_like"
+      ],
+      "entity_type_ids": [],
+      "generic_target": "GEN_NUMBER_CODE"
     }
   ],
   "visual_features": [
@@ -1631,7 +1672,7 @@
     },
     {
       "id": "official_seal",
-      "name": "公章/印章区域",
+      "name": "公章",
       "description": "公章、合同章、财务章、法院印章等视觉特征。",
       "examples": [],
       "color": "#A855F7",
@@ -1644,7 +1685,7 @@
       ],
       "generic_target": null,
       "entity_type_ids": [],
-      "default_enabled": false
+      "default_enabled": true
     },
     {
       "id": "physical_key",
@@ -1680,7 +1721,7 @@
     },
     {
       "id": "receipt",
-      "name": "小票/收据",
+      "name": "小票",
       "description": "购物小票、收据，通常包含交易明细、付款账号、门店和时间等隐私线索。",
       "examples": [],
       "color": "#6366F1",

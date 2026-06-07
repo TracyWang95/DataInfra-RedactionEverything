@@ -483,7 +483,7 @@ const HistoryDataRow = memo(function HistoryDataRow({
           </Badge>
         </div>
 
-        <div className="hidden whitespace-nowrap text-xs tabular-nums text-muted-foreground md:block">
+        <div className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground md:block">
           {row.entity_count}
         </div>
 
@@ -725,7 +725,7 @@ const HistoryBatchRow = memo(function HistoryBatchRow({
           </Badge>
         </div>
 
-        <div className="hidden whitespace-nowrap text-xs tabular-nums text-muted-foreground md:block">
+        <div className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground md:block">
           {entityCount}
         </div>
 

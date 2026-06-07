@@ -29,30 +29,6 @@ export interface DefaultPipelineCoverage {
 }
 
 const DEFAULT_EXCLUDED_TEXT_TYPE_IDS = new Set<string>();
-const OCR_FALLBACK_ONLY_VISUAL_TYPE_IDS = new Set<string>(['official_seal']);
-const VISUAL_FEATURE_MODEL_TYPE_IDS = new Set([
-  'face',
-  'fingerprint',
-  'palmprint',
-  'id_card',
-  'hk_macau_permit',
-  'passport',
-  'employee_badge',
-  'license_plate',
-  'bank_card',
-  'physical_key',
-  'receipt',
-  'shipping_label',
-  'whiteboard',
-  'sticky_note',
-  'mobile_screen',
-  'monitor_screen',
-  'medical_wristband',
-  'qr_code',
-  'barcode',
-  'paper',
-  'signature',
-]);
 export type PipelineMode = 'ocr_has' | 'visual_features';
 
 const DEFAULT_EXCLUDED_PIPELINE_TYPE_IDS: Record<PipelineMode, ReadonlySet<string>> = {
@@ -68,14 +44,6 @@ export function normalizeVisualTypeId(id: string): string {
     stamp_region: 'official_seal',
   };
   return aliases[normalized] ?? normalized;
-}
-
-export function isOcrFallbackOnlyVisualTypeId(id: string): boolean {
-  return OCR_FALLBACK_ONLY_VISUAL_TYPE_IDS.has(normalizeVisualTypeId(id));
-}
-
-export function isVisualFeatureModelTypeId(id: string): boolean {
-  return VISUAL_FEATURE_MODEL_TYPE_IDS.has(normalizeVisualTypeId(id));
 }
 
 function enabledIds<T extends { id: string; enabled?: boolean }>(items: T[]): string[] {

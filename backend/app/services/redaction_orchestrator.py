@@ -456,6 +456,9 @@ async def detect_vision(
         logger.info("Vision force refresh file=%s page=%d", file_id[:8], page)
 
     vision_service = VisionService()
+    # 正则兜底需要租户上下文：在文本链路运行前把 owner 设到 OCR/HaS 单例上
+    from app.services.ocr_has_vision_service import get_ocr_has_vision_service
+    get_ocr_has_vision_service().current_owner_id = owner_id
     bounding_boxes, result_image = await vision_service.detect_with_dual_pipeline(
         file_path=snapshot["file_path"],
         file_type=snapshot["file_type"],

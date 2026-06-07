@@ -70,9 +70,11 @@ CLASS_ID_TO_SLUG: dict[int, str] = {item.class_id: item.id for item in VISUAL_FE
 SLUG_TO_NAME_ZH: dict[str, str] = {item.id: item.name_zh for item in VISUAL_FEATURE_CATEGORIES}
 VISUAL_FEATURE_SLUGS = frozenset(SLUG_TO_CLASS_ID)
 
-# Seal detection is primarily supplied by PaddleOCR-VL because seal color and
-# stamp style vary; LocateAnything can still supplement it through custom labels.
-OCR_FALLBACK_ONLY_VISUAL_SLUGS = frozenset({"official_seal"})
+# PaddleOCR-VL has been dropped (OCR_VL_ENABLED=0), and LocateAnything (now
+# served via vLLM) detects official seals reliably (4/4 on the test contract).
+# So no visual slug is OCR-fallback-only anymore — every slug, including
+# official_seal, is routed to LocateAnything.
+OCR_FALLBACK_ONLY_VISUAL_SLUGS = frozenset()
 LOCATE_ANYTHING_VISUAL_SLUGS = VISUAL_FEATURE_SLUGS - OCR_FALLBACK_ONLY_VISUAL_SLUGS
 DEFAULT_EXCLUDED_VISUAL_FEATURE_SLUGS = frozenset()
 DEFAULT_VISUAL_FEATURE_SLUGS: tuple[str, ...] = tuple(

@@ -13,6 +13,25 @@ from app.services.ocr_has_vision_service import SensitiveRegion
 
 logger = logging.getLogger(__name__)
 
+# Merge / dedup thresholds (names for pre-existing literals; values unchanged).
+_MERGE_DEFAULT_IOU_THRESHOLD = 0.5
+_MERGE_SAME_TYPE_OVERLAP_MIN = 0.7
+_MERGE_TIGHTER_AREA_RATIO = 0.9
+# Entity-type precedence when two overlapping regions compete (higher wins).
+_DEFAULT_ENTITY_PRIORITY = 1
+_ENTITY_TYPE_PRIORITY = {
+    "PERSON": 6,
+    "PHONE": 6,
+    "ID_CARD": 6,
+    "BANK_ACCOUNT": 6,
+    "BANK_CARD": 6,
+    "BANK_NAME": 6,
+    "AMOUNT": 6,
+    "COMPANY": 5,
+    "ORG": 4,
+    "LEGAL_PARTY": 3,
+}
+
 
 # ---------------------------------------------------------------------------
 # IoU helpers
@@ -56,25 +75,12 @@ def calc_iou_regions(r1: SensitiveRegion, r2: SensitiveRegion) -> float:
 def merge_regions(
     regions1: list[SensitiveRegion],
     regions2: list[SensitiveRegion],
-    iou_threshold: float = 0.5,
+    iou_threshold: float = _MERGE_DEFAULT_IOU_THRESHOLD,
 ) -> list[SensitiveRegion]:
     """
     Merge two region lists, dropping entries from *regions2* that overlap with
     an existing entry in *regions1* above *iou_threshold*.
     """
-    priority = {
-        "PERSON": 6,
-        "PHONE": 6,
-        "ID_CARD": 6,
-        "BANK_ACCOUNT": 6,
-        "BANK_CARD": 6,
-        "BANK_NAME": 6,
-        "AMOUNT": 6,
-        "COMPANY": 5,
-        "ORG": 4,
-        "LEGAL_PARTY": 3,
-    }
-
     def compact(text: str | None) -> str:
         return "".join(str(text or "").split())
 
@@ -93,17 +99,17 @@ def merge_regions(
         return max(1, region.width * region.height)
 
     def should_replace(existing: SensitiveRegion, candidate: SensitiveRegion) -> bool:
-        existing_priority = priority.get(existing.entity_type, 1)
-        candidate_priority = priority.get(candidate.entity_type, 1)
+        existing_priority = _ENTITY_TYPE_PRIORITY.get(existing.entity_type, _DEFAULT_ENTITY_PRIORITY)
+        candidate_priority = _ENTITY_TYPE_PRIORITY.get(candidate.entity_type, _DEFAULT_ENTITY_PRIORITY)
         if candidate_priority > existing_priority:
             return True
         if candidate_priority < existing_priority:
             return False
 
-        if candidate.entity_type == existing.entity_type and overlap_ratio(candidate, existing) >= 0.7:
+        if candidate.entity_type == existing.entity_type and overlap_ratio(candidate, existing) >= _MERGE_SAME_TYPE_OVERLAP_MIN:
             candidate_text = compact(candidate.text)
             existing_text = compact(existing.text)
-            candidate_is_tighter = area(candidate) < area(existing) * 0.9
+            candidate_is_tighter = area(candidate) < area(existing) * _MERGE_TIGHTER_AREA_RATIO
             if candidate_is_tighter and len(candidate_text) <= len(existing_text):
                 return True
         return False
@@ -114,7 +120,7 @@ def merge_regions(
             same_text_overlap = (
                 candidate_text
                 and candidate_text == compact(existing.text)
-                and overlap_ratio(candidate, existing) >= 0.7
+                and overlap_ratio(candidate, existing) >= _MERGE_SAME_TYPE_OVERLAP_MIN
             )
             if (
                 same_text_overlap

@@ -140,7 +140,7 @@ export function PipelineCheckboxGrid({
               id={imageHintId}
               data-testid="settings-has-image-types-hint"
               title={t('settings.redaction.imageGroupHint')}
-              className="min-w-0 truncate text-[11px] leading-4 text-muted-foreground sm:max-w-[26rem] sm:text-right"
+              className="min-w-0 truncate text-xs leading-4 text-muted-foreground sm:max-w-[26rem] sm:text-right"
             >
               {t('settings.redaction.imageGroupHint')}
             </p>

@@ -23,10 +23,16 @@ logger = logging.getLogger(__name__)
 # Visual feature / OCR matching (coordinate refinement)
 # ---------------------------------------------------------------------------
 
+# Thresholds for matching an OCR block to a visual region (names for pre-existing
+# literals; values unchanged).
+_OCR_VISUAL_MATCH_IOU_THRESHOLD = 0.3
+_OCR_VISUAL_TEXT_SIMILARITY_MIN = 0.6
+
+
 def match_ocr_to_visual_regions(
     ocr_blocks: list[OCRTextBlock],
     visual_regions: list[SensitiveRegion],
-    iou_threshold: float = 0.3,
+    iou_threshold: float = _OCR_VISUAL_MATCH_IOU_THRESHOLD,
 ) -> list[SensitiveRegion]:
     """
     Refine visual feature regions using OCR text blocks.
@@ -72,7 +78,7 @@ def match_ocr_to_visual_regions(
                         break
                     if norm_ocr:
                         ratio = SequenceMatcher(None, norm_visual, norm_ocr).ratio()
-                        if ratio >= 0.6:
+                        if ratio >= _OCR_VISUAL_TEXT_SIMILARITY_MIN:
                             best_match = ocr_block
                             break
 
@@ -98,6 +104,37 @@ def match_ocr_to_visual_regions(
 # Drawing / visualization
 # ---------------------------------------------------------------------------
 
+# Preview/debug rendering constants (names for pre-existing literals; unchanged).
+_PREVIEW_FONT_SIZE = 14
+_PREVIEW_BOX_WIDTH = 2
+_PREVIEW_LABEL_Y_OFFSET = 18
+_PREVIEW_LABEL_TEXT_MAX = 15
+_PREVIEW_LABEL_BG_PAD = 2
+_DEFAULT_REGION_COLOR = (255, 0, 0)
+_PREVIEW_LABEL_TEXT_COLOR = (255, 255, 255)
+_PREVIEW_FONT_PATHS = [
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simsun.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+]
+# Per-entity-type box colour palette (RGB). Data table, not magic numbers.
+_ENTITY_TYPE_COLORS = {
+    "PERSON": (59, 130, 246),
+    "ORG": (16, 185, 129),
+    "COMPANY": (20, 184, 166),
+    "PHONE": (249, 115, 22),
+    "EMAIL": (234, 179, 8),
+    "ID_CARD": (239, 68, 68),
+    "BANK_CARD": (236, 72, 153),
+    "ACCOUNT_NAME": (168, 85, 247),
+    "BANK_NAME": (124, 58, 237),
+    "ACCOUNT_NUMBER": (139, 92, 246),
+    "ADDRESS": (99, 102, 241),
+    "DATE": (161, 98, 7),
+    "SEAL": (220, 20, 60),
+}
+
+
 def draw_regions_on_image(
     image: Image.Image,
     regions: list[SensitiveRegion],
@@ -108,59 +145,34 @@ def draw_regions_on_image(
 
     # Try to load a CJK font
     font = None
-    font_paths = [
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simsun.ttc",
-        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-    ]
-    for fp in font_paths:
+    for fp in _PREVIEW_FONT_PATHS:
         if os.path.exists(fp):
             try:
-                font = ImageFont.truetype(fp, 14)
+                font = ImageFont.truetype(fp, _PREVIEW_FONT_SIZE)
                 break
             except OSError:
                 pass
     if not font:
         font = ImageFont.load_default()
 
-    type_colors = {
-        # People
-        "PERSON": (59, 130, 246),
-        # Organizations
-        "ORG": (16, 185, 129),
-        "COMPANY": (20, 184, 166),
-        # Contact
-        "PHONE": (249, 115, 22),
-        "EMAIL": (234, 179, 8),
-        # IDs
-        "ID_CARD": (239, 68, 68),
-        "BANK_CARD": (236, 72, 153),
-        # Bank accounts
-        "ACCOUNT_NAME": (168, 85, 247),
-        "BANK_NAME": (124, 58, 237),
-        "ACCOUNT_NUMBER": (139, 92, 246),
-        # Address
-        "ADDRESS": (99, 102, 241),
-        # Date
-        "DATE": (161, 98, 7),
-        # Visual
-        "SEAL": (220, 20, 60),
-    }
-
     for region in regions:
-        color = type_colors.get(region.entity_type, (255, 0, 0))
+        color = _ENTITY_TYPE_COLORS.get(region.entity_type, _DEFAULT_REGION_COLOR)
 
         x1, y1 = region.left, region.top
         x2, y2 = region.left + region.width, region.top + region.height
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=2)
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=_PREVIEW_BOX_WIDTH)
 
         label = f"{region.entity_type}"
         if region.text:
-            label += f": {region.text[:15]}"
+            label += f": {region.text[:_PREVIEW_LABEL_TEXT_MAX]}"
 
-        bbox = draw.textbbox((x1, y1 - 18), label, font=font)
-        draw.rectangle([bbox[0] - 2, bbox[1] - 2, bbox[2] + 2, bbox[3] + 2], fill=color)
-        draw.text((x1, y1 - 18), label, fill=(255, 255, 255), font=font)
+        bbox = draw.textbbox((x1, y1 - _PREVIEW_LABEL_Y_OFFSET), label, font=font)
+        draw.rectangle(
+            [bbox[0] - _PREVIEW_LABEL_BG_PAD, bbox[1] - _PREVIEW_LABEL_BG_PAD,
+             bbox[2] + _PREVIEW_LABEL_BG_PAD, bbox[3] + _PREVIEW_LABEL_BG_PAD],
+            fill=color,
+        )
+        draw.text((x1, y1 - _PREVIEW_LABEL_Y_OFFSET), label, fill=_PREVIEW_LABEL_TEXT_COLOR, font=font)
 
     return draw_image
 

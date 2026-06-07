@@ -164,7 +164,7 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
               value="text"
               className="mt-0 h-full min-h-0 flex-col gap-2 p-2 pb-0 data-[state=active]:flex"
             >
-              <div className="flex shrink-0 items-center justify-between gap-3 rounded-2xl border border-border/70 bg-muted/20 px-3 py-2">
+              <div className="flex shrink-0 items-center justify-between gap-3 rounded-[20px] border border-border/70 bg-muted/20 px-3 py-2">
                 <p className="text-sm font-semibold tracking-[-0.02em] text-foreground">
                   {t('playground.text')}
                 </p>
@@ -178,7 +178,7 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
               value="vision"
               className="mt-0 h-full min-h-0 flex-col gap-2 p-2 pb-0 data-[state=active]:flex"
             >
-              <div className="flex shrink-0 items-center justify-between gap-3 rounded-2xl border border-border/70 bg-muted/20 px-3 py-2">
+              <div className="flex shrink-0 items-center justify-between gap-3 rounded-[20px] border border-border/70 bg-muted/20 px-3 py-2">
                 <p className="text-sm font-semibold tracking-[-0.02em] text-foreground">
                   {t('playground.vision')}
                 </p>

@@ -70,28 +70,28 @@ export function VisionModel() {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
-        <div className="page-stack gap-2.5">
+        <div className="page-stack gap-3">
           <section className="surface-subtle flex shrink-0 flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <h1 className="text-base font-semibold tracking-normal">{t('nav.visionModel')}</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('nav.visionModel')}</h1>
               <p className="mt-0.5 max-w-5xl text-xs leading-5 text-muted-foreground">
                 {t('settings.visionModel.infoDesc')}
               </p>
             </div>
             <div className="flex shrink-0 flex-wrap gap-1.5">
-              <Badge variant="outline" className="whitespace-nowrap text-[10px] leading-4">
+              <Badge variant="outline" className="whitespace-nowrap">
                 {t('settings.visionModel.tag.local')}
               </Badge>
-              <Badge variant="outline" className="whitespace-nowrap text-[10px] leading-4">
+              <Badge variant="outline" className="whitespace-nowrap">
                 {t('settings.visionModel.tag.openai')}
               </Badge>
-              <Badge variant="outline" className="whitespace-nowrap text-[10px] leading-4">
+              <Badge variant="outline" className="whitespace-nowrap">
                 {t('settings.visionModel.tag.custom')}
               </Badge>
             </div>
           </section>
 
-          <Card className="min-h-0 overflow-hidden rounded-2xl border-border/70 shadow-[var(--shadow-control)]">
+          <Card className="min-h-0 overflow-hidden border-border/70 shadow-[var(--shadow-control)]">
             <CardHeader className="px-4 pb-2 pt-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-1">
@@ -146,7 +146,7 @@ export function VisionModel() {
                           <span className="text-sm font-medium">{config.name}</span>
                           {isActive && (
                             <Badge
-                              className={`whitespace-nowrap text-[10px] leading-4 ${tonePanelClass.success}`}
+                              className={`whitespace-nowrap ${tonePanelClass.success}`}
                             >
                               {t('settings.visionModel.active')}
                             </Badge>
@@ -157,7 +157,7 @@ export function VisionModel() {
                                 ? 'secondary'
                                 : 'outline'
                             }
-                            className="whitespace-nowrap text-[10px] leading-4"
+                            className="whitespace-nowrap"
                           >
                             {BUILTIN_VISION_IDS.has(config.id) || config.enabled
                               ? t('common.enabled')
@@ -168,28 +168,28 @@ export function VisionModel() {
                               const live = liveForBuiltin(config.id);
                               return live === 'online' ? (
                                 <Badge
-                                  className={`whitespace-nowrap text-[10px] leading-4 ${tonePanelClass.success}`}
+                                  className={`whitespace-nowrap ${tonePanelClass.success}`}
                                 >
                                   {t('common.online')}
                                 </Badge>
                               ) : live === 'offline' ? (
                                 <Badge
                                   variant="destructive"
-                                  className="whitespace-nowrap text-[10px] leading-4"
+                                  className="whitespace-nowrap"
                                 >
                                   {t('common.offline')}
                                 </Badge>
                               ) : builtinLive === null ? (
                                 <Badge
                                   variant="outline"
-                                  className="whitespace-nowrap text-[10px] leading-4"
+                                  className="whitespace-nowrap"
                                 >
                                   {t('common.checking')}
                                 </Badge>
                               ) : (
                                 <Badge
                                   variant="outline"
-                                  className="whitespace-nowrap text-[10px] leading-4"
+                                  className="whitespace-nowrap"
                                 >
                                   {t('common.unknown')}
                                 </Badge>
@@ -200,7 +200,7 @@ export function VisionModel() {
                         <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                           <Badge
                             variant="outline"
-                            className="whitespace-nowrap text-[10px] leading-4"
+                            className="whitespace-nowrap"
                           >
                             {getProviderLabel(config.provider)}
                           </Badge>

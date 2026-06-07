@@ -138,7 +138,7 @@ export function AppSidebar() {
           <ShieldCheck className="h-4 w-4" />
         </div>
         <div className="min-w-0">
-          <span className="block truncate text-sm font-semibold leading-tight tracking-[-0.03em] text-sidebar-foreground">
+          <span className="block truncate text-sm font-semibold leading-tight tracking-tight text-sidebar-foreground">
             {t('sidebar.productName')}
           </span>
           <p className="mt-0.5 truncate text-xs text-sidebar-foreground/55">
@@ -150,7 +150,7 @@ export function AppSidebar() {
       <SidebarContent className="gap-0 px-2 py-1.5">
         <nav aria-label={t('layout.navLabel')}>
           <SidebarGroup className="px-2 py-0">
-            <SidebarGroupLabel className="h-6 px-2 text-[11px] font-semibold tracking-[0.02em] text-sidebar-foreground/50">
+            <SidebarGroupLabel className="h-6 px-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/50">
               {t('nav.group.workflow')}
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -165,7 +165,7 @@ export function AppSidebar() {
           <SidebarSeparator className="my-1 bg-sidebar-border opacity-100" />
 
           <SidebarGroup className="px-2 py-0">
-            <SidebarGroupLabel className="h-6 px-2 text-[11px] font-semibold tracking-[0.02em] text-sidebar-foreground/50">
+            <SidebarGroupLabel className="h-6 px-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/50">
               {t('nav.group.config')}
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -213,14 +213,14 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
           aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
           data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '') || 'start'}`}
         >
-          <item.icon className="h-[16px] w-[16px] opacity-70" />
+          <item.icon className="size-4 opacity-70" />
           {item.sublabel ? (
             <span className="flex min-w-0 flex-col gap-0.5 leading-snug">
-              <span className="truncate text-[12.5px] font-medium leading-tight">{item.label}</span>
-              <span className="truncate text-[10.5px] font-normal leading-tight opacity-45">{item.sublabel}</span>
+              <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
+              <span className="truncate text-[11px] font-normal leading-tight opacity-45">{item.sublabel}</span>
             </span>
           ) : (
-            <span className="truncate text-[12.5px] font-medium">{item.label}</span>
+            <span className="truncate text-xs font-medium">{item.label}</span>
           )}
         </NavLink>
       </SidebarMenuButton>
@@ -249,7 +249,7 @@ function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string
     >
       <item.icon className="h-[14px] w-[14px] opacity-65" />
       <span className="min-w-0">
-        <span className="block truncate text-[12px] font-medium">{item.label}</span>
+        <span className="block truncate text-xs font-medium">{item.label}</span>
         {item.sublabel ? (
           <span className="sr-only">{item.sublabel}</span>
         ) : null}
@@ -324,8 +324,8 @@ function SidebarServiceStatus({
           })}
         />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-semibold">{t('health.sidebar.title')}</p>
-          <p className="truncate text-[10.5px] font-medium text-sidebar-foreground/60">
+          <p className="truncate text-sm font-semibold">{t('health.sidebar.title')}</p>
+          <p className="truncate text-[11px] font-medium text-sidebar-foreground/60">
             {statusText}
             {roundTripMs != null ? ` · ${roundTripMs} ms` : ''}
           </p>
@@ -342,7 +342,7 @@ function SidebarServiceStatus({
         </button>
       </div>
 
-      <div className="mt-1.5 grid grid-cols-2 gap-1">
+      <div className="mt-1.5 flex flex-col gap-1">
         {services.map(({ key, service }) => {
           const status = displayStatus(service);
           const runtime = runtimeBadge(service, t);
@@ -353,11 +353,11 @@ function SidebarServiceStatus({
               key={key}
               className="grid min-h-5 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1.5 overflow-hidden rounded-lg bg-sidebar/45 px-1.5 py-0.5"
             >
-              <span className="min-w-0 truncate text-[10.5px] font-medium" title={serviceName}>
+              <span className="min-w-0 truncate text-[11px] font-medium" title={serviceName}>
                 {serviceName}
               </span>
               <span
-                className={cn('shrink-0 rounded-full px-1 py-0.5 text-[9.5px] font-semibold', {
+                className={cn('shrink-0 rounded-full px-1 py-0.5 text-[10px] font-semibold', {
                   'bg-[var(--success-surface)] text-[var(--success-foreground)]':
                     status === 'online',
                   'bg-[var(--warning-surface)] text-[var(--warning-foreground)]':
@@ -373,8 +373,8 @@ function SidebarServiceStatus({
       </div>
 
       <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
-        <span className="shrink-0 text-[10.5px] font-semibold">{t('health.gpuUsage')}</span>
-        <span className="min-w-0 truncate text-right text-[10.5px] text-sidebar-foreground/70" title={gpuText}>
+        <span className="shrink-0 text-[11px] font-semibold">{t('health.gpuUsage')}</span>
+        <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
           {gpuText}
         </span>
       </div>

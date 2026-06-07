@@ -41,16 +41,19 @@ export function StartPage() {
   return (
     <div className="saas-page flex h-full min-h-0 overflow-hidden bg-background">
       <div className="page-shell-narrow !max-w-[118rem] !px-3 !py-3 sm:!px-5 2xl:!max-w-[124rem]">
-        <div className="page-stack gap-4 overflow-hidden">
-          <section className="flex flex-none flex-wrap items-start justify-between gap-4">
-            <div className="min-w-0 space-y-1.5">
+        <div className="page-stack gap-3 overflow-hidden">
+          <section className="flex flex-none flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
               <span className="saas-kicker">{t('start.kicker')}</span>
-              <h2 className="text-3xl font-semibold tracking-tight" data-testid="start-title">
+              <h1
+                className="text-2xl font-semibold tracking-tight text-foreground"
+                data-testid="start-title"
+              >
                 {t('start.title')}
-              </h2>
+              </h1>
               <p className="max-w-3xl text-sm leading-6 text-muted-foreground">{t('start.desc')}</p>
             </div>
-            <Button variant="outline" size="sm" className="h-10 rounded-xl" onClick={refresh}>
+            <Button variant="outline" size="sm" className="rounded-xl" onClick={refresh}>
               <RefreshCw className={cn('mr-2 size-4', checking && 'animate-spin')} />
               {t('start.refreshServices')}
             </Button>
@@ -58,7 +61,7 @@ export function StartPage() {
 
           <section className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_24rem] 2xl:grid-cols-[minmax(0,1fr)_25rem]">
             <SingleFileActionCard />
-            <aside className="grid min-h-0 gap-3 sm:grid-cols-2 xl:grid-cols-1 xl:grid-rows-[minmax(0,1fr)_auto_auto]">
+            <aside className="grid min-h-0 content-start gap-3 sm:grid-cols-2 xl:grid-cols-1">
               <ServiceReadinessCard
                 health={health}
                 checking={checking}
@@ -112,7 +115,7 @@ function WorkflowDemoCard() {
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col rounded-2xl border border-border/70 bg-background/80 p-4 sm:p-5"
+      className="flex min-h-0 flex-1 flex-col rounded-[20px] border border-border/70 bg-background/80 p-4 sm:p-5"
       data-testid="start-workflow-demo"
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -124,12 +127,8 @@ function WorkflowDemoCard() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-[11px]">
-            {t('start.workflow.badge.singleFirst')}
-          </Badge>
-          <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-[11px]">
-            {t('start.workflow.badge.noMedia')}
-          </Badge>
+          <Badge variant="outline">{t('start.workflow.badge.singleFirst')}</Badge>
+          <Badge variant="outline">{t('start.workflow.badge.noMedia')}</Badge>
         </div>
       </div>
       <div className="relative flex min-h-0 flex-1 items-stretch">
@@ -138,7 +137,7 @@ function WorkflowDemoCard() {
           {workflowSteps.map(({ key, Icon, markerClass, dotClass }, index) => (
             <div
               key={key}
-              className="relative grid min-h-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-3 rounded-2xl border border-border/60 bg-[var(--surface-control-muted)] px-3 py-3 lg:bg-transparent"
+              className="relative grid min-h-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-3 rounded-[20px] border border-border/60 bg-[var(--surface-control-muted)] px-3 py-3 lg:bg-transparent"
             >
               <div
                 className={cn(
@@ -195,7 +194,7 @@ function SingleFileActionCard() {
             </div>
           </div>
           <Button
-            className="h-11 shrink-0 justify-between rounded-xl lg:min-w-56"
+            className="h-10 shrink-0 justify-between rounded-xl lg:min-w-56"
             asChild
             data-testid="start-playground"
           >
@@ -232,9 +231,7 @@ function LiveBatchActionCard({
             <div className="flex flex-wrap items-center gap-2">
               <CardTitle className="text-sm font-semibold">{t('start.batchLive.title')}</CardTitle>
               {!liveAvailable ? (
-                <Badge variant="outline" className="rounded-full px-2 py-0.5 text-[10px]">
-                  {t('start.batchDemo.title')}
-                </Badge>
+                <Badge variant="outline">{t('start.batchDemo.title')}</Badge>
               ) : null}
             </div>
             <CardDescription className="text-xs leading-5">
@@ -265,7 +262,7 @@ function LiveBatchActionCard({
         </Button>
         {liveBlockedReason ? (
           <p
-            className="mt-2 text-[11px] leading-4 text-muted-foreground"
+            className="mt-2 text-xs leading-4 text-muted-foreground"
             data-testid="start-live-blocked-reason"
           >
             {liveBlockedReason}
@@ -366,17 +363,16 @@ function ServiceReadinessCard({
 
   return (
     <Card className="page-surface min-h-0 border-border/70 shadow-[var(--shadow-control)]">
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-4 p-4">
-        <div className="flex min-w-0 flex-none gap-3">
-          <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground">
+      <CardContent className="flex flex-col gap-4 p-4">
+        <div className="flex min-w-0 flex-none items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-border bg-muted text-foreground">
             <FileCheck2 className="size-4" />
           </span>
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold">{t('start.services.title')}</span>
+              <CardTitle className="text-sm font-semibold">{t('start.services.title')}</CardTitle>
               <Badge
                 variant={liveReady ? 'default' : 'outline'}
-                className="rounded-full px-2.5 py-0.5 text-xs"
                 data-testid="start-live-state"
               >
                 {checking
@@ -393,11 +389,11 @@ function ServiceReadinessCard({
                 </span>
               ) : null}
             </div>
-            <p className="text-sm leading-6 text-muted-foreground">{readinessMessage}</p>
+            <CardDescription className="text-xs leading-5">{readinessMessage}</CardDescription>
           </div>
         </div>
 
-        <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] content-start gap-2 overflow-hidden">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
           {services.map((service) => {
             const displayStatus = service.status === 'busy' ? 'online' : service.status;
 
@@ -405,7 +401,7 @@ function ServiceReadinessCard({
               <span
                 key={service.name}
                 className={cn(
-                  'block min-w-0 max-w-full truncate rounded-full border px-2.5 py-1 text-[11px] font-medium',
+                  'block min-w-0 max-w-full truncate rounded-full border px-2.5 py-1 text-xs font-medium',
                   displayStatus === 'online' &&
                     'border-[var(--success-border)] bg-[var(--success-surface)] text-[var(--success-foreground)]',
                   displayStatus === 'degraded' &&
@@ -426,12 +422,12 @@ function ServiceReadinessCard({
             </span>
           ) : null}
         </div>
-        <div className="flex flex-none justify-end">
+        <div className="flex justify-end">
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-8 rounded-xl px-2"
+            className="rounded-xl px-2"
             onClick={onRefresh}
             aria-label={t('start.refreshServices')}
           >

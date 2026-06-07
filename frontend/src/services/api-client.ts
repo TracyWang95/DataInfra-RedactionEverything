@@ -8,6 +8,7 @@ export const API_TIMEOUT = 60_000;
 export const VISION_TIMEOUT = 900_000;
 export const BATCH_TIMEOUT = 120_000;
 export const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
+const HTTP_STATUS_UNAUTHORIZED = 401;
 const DEFAULT_API_PREFIX = '/api/v1';
 const RAW_API_PREFIX = import.meta.env.VITE_API_PREFIX ?? DEFAULT_API_PREFIX;
 
@@ -145,7 +146,7 @@ apiClient.interceptors.response.use(
       errorType = 'timeout';
     } else if (!error.response) {
       errorType = 'network';
-    } else if (error.response.status === 401) {
+    } else if (error.response.status === HTTP_STATUS_UNAUTHORIZED) {
       errorType = 'auth';
       emitUnauthorized(error.config?.url);
     } else {
@@ -179,13 +180,6 @@ export function del<T = void>(url: string, config?: AxiosRequestConfig): Promise
 
 // ─── Authenticated fetch helpers ─────────────────────────────
 
-export function buildAuthHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers = { ...(extra ?? {}) };
-  const token = getCsrfToken();
-  if (token) headers['X-CSRF-Token'] = token;
-  return headers;
-}
-
 /** Drop-in replacement for `fetch()` that sends cookies automatically. */
 export function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const normalizedInput = normalizeApiInput(input);
@@ -196,7 +190,7 @@ export function authFetch(input: RequestInfo | URL, init?: RequestInit): Promise
     credentials: 'include',
     headers,
   }).then((response) => {
-    if (response.status === 401) emitUnauthorized(url);
+    if (response.status === HTTP_STATUS_UNAUTHORIZED) emitUnauthorized(url);
     return response;
   });
 }
@@ -205,7 +199,7 @@ export async function downloadFile(url: string, filename: string): Promise<void>
   const normalizedUrl = rewriteLegacyApiPath(url);
   const res = await fetch(normalizedUrl, { credentials: 'include' });
   if (!res.ok) {
-    const isAuthError = res.status === 401;
+    const isAuthError = res.status === HTTP_STATUS_UNAUTHORIZED;
     if (isAuthError) emitUnauthorized(normalizedUrl);
     throw new ApiError(
       isAuthError ? 'Authentication required.' : `Download failed: ${res.status}`,
@@ -234,7 +228,7 @@ export async function fetchBlob(url: string, init?: RequestInit): Promise<Blob> 
     credentials: 'include',
   });
   if (!res.ok) {
-    const isAuthError = res.status === 401;
+    const isAuthError = res.status === HTTP_STATUS_UNAUTHORIZED;
     if (isAuthError) emitUnauthorized(normalizedUrl);
     let msg = `HTTP ${res.status}`;
     try {

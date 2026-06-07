@@ -91,7 +91,7 @@ export function HistoryFilterMenu({
       <Button
         variant={hasActiveFilter ? 'default' : 'outline'}
         size="sm"
-        className="h-8 w-16 shrink-0 rounded-lg px-2 text-xs whitespace-nowrap"
+        className="h-8 shrink-0 rounded-lg px-2.5 text-xs whitespace-nowrap"
         onClick={() => setFilterOpen((open) => !open)}
         data-testid="history-filter-menu"
         aria-expanded={filterOpen}
@@ -259,7 +259,7 @@ export function HistoryFilters({
   const t = useT();
 
   return (
-    <section className="saas-panel relative z-30 mb-2 grid shrink-0 gap-2.5 overflow-visible rounded-[18px] border-border/70 bg-card/95 p-2.5 shadow-[var(--shadow-control)] xl:grid-cols-[minmax(260px,0.7fr)_minmax(340px,1fr)_auto] xl:items-center 2xl:p-3">
+    <section className="saas-panel relative z-30 mb-2 grid shrink-0 gap-2.5 overflow-visible rounded-[20px] border-border/70 bg-card/95 p-2.5 shadow-[var(--shadow-control)] xl:grid-cols-[minmax(260px,0.7fr)_minmax(340px,1fr)_auto] xl:items-center 2xl:p-3">
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
           <span className="saas-kicker inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap !px-2 !py-1">
@@ -299,7 +299,7 @@ export function HistoryFilters({
           disabled={refreshing || loading || tableBusy}
           onClick={onRefresh}
           data-testid="history-refresh"
-          className="h-8 min-w-[5.5rem] shrink-0 justify-center rounded-lg px-2 text-xs whitespace-nowrap"
+          className="h-8 min-w-[7.5rem] shrink-0 justify-center rounded-lg px-2.5 text-xs whitespace-nowrap"
           title={t('jobs.refreshTitle')}
         >
           <RefreshCw data-icon="inline-start" className={cn(refreshing && 'animate-spin')} />
@@ -309,7 +309,7 @@ export function HistoryFilters({
         <Button
           variant="outline"
           size="sm"
-          className="h-8 shrink-0 rounded-lg border-destructive/25 px-2 text-xs whitespace-nowrap text-destructive hover:bg-destructive/10"
+          className="h-8 shrink-0 rounded-lg border-destructive/25 px-2.5 text-xs whitespace-nowrap text-destructive hover:bg-destructive/10"
           onClick={onCleanup}
           data-testid="history-cleanup"
           title={t('history.cleanupButton')}
@@ -327,7 +327,7 @@ export function HistoryFilters({
           aria-busy={zipLoading}
           title={t('history.downloadOriginalZip')}
           aria-label={t('history.downloadOriginalZip')}
-          className="h-8 shrink-0 rounded-lg px-2 text-xs whitespace-nowrap"
+          className="h-8 shrink-0 rounded-lg px-2.5 text-xs whitespace-nowrap"
         >
           <Download data-icon="inline-start" className={cn(zipLoading && 'animate-pulse')} />
           {t('history.downloadOriginalZipShort')}
@@ -342,7 +342,7 @@ export function HistoryFilters({
           aria-busy={zipLoading}
           title={t('history.downloadRedactedZip')}
           aria-label={t('history.downloadRedactedZip')}
-          className="h-8 shrink-0 rounded-lg px-2 text-xs whitespace-nowrap"
+          className="h-8 shrink-0 rounded-lg px-2.5 text-xs whitespace-nowrap"
         >
           <Download data-icon="inline-start" className={cn(zipLoading && 'animate-pulse')} />
           {t('history.downloadRedactedZipShort')}

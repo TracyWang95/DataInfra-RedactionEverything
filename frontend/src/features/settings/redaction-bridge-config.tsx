@@ -43,7 +43,7 @@ export function RedactionBridgeConfig({
   return (
     <>
       <div className="surface-subtle flex flex-col gap-2 px-3 py-2 text-xs leading-5 sm:flex-row sm:items-center sm:justify-between">
-        <p className="shrink-0 text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground">
+        <p className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {t('settings.redaction.currentSelection')}
         </p>
         <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1">
@@ -69,7 +69,7 @@ export function RedactionBridgeConfig({
               setActivePresetTextId(nextValue || null);
             }}
           >
-            <SelectTrigger className="h-8 rounded-lg text-xs" data-testid="bridge-text-select">
+            <SelectTrigger className="h-8 rounded-xl text-xs" data-testid="bridge-text-select">
               <SelectValue placeholder={t('settings.redaction.defaultOption')} />
             </SelectTrigger>
             <SelectContent>
@@ -98,7 +98,7 @@ export function RedactionBridgeConfig({
               setActivePresetVisionId(nextValue || null);
             }}
           >
-            <SelectTrigger className="h-8 rounded-lg text-xs" data-testid="bridge-vision-select">
+            <SelectTrigger className="h-8 rounded-xl text-xs" data-testid="bridge-vision-select">
               <SelectValue placeholder={t('settings.redaction.defaultOption')} />
             </SelectTrigger>
             <SelectContent>

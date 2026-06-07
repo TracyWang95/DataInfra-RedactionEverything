@@ -109,6 +109,12 @@ _VALUE_PATTERNS: list[tuple[re.Pattern[str], str, str, float]] = [
     (re.compile(r"^-?[\u00a5\uffe5$]?\d{1,3}(?:,\d{3})*(?:\.\d+)?$|^-?[\u00a5\uffe5$]?\d+(?:\.\d+)?$"), "AMOUNT", "medium", 0.55),
 ]
 
+# Type-inference acceptance thresholds + shape heuristics (names for literals).
+_WIDE_TABLE_COLUMN_THRESHOLD = 80
+_CUSTOM_TYPE_CONFIDENCE_MIN = 0.55
+_DEFAULT_TYPE_CONFIDENCE_MIN = 0.78
+_DEFAULT_DATASET_DISCOVERY_LIMIT = 500
+
 _PII_DEFAULT_MASK_TYPES = {
     "PHONE",
     "EMAIL",
@@ -575,7 +581,7 @@ def infer_runtime_type(values: Iterable[Any]) -> str:
 
 def infer_shape_kind(columns: list[str], rows: list[dict[str, Any]]) -> str:
     lowered = " ".join(col.lower() for col in columns)
-    if len(columns) >= 80:
+    if len(columns) >= _WIDE_TABLE_COLUMN_THRESHOLD:
         return "wide_feature_table"
     if ("event" in lowered or "action" in lowered or "status" in lowered) and (
         "time" in lowered or "date" in lowered
@@ -925,8 +931,8 @@ def should_apply_semantic_profile(column: dict[str, Any], semantic: dict[str, An
     if current_type == semantic_type:
         return confidence >= 0.5
     if current_type == "CUSTOM" or reasons == {"high_cardinality"}:
-        return confidence >= 0.55
-    return confidence >= 0.78
+        return confidence >= _CUSTOM_TYPE_CONFIDENCE_MIN
+    return confidence >= _DEFAULT_TYPE_CONFIDENCE_MIN
 
 
 def classify_by_name(column: str) -> tuple[str, str, float, str] | None:
@@ -1358,7 +1364,7 @@ def register_connection_datasets(
     return selected
 
 
-def discover_connection_datasets_from_payload(payload: dict[str, Any], *, limit: int = 500) -> list[dict[str, Any]]:
+def discover_connection_datasets_from_payload(payload: dict[str, Any], *, limit: int = _DEFAULT_DATASET_DISCOVERY_LIMIT) -> list[dict[str, Any]]:
     engine = str(payload.get("engine") or "")
     if engine == "sqlite":
         path = str(payload.get("sqlite_path") or payload.get("database") or "")

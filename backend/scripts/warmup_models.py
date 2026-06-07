@@ -38,6 +38,20 @@ VISUAL_MODEL = (
     or "LocateAnything-3B"
 )
 VISUAL_MAX_TOKENS = int(os.environ.get("LOCATE_ANYTHING_MAX_NEW_TOKENS", "8192"))
+# Long side (px) the visual server resizes inference images to; warm at this size
+# so MoonViT autotunes/captures the SAME patch grid a real scanned page hits.
+VISUAL_WARMUP_LONG_SIDE = int(os.environ.get("LOCATE_ANYTHING_MAX_IMAGE_SIDE", "1280"))
+# Production default visual categories (matches preset_pipeline_types default-enabled).
+VISUAL_WARMUP_CATEGORIES = ["official_seal", "signature"]
+# Repeat the visual detect until a pass actually reaches the warm steady state:
+# the MoonViT encode settles over several iterations (cold autotune + cuDNN
+# benchmark + the expandable-segments allocator caching its segments under memory
+# pressure), and the per-pass curve is noisy (pass 2 has measured anywhere from
+# 17s to 31s), so a relative-plateau test stops too early. Instead keep warming
+# until a pass finishes under an absolute target (warm), with a min/max bound.
+VISUAL_WARMUP_MIN_PASSES = int(os.environ.get("VISUAL_FEATURES_WARMUP_MIN_PASSES", "3"))
+VISUAL_WARMUP_MAX_PASSES = int(os.environ.get("VISUAL_FEATURES_WARMUP_MAX_PASSES", "8"))
+VISUAL_WARMUP_TARGET_SECONDS = float(os.environ.get("VISUAL_FEATURES_WARMUP_TARGET_SECONDS", "8.0"))
 
 TIMEOUT = 180.0
 DEFAULT_MAX_WAIT = int(os.environ.get("WARMUP_MAX_WAIT_SECONDS", "120"))
@@ -76,6 +90,38 @@ def _document_image_base64() -> str:
     draw.text((116, 554), "Alice", fill="black")
     draw.text((276, 554), "ASAT", fill="black")
     draw.text((436, 554), "2026-05-06", fill="black")
+    return _png_base64(image)
+
+
+def _large_document_image_base64() -> str:
+    """A portrait page sized so the long side equals VISUAL_WARMUP_LONG_SIDE.
+
+    A real scanned A4 page is resized to ~904x1280 before MoonViT; this synthetic
+    page hits the same patch grid, so warming on it captures the CUDA graphs and
+    cuDNN autotune the first real /detect would otherwise pay (cold first detect
+    was 30s+). It also draws a round seal + a signature stroke so the detector has
+    something to localize."""
+    long_side = max(640, VISUAL_WARMUP_LONG_SIDE)
+    height = long_side
+    width = max(320, round(long_side * 0.707))  # A4 portrait aspect (1 : 1.414)
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    margin = round(width * 0.05)
+    draw.rectangle((margin, margin, width - margin, height - margin), outline=(210, 210, 210), width=3)
+    line_gap = round(height * 0.04)
+    for index in range(1, 18):
+        y = margin * 2 + index * line_gap
+        if y > height - margin * 3:
+            break
+        draw.line((margin * 2, y, width - margin * 2, y), fill=(70, 70, 70), width=2)
+    draw.ellipse(
+        (width - round(width * 0.30), height - round(height * 0.24),
+         width - round(width * 0.11), height - round(height * 0.11)),
+        outline=(170, 40, 40), width=6,
+    )
+    sx, sy = round(width * 0.14), height - round(height * 0.18)
+    draw.line((sx, sy, sx + round(width * 0.10), sy - round(height * 0.04)), fill=(30, 30, 30), width=5)
+    draw.line((sx + round(width * 0.10), sy - round(height * 0.04), sx + round(width * 0.22), sy), fill=(30, 30, 30), width=5)
     return _png_base64(image)
 
 
@@ -217,22 +263,28 @@ def warmup_pp_structure() -> bool:
 
 
 def warmup_visual_detect() -> bool:
-    print("[warmup] LocateAnything /detect ...")
-    try:
-        start = time.perf_counter()
-        _post_json(
-            VISUAL_DETECT_URL,
-            {
-                "image_base64": _document_image_base64(),
-                "categories": ["signature", "official_seal", "paper_document"],
-                "conf": 0.25,
-            },
-        )
-        print(f"[warmup] [OK] LocateAnything /detect done in {time.perf_counter() - start:.2f}s")
-        return True
-    except Exception as exc:
-        print(f"[warmup] [FAIL] LocateAnything /detect failed: {exc}")
-        return False
+    print(f"[warmup] LocateAnything /detect (long_side={VISUAL_WARMUP_LONG_SIDE}, warm-to-plateau) ...")
+    image_b64 = _large_document_image_base64()
+    ok = False
+    for attempt in range(1, VISUAL_WARMUP_MAX_PASSES + 1):
+        try:
+            start = time.perf_counter()
+            _post_json(
+                VISUAL_DETECT_URL,
+                {"image_base64": image_b64, "categories": VISUAL_WARMUP_CATEGORIES, "conf": 0.25},
+            )
+            dt = time.perf_counter() - start
+            ok = True
+            print(f"[warmup] [OK] LocateAnything /detect pass {attempt} done in {dt:.2f}s")
+            # Keep warming until a pass actually reaches the warm steady state.
+            if attempt >= VISUAL_WARMUP_MIN_PASSES and dt < VISUAL_WARMUP_TARGET_SECONDS:
+                print(f"[warmup] [OK] LocateAnything /detect warm ({dt:.2f}s < {VISUAL_WARMUP_TARGET_SECONDS:.0f}s target)")
+                break
+        except Exception as exc:
+            print(f"[warmup] [FAIL] LocateAnything /detect pass {attempt} failed: {exc}")
+            ok = False
+            break
+    return ok
 
 
 def warmup_visual_chat() -> bool:
@@ -249,7 +301,7 @@ def warmup_visual_chat() -> bool:
                         "content": [
                             {
                                 "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{_document_image_base64()}"},
+                                "image_url": {"url": f"data:image/png;base64,{_large_document_image_base64()}"},
                             },
                             {
                                 "type": "text",

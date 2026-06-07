@@ -279,7 +279,7 @@ export function JobDetailPage() {
   if (err || !data) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 px-4">
-        <p className="text-sm text-destructive">{err ?? t('jobDetail.notFound')}</p>
+        <p className="text-sm text-[var(--error-foreground)]">{err ?? t('jobDetail.notFound')}</p>
         <Button variant="outline" size="sm" asChild>
           <Link to="/jobs">{t('jobDetail.backToList')}</Link>
         </Button>
@@ -349,7 +349,7 @@ export function JobDetailPage() {
                 {t('jobDetail.progressAwaiting').replace('{n}', String(awaitingCount))}
               </span>
               {j.progress.failed > 0 && (
-                <span className="shrink-0 whitespace-nowrap text-destructive">
+                <span className="shrink-0 whitespace-nowrap text-[var(--error-foreground)]">
                   {t('jobDetail.progressFailed').replace('{n}', String(j.progress.failed))}
                 </span>
               )}
@@ -382,7 +382,7 @@ export function JobDetailPage() {
                   variant="outline"
                   size="sm"
                   disabled={actionBusy}
-                  className="shrink-0 whitespace-nowrap text-destructive border-destructive/30 hover:bg-destructive/10"
+                  className="shrink-0 whitespace-nowrap text-destructive border-destructive/25 hover:bg-destructive/10"
                   onClick={() => setDeleteConfirmOpen(true)}
                 >
                   {deleting ? t('jobDetail.deleting') : t('jobDetail.deleteTask')}
@@ -397,7 +397,7 @@ export function JobDetailPage() {
                   variant="outline"
                   size="sm"
                   disabled={actionBusy}
-                  className="shrink-0 whitespace-nowrap text-destructive border-destructive/30 hover:bg-destructive/10"
+                  className="shrink-0 whitespace-nowrap text-destructive border-destructive/25 hover:bg-destructive/10"
                   onClick={onRequeueFailed}
                 >
                   {requeueLoading
@@ -479,7 +479,7 @@ export function JobDetailPage() {
                             <RedactionStateBadge state={rs} />
                             {it.error_message && !it.error_message.startsWith('auto-repaired') && (
                               <span
-                                className="ml-2 inline-block max-w-36 truncate align-middle text-destructive text-2xs"
+                                className="ml-2 inline-block max-w-36 truncate align-middle text-[var(--error-foreground)] text-2xs"
                                 title={it.error_message}
                               >
                                 {it.error_message}
@@ -540,7 +540,7 @@ function JobRecoveryPanel({
             variant="outline"
             size="sm"
             disabled={actionBusy}
-            className="shrink-0 whitespace-nowrap text-destructive border-destructive/30 hover:bg-destructive/10"
+            className="shrink-0 whitespace-nowrap text-destructive border-destructive/25 hover:bg-destructive/10"
             onClick={onRequeueFailed}
             data-testid="job-recovery-requeue"
           >
@@ -598,12 +598,12 @@ function RecoveryActionCard({ action }: { action: JobRecoveryAction }) {
           <h4 className="truncate text-xs font-semibold text-foreground">{t(action.titleKey)}</h4>
           <p className="truncate text-xs leading-5 text-muted-foreground">{t(action.descKey)}</p>
         </div>
-        <span className="shrink-0 rounded-full border border-border bg-background px-2 py-0.5 text-[11px] text-muted-foreground">
+        <span className="shrink-0 rounded-full border border-border bg-background px-2 py-0.5 text-caption text-muted-foreground">
           {action.count}
         </span>
       </div>
       {visibleNames && (
-        <p className="mt-1 truncate text-[11px] text-muted-foreground" title={visibleNames}>
+        <p className="mt-1 truncate text-caption text-muted-foreground" title={visibleNames}>
           {visibleNames}
           {moreCount > 0
             ? ` ${t('jobDetail.recovery.moreFiles').replace('{n}', String(moreCount))}`

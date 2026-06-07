@@ -733,7 +733,8 @@ def create_job(store: JobStore, job_type_str: str, title: str, config: Any,
         owner_id=owner_id,
     )
     row = store.get_job(jid)
-    assert row
+    if not row:
+        raise RuntimeError("internal invariant: row is unexpectedly missing")
     return job_to_summary(row, store)
 
 
@@ -796,7 +797,8 @@ def get_job_detail(store: JobStore, job_id: str, owner_id: str | None = None) ->
     """Get full job detail with items. Raises ValueError if not found."""
     row = store.get_job(job_id)
     assert_job_owner(row, owner_id)
-    assert row
+    if not row:
+        raise RuntimeError("internal invariant: row is unexpectedly missing")
     items = store.list_items(job_id)
     base = job_to_summary(row, store)
     base["items"] = [
@@ -1220,7 +1222,8 @@ def update_draft(store: JobStore, job_id: str, patch: dict[str, Any]) -> dict[st
         raise ValueError("nothing to update")
     store.touch_job_updated(job_id)
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1242,7 +1245,8 @@ def add_item(store: JobStore, job_id: str, file_id: str, sort_order: int | None)
         iid = store.add_item(job_id, file_id, sort_order=sort_order)
         store.touch_job_updated(job_id)
         ir = store.get_item(iid)
-        assert ir
+        if not ir:
+            raise RuntimeError("internal invariant: ir is unexpectedly missing")
         return item_to_out(ir, owner_id=owner_id, job_id=job_id)
     validate_file_allowed_for_job_type(
         job_type=row["job_type"],
@@ -1252,7 +1256,8 @@ def add_item(store: JobStore, job_id: str, file_id: str, sort_order: int | None)
     iid = store.add_item(job_id, file_id, sort_order=sort_order)
     store.touch_job_updated(job_id)
     ir = store.get_item(iid)
-    assert ir
+    if not ir:
+        raise RuntimeError("internal invariant: ir is unexpectedly missing")
     return item_to_out(ir)
 
 
@@ -1316,7 +1321,8 @@ def submit_job(store: JobStore, job_id: str) -> dict[str, Any]:
             )
             enqueue_task("recognition", job_id, it["id"], it["file_id"], meta=meta)
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1327,7 +1333,8 @@ def cancel_job(store: JobStore, job_id: str) -> dict[str, Any]:
         raise ValueError("job not found")
     store.cancel_job(job_id)
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1383,7 +1390,8 @@ def requeue_failed(store: JobStore, job_id: str) -> dict[str, Any]:
                 meta=_recognition_queue_meta_for_item(it),
             )
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1445,7 +1453,8 @@ def approve_review(store: JobStore, job_id: str, item_id: str, reviewer: str = "
     except ValueError:
         raise
     ir = store.get_item(item_id)
-    assert ir
+    if not ir:
+        raise RuntimeError("internal invariant: ir is unexpectedly missing")
     store.touch_job_updated(job_id)
     refresh_job_status(store, job_id)
     # 触发匿名化任务
@@ -1461,7 +1470,8 @@ def reject_review(store: JobStore, job_id: str, item_id: str, reviewer: str = "l
     except ValueError:
         raise
     ir = store.get_item(item_id)
-    assert ir
+    if not ir:
+        raise RuntimeError("internal invariant: ir is unexpectedly missing")
     store.touch_job_updated(job_id)
     refresh_job_status(store, job_id)
     enqueue_task("recognition", job_id, item_id, ir["file_id"])
@@ -1540,5 +1550,6 @@ async def commit_review(
         raise
 
     item_done = store.get_item(item_id)
-    assert item_done
+    if not item_done:
+        raise RuntimeError("internal invariant: item_done is unexpectedly missing")
     return item_to_out(item_done)

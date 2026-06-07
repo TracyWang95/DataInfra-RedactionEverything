@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE_REDACTION_METHOD = "mosaic"
 DEFAULT_IMAGE_REDACTION_STRENGTH = 75
+MIN_IMAGE_REDACTION_STRENGTH = 1  # lower clamp bound for redaction strength
+MAX_IMAGE_REDACTION_STRENGTH = 100  # upper clamp bound for redaction strength
 DEFAULT_IMAGE_FILL_COLOR = "#000000"
 _VALID_IMAGE_REDACTION_METHODS = {"mosaic", "blur", "fill"}
 _VISUAL_SAFE_FILL_RGB_MIN = 245
@@ -59,7 +61,7 @@ def resolve_image_redaction_options(config: Any) -> tuple[str, int, str]:
         except (TypeError, ValueError):
             logger.warning("invalid image redaction strength %r; falling back to 75", raw_strength)
             strength = DEFAULT_IMAGE_REDACTION_STRENGTH
-    strength = max(1, min(100, strength))
+    strength = max(MIN_IMAGE_REDACTION_STRENGTH, min(MAX_IMAGE_REDACTION_STRENGTH, strength))
 
     fill_color = _config_value(config, "image_fill_color") or DEFAULT_IMAGE_FILL_COLOR
     return str(method), strength, str(fill_color)

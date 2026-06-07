@@ -399,7 +399,7 @@ export function PipelineConfigPanel({
       </div>
 
       <div
-        className="page-surface rounded-2xl border border-border/70 bg-card shadow-[var(--shadow-control)]"
+        className="page-surface rounded-[20px] border border-border/70 bg-card shadow-[var(--shadow-control)]"
         data-testid="vision-pipeline-panel"
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-muted/20 px-4 py-2.5">
@@ -451,7 +451,7 @@ export function PipelineConfigPanel({
               {visibleTypes.map((type) => (
                 <article
                   key={`${type.pipelineMode}-${type.id}`}
-                  className="flex h-full min-h-0 overflow-hidden rounded-2xl border border-border/70 bg-[var(--surface-control)] px-3.5 py-3.5 shadow-[var(--shadow-sm)] transition-colors hover:border-border"
+                  className="flex h-full min-h-0 overflow-hidden rounded-[20px] border border-border/70 bg-[var(--surface-control)] px-3.5 py-3.5 shadow-[var(--shadow-sm)] transition-colors hover:border-border"
                 >
                   <div className="flex min-w-0 flex-1 flex-col gap-2.5">
                     <div className="flex items-start justify-between gap-2">
@@ -485,7 +485,7 @@ export function PipelineConfigPanel({
                     </div>
 
                     <div className="min-h-0 flex-1 rounded-xl border border-border/70 bg-muted/25 px-3 py-2.5">
-                      <p className="text-[10px] font-semibold tracking-[0.02em] text-muted-foreground">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {t('settings.cardDescriptionLabel')}
                       </p>
                       <p className="mt-1 line-clamp-4 text-xs leading-4 text-foreground">

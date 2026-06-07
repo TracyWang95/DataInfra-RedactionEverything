@@ -37,15 +37,15 @@ export function AppHeader() {
         : t('health.backendDown');
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 backdrop-blur-2xl sm:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 backdrop-blur-2xl sm:px-6">
       <div className="flex min-h-[40px] min-w-0 flex-1 items-center gap-3">
         <SidebarTrigger className="lg:hidden" aria-label={t('layout.toggleSidebar')} />
         <div className="flex min-w-0 flex-col justify-center lg:hidden" aria-label={title}>
-          <div className="truncate text-lg font-semibold leading-tight tracking-normal text-foreground">
+          <div className="truncate text-lg font-semibold leading-tight tracking-tight text-foreground">
             {title}
           </div>
           {sub && (
-            <p className="mt-1 truncate text-xs leading-snug text-muted-foreground sm:text-sm">
+            <p className="mt-1 truncate text-xs leading-snug text-muted-foreground">
               {sub}
             </p>
           )}

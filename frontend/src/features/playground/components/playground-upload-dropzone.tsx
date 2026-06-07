@@ -3,6 +3,7 @@
 
 import type { FC } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
+import { Button } from '@/components/ui/button';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import type { usePlayground } from '../hooks/use-playground';
@@ -121,12 +122,7 @@ export const PlaygroundUploadDropzone: FC<PlaygroundUploadDropzoneProps> = ({
                 {uploadIssue}
               </div>
             )}
-            <button
-              type="button"
-              onClick={handleOpenClick}
-              disabled={disabled}
-              className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-border/70 bg-card px-4 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent/40"
-            >
+            <Button type="button" variant="outline" size="sm" onClick={handleOpenClick} disabled={disabled}>
               <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
@@ -136,7 +132,7 @@ export const PlaygroundUploadDropzone: FC<PlaygroundUploadDropzoneProps> = ({
                 />
               </svg>
               {t('playground.clickToUpload')}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

@@ -42,7 +42,7 @@ export function SystemSettings() {
   if (!status?.is_super_admin) {
     return (
       <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-        <div className="page-shell">
+        <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
           <Alert variant="destructive">
             <AlertDescription>需要管理员权限。</AlertDescription>
           </Alert>
@@ -57,7 +57,7 @@ export function SystemSettings() {
         <Tabs defaultValue="runtime" className="page-stack gap-3 overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold tracking-tight">系统设置</h2>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">系统设置</h1>
               <p className="text-sm text-muted-foreground">运行配置、用户权限和本地服务监控。</p>
             </div>
             <TabsList className="rounded-xl border border-border/70 bg-muted/40 p-1">
@@ -297,7 +297,7 @@ function AdminAccessPanel() {
           <Label htmlFor="admin-new-role">角色</Label>
           <select
             id="admin-new-role"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            className="flex h-10 w-full rounded-xl border border-input bg-[var(--surface-control)] px-3 py-2 text-sm shadow-[var(--shadow-control)]"
             value={role}
             onChange={(event) => setRole(event.target.value === 'super_admin' ? 'super_admin' : 'user')}
           >
@@ -362,7 +362,7 @@ function PanelHeading({ title, description }: { title: string; description: stri
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-background px-3 py-2">
+    <div className="rounded-lg border border-border bg-background p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 truncate text-sm font-semibold" title={value}>
         {value}

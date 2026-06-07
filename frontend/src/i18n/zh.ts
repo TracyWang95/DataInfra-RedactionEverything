@@ -993,7 +993,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.previewJobLabel': '预览任务',
 
   'error.visionTimeout':
-    '图像识别超时（超过 3 分钟）。若 Paddle 在 CPU 上跑会很慢，可换更小图片或安装 paddle GPU 版加速。',
+    '图像识别超时（超过 3 分钟）。可换更小图片，或检查视觉特征服务（LocateAnything/vLLM）是否正常、显存是否充足。',
   'error.visionDetectionFailed': '图像识别失败',
   'error.reRecognizeFailed': '重新识别失败',
 };

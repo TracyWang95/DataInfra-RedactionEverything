@@ -84,10 +84,11 @@ class CreateEntityTypeRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_required_taxonomy(self):
+        # Custom items are tag-only: the name IS the HaS open-vocab tag. L1/L2
+        # (data_domain / generic_target) are optional organizational hints, not
+        # sent to the model, so they are defaulted rather than required.
         if not str(self.data_domain or "").strip():
-            raise ValueError("L1 数据域必填")
-        if not str(self.generic_target or "").strip():
-            raise ValueError("L2 通用识别项必填")
+            self.data_domain = "custom_extension"
         return self
 
 
@@ -316,8 +317,8 @@ def normalize_custom_entity_type(config: EntityTypeConfig) -> EntityTypeConfig:
     return config.model_copy(update={
         "data_domain": data_domain,
         "generic_target": generic_target,
-        "regex_pattern": None,
-        "use_llm": True,
+        "regex_pattern": (str(config.regex_pattern).strip() or None) if config.regex_pattern else None,
+        "use_llm": bool(config.use_llm),
         "tag_template": build_tag_template(config.name, config.tag_template),
         "coref_enabled": coref_enabled,
         "linkage_groups": infer_linkage_groups(data_domain, generic_target) if coref_enabled else [],
@@ -494,8 +495,8 @@ def create_type(
         description=request.description,
         examples=request.examples,
         color=request.color,
-        regex_pattern=None,
-        use_llm=True,
+        regex_pattern=(str(request.regex_pattern).strip() or None) if request.regex_pattern else None,
+        use_llm=bool(request.use_llm),
         tag_template=build_tag_template(request.name),
         enabled=True,
         order=200,
@@ -541,8 +542,6 @@ def update_type(
         infer_linkage_groups(next_data_domain, next_generic_target)
         if next_coref_enabled else []
     )
-    update_data["regex_pattern"] = None
-    update_data["use_llm"] = True
     if "name" in update_data or "tag_template" in update_data:
         next_name = update_data.get("name", existing.name)
         update_data["tag_template"] = build_tag_template(next_name)

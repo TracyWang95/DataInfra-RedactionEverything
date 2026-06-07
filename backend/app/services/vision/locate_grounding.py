@@ -27,34 +27,26 @@ from app.services import model_config_service
 
 logger = logging.getLogger(__name__)
 
-
-PAGE_SCALE_VISUAL_SLUGS = frozenset({
-    "paper",
-    "receipt",
-    "shipping_label",
-    "id_card",
-    "hk_macau_permit",
-    "passport",
-    "bank_card",
-    "employee_badge",
-    "whiteboard",
-    "mobile_screen",
-    "monitor_screen",
-})
-
-
-def _accept_visual_grounding_box(slug: str, x: float, y: float, width: float, height: float) -> bool:
-    if width <= 0 or height <= 0:
-        return False
-    area = width * height
-    if area <= 0:
-        return False
-    if slug not in PAGE_SCALE_VISUAL_SLUGS and area >= 0.50 and width >= 0.65 and height >= 0.65:
-        return False
-    if slug == "face":
-        aspect = width / max(height, 1e-6)
-        return 0.35 <= aspect <= 2.5 and area <= 0.35
-    return True
+# JPEG encode quality for the image sent to the chat model
+_JPEG_QUALITY = 92
+# Smallest allowed longest-side (px) when downscaling the chat request image
+_MIN_IMAGE_SIDE = 256
+# Fallback longest-side cap (px) when no setting is configured
+_DEFAULT_MAX_IMAGE_SIDE = 2048
+# Slack multiplier deciding whether boxes are normalized (0..coord) vs absolute pixels
+_COORD_MODE_TOLERANCE = 1.05
+# Retry budget / base backoff (s) for the detect HTTP call
+_DETECT_MAX_RETRIES = 2
+_DETECT_BASE_DELAY = 1.0
+# Fallback max-new-tokens cap when no setting is configured
+_DEFAULT_MAX_NEW_TOKENS = 8192
+# Sampling defaults / caps for the chat request
+_DEFAULT_TEMPERATURE = 0.1
+_MAX_TEMPERATURE = 0.2
+_DEFAULT_TOP_P = 0.6
+# Default confidence when the model omits one
+_DEFAULT_DETECT_CONFIDENCE = 0.8
+_DEFAULT_CHECKLIST_CONFIDENCE = 0.82
 
 
 @dataclass
@@ -114,7 +106,7 @@ def _prepare_jpeg(image_data: bytes, max_side: int) -> tuple[bytes, tuple[int, i
     if max(image.size) > max_side:
         image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
     encoded = io.BytesIO()
-    image.save(encoded, format="JPEG", quality=92, optimize=True)
+    image.save(encoded, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
     return encoded.getvalue(), image.size
 
 
@@ -136,15 +128,13 @@ def _normalize_box(raw_box: Any, width: int, height: int) -> tuple[float, float,
     except (TypeError, ValueError):
         return None
     coord = max(1.0, float(settings.VISUAL_FEATURES_COORD_MODE))
-    if max(x1, y1, x2, y2) <= coord * 1.05:
+    if max(x1, y1, x2, y2) <= coord * _COORD_MODE_TOLERANCE:
         x1, x2 = x1 / coord * width, x2 / coord * width
         y1, y2 = y1 / coord * height, y2 / coord * height
     x1, x2 = sorted((max(0.0, min(float(width), x1)), max(0.0, min(float(width), x2))))
     y1, y2 = sorted((max(0.0, min(float(height), y1)), max(0.0, min(float(height), y2))))
-    if x2 - x1 < 2 or y2 - y1 < 2:
-        return None
-    if ((x2 - x1) * (y2 - y1)) / max(1.0, width * height) > 0.85:
-        return None
+    if x2 <= x1 or y2 <= y1:
+        return None  # degenerate (non-positive area); trust LA for everything else
     return x1 / width, y1 / height, (x2 - x1) / width, (y2 - y1) / height
 
 
@@ -240,16 +230,6 @@ class LocateAnythingGroundingService:
             if normalized is None:
                 continue
             x, y, width, height = normalized
-            if not _accept_visual_grounding_box(slug, x, y, width, height):
-                logger.info(
-                    "Skipping page-scale LocateAnything box category=%s box=(%.4f, %.4f, %.4f, %.4f)",
-                    slug,
-                    x,
-                    y,
-                    width,
-                    height,
-                )
-                continue
             boxes.append(
                 BoundingBox(
                     id=f"locate_{index}_{uuid.uuid4().hex[:8]}",
@@ -260,7 +240,7 @@ class LocateAnythingGroundingService:
                     type=slug,
                     text=SLUG_TO_NAME_ZH.get(slug, slug),
                     page=page,
-                    confidence=float(raw.get("confidence", 0.8) or 0.8),
+                    confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
                     source="visual_features",
                     source_detail="locate_anything:detect",
                     evidence_source="visual_feature_model",
@@ -286,14 +266,14 @@ class LocateAnythingGroundingService:
 
         prepare_start = time.perf_counter()
         max_side = max(
-            256,
+            _MIN_IMAGE_SIDE,
             int(
                 getattr(
                     settings,
                     "VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE",
-                    getattr(settings, "VISUAL_FEATURES_MAX_IMAGE_SIDE", 2048),
+                    getattr(settings, "VISUAL_FEATURES_MAX_IMAGE_SIDE", _DEFAULT_MAX_IMAGE_SIDE),
                 )
-                or 2048
+                or _DEFAULT_MAX_IMAGE_SIDE
             ),
         )
         request_image, (width, height) = _prepare_jpeg(image_data, max_side)
@@ -328,8 +308,8 @@ class LocateAnythingGroundingService:
 
         response = await retry_async(
             request,
-            max_retries=2,
-            base_delay=1.0,
+            max_retries=_DETECT_MAX_RETRIES,
+            base_delay=_DETECT_BASE_DELAY,
             retryable_exceptions=RETRYABLE_HTTPX,
         )
         data = response.json()
@@ -344,7 +324,7 @@ class LocateAnythingGroundingService:
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
         max_tokens = max(
-            int(getattr(settings, "LOCATE_ANYTHING_MAX_NEW_TOKENS", 8192) or 8192),
+            int(getattr(settings, "LOCATE_ANYTHING_MAX_NEW_TOKENS", _DEFAULT_MAX_NEW_TOKENS) or _DEFAULT_MAX_NEW_TOKENS),
             int(config.max_tokens or 0),
         )
         payload = {
@@ -358,8 +338,8 @@ class LocateAnythingGroundingService:
                     ],
                 }
             ],
-            "temperature": min(float(config.temperature or 0.1), 0.2),
-            "top_p": float(config.top_p or 0.6),
+            "temperature": min(float(config.temperature or _DEFAULT_TEMPERATURE), _MAX_TEMPERATURE),
+            "top_p": float(config.top_p or _DEFAULT_TOP_P),
             "max_tokens": max_tokens,
             "stream": False,
             "chat_template_kwargs": {"enable_thinking": False},
@@ -414,7 +394,7 @@ class LocateAnythingGroundingService:
                     type=type_id,
                     text=str(obj.get("text") or label).strip() or label,
                     page=page,
-                    confidence=max(0.0, min(1.0, float(obj.get("confidence", 0.82) or 0.82))),
+                    confidence=max(0.0, min(1.0, float(obj.get("confidence", _DEFAULT_CHECKLIST_CONFIDENCE) or _DEFAULT_CHECKLIST_CONFIDENCE))),
                     source="visual_features",
                     source_detail=f"locate_anything:{obj.get('rule_matched') or 'checklist'}",
                     evidence_source="visual_feature_model",

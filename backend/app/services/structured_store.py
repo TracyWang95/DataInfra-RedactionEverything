@@ -381,7 +381,8 @@ class StructuredStore:
             )
             conn.commit()
         dataset = self.get_dataset(did, owner_id=owner_id)
-        assert dataset
+        if not dataset:
+            raise RuntimeError("internal invariant: dataset is unexpectedly missing")
         return dataset
 
     def get_dataset(self, dataset_id: str, *, owner_id: str) -> dict[str, Any] | None:

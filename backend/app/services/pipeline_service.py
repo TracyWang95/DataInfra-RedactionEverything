@@ -122,7 +122,18 @@ PRESET_PIPELINES: dict[str, PipelineConfig] = {
 
 PIPELINE_MIGRATIONS_KEY = "_migrations"
 VISUAL_FEATURES_PRESET_MIGRATION = "visual_features_preset_v1"
-VISUAL_FEATURES_DEFAULT_IDS = {"signature"}
+# Document visual-PII features selected by default (seal, signature, ID docs,
+# bank card, biometrics, plates, codes, badges, medical, receipt/waybill). Pure
+# scene objects (whiteboard, screens, sticky note, key, paper) stay off-by-default
+# but remain available for manual selection. Kept in sync with
+# preset_pipeline_types.json (default_enabled).
+VISUAL_FEATURES_DEFAULT_IDS = {
+    # Owner decision: only signature + official seal are auto-checked by default.
+    # Every other visual type stays available for manual selection / checklist config,
+    # and keeping the default to 2 categories also keeps LocateAnything fast
+    # (one prompt per selected category).
+    "official_seal", "signature",
+}
 
 
 def _validate_pipeline_type_for_mode(_mode: str, _type_config: PipelineTypeConfig) -> str:
@@ -248,6 +259,40 @@ def _pipelines_for_owner(owner_id: str | None = None) -> dict[str, PipelineConfi
     return pipelines_db if owner_id is None else _load_pipelines(owner_id)
 
 
+def _custom_semantic_ocr_has_types(owner_id: str | None) -> list[PipelineTypeConfig]:
+    """User-added semantic custom items (识别项设置 文本) surfaced into the OCR+HaS
+    catalog so they are checkable in the Playground and reach HaS as open-vocab
+    tags. Only user customs (id 'custom_*'), only non-regex (regex items run in the
+    text-chain fallback step, not as HaS tags). Default-off so nothing auto-runs.
+    """
+    try:
+        from app.services import entity_type_service as _ets
+    except Exception:
+        return []
+    out: list[PipelineTypeConfig] = []
+    for et in _ets.list_types(owner_id=owner_id).custom_types:
+        if not str(getattr(et, "id", "") or "").startswith("custom_"):
+            continue
+        if getattr(et, "regex_pattern", None):
+            continue  # regex items run in the text-chain fallback step, not as HaS tags
+        if not getattr(et, "enabled", True):
+            continue
+        out.append(
+            PipelineTypeConfig(
+                id=et.id,
+                name=et.name,
+                description=getattr(et, "description", None),
+                data_domain=getattr(et, "data_domain", "custom_extension") or "custom_extension",
+                generic_target=getattr(et, "generic_target", None),
+                linkage_groups=list(getattr(et, "linkage_groups", []) or []),
+                default_enabled=False,
+                enabled=True,
+                order=9000,
+            )
+        )
+    return out
+
+
 def get_pipeline_types_for_mode(
     mode: str,
     *,
@@ -263,7 +308,11 @@ def get_pipeline_types_for_mode(
     types = pipeline.types
     if enabled_only:
         types = [item for item in types if item.enabled]
-    return list(types)
+    result = list(types)
+    if _canonical_pipeline_mode(mode) == "ocr_has":
+        existing = {item.id for item in result}
+        result.extend(t for t in _custom_semantic_ocr_has_types(owner_id) if t.id not in existing)
+    return result
 
 
 def _visible_pipelines(db: dict[str, PipelineConfig]) -> list[PipelineConfig]:
@@ -319,7 +368,11 @@ def get_pipeline_types(
     types = pipeline.types
     if enabled_only:
         types = [item for item in types if item.enabled]
-    return sorted(types, key=lambda item: item.order)
+    result = sorted(types, key=lambda item: item.order)
+    if _canonical_pipeline_mode(mode) == "ocr_has":
+        existing = {item.id for item in result}
+        result = result + [t for t in _custom_semantic_ocr_has_types(owner_id) if t.id not in existing]
+    return result
 
 
 def add_pipeline_type(

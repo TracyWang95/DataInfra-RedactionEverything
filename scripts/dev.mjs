@@ -278,6 +278,31 @@ async function startVllmServices() {
     ].join(' '),
   );
   await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 720000);
+
+  // LocateAnything Qwen2 text backbone served by vLLM (prompt-embeds). The
+  // LocateAnything service (8090) runs the MoonViT vision tower locally and
+  // posts stitched image+text embeds here. Only started in vLLM mode.
+  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0' && (env.LOCATE_ANYTHING_VLLM_URL || '').trim()) {
+    const locateLmModel = env.LOCATE_ANYTHING_LM_MODEL_DIR || '/mnt/d/has_models/locate_qwen2_model';
+    spawnWsl(
+      'locate-lm-vllm',
+      [
+        `cd ${shellQuote(wslRoot)} &&`,
+        `CUDA_VISIBLE_DEVICES=${cuda}`,
+        'HF_HUB_OFFLINE=1',
+        'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True',
+        shellQuote(vllmPython),
+        shellQuote(vllmBin),
+        'serve',
+        shellQuote(locateLmModel),
+        `--served-model-name ${shellQuote(env.LOCATE_ANYTHING_VLLM_MODEL || 'locate_qwen2_model')}`,
+        '--host 0.0.0.0 --port 8091',
+        '--enable-prompt-embeds',
+        ...splitArgs(env.LOCATE_ANYTHING_LM_VLLM_EXTRA_ARGS).map(shellQuote),
+      ].join(' '),
+    );
+    await waitJson(`http://${wslHost}:8091/v1/models`, (body) => Array.isArray(body.data), 'locate-lm-vllm', 720000);
+  }
 }
 
 async function startOcrWrapper() {
@@ -331,6 +356,8 @@ async function startLocateAnything() {
       wslEnvVar('LOCATE_ANYTHING_FAST_FIRST_FALLBACK_ON_EMPTY', '1'),
       wslEnvVar('LOCATE_ANYTHING_SIGNATURE_TILE_FALLBACK_MAX_TILES', '1'),
       wslEnvVar('LOCATE_ANYTHING_TEMPERATURE', '0.7'),
+      wslEnvVar('LOCATE_ANYTHING_VLLM_URL', ''),
+      wslEnvVar('LOCATE_ANYTHING_VLLM_MODEL', 'locate_qwen2_model'),
       `PYTHONPATH=${shellQuote(locatePythonPath)}`,
       shellQuote(vllmPython),
       'backend/scripts/locate_anything_server.py',

@@ -117,7 +117,7 @@ export function SettingsHub() {
   return (
     <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
-        <Tabs defaultValue="text" className="page-stack gap-2.5 overflow-hidden">
+        <Tabs defaultValue="text" className="page-stack gap-3 overflow-hidden">
           {loadError && (
             <Alert variant="destructive" data-testid="settings-load-error">
               <AlertDescription>{loadError}</AlertDescription>
@@ -140,7 +140,7 @@ export function SettingsHub() {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-8 whitespace-nowrap"
+                className="whitespace-nowrap"
                 onClick={() => void runLocked(handleExportPresets)}
                 disabled={operationLoading}
                 data-testid="export-presets"
@@ -150,7 +150,7 @@ export function SettingsHub() {
               <Button
                 size="sm"
                 variant="outline"
-                className="h-8 whitespace-nowrap"
+                className="whitespace-nowrap"
                 onClick={() => importFileRef.current?.click()}
                 disabled={operationLoading}
                 data-testid="import-presets"

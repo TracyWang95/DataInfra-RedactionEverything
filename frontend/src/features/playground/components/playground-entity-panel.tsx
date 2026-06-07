@@ -11,7 +11,6 @@ import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
   ENTITY_GROUPS,
-  getEntityGroup,
   getEntityGroupLabel,
   getEntityTypeName,
 } from '@/config/entityTypes';
@@ -93,7 +92,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
         <Card className="overflow-hidden">
           <CardContent className="flex flex-col gap-2.5 p-3.5">
             <div className="space-y-0.5">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {t('playground.recognitionSection')}
               </div>
               <p className="line-clamp-2 text-sm leading-5 text-foreground">
@@ -127,7 +126,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
                     .replace('{total}', String(totalCount))}
                 </p>
               </div>
-              <Badge variant="outline" className="shrink-0 rounded-full px-2.5 py-1 text-[11px]">
+              <Badge variant="outline" className="shrink-0 rounded-full px-2.5 py-1">
                 {shownSelectedCount}/{totalCount}
               </Badge>
             </div>
@@ -179,9 +178,9 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
                   const selected = groupedStats.reduce((sum, [, count]) => sum + count.selected, 0);
 
                   return (
-                    <div key={group.id} className="rounded-2xl border border-border/70 bg-muted/25">
+                    <div key={group.id} className="rounded-[20px] border border-border/70 bg-muted/25">
                       <div className="flex items-center justify-between border-b border-border/60 px-3 py-2">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                           {getEntityGroupLabel(group.id)}
                         </span>
                         <span className="text-[11px] tabular-nums text-muted-foreground">
@@ -218,7 +217,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
                 {t('playground.clickToEdit')}
               </p>
             </div>
-            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 py-1 text-[11px]">
+            <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 py-1">
               {totalCount}
             </Badge>
           </div>
@@ -249,7 +248,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
           disabled={shownSelectedCount === 0 || isLoading}
           aria-describedby={disabledReason ? 'playground-redact-disabled-reason' : undefined}
           className={cn(
-            'h-11 shrink-0 rounded-2xl text-sm font-semibold shadow-[var(--shadow-control)]',
+            'h-11 shrink-0 rounded-[20px] text-sm font-semibold shadow-[var(--shadow-control)]',
             shownSelectedCount === 0 && 'opacity-50',
           )}
           data-testid="playground-redact-btn"
@@ -278,7 +277,7 @@ const ReplacementModeSelector: FC<{
 
   return (
     <div className="space-y-2">
-      <label className="block text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+      <label className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {t('playground.redactMode')}
       </label>
       <div className="grid grid-cols-3 gap-1.5">
@@ -305,7 +304,7 @@ const ReplacementModeSelector: FC<{
               {item.badge && (
                 <Badge
                   variant="outline"
-                  className="hidden shrink-0 rounded-full px-1.5 py-0 text-[9px] xl:inline-flex"
+                  className="hidden shrink-0 rounded-full px-1.5 py-0 xl:inline-flex"
                 >
                   {item.badge}
                 </Badge>
@@ -364,7 +363,6 @@ const BoxList: FC<{ boxes: BoundingBox[]; onToggle: (id: string) => void }> = ({
   return (
     <>
       {boxes.map((box) => {
-        const group = getEntityGroup(box.type);
         const sourceLabel =
           box.source === 'ocr_has'
             ? t('playground.sourceOcr')
@@ -386,10 +384,10 @@ const BoxList: FC<{ boxes: BoundingBox[]; onToggle: (id: string) => void }> = ({
             />
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                <Badge variant="secondary" className="text-[10px]">
-                  {group?.label} / {getEntityTypeName(box.type)}
+                <Badge variant="secondary">
+                  {getEntityTypeName(box.type)}
                 </Badge>
-                <Badge variant="outline" className="text-[10px]">
+                <Badge variant="outline">
                   {sourceLabel}
                 </Badge>
               </div>
@@ -430,7 +428,7 @@ const EntityList: FC<{
         return (
           <div key={group.id}>
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border/60 bg-background/95 px-3 py-2 backdrop-blur">
-              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {getEntityGroupLabel(group.id)}
               </span>
               <span className="text-[11px] tabular-nums text-muted-foreground">
@@ -455,10 +453,10 @@ const EntityList: FC<{
                 >
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                      <Badge variant="secondary" className="text-[10px]">
+                      <Badge variant="secondary">
                         {typeNameById.get(entity.type) ?? getEntityTypeName(entity.type)}
                       </Badge>
-                      <span className="text-[11px] text-muted-foreground">{sourceLabel}</span>
+                      <Badge variant="outline">{sourceLabel}</Badge>
                     </div>
                     <p className="truncate text-sm text-foreground">{entity.text}</p>
                   </div>
@@ -496,7 +494,7 @@ const EntityList: FC<{
       {customEntities.length > 0 && (
         <div key="custom">
           <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border/60 bg-background/95 px-3 py-2 backdrop-blur">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t('entityGroup.other')}
             </span>
             <span className="text-[11px] tabular-nums text-muted-foreground">
@@ -521,10 +519,10 @@ const EntityList: FC<{
               >
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                    <Badge variant="secondary" className="text-[10px]">
+                    <Badge variant="secondary">
                       {typeNameById.get(entity.type) ?? getEntityTypeName(entity.type)}
                     </Badge>
-                    <span className="text-[11px] text-muted-foreground">{sourceLabel}</span>
+                    <Badge variant="outline">{sourceLabel}</Badge>
                   </div>
                   <p className="truncate text-sm text-foreground">{entity.text}</p>
                 </div>

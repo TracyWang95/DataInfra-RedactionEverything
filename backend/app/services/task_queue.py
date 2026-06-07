@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _MIN_JOB_CONCURRENCY = 1
 _MAX_JOB_CONCURRENCY = 16
+# Truncation lengths for stored error messages (names for repeated literals).
+_ERROR_MSG_MAX_LEN = 500
+_WORKER_ERROR_MSG_MAX_LEN = 200
+# GPU memory ratio at/above which the queue treats the device as saturated.
+_GPU_SATURATION_RATIO = 0.90
+# File-size bucket (bytes) used to order small-vs-large files in the queue.
+_FILE_SIZE_BUCKET_BYTES = 16_384
 
 
 def _clamp_job_concurrency(value: Any) -> int:
@@ -109,7 +116,7 @@ def _estimate_recognition_task_cost(file_info: dict[str, Any]) -> tuple[int, int
     pages = max(1, pages)
 
     if ft in {"txt", "doc", "docx"}:
-        return (0, max(1, _safe_int(file_info.get("file_size"), default=1) // 16_384))
+        return (0, max(1, _safe_int(file_info.get("file_size"), default=1) // _FILE_SIZE_BUCKET_BYTES))
     if ft == "image":
         return (1, 1)
     if ft in {"pdf", "pdf_scanned"}:
@@ -145,7 +152,7 @@ def _effective_vision_page_concurrency(
     pages = max(1, int(pages))
     configured = max(1, int(configured))
     gpu_ratio = _gpu_memory_ratio(gpu_memory)
-    if gpu_ratio is not None and gpu_ratio >= 0.90:
+    if gpu_ratio is not None and gpu_ratio >= _GPU_SATURATION_RATIO:
         return 1
     return min(configured, pages)
 
@@ -157,7 +164,7 @@ def _vision_page_concurrency_reason(
     gpu_memory: dict[str, Any] | None,
 ) -> str:
     gpu_ratio = _gpu_memory_ratio(gpu_memory)
-    if effective == 1 and gpu_ratio is not None and gpu_ratio >= 0.90:
+    if effective == 1 and gpu_ratio is not None and gpu_ratio >= _GPU_SATURATION_RATIO:
         return "gpu_memory_high"
     if effective < max(1, int(configured)):
         return "page_count"
@@ -532,7 +539,7 @@ class SimpleTaskQueue:
                     store = self._get_store()
                     store.update_item_status(
                         task.item_id, JobItemStatus.FAILED,
-                        error_message=f"worker: {type(exc).__name__}: {str(exc)[:200]}",
+                        error_message=f"worker: {type(exc).__name__}: {str(exc)[:_WORKER_ERROR_MSG_MAX_LEN]}",
                     )
                 except Exception:
                     pass
@@ -633,28 +640,28 @@ class SimpleTaskQueue:
             self._mark_recognition_complete(task, job, store)
 
         except (FileNotFoundError, OSError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s recognition I/O error: %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 logger.warning("failed to mark item %s as FAILED (item not found or invalid transition)", task.item_id[:8])
         except TimeoutError as e:
-            err_msg = str(e)[:500] or "recognition timed out"
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN] or "recognition timed out"
             logger.error("[queue] item=%s recognition timeout: %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 logger.warning("failed to mark item %s as FAILED (item not found or invalid transition)", task.item_id[:8])
         except (RuntimeError, ValueError, KeyError, json.JSONDecodeError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s recognition failed: %s: %s", task.item_id[:8], type(e).__name__, err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 logger.warning("failed to mark item %s as FAILED (item not found or invalid transition)", task.item_id[:8])
         except Exception as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.exception("[queue] item=%s recognition failed (unexpected): %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
@@ -1110,14 +1117,14 @@ class SimpleTaskQueue:
             store.update_item_status(task.item_id, JobItemStatus.COMPLETED)
             logger.info("[queue] item=%s structured export completed", task.item_id[:8])
         except (RuntimeError, ValueError, KeyError, OSError) as exc:
-            err_msg = str(exc)[:500]
+            err_msg = str(exc)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s structured failed: %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 pass
         except Exception as exc:
-            err_msg = str(exc)[:500]
+            err_msg = str(exc)[:_ERROR_MSG_MAX_LEN]
             logger.exception("[queue] item=%s structured failed (unexpected): %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
@@ -1227,21 +1234,21 @@ class SimpleTaskQueue:
             logger.info("[queue] item=%s redaction completed", task.item_id[:8])
 
         except (FileNotFoundError, OSError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s redaction I/O error: %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 pass
         except (RuntimeError, ValueError, KeyError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s redaction failed: %s: %s", task.item_id[:8], type(e).__name__, err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 pass
         except Exception as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.exception("[queue] item=%s redaction failed (unexpected): %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)

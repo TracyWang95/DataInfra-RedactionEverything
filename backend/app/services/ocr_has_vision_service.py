@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 from PIL import Image
 
-from app.core.config import settings
 from app.models.type_mapping import canonical_type_id
 
 VISUAL_ONLY_ENTITY_TYPES = {
@@ -29,64 +28,6 @@ VISUAL_ONLY_ENTITY_TYPES = {
     "HANDWRITING",
     "WATERMARK",
 }
-
-HAS_TEXT_SEMANTIC_ENTITY_TYPES = {
-    "PERSON",
-    "ID_CARD",
-    "PASSPORT",
-    "SOCIAL_SECURITY",
-    "BIOMETRIC",
-    "DRIVER_LICENSE",
-    "MILITARY_ID",
-    "PHONE",
-    "EMAIL",
-    "QQ_WECHAT_ID",
-    "BANK_CARD",
-    "BANK_ACCOUNT",
-    "BANK_NAME",
-    "PAYMENT_ACCOUNT",
-    "TAX_ID",
-    "IP_ADDRESS",
-    "MAC_ADDRESS",
-    "DEVICE_ID",
-    "USERNAME_PASSWORD",
-    "AUTH_SECRET",
-    "BIRTH_DATE",
-    "AGE",
-    "GENDER",
-    "NATIONALITY",
-    "ETHNICITY",
-    "MARITAL_STATUS",
-    "ADDRESS",
-    "POSTAL_CODE",
-    "GPS_LOCATION",
-    "EDUCATION",
-    "WORK_UNIT",
-    "DATE",
-    "TIME",
-    "LICENSE_PLATE",
-    "VIN",
-    "HEALTH_INFO",
-    "MEDICAL_RECORD",
-    "AMOUNT",
-    "PROPERTY",
-    "CRIMINAL_RECORD",
-    "POLITICAL",
-    "RELIGION",
-    "SEXUAL_ORIENTATION",
-    "CASE_NUMBER",
-    "CONTRACT_NO",
-    "LEGAL_DOC_NO",
-    "LEGAL_PARTY",
-    "LAWYER",
-    "JUDGE",
-    "WITNESS",
-    "ORG",
-    "COMPANY",
-    "COMPANY_CODE",
-    "URL_WEBSITE",
-}
-
 
 IMAGE_TEXT_ENTITY_TYPE_ALIASES = {
     "DATETIME": "DATE",
@@ -105,10 +46,13 @@ def _canonicalize_image_text_types(entity_type_ids: list[str]) -> list[str]:
 
 
 def _semantic_entity_type_ids(entity_type_ids: list[str]) -> list[str]:
+    # Any requested type that is not visual-only is a text/semantic type and is
+    # sent to HaS. The channel was already decided upstream (ocr_has vs visual);
+    # we no longer gate on a hardcoded whitelist — "what you check is what you get".
     return [
         type_id
         for type_id in _canonicalize_image_text_types(entity_type_ids)
-        if type_id in HAS_TEXT_SEMANTIC_ENTITY_TYPES
+        if type_id not in VISUAL_ONLY_ENTITY_TYPES
     ]
 
 
@@ -118,13 +62,13 @@ def _semantic_vision_types(vision_types: list | None) -> list | None:
     return [
         item
         for item in vision_types
-        if _canonical_image_text_type(getattr(item, "id", "")) in HAS_TEXT_SEMANTIC_ENTITY_TYPES
+        if _canonical_image_text_type(getattr(item, "id", "")) not in VISUAL_ONLY_ENTITY_TYPES
     ]
 
 
 def _needs_has_text_analysis(entity_type_ids: list[str]) -> bool:
     """Return whether selected vision types need semantic HaS NER."""
-    return any(_canonical_image_text_type(type_id) in HAS_TEXT_SEMANTIC_ENTITY_TYPES for type_id in entity_type_ids)
+    return any(_canonical_image_text_type(type_id) not in VISUAL_ONLY_ENTITY_TYPES for type_id in entity_type_ids)
 
 # ---------------------------------------------------------------------------
 # Shared data classes (imported by sub-modules and external consumers)
@@ -193,6 +137,7 @@ class OcrHasVisionService:
         self._has_ready = False
         self.last_duration_ms: dict[str, Any] = {}
         self.last_ocr_blocks: list[OCRTextBlock] = []
+        self.current_owner_id: str | None = None
         self._init_services()
 
     def _init_services(self):
@@ -293,14 +238,60 @@ class OcrHasVisionService:
         from app.services.vision.ocr_pipeline import match_entities_to_ocr
         return match_entities_to_ocr(ocr_blocks, entities)
 
-    def _match_ocr_to_visual_regions(
+    def _apply_regex_fallback(
         self,
         ocr_blocks: list[OCRTextBlock],
-        visual_regions: list[SensitiveRegion],
-        iou_threshold: float = 0.3,
+        width: int,
+        height: int,
     ) -> list[SensitiveRegion]:
-        from app.services.vision.image_pipeline import match_ocr_to_visual_regions
-        return match_ocr_to_visual_regions(ocr_blocks, visual_regions, iou_threshold)
+        """Regex 兜底：作为文本链路最后一步，补齐 HaS Text 漏检的自定义正则类型。
+
+        当没有配置任何带 regex_pattern 的启用类型时严格无操作（返回 []）。
+        """
+        from app.services import entity_type_service as ets
+
+        regex_types = ets.get_regex_types(self.current_owner_id)
+        if not regex_types:
+            return []
+
+        import re
+
+        new_regions: list[SensitiveRegion] = []
+        for item in regex_types:
+            try:
+                pat = re.compile(item.regex_pattern)
+            except Exception as exc:  # noqa: BLE001 - never raise on bad pattern
+                logger.warning("Regex fallback skipping type %s (bad pattern): %s", item.id, exc)
+                continue
+            for block in ocr_blocks:
+                try:
+                    if not pat.search(block.text or ""):
+                        continue
+                except Exception as exc:  # noqa: BLE001 - never raise on regex search
+                    logger.warning("Regex fallback search failed for type %s: %s", item.id, exc)
+                    break
+                # De-dupe (block-level): skip if a region already covers this block
+                # with the same custom type at the same location.
+                if any(
+                    region.entity_type == item.id
+                    and region.left == block.left
+                    and region.top == block.top
+                    for region in new_regions
+                ):
+                    continue
+                new_regions.append(SensitiveRegion(
+                    text=block.text or "",
+                    entity_type=item.id,
+                    left=block.left,
+                    top=block.top,
+                    width=block.width,
+                    height=block.height,
+                    confidence=1.0,
+                    source="regex_fallback",
+                ))
+        if new_regions:
+            logger.info("Regex fallback added %d regions", len(new_regions))
+        return new_regions
 
     def _draw_regions_on_image(
         self,
@@ -309,15 +300,6 @@ class OcrHasVisionService:
     ) -> Image.Image:
         from app.services.vision.image_pipeline import draw_regions_on_image
         return draw_regions_on_image(image, regions)
-
-    def _merge_regions(
-        self,
-        regions1: list[SensitiveRegion],
-        regions2: list[SensitiveRegion],
-        iou_threshold: float = 0.5,
-    ) -> list[SensitiveRegion]:
-        from app.services.vision.region_merger import merge_regions
-        return merge_regions(regions1, regions2, iou_threshold)
 
     # ------------------------------------------------------------------
     # Public API
@@ -377,6 +359,11 @@ class OcrHasVisionService:
         else:
             regions = []
             duration_ms["match"] = 0
+
+        # 正则兜底：文本链路最后一步，补齐 HaS Text 漏检的自定义正则类型
+        # （未配置任何 regex 类型时严格无操作）
+        if ocr_blocks:
+            regions.extend(self._apply_regex_fallback(ocr_blocks, 0, 0))
 
         duration_ms["draw"] = 0
         duration_ms["total"] = round((time.perf_counter() - perf_start) * 1000)
@@ -513,6 +500,11 @@ class OcrHasVisionService:
             duration_ms.setdefault("has_ner", 0)
             duration_ms.setdefault("match", 0)
             logger.warning("PaddleOCR returned no text blocks")
+
+        # 正则兜底：文本链路最后一步，补齐 HaS Text 漏检的自定义正则类型
+        # （未配置任何 regex 类型时严格无操作）
+        if ocr_blocks:
+            all_regions.extend(self._apply_regex_fallback(ocr_blocks, width, height))
 
         logger.info("Final detected %d sensitive regions", len(all_regions))
 

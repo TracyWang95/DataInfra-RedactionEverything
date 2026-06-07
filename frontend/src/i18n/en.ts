@@ -1148,7 +1148,7 @@ const enBase: Record<string, string> = {
   'safety.autoDelete.desc': 'Automatically remove uploaded source files once redaction completes',
 
   'error.visionTimeout':
-    'Vision detection timed out (over 3 min). PaddleOCR is slow on CPU — try a smaller image or install paddle GPU.',
+    'Vision detection timed out (over 3 min). Try a smaller image, or check that the vision service (LocateAnything/vLLM) is healthy and has enough free GPU memory.',
   'error.visionDetectionFailed': 'Vision detection failed',
   'error.reRecognizeFailed': 'Re-recognition failed',
 };

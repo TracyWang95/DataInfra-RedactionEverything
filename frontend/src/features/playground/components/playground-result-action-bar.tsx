@@ -132,7 +132,7 @@ export const RedactionReportSection: FC<{
     <div className="mb-3 flex-shrink-0">
       <Button
         variant="outline"
-        className="h-10 w-full justify-between rounded-2xl px-4 py-0"
+        className="h-10 w-full justify-between rounded-[20px] px-4 py-0"
         onClick={onToggle}
       >
         <span className="truncate text-xs font-semibold">{t('playground.qualityReport')}</span>
@@ -161,7 +161,7 @@ export const RedactionReportSection: FC<{
             </div>
             {redactionMode && (
               <div className="rounded-xl border border-border/70 bg-muted/25 px-3 py-2">
-                <span className="text-[10px] uppercase text-muted-foreground">
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   {t('playground.reportMode')}
                 </span>
                 <p className="mt-1 text-sm font-medium text-foreground">{redactionMode}</p>
@@ -176,7 +176,7 @@ export const RedactionReportSection: FC<{
 
 const ReportMetric: FC<{ label: string; value: string | number }> = ({ label, value }) => (
   <div className="min-w-0 rounded-xl border border-border/70 bg-muted/25 px-3 py-2">
-    <span className="block truncate text-[10px] uppercase text-muted-foreground">{label}</span>
+    <span className="block truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>
     <span className="mt-1 block text-lg font-bold tabular-nums">{String(value)}</span>
   </div>
 );
@@ -186,7 +186,7 @@ const DistributionBlock: FC<{ title: string; rows: Array<[string, number]> }> = 
   rows,
 }) => (
   <div className="min-w-0 rounded-xl border border-border/70 px-3 py-2">
-    <span className="block truncate text-[10px] uppercase text-muted-foreground">{title}</span>
+    <span className="block truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</span>
     <div className="mt-2 space-y-1.5">
       {rows.length > 0 ? (
         rows.map(([label, count]) => (

@@ -220,10 +220,6 @@ class Settings(BaseSettings):
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
     VISUAL_FEATURES_CONCURRENCY: int = 1
-    VISUAL_FEATURES_SIGNATURE_OCR_FAST_PATH: bool = False
-    VISUAL_FEATURES_SIGNATURE_LOCAL_SUPPLEMENTS_ENABLED: bool = True
-    VISUAL_FEATURES_SIGNATURE_SKIP_WHEN_OCR_ANCHOR_FOUND: bool = False
-    VISUAL_FEATURES_SIGNATURE_FALLBACK_TIMEOUT: float = 60.0
     LOCATE_ANYTHING_MAX_NEW_TOKENS: int = 8192
     LOCATE_ANYTHING_MAX_IMAGE_SIDE: int = 1408
     LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
@@ -254,24 +250,20 @@ class Settings(BaseSettings):
     # count, and the validator below clamps operator overrides to 1..4. Lower
     # this to 1 when GPU memory is already above 90% or model services are cold.
     BATCH_RECOGNITION_PAGE_CONCURRENCY: int = 2
-    # Single-GPU safety: run OCR/HaS and LocateAnything SEQUENTIALLY by default.
-    # On one GPU, running both heavy VLMs at the same time causes ~5-10x slowdown
-    # from GPU contention (measured: 54s parallel vs ~10s serial on one file).
-    # Enabling parallel is only safe after both heavy GPU calls go through a
-    # single-GPU inference gate (not yet wired). Structure is no longer part of
-    # the default vision chain.
-    VISION_DUAL_PIPELINE_PARALLEL: bool = False
+    # Single-GPU safety: OCR/HaS and LocateAnything run SEQUENTIALLY. On one GPU,
+    # running both heavy VLMs at once causes ~5-10x slowdown from contention
+    # (measured: 54s parallel vs ~10s serial on one file).
     SERIALIZE_SHARED_GPU_MODELS: bool = True
-    # PaddleOCR-VL toggle. When false (structure-only deployments) the backend
-    # never calls the VL /ocr endpoint and routes all OCR through PP-StructureV3.
-    OCR_VL_ENABLED: bool = True
-    # PP-StructureV3 table fallback exposed by the same OCR microservice.
-    # PaddleOCR-VL 1.6 is the default OCR/layout path. Keep Structure disabled
-    # unless an operator explicitly wants the slower table supplement.
+    # PaddleOCR-VL toggle. Dropped from the default deployment: when false the
+    # backend never calls the VL /ocr endpoint and routes all OCR through
+    # PP-StructureV3 (the current, faster, more precise path).
+    OCR_VL_ENABLED: bool = False
+    # PP-StructureV3 is the document OCR/layout path now that PaddleOCR-VL is
+    # dropped. Keep enabled.
     OCR_STRUCTURE_ENABLED: bool = True
     OCR_STRUCTURE_MIN_VL_BOXES: int = 12
-    # PaddleOCR-VL is the primary document OCR path. PP-StructureV3 can be
-    # enabled as an opt-in table/layout supplement.
+    # PP-StructureV3 is the primary (and only) document OCR path. The VL fusion
+    # supplement below stays off unless VL is re-enabled.
     OCR_STRUCTURE_PRIMARY: bool = True
     OCR_STRUCTURE_PRIMARY_MIN_BOXES: int = 8
     OCR_MAX_IMAGE_SIDE: int = 2048
