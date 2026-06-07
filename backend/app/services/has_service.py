@@ -12,18 +12,26 @@ HaS (Hide And Seek) 本地匿名化模型服务
 
 import asyncio
 import logging
-import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 from app.core.gpu_inference_gate import shared_gpu_inference_slot
 from app.models.schemas import Entity
-from app.models.type_mapping import canonical_type_id
+from app.models.type_mapping import canonical_type_id, has_query_labels_for
 from app.services.has_client import HaSClient
 
 # 类型别名，兼容 EntityTypeConfig 和 CustomEntityType
 EntityTypeConfig = Any
+
+# 估算类型批次 token 成本：约每 2 个字符折算 1 个 token
+_NER_CHARS_PER_TOKEN = 2
+# 每个中文类型名在请求中的固定 token 开销
+_NER_TOKENS_PER_TYPE = 8
+# 单批次目标 token 预算的最小下限
+_NER_MIN_TARGET_TOKENS = 128
+# HaS NER 命中实体的默认置信度
+_NER_DEFAULT_CONFIDENCE = 0.95
 
 
 class HaSService:
@@ -172,7 +180,7 @@ class HaSService:
         current: list[EntityTypeConfig] = []
         current_cost = 0
         max_types = max(1, max_types)
-        target_tokens = max(128, target_tokens)
+        target_tokens = max(_NER_MIN_TARGET_TOKENS, target_tokens)
 
         for item in items:
             item_cost = self._ner_type_batch_cost([item])
@@ -199,7 +207,7 @@ class HaSService:
             text += str(item.get("type") or "")
             text += str(item.get("description") or "")
             text += "".join(str(example) for example in item.get("examples") or [])
-        return max(1, len(text) // 2 + len(chinese_types) * 8)
+        return max(1, len(text) // _NER_CHARS_PER_TOKEN + len(chinese_types) * _NER_TOKENS_PER_TYPE)
 
     def _expand_query_type_names(self, type_id: str, chinese_types: list[str]) -> list[str]:
         """Add prompt-only aliases for a selected L3 type.
@@ -214,7 +222,8 @@ class HaSService:
                 names.append(name_text)
 
         builtin_guidance = self.BUILTIN_TYPE_GUIDANCE.get(canonical_type_id(type_id)) or {}
-        for alias in builtin_guidance.get("query_aliases") or []:
+        aliases = [*(builtin_guidance.get("query_aliases") or []), *has_query_labels_for(type_id)]
+        for alias in aliases:
             alias_text = str(alias or "").strip()
             if alias_text and alias_text not in names:
                 names.append(alias_text)
@@ -261,11 +270,16 @@ class HaSService:
         result_type_name: str,
         requested_type_by_name: dict[str, str],
         custom_requested_types: list[tuple[str, str]],
+        requested_type_ids: set[str] | None = None,
     ) -> str | None:
         result_type_name = str(result_type_name or "").strip()
         if not result_type_name:
             return None
-        return requested_type_by_name.get(result_type_name)
+        direct = requested_type_by_name.get(result_type_name)
+        if direct:
+            return direct
+        # Open vocabulary: keep the model's raw label as the type (识别出来是啥就是啥).
+        return result_type_name
 
     async def extract_entities(
         self,
@@ -350,6 +364,7 @@ class HaSService:
                     chinese_type,
                     requested_type_by_name,
                     custom_requested_types,
+                    requested_type_ids,
                 )
 
                 for entity_text in entity_list:
@@ -383,7 +398,7 @@ class HaSService:
                             start=pos,
                             end=pos + len(entity_text),
                             page=1,
-                            confidence=0.95,
+                            confidence=_NER_DEFAULT_CONFIDENCE,
                             source="has",
                             coref_id=coref_map[coref_key],
                         ))
@@ -408,204 +423,13 @@ class HaSService:
     ) -> str | None:
         """Keep HaS output aligned with the caller-selected recognition list."""
         raw_entity_type_id = str(entity_type_id or "").strip()
-        canonical_entity_type_id = canonical_type_id(entity_type_id)
-
-        if canonical_entity_type_id not in requested_type_ids:
+        if not raw_entity_type_id:
             return None
+        # Open vocabulary: keep whatever the model returned (识别出来是啥就是啥);
+        # don't drop a label just because it isn't in the requested list.
         if self._is_custom_type_id(raw_entity_type_id):
             return raw_entity_type_id
-        return canonical_entity_type_id
-
-    async def hide_text(
-        self,
-        content: str,
-        entity_types: list[EntityTypeConfig]
-    ) -> tuple[str, dict[str, list[str]]]:
-        """
-        使用 HaS 进行结构化语义标签匿名化
-
-        Args:
-            content: 原始文本
-            entity_types: 要匿名化的实体类型
-
-        Returns:
-            (匿名化后文本, 映射表)
-        """
-        chinese_types = self._convert_entity_types_to_chinese(entity_types)
-
-        try:
-            masked_text, mapping = self.client.hide(content, chinese_types)
-            return masked_text, mapping
-        except Exception as e:
-            logger.error("HaS Hide 失败: %s", e)
-            return content, {}
-
-    async def extract_entities_with_hide(
-        self,
-        content: str,
-        entity_types: list[EntityTypeConfig],
-    ) -> list[Entity]:
-        """
-        使用 HaS Hide 模式识别实体（带指代消解）
-
-        基于结构化语义标签解析出实体位置和 coref_id。
-        """
-        if not content.strip():
-            return []
-
-        chinese_types = self._convert_entity_types_to_chinese(entity_types)
-        (
-            _requested_type_ids,
-            requested_type_by_name,
-            custom_requested_types,
-        ) = self._build_requested_type_lookup(entity_types)
-
-        try:
-            masked_text, mapping = self.client.hide(
-                content, chinese_types, use_history=True
-            )
-        except Exception as e:
-            logger.error("HaS Hide 模式失败: %s", e)
-            return []
-
-        if not mapping:
-            return []
-
-        entities: list[Entity] = []
-        used_positions: set[tuple[int, int]] = set()
-        entity_id = 0
-
-        def find_next_occurrence(text: str) -> int | None:
-            start = 0
-            while True:
-                pos = content.find(text, start)
-                if pos < 0:
-                    return None
-                end = pos + len(text)
-                overlaps = any(not (end <= s or pos >= e) for s, e in used_positions)
-                if not overlaps:
-                    return pos
-                start = pos + len(text)
-
-        for tag_info in HaSTagParser.find_all_tags(masked_text):
-            tag = tag_info.get("tag")
-            if not tag:
-                continue
-
-            candidates = mapping.get(tag, [])
-            if not candidates:
-                continue
-
-            # 使用第一个可定位的原文
-            found_text = None
-            found_pos = None
-            for candidate in candidates:
-                if not candidate:
-                    continue
-                pos = find_next_occurrence(candidate)
-                if pos is not None:
-                    found_text = candidate
-                    found_pos = pos
-                    break
-
-            if found_text is None or found_pos is None:
-                continue
-
-            entity_type_cn = tag_info.get("entity_type") or "自定义"
-            entity_type_id = self._resolve_result_type_id(
-                entity_type_cn,
-                requested_type_by_name,
-                custom_requested_types,
-            )
-            if entity_type_id is None:
-                continue
-
-            start = found_pos
-            end = found_pos + len(found_text)
-            used_positions.add((start, end))
-
-            entities.append(Entity(
-                id=f"has_hide_{entity_id}",
-                text=found_text,
-                type=entity_type_id,
-                start=start,
-                end=end,
-                page=1,
-                confidence=0.96,
-                source="has",
-                coref_id=tag,
-            ))
-            entity_id += 1
-
-        entities.sort(key=lambda e: e.start)
-        return entities
-
-    async def seek_text(
-        self,
-        masked_text: str,
-        mapping: dict[str, list[str]] | None = None
-    ) -> str:
-        """
-        使用 HaS 进行标签还原
-
-        Args:
-            masked_text: 匿名化后的文本
-            mapping: 标签映射表
-
-        Returns:
-            还原后的原文
-        """
-        try:
-            restored = self.client.seek(masked_text, mapping)
-            return restored
-        except Exception as e:
-            logger.error("HaS Seek 失败: %s", e)
-            return masked_text
-
-
-# 标签解析工具
-class HaSTagParser:
-    """HaS 结构化语义标签解析器"""
-
-    # 标签正则: <类型[序号].子类型.属性>
-    TAG_PATTERN = re.compile(r'<([^>\[]+)\[(\d+)\]\.([^>\.]+)\.([^>]+)>')
-
-    @classmethod
-    def parse_tag(cls, tag: str) -> dict | None:
-        """解析标签"""
-        match = cls.TAG_PATTERN.match(tag)
-        if match:
-            return {
-                "entity_type": match.group(1),
-                "entity_id": match.group(2),
-                "sub_type": match.group(3),
-                "attribute": match.group(4),
-            }
-        return None
-
-    @classmethod
-    def find_all_tags(cls, text: str) -> list[dict]:
-        """在文本中查找所有标签"""
-        tags = []
-        for match in cls.TAG_PATTERN.finditer(text):
-            tags.append({
-                "tag": match.group(),
-                "start": match.start(),
-                "end": match.end(),
-                **cls.parse_tag(match.group()),
-            })
-        return tags
-
-    @classmethod
-    def generate_tag(
-        cls,
-        entity_type: str,
-        entity_id: int,
-        sub_type: str,
-        attribute: str
-    ) -> str:
-        """生成标签"""
-        return f"<{entity_type}[{entity_id:03d}].{sub_type}.{attribute}>"
+        return canonical_type_id(entity_type_id)
 
 
 # 全局服务实例

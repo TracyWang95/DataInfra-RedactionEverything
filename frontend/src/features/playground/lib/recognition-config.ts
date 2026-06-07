@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { t } from '@/i18n';
-import { isHasImageModelTypeId } from '@/services/defaultRedactionPreset';
 import { getScopedStorageItem, setScopedStorageItem } from '@/lib/storage';
 import { buildDefaultPipelineTypeIds } from '@/services/defaultRedactionPreset';
 import type { SelectionTone } from '@/ui/selectionPalette';
@@ -80,8 +79,7 @@ export function updateRecognitionConfigCache(
 export function buildVisionSelectionSignature(pipelines: PipelineConfig[]): string {
   return JSON.stringify({
     ocrHas: buildDefaultPipelineTypeIds(pipelines, 'ocr_has'),
-    hasImage: buildDefaultPipelineTypeIds(pipelines, 'has_image'),
-    vlm: buildDefaultPipelineTypeIds(pipelines, 'vlm'),
+    visualFeatures: buildDefaultPipelineTypeIds(pipelines, 'visual_features'),
   });
 }
 
@@ -115,33 +113,38 @@ export function buildPlaygroundTextGroups(types: EntityTypeConfig[]): Playground
 }
 
 export function normalizeVisionPipelines(pipelines: PipelineConfig[]): PipelineConfig[] {
-  return pipelines
+  const normalized = pipelines
     .filter((pipeline) => pipeline.enabled)
     .map((pipeline) => ({
       ...pipeline,
       name:
-        pipeline.mode === 'has_image'
+        pipeline.mode === 'visual_features'
           ? t('settings.pipelineDisplayName.image')
           : pipeline.mode === 'ocr_has'
             ? t('settings.pipelineDisplayName.ocr')
-            : pipeline.mode === 'vlm'
-              ? t('settings.pipelineDisplayName.vlm')
             : pipeline.name,
       description:
-        pipeline.mode === 'has_image'
+        pipeline.mode === 'visual_features'
           ? t('settings.pipelineDescription.image')
           : pipeline.mode === 'ocr_has'
             ? t('settings.pipelineDescription.ocr')
-            : pipeline.mode === 'vlm'
-              ? t('settings.pipelineDescription.vlm')
           : pipeline.description,
-      types: pipeline.types.filter(
-        (type) =>
-          pipeline.mode === 'has_image'
-            ? isHasImageModelTypeId(type.id)
-            : type.enabled,
-      ),
+      types: pipeline.types.filter((type) => type.enabled !== false),
     }));
+  const byMode = new Map<string, PipelineConfig>();
+  for (const pipeline of normalized) {
+    const existing = byMode.get(pipeline.mode);
+    if (!existing) {
+      byMode.set(pipeline.mode, pipeline);
+      continue;
+    }
+    byMode.set(pipeline.mode, {
+      ...existing,
+      enabled: existing.enabled || pipeline.enabled,
+      types: [...existing.types, ...pipeline.types],
+    });
+  }
+  return Array.from(byMode.values());
 }
 
 export function flattenVisionTypes(pipelines: PipelineConfig[]): VisionTypeConfig[] {

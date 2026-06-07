@@ -38,23 +38,23 @@ export function TextModel() {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
-        <div className="page-stack gap-2.5">
+        <div className="page-stack gap-3">
           <section className="surface-subtle flex shrink-0 flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <h1 className="text-base font-semibold tracking-normal">{t('nav.textModel')}</h1>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('nav.textModel')}</h1>
               <p className="mt-0.5 max-w-5xl text-xs leading-5 text-muted-foreground">
                 {t('settings.textModel.infoDesc')}
               </p>
             </div>
             <div className="flex shrink-0 flex-col items-start gap-2 sm:items-end">
               <div className="flex flex-wrap justify-end gap-1.5">
-                <Badge variant="outline" className="whitespace-nowrap text-[10px] leading-4">
+                <Badge variant="outline" className="whitespace-nowrap">
                   {t('settings.textModel.tag.openai')}
                 </Badge>
-                <Badge variant="outline" className="whitespace-nowrap text-[10px] leading-4">
+                <Badge variant="outline" className="whitespace-nowrap">
                   {t('settings.textModel.tag.local')}
                 </Badge>
-                <Badge variant="outline" className="whitespace-nowrap text-[10px] leading-4">
+                <Badge variant="outline" className="whitespace-nowrap">
                   {t('settings.textModel.tag.server')}
                 </Badge>
               </div>

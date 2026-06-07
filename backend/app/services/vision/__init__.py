@@ -1,13 +1,8 @@
-"""
-vision subpackage - focused modules split from hybrid_vision_service.py.
-
-Re-exports for backward compatibility:
-    from app.services.vision import ocr_pipeline, image_pipeline, region_merger
-"""
+"""Vision subpackage public helpers."""
 from app.services.vision.image_pipeline import (
     apply_redaction,
     draw_regions_on_image,
-    match_ocr_to_vlm,
+    match_ocr_to_visual_regions,
 )
 from app.services.vision.ocr_pipeline import (
     expand_table_blocks,
@@ -32,7 +27,7 @@ __all__ = [
     "run_has_text_analysis",
     "match_entities_to_ocr",
     # image_pipeline
-    "match_ocr_to_vlm",
+    "match_ocr_to_visual_regions",
     "draw_regions_on_image",
     "apply_redaction",
     # region_merger

@@ -52,8 +52,8 @@ export interface BoundingBox {
   text?: string;
   selected: boolean;
   confidence?: number;
-  source?: 'ocr_has' | 'has_image' | 'vlm' | 'manual';
-  evidence_source?: 'ocr_has' | 'has_image_model' | 'vlm_model' | 'local_fallback' | 'manual';
+  source?: 'ocr_has' | 'visual_features' | 'manual';
+  evidence_source?: 'ocr_has' | 'visual_feature_model' | 'local_fallback' | 'manual';
   source_detail?: string;
   warnings?: string[];
 }
@@ -85,10 +85,11 @@ export interface VisionTypeConfig {
   rules?: string[];
   negative_prompt_enabled?: boolean;
   negative_prompt?: string | null;
+  pipelineMode?: 'ocr_has' | 'visual_features';
 }
 
 export interface PipelineConfig {
-  mode: 'ocr_has' | 'has_image' | 'vlm';
+  mode: 'ocr_has' | 'visual_features';
   name: string;
   description: string;
   enabled: boolean;

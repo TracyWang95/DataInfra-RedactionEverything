@@ -1,6 +1,6 @@
 """
 进程内异步任务队列。
-
+进程内异步任务队列。
 单 GPU 串行处理，无跨进程问题。
 队列运行在 FastAPI 主进程的事件循环中，submit 后立即入队，后台逐个消费。
 """
@@ -21,6 +21,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _MIN_JOB_CONCURRENCY = 1
 _MAX_JOB_CONCURRENCY = 16
+# Truncation lengths for stored error messages (names for repeated literals).
+_ERROR_MSG_MAX_LEN = 500
+_WORKER_ERROR_MSG_MAX_LEN = 200
+# GPU memory ratio at/above which the queue treats the device as saturated.
+_GPU_SATURATION_RATIO = 0.90
+# File-size bucket (bytes) used to order small-vs-large files in the queue.
+_FILE_SIZE_BUCKET_BYTES = 16_384
 
 
 def _clamp_job_concurrency(value: Any) -> int:
@@ -109,7 +116,7 @@ def _estimate_recognition_task_cost(file_info: dict[str, Any]) -> tuple[int, int
     pages = max(1, pages)
 
     if ft in {"txt", "doc", "docx"}:
-        return (0, max(1, _safe_int(file_info.get("file_size"), default=1) // 16_384))
+        return (0, max(1, _safe_int(file_info.get("file_size"), default=1) // _FILE_SIZE_BUCKET_BYTES))
     if ft == "image":
         return (1, 1)
     if ft in {"pdf", "pdf_scanned"}:
@@ -145,7 +152,7 @@ def _effective_vision_page_concurrency(
     pages = max(1, int(pages))
     configured = max(1, int(configured))
     gpu_ratio = _gpu_memory_ratio(gpu_memory)
-    if gpu_ratio is not None and gpu_ratio >= 0.90:
+    if gpu_ratio is not None and gpu_ratio >= _GPU_SATURATION_RATIO:
         return 1
     return min(configured, pages)
 
@@ -157,7 +164,7 @@ def _vision_page_concurrency_reason(
     gpu_memory: dict[str, Any] | None,
 ) -> str:
     gpu_ratio = _gpu_memory_ratio(gpu_memory)
-    if effective == 1 and gpu_ratio is not None and gpu_ratio >= 0.90:
+    if effective == 1 and gpu_ratio is not None and gpu_ratio >= _GPU_SATURATION_RATIO:
         return "gpu_memory_high"
     if effective < max(1, int(configured)):
         return "page_count"
@@ -259,7 +266,7 @@ class SimpleTaskQueue:
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """在 FastAPI startup 事件中调用。"""
+        """Start queue workers during application startup."""
         loop = asyncio.get_event_loop()
         if self._loop is not loop:
             self._queue = asyncio.Queue()
@@ -302,7 +309,7 @@ class SimpleTaskQueue:
         return self._concurrency
 
     def stop(self) -> list[asyncio.Task]:
-        """在 FastAPI shutdown 事件中调用。返回 worker tasks 供调用方 await。"""
+        """Stop workers and return tasks for shutdown awaiting."""
         self._running = False
         tasks = []
         for t in self._worker_tasks:
@@ -398,6 +405,8 @@ class SimpleTaskQueue:
         task.meta.setdefault("estimated_work_units", work_units)
 
     def _estimate_task_cost(self, task: TaskItem) -> tuple[int, int]:
+        if task.task_type == "structured":
+            return (0, 1)
         if task.task_type != "recognition":
             return (20, 1)
         try:
@@ -410,7 +419,7 @@ class SimpleTaskQueue:
         return _estimate_recognition_task_cost(info)
 
     def _task_sort_key(self, task: TaskItem) -> tuple[int, int, int, int]:
-        task_type_order = 0 if task.task_type == "recognition" else 1
+        task_type_order = 0 if task.task_type in {"structured", "recognition"} else 1
         return (
             task_type_order,
             _safe_int(task.meta.get("priority_class"), default=99),
@@ -478,7 +487,7 @@ class SimpleTaskQueue:
                             job_id=str(row["job_id"]),
                             item_id=str(row["item_id"]),
                             file_id=str(row["file_id"]),
-                            task_type="recognition",
+                            task_type=str(row.get("task") or "recognition"),
                         )
                     )
                 if repaired:
@@ -515,6 +524,8 @@ class SimpleTaskQueue:
                     await self._run_recognition(task)
                 elif task.task_type == "redaction":
                     await self._run_redaction(task)
+                elif task.task_type == "structured":
+                    await self._run_structured(task)
                 else:
                     logger.warning("unknown task_type: %s", task.task_type)
             except (TimeoutError, OSError, RuntimeError, ValueError, KeyError, json.JSONDecodeError) as exc:
@@ -528,7 +539,7 @@ class SimpleTaskQueue:
                     store = self._get_store()
                     store.update_item_status(
                         task.item_id, JobItemStatus.FAILED,
-                        error_message=f"worker: {type(exc).__name__}: {str(exc)[:200]}",
+                        error_message=f"worker: {type(exc).__name__}: {str(exc)[:_WORKER_ERROR_MSG_MAX_LEN]}",
                     )
                 except Exception:
                     pass
@@ -614,7 +625,7 @@ class SimpleTaskQueue:
                 parse_ms / 1000,
             )
 
-            # 2) NER 或 Vision
+            # 2) NER 鎴?Vision
             stage_started = time.perf_counter()
             await self._run_ner_or_vision(task, cfg)
             recognition_stage_ms = _elapsed_ms(stage_started)
@@ -629,28 +640,28 @@ class SimpleTaskQueue:
             self._mark_recognition_complete(task, job, store)
 
         except (FileNotFoundError, OSError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s recognition I/O error: %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 logger.warning("failed to mark item %s as FAILED (item not found or invalid transition)", task.item_id[:8])
         except TimeoutError as e:
-            err_msg = str(e)[:500] or "recognition timed out"
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN] or "recognition timed out"
             logger.error("[queue] item=%s recognition timeout: %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 logger.warning("failed to mark item %s as FAILED (item not found or invalid transition)", task.item_id[:8])
         except (RuntimeError, ValueError, KeyError, json.JSONDecodeError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s recognition failed: %s: %s", task.item_id[:8], type(e).__name__, err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 logger.warning("failed to mark item %s as FAILED (item not found or invalid transition)", task.item_id[:8])
         except Exception as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.exception("[queue] item=%s recognition failed (unexpected): %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
@@ -672,14 +683,14 @@ class SimpleTaskQueue:
             self._refresh_job_status(store, task.job_id)
 
     async def _parse_file(self, task: TaskItem) -> None:
-        """Step 1: 解析上传文件。"""
+        """Parse the uploaded file."""
         from app.services.file_operations import parse_file
 
         logger.info("[queue] item=%s parse", task.item_id[:8])
         await parse_file(task.file_id)
 
     async def _run_ner(self, task: TaskItem, entity_type_ids: list) -> None:
-        """Step 2a: 文本 NER 识别。"""
+        """Run text recognition."""
         from app.services.file_operations import hybrid_ner
 
         store = self._get_store()
@@ -713,28 +724,31 @@ class SimpleTaskQueue:
         )
 
     async def _run_vision(self, task: TaskItem, cfg: dict) -> None:
-        """Step 2b: 图像/扫描件 OCR + Vision 识别。"""
+        """Run OCR and visual feature recognition for images or scanned pages."""
         from app.core.config import settings
         from app.services.file_operations import get_file_info, vision_detect
         from app.services.vision_config import resolve_optional_type_list
 
         fi = get_file_info(task.file_id) or {}
-        ocr_types = resolve_optional_type_list(cfg, "ocr_has_types")
-        has_img_types = resolve_optional_type_list(cfg, "has_image_types")
-        vlm_types = resolve_optional_type_list(cfg, "vlm_types")
+        ocr_types = resolve_optional_type_list(cfg, "ocr_has_types", "selected_ocr_has_types")
+        configured_visual_types = resolve_optional_type_list(
+            cfg,
+            "visual_feature_types",
+            "visualFeatureTypes",
+            "selected_visual_feature_types",
+        )
+        visual_feature_types = configured_visual_types
         pages = int(fi.get("page_count") or 1)
         vision_started = time.perf_counter()
         logger.info(
-            "[queue] item=%s vision (ocr=%s, has_image=%s, vlm=%s, pages=%d)",
+            "[queue] item=%s vision (ocr=%s, visual_features=%s, pages=%d)",
             task.item_id[:8],
             len(ocr_types) if ocr_types is not None else "default",
-            len(has_img_types) if has_img_types is not None else "default",
-            len(vlm_types) if vlm_types is not None else "default",
+            len(visual_feature_types) if visual_feature_types is not None else "default",
             pages,
         )
-        # Pass empty lists as-is (user explicitly deselected a pipeline). Keep
-        # missing keys as None so legacy/default jobs still use orchestrator
-        # defaults instead of silently skipping the whole pipeline.
+        # Pass empty lists as-is (user explicitly deselected a pipeline).
+        # Missing keys stay None so orchestrator defaults still apply.
         page_timeout = float(settings.BATCH_RECOGNITION_PAGE_TIMEOUT)
         configured_page_concurrency = int(settings.BATCH_RECOGNITION_PAGE_CONCURRENCY)
         gpu_memory = None
@@ -802,12 +816,10 @@ class SimpleTaskQueue:
             p: int,
             *,
             selected_ocr_types: list[str] | None,
-            selected_has_img_types: list[str] | None,
-            selected_vlm_types: list[str] | None,
+            selected_visual_feature_types: list[str] | None,
             merge_existing: bool = False,
             signature_ocr_types: list[str] | None = None,
-            signature_has_img_types: list[str] | None = None,
-            signature_vlm_types: list[str] | None = None,
+            signature_visual_feature_types: list[str] | None = None,
             stage_label: str = "视觉识别",
         ) -> None:
             nonlocal active_pages, max_active_pages
@@ -822,7 +834,7 @@ class SimpleTaskQueue:
                     stage="vision",
                     current=p,
                     total=pages,
-                    message=f"{stage_label}第 {p}/{pages} 页",
+                    message=f"{stage_label} page {p}/{pages}",
                 )
                 logger.info(
                     "[queue] item=%s %s page %d/%d START (page_concurrency=%d active_pages=%d)",
@@ -849,13 +861,11 @@ class SimpleTaskQueue:
                         vision_detect(
                             task.file_id,
                             p,
-                            selected_ocr_types,
-                            selected_has_img_types,
-                            selected_vlm_types,
+                            ocr_has_types=selected_ocr_types,
+                            visual_feature_types=selected_visual_feature_types,
                             merge_existing=merge_existing,
                             signature_ocr_has_types=signature_ocr_types,
-                            signature_has_image_types=signature_has_img_types,
-                            signature_vlm_types=signature_vlm_types,
+                            signature_visual_feature_types=signature_visual_feature_types,
                         ),
                         timeout=page_timeout,
                     )
@@ -942,12 +952,10 @@ class SimpleTaskQueue:
         async def run_page_stage(
             *,
             selected_ocr_types: list[str] | None,
-            selected_has_img_types: list[str] | None,
-            selected_vlm_types: list[str] | None,
+            selected_visual_feature_types: list[str] | None,
             merge_existing: bool = False,
             signature_ocr_types: list[str] | None = None,
-            signature_has_img_types: list[str] | None = None,
-            signature_vlm_types: list[str] | None = None,
+            signature_visual_feature_types: list[str] | None = None,
             stage_label: str = "视觉识别",
         ) -> None:
             page_tasks = {
@@ -955,12 +963,10 @@ class SimpleTaskQueue:
                     run_page(
                         p,
                         selected_ocr_types=selected_ocr_types,
-                        selected_has_img_types=selected_has_img_types,
-                        selected_vlm_types=selected_vlm_types,
+                        selected_visual_feature_types=selected_visual_feature_types,
                         merge_existing=merge_existing,
                         signature_ocr_types=signature_ocr_types,
-                        signature_has_img_types=signature_has_img_types,
-                        signature_vlm_types=signature_vlm_types,
+                        signature_visual_feature_types=signature_visual_feature_types,
                         stage_label=stage_label,
                     )
                 ): p
@@ -975,34 +981,30 @@ class SimpleTaskQueue:
                 raise
 
         try:
-            if pages > 1 and vlm_types != []:
+            if pages > 1 and visual_feature_types != []:
                 logger.info(
-                    "[queue] item=%s vision multi-page scheduling: non-VLM first (concurrency=%d), then VLM merge pass (concurrency=1)",
+                    "[queue] item=%s vision multi-page scheduling: OCR first (concurrency=%d), then visual features merge pass (concurrency=1)",
                     task.item_id[:8],
                     page_concurrency,
                 )
                 await run_page_stage(
                     selected_ocr_types=ocr_types,
-                    selected_has_img_types=has_img_types,
-                    selected_vlm_types=[],
+                    selected_visual_feature_types=[],
                     stage_label="OCR+HaS识别",
                 )
                 page_sem = asyncio.Semaphore(1)
                 await run_page_stage(
                     selected_ocr_types=[],
-                    selected_has_img_types=[],
-                    selected_vlm_types=vlm_types,
+                    selected_visual_feature_types=visual_feature_types,
                     merge_existing=True,
                     signature_ocr_types=ocr_types,
-                    signature_has_img_types=has_img_types,
-                    signature_vlm_types=vlm_types,
-                    stage_label="VLM识别",
+                    signature_visual_feature_types=visual_feature_types,
+                    stage_label="视觉特征识别",
                 )
             else:
                 await run_page_stage(
                     selected_ocr_types=ocr_types,
-                    selected_has_img_types=has_img_types,
-                    selected_vlm_types=vlm_types,
+                    selected_visual_feature_types=visual_feature_types,
                 )
             store.update_item_progress(
                 task.item_id,
@@ -1035,7 +1037,7 @@ class SimpleTaskQueue:
             ) from exc
 
     async def _run_ner_or_vision(self, task: TaskItem, cfg: dict) -> None:
-        """Step 2: 根据文件类型选择 NER 或 Vision 流水线。"""
+        """Choose text or vision recognition based on file type."""
         from app.services.file_operations import get_file_info
 
         fi = get_file_info(task.file_id) or {}
@@ -1049,7 +1051,7 @@ class SimpleTaskQueue:
             await self._run_ner(task, entity_type_ids)
 
     def _mark_recognition_complete(self, task: TaskItem, job: dict, store: JobStore) -> None:
-        """Step 3: 更新状态为 awaiting_review，可选自动入队匿名化。"""
+        """Mark recognition complete and optionally enqueue redaction."""
         from app.services.job_store import JobItemStatus
 
         skip_review = bool(job.get("skip_item_review"))
@@ -1069,6 +1071,73 @@ class SimpleTaskQueue:
     # ------------------------------------------------------------------
     # 匿名化流水线
     # ------------------------------------------------------------------
+
+    async def _run_structured(self, task: TaskItem) -> None:
+        from app.services.job_store import JobItemStatus, JobStatus
+        from app.services.structured_service import run_structured_job_item
+
+        started = time.perf_counter()
+        store = self._get_store()
+        self._record_task_started(task, store)
+        job = store.get_job(task.job_id)
+        if not job:
+            return
+        item = store.get_item(task.item_id)
+        if not item or item["status"] == JobItemStatus.COMPLETED.value:
+            return
+        if job.get("status") == JobStatus.CANCELLED.value:
+            return
+
+        cfg = json.loads(job.get("config_json") or "{}")
+        owner_id = str(job.get("owner_id") or "local_user")
+        export_format = str(cfg.get("export_format") or "csv")
+        try:
+            store.update_item_status(task.item_id, JobItemStatus.PROCESSING)
+            self._try_update_job_status(store, task.job_id, JobStatus.PROCESSING)
+            result = await run_structured_job_item(
+                job_id=task.job_id,
+                item_id=task.item_id,
+                dataset_id=task.file_id,
+                owner_id=owner_id,
+                export_format=export_format,
+                store=store,
+            )
+            self._record_item_performance(
+                store,
+                task.item_id,
+                {
+                    "structured": {
+                        "finished_at": _utc_iso(),
+                        "duration_ms": result.get("duration_ms") or _elapsed_ms(started),
+                        "export": result.get("export"),
+                        "profile": result.get("profile"),
+                    }
+                },
+            )
+            store.update_item_status(task.item_id, JobItemStatus.COMPLETED)
+            logger.info("[queue] item=%s structured export completed", task.item_id[:8])
+        except (RuntimeError, ValueError, KeyError, OSError) as exc:
+            err_msg = str(exc)[:_ERROR_MSG_MAX_LEN]
+            logger.error("[queue] item=%s structured failed: %s", task.item_id[:8], err_msg)
+            try:
+                store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
+            except (KeyError, ValueError):
+                pass
+        except Exception as exc:
+            err_msg = str(exc)[:_ERROR_MSG_MAX_LEN]
+            logger.exception("[queue] item=%s structured failed (unexpected): %s", task.item_id[:8], err_msg)
+            try:
+                store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
+            except Exception:
+                pass
+        finally:
+            self._record_item_performance(
+                store,
+                task.item_id,
+                {"structured": {"last_seen_duration_ms": _elapsed_ms(started)}},
+            )
+            store.touch_job_updated(task.job_id)
+            self._refresh_job_status(store, task.job_id)
 
     async def _run_redaction(self, task: TaskItem) -> None:
         from app.models.schemas import RedactionConfig, ReplacementMode
@@ -1165,21 +1234,21 @@ class SimpleTaskQueue:
             logger.info("[queue] item=%s redaction completed", task.item_id[:8])
 
         except (FileNotFoundError, OSError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s redaction I/O error: %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 pass
         except (RuntimeError, ValueError, KeyError) as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.error("[queue] item=%s redaction failed: %s: %s", task.item_id[:8], type(e).__name__, err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
             except (KeyError, ValueError):
                 pass
         except Exception as e:
-            err_msg = str(e)[:500]
+            err_msg = str(e)[:_ERROR_MSG_MAX_LEN]
             logger.exception("[queue] item=%s redaction failed (unexpected): %s", task.item_id[:8], err_msg)
             try:
                 store.update_item_status(task.item_id, JobItemStatus.FAILED, error_message=err_msg)
@@ -1210,7 +1279,7 @@ class SimpleTaskQueue:
             pass  # 状态已前进或 job 不存在，忽略
 
     def _refresh_job_status(self, store, job_id: str) -> None:
-        """根据所有 item 状态聚合 job 级状态。"""
+        """Refresh the job status from item statuses."""
         from app.services.job_store import JobItemStatus, JobStatus
 
         job = store.get_job(job_id)
@@ -1258,3 +1327,4 @@ def get_task_queue() -> SimpleTaskQueue:
             concurrency=load_persisted_job_concurrency(settings.JOB_CONCURRENCY)
         )
     return _instance
+

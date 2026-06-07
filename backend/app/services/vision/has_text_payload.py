@@ -6,8 +6,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from app.models.type_mapping import TYPE_ID_TO_CN, canonical_type_id, id_to_cn
-from app.services.hybrid_vision_service import OCRTextBlock
+from app.models.type_mapping import canonical_type_id, has_query_labels_for
+from app.services.ocr_has_vision_service import OCRTextBlock
 
 logger = logging.getLogger("app.services.vision.ocr_pipeline")
 
@@ -85,21 +85,28 @@ def _canonical_image_text_type(entity_type: str | None) -> str:
 
 
 def _build_has_text_type_names(vision_types: list | None = None) -> list[str]:
-    """Build the stable, de-duplicated HaS Text type list for OCR text."""
-    if not vision_types:
-        return [id_to_cn(type_id) for type_id in DEFAULT_HAS_TEXT_TYPE_IDS]
+    """Build the de-duplicated HaS Text prompt label list for OCR text.
 
-    chinese_types: list[str] = []
-    seen_type_ids: set[str] = set()
-    for vt in vision_types:
-        type_id = _canonical_image_text_type(getattr(vt, "id", ""))
-        if not type_id or type_id in VISUAL_ONLY_TYPES or type_id in seen_type_ids:
-            continue
-        seen_type_ids.add(type_id)
-        chinese_type = TYPE_ID_TO_CN.get(type_id) or str(getattr(vt, "name", "") or "").strip()
-        if chinese_type:
-            chinese_types.append(chinese_type)
-    return chinese_types
+    Each requested schema item contributes its own label (has_query_labels_for);
+    the open-vocabulary model returns whatever it finds under whatever label, and
+    that label IS the type (识别出来是啥就是啥).
+    """
+    if not vision_types:
+        type_ids: list[str] = list(DEFAULT_HAS_TEXT_TYPE_IDS)
+    else:
+        type_ids = []
+        seen_type_ids: set[str] = set()
+        for vt in vision_types:
+            type_id = _canonical_image_text_type(getattr(vt, "id", ""))
+            if not type_id or type_id in VISUAL_ONLY_TYPES or type_id in seen_type_ids:
+                continue
+            seen_type_ids.add(type_id)
+            type_ids.append(type_id)
+
+    labels: list[str] = []
+    for type_id in type_ids:
+        labels.extend(has_query_labels_for(type_id))
+    return list(dict.fromkeys(label for label in labels if label))
 
 def _compact_text(text: str | None) -> str:
     return "".join(str(text or "").split())

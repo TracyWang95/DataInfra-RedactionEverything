@@ -1,11 +1,12 @@
-# DataInfra-RedactionEverything  —  Docker Compose
-# -----------------------------------------------------------
-# CPU-only (default):   docker compose up -d
-# With GPU services:    docker compose --profile gpu up -d
-# -----------------------------------------------------------
+# DataInfra-RedactionEverything docker compose
+#
+# CPU API/frontend only:
+#   docker compose up -d
+#
+# Full GPU model stack:
+#   docker compose --profile gpu up -d
 
 services:
-  # ── FastAPI 后端 ──────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -26,12 +27,13 @@ services:
       - VIRUS_SCAN_ENABLED=${VIRUS_SCAN_ENABLED:-false}
       - OCR_REQUIRE_GPU=${OCR_REQUIRE_GPU:-false}
       - JOB_CONCURRENCY=${JOB_CONCURRENCY:-3}
-      - BATCH_RECOGNITION_PAGE_CONCURRENCY=${BATCH_RECOGNITION_PAGE_CONCURRENCY:-2}
-      - HAS_NER_MAX_PARALLEL_REQUESTS=${HAS_NER_MAX_PARALLEL_REQUESTS:-4}
-      - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-true}
+      - BATCH_RECOGNITION_PAGE_CONCURRENCY=${BATCH_RECOGNITION_PAGE_CONCURRENCY:-1}
+      - HAS_NER_MAX_PARALLEL_REQUESTS=${HAS_NER_MAX_PARALLEL_REQUESTS:-1}
+      - VISUAL_FEATURES_CONCURRENCY=${VISUAL_FEATURES_CONCURRENCY:-1}
+      - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-false}
       - OCR_BASE_URL=http://ocr:8082
       - HAS_LLAMACPP_BASE_URL=http://ner:8080/v1
-      - HAS_IMAGE_BASE_URL=http://vision:8081
+      - VISUAL_FEATURES_BASE_URL=http://visual-features:8090
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
     volumes:
       - backend-data:/app/data
@@ -45,35 +47,19 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-          cpus: "2"
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
     restart: unless-stopped
 
-  # ── React 前端（Nginx）──────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
       - "${FRONTEND_PORT:-3000}:8080"
-    networks:
-      - redaction-net
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-          cpus: "1"
     depends_on:
       backend:
         condition: service_healthy
+    networks:
+      - redaction-net
     healthcheck:
       test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/ || exit 1"]
       interval: 30s
@@ -82,7 +68,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ── PaddleOCR-VL 微服务（端口 8082）— GPU ──────────────
   ocr:
     build:
       context: ./backend
@@ -91,8 +76,6 @@ services:
       - "${OCR_PORT:-8082}:8082"
     deploy:
       resources:
-        limits:
-          memory: 4G
         reservations:
           devices:
             - driver: nvidia
@@ -106,16 +89,10 @@ services:
       timeout: 15s
       retries: 5
       start_period: 60s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
     profiles:
       - gpu
     restart: unless-stopped
 
-  # ── HaS Text NER（llama-server，端口 8080）— GPU ────────
   ner:
     image: ghcr.io/ggerganov/llama.cpp:server
     ports:
@@ -129,8 +106,6 @@ services:
       -ngl 99
     deploy:
       resources:
-        limits:
-          memory: 8G
         reservations:
           devices:
             - driver: nvidia
@@ -144,28 +119,30 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
     profiles:
       - gpu
     restart: unless-stopped
 
-  # ── HaS Image YOLO 微服务（端口 8081）— GPU ────────────
-  vision:
+  visual-features:
     build:
       context: ./backend
-      dockerfile: Dockerfile.vision
+      dockerfile: Dockerfile.locateanything
     ports:
-      - "${VISION_PORT:-8081}:8081"
+      - "${VISUAL_FEATURES_PORT:-8090}:8090"
+    environment:
+      - LOCATE_ANYTHING_MODEL=${LOCATE_ANYTHING_MODEL:-/models/locateanything/LocateAnything-3B-HF}
+      - LOCATE_ANYTHING_BACKEND=${LOCATE_ANYTHING_BACKEND:-hf}
+      - LOCATE_ANYTHING_DTYPE=${LOCATE_ANYTHING_DTYPE:-bfloat16}
+      - LOCATE_ANYTHING_PORT=8090
+      - LOCATE_ANYTHING_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_MAX_IMAGE_SIDE:-1280}
+      - LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE:-1280}
+      - LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE:-1280}
+      - LOCATE_ANYTHING_MAX_NEW_TOKENS=${LOCATE_ANYTHING_MAX_NEW_TOKENS:-8192}
+      - LOCATE_ANYTHING_GENERATION_MODE=${LOCATE_ANYTHING_GENERATION_MODE:-hybrid}
     volumes:
-      - ./backend/models:/app/models
+      - ./backend/models:/models
     deploy:
       resources:
-        limits:
-          memory: 8G
         reservations:
           devices:
             - driver: nvidia
@@ -174,27 +151,20 @@ services:
     networks:
       - redaction-net
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8081/health').raise_for_status()"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8090/health').raise_for_status()"]
       interval: 30s
-      timeout: 10s
+      timeout: 15s
       retries: 5
-      start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
+      start_period: 120s
     profiles:
       - gpu
     restart: unless-stopped
 
-# ── 持久化卷 ───────────────────────────────────────────────
 volumes:
   backend-data:
   backend-uploads:
   backend-outputs:
 
-# ── 网络 ───────────────────────────────────────────────────
 networks:
   redaction-net:
     driver: bridge

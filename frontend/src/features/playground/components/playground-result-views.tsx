@@ -64,7 +64,7 @@ export const TextResultView: FC<{
       <div className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-hidden">
         <div
           className={cn(
-            'flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-background shadow-[var(--shadow-sm)]',
+            'flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border bg-background shadow-[var(--shadow-sm)]',
             mobileTab === 'original' ? '' : 'hidden',
             'md:flex',
           )}
@@ -81,7 +81,7 @@ export const TextResultView: FC<{
 
         <div
           className={cn(
-            'flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-background shadow-[var(--shadow-sm)]',
+            'flex min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border bg-background shadow-[var(--shadow-sm)]',
             mobileTab === 'redacted' ? '' : 'hidden',
             'md:flex',
           )}
@@ -158,7 +158,7 @@ export const ImageResultView: FC<{
     <div className="flex min-h-0 min-w-0 flex-1 gap-3 overflow-hidden">
       <div
         className={cn(
-          'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-background shadow-[var(--shadow-sm)]',
+          'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border bg-background shadow-[var(--shadow-sm)]',
           mobileTab === 'original' ? '' : 'hidden',
           'md:flex',
         )}
@@ -201,7 +201,7 @@ export const ImageResultView: FC<{
 
       <div
         className={cn(
-          'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border bg-background shadow-[var(--shadow-sm)]',
+          'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border bg-background shadow-[var(--shadow-sm)]',
           mobileTab === 'redacted' ? '' : 'hidden',
           'md:flex',
         )}
@@ -212,7 +212,7 @@ export const ImageResultView: FC<{
         <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-muted/20">
           {redactedImageError ? (
             <div
-              className="mx-6 max-w-md rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-[var(--shadow-sm)]"
+              className="mx-6 max-w-md rounded-[20px] border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-[var(--shadow-sm)]"
               role="alert"
               data-testid="redacted-preview-error"
             >
@@ -228,7 +228,7 @@ export const ImageResultView: FC<{
               className="block h-auto max-h-full w-auto max-w-full select-none object-contain"
             />
           ) : fileInfo ? (
-            <div className="mx-6 rounded-2xl border border-dashed border-border/70 bg-background px-5 py-4 text-center shadow-[var(--shadow-sm)]">
+            <div className="mx-6 rounded-[20px] border border-dashed border-border/70 bg-background px-5 py-4 text-center shadow-[var(--shadow-sm)]">
               <p className="text-sm font-medium text-foreground">
                 {t('playground.redactedPreviewPreparing')}
               </p>

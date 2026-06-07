@@ -11,6 +11,7 @@ export interface ServiceInfo {
 
 export type ServiceStatus = ServiceInfo['status'];
 export type ServiceRuntimeMode = 'gpu' | 'cpu' | 'unknown';
+
 export interface ServiceDetail {
   runtime?: string | null;
   runtime_mode?: ServiceRuntimeMode;
@@ -35,13 +36,13 @@ export interface ServicesHealth {
   services: {
     paddle_ocr: ServiceInfo;
     has_ner: ServiceInfo;
-    has_image: ServiceInfo;
-    vlm?: ServiceInfo;
+    visual_features: ServiceInfo;
   };
 }
 
 const HEALTH_TIMEOUT_MS = 55_000;
 const HEALTH_POLL_INTERVAL_MS = 15_000;
+const HEALTH_FAILURES_BEFORE_OFFLINE = 3;
 
 const LIVE_SERVICE_STATUSES = new Set([
   'online',
@@ -55,8 +56,7 @@ const LIVE_SERVICE_STATUSES = new Set([
 const serviceFallbacks: Required<ServicesHealth['services']> = {
   paddle_ocr: { name: 'PaddleOCR', status: 'offline' },
   has_ner: { name: 'HaS Text', status: 'offline' },
-  has_image: { name: 'HaS Image', status: 'offline' },
-  vlm: { name: 'VLM', status: 'offline' },
+  visual_features: { name: '视觉特征', status: 'offline' },
 };
 
 type HealthStoreSnapshot = {
@@ -77,6 +77,7 @@ let snapshot: HealthStoreSnapshot = initialSnapshot;
 const listeners = new Set<HealthListener>();
 let activeFetch: Promise<void> | null = null;
 let started = false;
+let consecutiveFailures = 0;
 
 function emitHealthChange() {
   listeners.forEach((listener) => listener());
@@ -90,10 +91,10 @@ function updateSnapshot(next: Partial<HealthStoreSnapshot>) {
 function normalizeService(value: unknown, fallback: ServiceInfo): ServiceInfo {
   if (!value || typeof value !== 'object') return fallback;
   const raw = value as Partial<ServiceInfo>;
-  const normalizedStatus = typeof raw.status === 'string' && LIVE_SERVICE_STATUSES.has(raw.status)
-    ? 'online'
-    : raw.status;
-  const detail = normalizeServiceDetail(raw.detail);
+  const normalizedStatus =
+    typeof raw.status === 'string' && LIVE_SERVICE_STATUSES.has(raw.status)
+      ? 'online'
+      : raw.status;
 
   return {
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name : fallback.name,
@@ -101,10 +102,11 @@ function normalizeService(value: unknown, fallback: ServiceInfo): ServiceInfo {
       normalizedStatus === 'online' ||
       normalizedStatus === 'offline' ||
       normalizedStatus === 'checking' ||
-      normalizedStatus === 'degraded'
+      normalizedStatus === 'degraded' ||
+      normalizedStatus === 'busy'
         ? normalizedStatus
         : fallback.status,
-    detail,
+    detail: normalizeServiceDetail(raw.detail),
   };
 }
 
@@ -113,11 +115,7 @@ function normalizeServiceDetail(value: unknown): ServiceDetail | undefined {
   const raw = value as Record<string, unknown>;
   const detail: ServiceDetail = {};
   if (typeof raw.runtime === 'string') detail.runtime = raw.runtime;
-  if (
-    raw.runtime_mode === 'gpu' ||
-    raw.runtime_mode === 'cpu' ||
-    raw.runtime_mode === 'unknown'
-  ) {
+  if (raw.runtime_mode === 'gpu' || raw.runtime_mode === 'cpu' || raw.runtime_mode === 'unknown') {
     detail.runtime_mode = raw.runtime_mode;
   }
   if (typeof raw.gpu_available === 'boolean' || raw.gpu_available === null) {
@@ -161,18 +159,18 @@ export function normalizeHealthPayload(value: unknown): ServicesHealth {
       (services as Partial<ServicesHealth['services']>).has_ner,
       serviceFallbacks.has_ner,
     ),
-    has_image: normalizeService(
-      (services as Partial<ServicesHealth['services']>).has_image,
-      serviceFallbacks.has_image,
-    ),
-    vlm: normalizeService(
-      (services as Partial<ServicesHealth['services']>).vlm,
-      serviceFallbacks.vlm,
+    visual_features: normalizeService(
+      (services as Partial<ServicesHealth['services']>).visual_features,
+      serviceFallbacks.visual_features,
     ),
   };
 
   return {
-    all_online: Object.values(normalizedServices).every((service) => service.status === 'online'),
+    all_online: [
+      normalizedServices.paddle_ocr,
+      normalizedServices.has_ner,
+      normalizedServices.visual_features,
+    ].every((service) => service.status === 'online'),
     probe_ms: typeof data.probe_ms === 'number' ? data.probe_ms : undefined,
     checked_at: typeof data.checked_at === 'string' ? data.checked_at : undefined,
     gpu_memory: data.gpu_memory ?? null,
@@ -194,21 +192,25 @@ async function runHealthCheck(showChecking: boolean) {
   activeFetch = (async () => {
     const ac = new AbortController();
     const timer = window.setTimeout(() => ac.abort(), HEALTH_TIMEOUT_MS);
-    const t0 = performance.now();
+    const start = performance.now();
     try {
-      // Intentionally uses raw fetch: health endpoint is unauthenticated
-      const res = await fetch('/health/services', { signal: ac.signal });
+      const res = await fetch('/health/services', {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+        signal: ac.signal,
+      });
       if (!res.ok) {
-        updateSnapshot({ health: null, roundTripMs: null });
+        recordHealthFailure();
         return;
       }
       const data = normalizeHealthPayload(await res.json().catch(() => ({})));
+      consecutiveFailures = 0;
       updateSnapshot({
         health: data,
-        roundTripMs: Math.round(performance.now() - t0),
+        roundTripMs: Math.round(performance.now() - start),
       });
     } catch {
-      updateSnapshot({ health: null, roundTripMs: null });
+      recordHealthFailure();
     } finally {
       window.clearTimeout(timer);
       activeFetch = null;
@@ -217,6 +219,13 @@ async function runHealthCheck(showChecking: boolean) {
   })();
 
   return activeFetch;
+}
+
+function recordHealthFailure() {
+  consecutiveFailures += 1;
+  if (!snapshot.health || consecutiveFailures >= HEALTH_FAILURES_BEFORE_OFFLINE) {
+    updateSnapshot({ health: null, roundTripMs: null });
+  }
 }
 
 function ensureHealthPolling() {
@@ -232,6 +241,8 @@ function ensureHealthPolling() {
   };
 
   window.setInterval(tick, HEALTH_POLL_INTERVAL_MS);
+  window.addEventListener('focus', tick);
+  window.addEventListener('online', tick);
   document.addEventListener('visibilitychange', tick);
 }
 
@@ -245,6 +256,7 @@ function subscribe(listener: HealthListener) {
 export function useServiceHealth() {
   useEffect(() => {
     ensureHealthPolling();
+    void runHealthCheck(false);
   }, []);
 
   const state = useSyncExternalStore(

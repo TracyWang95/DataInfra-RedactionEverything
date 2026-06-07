@@ -63,8 +63,7 @@ export const VISION_FETCH_TIMEOUT_MS = VISION_TIMEOUT;
 export async function runVisionDetection(
   fileId: string,
   ocrHasTypes: string[],
-  hasImageTypes: string[],
-  vlmTypes: string[],
+  visualFeatureTypes: string[],
   externalSignal?: AbortSignal,
   page = 1,
   force = false,
@@ -89,8 +88,7 @@ export async function runVisionDetection(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         selected_ocr_has_types: ocrHasTypes,
-        selected_has_image_types: hasImageTypes,
-        selected_vlm_types: vlmTypes,
+        selected_visual_feature_types: Array.from(new Set(visualFeatureTypes)),
       }),
       signal: controller.signal,
     });
@@ -132,8 +130,7 @@ export interface VisionPageCompletePayload {
 interface RunVisionDetectionPagesOptions {
   fileId: string;
   ocrHasTypes: string[];
-  hasImageTypes: string[];
-  vlmTypes: string[];
+  visualFeatureTypes?: string[];
   totalPages: number;
   signal?: AbortSignal;
   concurrency?: number;
@@ -146,8 +143,7 @@ interface RunVisionDetectionPagesOptions {
 export async function runVisionDetectionPages({
   fileId,
   ocrHasTypes,
-  hasImageTypes,
-  vlmTypes,
+  visualFeatureTypes = [],
   totalPages,
   signal,
   concurrency = PLAYGROUND_VISION_PAGE_CONCURRENCY,
@@ -157,9 +153,8 @@ export async function runVisionDetectionPages({
   onPageComplete,
 }: RunVisionDetectionPagesOptions): Promise<{ boxes: BoundingBox[]; totalBoxes: number }> {
   const pages = Array.from({ length: Math.max(1, totalPages) }, (_unused, index) => index + 1);
-  // The local VLM service runs as a single GPU slot. Letting multi-page PDFs
-  // enqueue several VLM requests at once causes avoidable timeout cascades.
-  const effectiveConcurrency = vlmTypes.length > 0 ? 1 : concurrency;
+  const mergedVisualFeatureTypes = Array.from(new Set(visualFeatureTypes));
+  const effectiveConcurrency = mergedVisualFeatureTypes.length > 0 ? 1 : concurrency;
   const maxWorkers = Math.max(1, Math.min(effectiveConcurrency, pages.length));
   const boxesByPage = new Map<number, BoundingBox[]>();
   let nextIndex = 0;
@@ -175,8 +170,7 @@ export async function runVisionDetectionPages({
         result = await runVisionDetection(
           fileId,
           ocrHasTypes,
-          hasImageTypes,
-          vlmTypes,
+          mergedVisualFeatureTypes,
           signal,
           page,
           force,

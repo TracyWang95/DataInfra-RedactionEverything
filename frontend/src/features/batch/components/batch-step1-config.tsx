@@ -67,31 +67,23 @@ function BatchStep1ConfigInner() {
   const ocrTypes = pipelines
     .filter((pipeline) => pipeline.mode === 'ocr_has')
     .flatMap((pipeline) => pipeline.types);
-  const hasImageTypes = pipelines
-    .filter((pipeline) => pipeline.mode === 'has_image')
-    .flatMap((pipeline) => pipeline.types);
-  const vlmTypes = pipelines
-    .filter((pipeline) => pipeline.mode === 'vlm')
+  const visualFeatureTypes = pipelines
+    .filter((pipeline) => pipeline.mode === 'visual_features')
     .flatMap((pipeline) => pipeline.types);
   const selectedOcrLabels = ocrTypes
     .filter((type) => cfg.ocrHasTypes.includes(type.id))
     .map((type) => type.name);
-  const selectedImageLabels = hasImageTypes
-    .filter((type) => cfg.hasImageTypes.includes(type.id))
-    .map((type) => type.name);
-  const selectedVlmLabels = vlmTypes
-    .filter((type) => (cfg.vlmTypes ?? []).includes(type.id))
+  const selectedVisualFeatureLabels = visualFeatureTypes
+    .filter((type) => (cfg.visualFeatureTypes ?? []).includes(type.id))
     .map((type) => type.name);
   const defaultOcrCoverage = buildDefaultPipelineCoverage(pipelines, 'ocr_has');
-  const defaultImageCoverage = buildDefaultPipelineCoverage(pipelines, 'has_image');
-  const defaultVlmCoverage = buildDefaultPipelineCoverage(pipelines, 'vlm');
+  const defaultVisualFeatureCoverage = buildDefaultPipelineCoverage(pipelines, 'visual_features');
   const pipelineNameById = new Map(
-    [...ocrTypes, ...hasImageTypes, ...vlmTypes].map((type) => [type.id, type.name] as const),
+    [...ocrTypes, ...visualFeatureTypes].map((type) => [type.id, type.name] as const),
   );
   const defaultVisionExcludedLabels = [
     ...defaultOcrCoverage.excludedIds,
-    ...defaultImageCoverage.excludedIds,
-    ...defaultVlmCoverage.excludedIds,
+    ...defaultVisualFeatureCoverage.excludedIds,
   ]
     .map((id) => pipelineNameById.get(id) ?? id)
     .slice(0, 6);
@@ -104,16 +96,14 @@ function BatchStep1ConfigInner() {
       '{selected}',
       String(
         defaultOcrCoverage.selectedIds.length +
-          defaultImageCoverage.selectedIds.length +
-          defaultVlmCoverage.selectedIds.length,
+          defaultVisualFeatureCoverage.selectedIds.length,
       ),
     )
     .replace(
       '{excluded}',
       String(
         defaultOcrCoverage.excludedIds.length +
-          defaultImageCoverage.excludedIds.length +
-          defaultVlmCoverage.excludedIds.length,
+          defaultVisualFeatureCoverage.excludedIds.length,
       ),
     );
   const defaultVisionExcludedSummary =
@@ -170,13 +160,8 @@ function BatchStep1ConfigInner() {
       emptyLabel: t('batchWizard.step1.noVisionSelection'),
     },
     {
-      title: t('batchWizard.step1.imageTypes'),
-      items: selectedImageLabels,
-      emptyLabel: t('batchWizard.step1.noVisionSelection'),
-    },
-    {
-      title: t('batchWizard.step1.vlmTypes'),
-      items: selectedVlmLabels,
+      title: t('batchWizard.step1.visualFeatureTypes'),
+      items: selectedVisualFeatureLabels,
       emptyLabel: t('batchWizard.step1.noVisionSelection'),
     },
   ];

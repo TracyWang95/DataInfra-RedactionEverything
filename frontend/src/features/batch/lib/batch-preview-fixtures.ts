@@ -246,9 +246,9 @@ export const previewPipelines: PipelineCfg[] = [
     })),
   },
   {
-    mode: 'has_image',
-    name: 'HaS Image',
-    description: '图像特征通道',
+    mode: 'visual_features',
+    name: '视觉特征',
+    description: 'LocateAnything 视觉特征通道',
     enabled: true,
     types: Array.from({ length: 12 }, (_, index) => ({
       id: `image_type_${index + 1}`,
@@ -270,7 +270,7 @@ const allPreviewOcrIds =
   [];
 const allPreviewImageIds =
   previewPipelines
-    .find((pipeline) => pipeline.mode === 'has_image')
+    .find((pipeline) => pipeline.mode === 'visual_features')
     ?.types.map((type) => type.id) ?? [];
 
 export const previewPresets: RecognitionPreset[] = [
@@ -280,8 +280,7 @@ export const previewPresets: RecognitionPreset[] = [
     kind: 'text',
     selectedEntityTypeIds: allPreviewTextIds,
     ocrHasTypes: [],
-    hasImageTypes: [],
-    vlmTypes: [],
+    visualFeatureTypes: [],
     replacementMode: 'structured',
     created_at: previewNow,
     updated_at: previewNow,
@@ -292,8 +291,7 @@ export const previewPresets: RecognitionPreset[] = [
     kind: 'vision',
     selectedEntityTypeIds: [],
     ocrHasTypes: allPreviewOcrIds,
-    hasImageTypes: allPreviewImageIds,
-    vlmTypes: [],
+    visualFeatureTypes: allPreviewImageIds,
     replacementMode: 'structured',
     created_at: previewNow,
     updated_at: previewNow,
@@ -303,8 +301,7 @@ export const previewPresets: RecognitionPreset[] = [
 export const previewBatchConfig: BatchWizardPersistedConfig = {
   selectedEntityTypeIds: allPreviewTextIds,
   ocrHasTypes: allPreviewOcrIds,
-  hasImageTypes: allPreviewImageIds,
-  vlmTypes: [],
+  visualFeatureTypes: allPreviewImageIds,
   replacementMode: 'structured',
   imageRedactionMethod: 'mosaic',
   imageRedactionStrength: 25,
@@ -385,7 +382,7 @@ const previewImageBoxes: EditorBox[] = [
     type: 'image_type_1',
     text: '二维码',
     selected: true,
-    source: 'has_image',
+    source: 'visual_features',
     confidence: 0.96,
   },
   {
@@ -397,7 +394,7 @@ const previewImageBoxes: EditorBox[] = [
     type: 'image_type_2',
     text: '公章',
     selected: true,
-    source: 'has_image',
+    source: 'visual_features',
     confidence: 0.94,
   },
   {
@@ -409,7 +406,7 @@ const previewImageBoxes: EditorBox[] = [
     type: 'image_type_3',
     text: '头像',
     selected: false,
-    source: 'has_image',
+    source: 'visual_features',
     confidence: 0.9,
   },
 ];

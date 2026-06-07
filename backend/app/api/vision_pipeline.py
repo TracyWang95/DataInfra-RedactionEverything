@@ -1,8 +1,8 @@
-"""
-图像识别 Pipeline 配置 API — 路由层（thin wrapper）
-1. OCR + HaS：文字类敏感信息
-2. HaS Image：端侧 YOLO 分割（8081 微服务），21 类隐私区域
-"""
+"""Vision pipeline configuration API."""
+
+
+
+
 
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,16 +29,16 @@ async def get_pipeline(mode: str, owner_id: str = Depends(require_auth)):
     """获取指定 Pipeline 配置"""
     result = pipeline_service.get_pipeline(mode, owner_id=owner_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="Pipeline 不存在")
+        raise HTTPException(status_code=404, detail="Pipeline not found")
     return result
 
 
 @router.post("/vision-pipelines/{mode}/toggle")
 async def toggle_pipeline(mode: str, owner_id: str = Depends(require_auth)):
-    """切换 Pipeline 启用状态"""
+    """Toggle a pipeline."""
     enabled = pipeline_service.toggle_pipeline(mode, owner_id=owner_id)
     if enabled is None:
-        raise HTTPException(status_code=404, detail="Pipeline 不存在")
+        raise HTTPException(status_code=404, detail="Pipeline not found")
     return {"enabled": enabled}
 
 
@@ -48,10 +48,10 @@ async def get_pipeline_types(
     enabled_only: bool = True,
     owner_id: str = Depends(require_auth),
 ):
-    """获取指定 Pipeline 的类型配置"""
+    """Return pipeline type configs."""
     result = pipeline_service.get_pipeline_types(mode, enabled_only, owner_id=owner_id)
     if result is None:
-        raise HTTPException(status_code=404, detail="Pipeline 不存在")
+        raise HTTPException(status_code=404, detail="Pipeline not found")
     return result
 
 
@@ -64,7 +64,7 @@ async def add_pipeline_type(
     """添加 Pipeline 类型"""
     created, error = pipeline_service.add_pipeline_type(mode, request, owner_id=owner_id)
     if created is None:
-        code = 404 if error == "Pipeline 不存在" else 400
+        code = 404 if error == "Pipeline not found" else 400
         raise HTTPException(status_code=code, detail=error)
     return created
 
@@ -90,7 +90,7 @@ async def toggle_pipeline_type(
     type_id: str,
     owner_id: str = Depends(require_auth),
 ):
-    """切换 Pipeline 类型启用状态"""
+    """Toggle a pipeline type."""
     enabled, error = pipeline_service.toggle_pipeline_type(mode, type_id, owner_id=owner_id)
     if enabled is None:
         code = 404
@@ -103,13 +103,14 @@ async def delete_pipeline_type(mode: str, type_id: str, owner_id: str = Depends(
     """删除 Pipeline 类型"""
     success, error = pipeline_service.delete_pipeline_type(mode, type_id, owner_id=owner_id)
     if not success:
-        code = 404 if error == "Pipeline 不存在" else 400
+        code = 404 if error == "Pipeline not found" else 400
         raise HTTPException(status_code=code, detail=error)
     return {"message": "删除成功"}
 
 
 @router.post("/vision-pipelines/reset")
 async def reset_pipelines(owner_id: str = Depends(require_auth)):
-    """重置所有 Pipeline 配置为默认"""
+    """Reset all pipelines to defaults."""
     pipeline_service.reset_pipelines(owner_id=owner_id)
     return {"message": "已重置为默认配置"}
+

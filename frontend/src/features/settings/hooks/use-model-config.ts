@@ -181,11 +181,10 @@ interface ModelConfigList {
 }
 interface BuiltinServiceLive {
   paddle?: 'online' | 'offline';
-  has_image?: 'online' | 'offline';
-  vlm?: 'online' | 'offline';
+  visual_features?: 'online' | 'offline';
 }
 
-export const BUILTIN_VISION_IDS = new Set(['paddle_ocr_service', 'has_image_service', 'vlm_service']);
+export const BUILTIN_VISION_IDS = new Set(['paddle_ocr_service', 'visual_features_service']);
 
 export const DEFAULT_MODEL_FORM: Partial<ModelConfig> = {
   provider: 'local',
@@ -237,8 +236,7 @@ export function useVisionModelConfig() {
   useEffect(() => {
     setBuiltinLive({
       paddle: normalizeServiceLive(health?.services?.paddle_ocr?.status),
-      has_image: normalizeServiceLive(health?.services?.has_image?.status),
-      vlm: normalizeServiceLive(health?.services?.vlm?.status),
+      visual_features: normalizeServiceLive(health?.services?.visual_features?.status),
     });
   }, [health]);
 
@@ -344,8 +342,7 @@ export function useVisionModelConfig() {
   const liveForBuiltin = useCallback(
     (configId: string): 'online' | 'offline' | undefined => {
       if (configId === 'paddle_ocr_service') return builtinLive?.paddle;
-      if (configId === 'has_image_service') return builtinLive?.has_image;
-      if (configId === 'vlm_service') return builtinLive?.vlm;
+      if (configId === 'visual_features_service') return builtinLive?.visual_features;
       return undefined;
     },
     [builtinLive],

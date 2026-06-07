@@ -21,8 +21,8 @@ export interface BoundingBox {
   text?: string;
   selected: boolean;
   confidence?: number;
-  source?: 'ocr_has' | 'has_image' | 'vlm' | 'manual';
-  evidence_source?: 'ocr_has' | 'has_image_model' | 'vlm_model' | 'local_fallback' | 'manual';
+  source?: 'ocr_has' | 'visual_features' | 'manual';
+  evidence_source?: 'ocr_has' | 'visual_feature_model' | 'local_fallback' | 'manual';
   source_detail?: string;
   warnings?: string[];
 }
@@ -96,7 +96,7 @@ function BBoxOverlayBoxInner({
     () =>
       box.source === 'ocr_has'
         ? 'border-[var(--selection-regex-border)] bg-[var(--selection-regex-soft)] text-[var(--selection-regex-text)]'
-        : box.source === 'has_image'
+        : box.source === 'visual_features'
           ? 'border-[var(--selection-yolo-border)] bg-[var(--selection-yolo-soft)] text-[var(--selection-yolo-text)]'
           : 'border-[var(--selection-ner-border)] bg-[var(--selection-ner-soft)] text-[var(--selection-ner-text)]',
     [box.source],
@@ -174,7 +174,7 @@ function BBoxOverlayBoxInner({
         <span className="text-[8px] leading-none font-medium tabular-nums shrink-0">
           {box.source === 'ocr_has'
             ? t('playground.sourceOcr')
-            : box.source === 'has_image'
+            : box.source === 'visual_features'
               ? t('playground.sourceImage')
               : t('playground.sourceManual')}
         </span>

@@ -63,7 +63,7 @@ export function EntityTypeList({
       )}
       data-testid={`entity-type-list-${variant}`}
     >
-      <div className="page-surface w-full rounded-2xl border border-border/70 bg-card shadow-[var(--shadow-control)]">
+      <div className="page-surface w-full rounded-[20px] border border-border/70 bg-card shadow-[var(--shadow-control)]">
         <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-border/70 bg-muted/20 px-4 py-2.5">
           <div className="flex min-w-0 items-center gap-2">
             <span className={cn('size-2 shrink-0 rounded-full', toneClasses.dot)} />
@@ -78,11 +78,11 @@ export function EntityTypeList({
               {types.length}
             </Badge>
           </div>
-          <div className="grid shrink-0 grid-cols-[7.5rem_8.5rem] items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Button
               size="sm"
               variant="outline"
-              className="h-8 w-full whitespace-nowrap"
+              className="h-8 whitespace-nowrap"
               onClick={onReset}
               data-testid={`reset-${variant}-types`}
             >
@@ -90,7 +90,7 @@ export function EntityTypeList({
             </Button>
             <Button
               size="sm"
-              className="h-8 w-full whitespace-nowrap"
+              className="h-8 whitespace-nowrap"
               onClick={onAdd}
               data-testid={`add-${variant}-type`}
             >
@@ -126,8 +126,7 @@ export function EntityTypeList({
                   <article
                     key={type.id}
                     className={cn(
-                      'flex overflow-hidden rounded-2xl border border-border/70 bg-[var(--surface-control)] px-3.5 py-3.5 shadow-[var(--shadow-sm)] transition-colors hover:border-border',
-                      systemManaged && 'opacity-75',
+                      'flex overflow-hidden rounded-[20px] border border-border/70 bg-[var(--surface-control)] px-3.5 py-3.5 shadow-[var(--shadow-sm)] transition-colors hover:border-border',
                       compact ? 'h-[112px]' : 'h-full min-h-0',
                     )}
                   >
@@ -138,7 +137,7 @@ export function EntityTypeList({
                           {type.name}
                         </span>
                         {systemManaged && (
-                          <span className="mt-1 inline-flex rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          <span className="mt-1 inline-flex rounded-md border border-border/70 bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
                             系统配置
                           </span>
                         )}
@@ -170,7 +169,7 @@ export function EntityTypeList({
                     </div>
 
                     <div className="min-h-0 flex-1 rounded-xl border border-border/70 bg-muted/25 px-3 py-2.5">
-                      <p className="text-[10px] font-semibold tracking-[0.02em] text-muted-foreground">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {isRegex ? t('settings.matchExpression') : t('settings.cardDescriptionLabel')}
                       </p>
                       {isRegex ? (

@@ -46,30 +46,30 @@ export function ModelEndpointCard({
   const t = useT();
 
   return (
-    <Card className="overflow-hidden rounded-2xl border-border/70 shadow-[var(--shadow-control)]">
+    <Card className="overflow-hidden border-border/70 shadow-[var(--shadow-control)]">
       <CardHeader className="px-4 pb-2 pt-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 space-y-1">
             <CardTitle className="text-base">{title}</CardTitle>
             <CardDescription className="max-w-3xl text-xs leading-5">{description}</CardDescription>
             <div className="flex flex-wrap items-center gap-1.5 pt-1">
-              <Badge variant="secondary" className="whitespace-nowrap text-[10px] leading-4">
+              <Badge variant="secondary" className="whitespace-nowrap">
                 {t('common.enabled')}
               </Badge>
               {liveStatus === 'online' && (
                 <Badge
-                  className={`whitespace-nowrap text-[10px] leading-4 ${tonePanelClass.success}`}
+                  className={`whitespace-nowrap ${tonePanelClass.success}`}
                 >
                   {t('common.online')}
                 </Badge>
               )}
               {liveStatus === 'offline' && (
-                <Badge variant="destructive" className="whitespace-nowrap text-[10px] leading-4">
+                <Badge variant="destructive" className="whitespace-nowrap">
                   {t('common.offline')}
                 </Badge>
               )}
               {liveStatus === undefined && (
-                <Badge variant="outline" className="whitespace-nowrap text-[10px] leading-4">
+                <Badge variant="outline" className="whitespace-nowrap">
                   {t('common.checking')}
                 </Badge>
               )}
@@ -77,7 +77,7 @@ export function ModelEndpointCard({
                 <Badge
                   key={tag}
                   variant="outline"
-                  className="whitespace-nowrap text-[10px] leading-4"
+                  className="whitespace-nowrap"
                 >
                   {tag}
                 </Badge>

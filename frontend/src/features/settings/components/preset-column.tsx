@@ -15,13 +15,13 @@ import { localizePresetName, localizeRecognitionTypeName } from '../lib/redactio
 import type { EntityTypeConfig, PipelineConfig } from '../hooks/use-entity-types';
 
 const presetMetaPillClass =
-  'inline-flex h-6 w-[4.5rem] items-center justify-center whitespace-nowrap rounded-full border border-border/70 bg-muted/45 px-2 text-[11px] font-medium leading-none text-muted-foreground';
+  'inline-flex h-6 w-[4.5rem] items-center justify-center whitespace-nowrap rounded-full border border-border/70 bg-muted/45 px-2 text-xs font-medium leading-none text-muted-foreground';
 const presetActionButtonClass =
-  'h-7 whitespace-nowrap rounded-full border-border/80 bg-background px-3 text-[11px] font-medium leading-none';
+  'h-7 whitespace-nowrap rounded-full border-border/80 bg-background px-3 text-xs font-medium leading-none';
 const presetDangerButtonClass =
-  'h-7 whitespace-nowrap rounded-full border-destructive/25 bg-background px-3 text-[11px] font-medium leading-none text-destructive hover:bg-destructive/8';
+  'h-7 whitespace-nowrap rounded-full border-destructive/25 bg-background px-3 text-xs font-medium leading-none text-destructive hover:bg-destructive/8';
 const presetPreviewChipClass =
-  'inline-flex h-7 w-full items-center rounded-[14px] border border-border/70 bg-background px-2 text-[11px] font-medium leading-none';
+  'inline-flex h-7 w-full items-center rounded-xl border border-border/70 bg-background px-2 text-xs font-medium leading-none';
 const presetPreviewChipGridClass = 'grid grid-cols-3 gap-1.5 xl:grid-cols-4 2xl:grid-cols-5';
 const presetRowLeftClass = 'grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-2';
 const presetRowNameClass = 'min-w-0 truncate font-medium';
@@ -178,8 +178,7 @@ function PresetPreview({
   const showText = scope === 'text' && presetAppliesText(preset);
   const showVision = scope === 'vision' && presetAppliesVision(preset);
   const ocrPipeline = pipelines.find((pipeline) => pipeline.mode === 'ocr_has');
-  const imagePipeline = pipelines.find((pipeline) => pipeline.mode === 'has_image');
-  const vlmPipeline = pipelines.find((pipeline) => pipeline.mode === 'vlm');
+  const imagePipeline = pipelines.find((pipeline) => pipeline.mode === 'visual_features');
   const entityTypeById = useMemo(
     () => new Map(entityTypes.map((type) => [type.id, type])),
     [entityTypes],
@@ -192,11 +191,6 @@ function PresetPreview({
     () => new Map((imagePipeline?.types ?? []).map((type) => [type.id, type])),
     [imagePipeline?.types],
   );
-  const vlmTypeById = useMemo(
-    () => new Map((vlmPipeline?.types ?? []).map((type) => [type.id, type])),
-    [vlmPipeline?.types],
-  );
-
   const selectedRegexTypes = useMemo(
     () =>
       preset.selectedEntityTypeIds.filter((id) => {
@@ -218,7 +212,7 @@ function PresetPreview({
     <div className="space-y-2 border-t px-2 pb-3 pt-2">
       {showText && selectedRegexTypes.length > 0 && (
         <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t('settings.redaction.regexGroup')} ({selectedRegexTypes.length})
           </p>
           <div className={presetPreviewChipGridClass}>
@@ -237,7 +231,7 @@ function PresetPreview({
 
       {showText && selectedSemanticTypes.length > 0 && (
         <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t('settings.redaction.semanticGroup')} ({selectedSemanticTypes.length})
           </p>
           <div className={presetPreviewChipGridClass}>
@@ -258,7 +252,7 @@ function PresetPreview({
         <>
           {preset.ocrHasTypes.length > 0 && (
             <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {t('settings.redaction.ocrGroup')} ({preset.ocrHasTypes.length})
               </p>
               <div className={presetPreviewChipGridClass}>
@@ -274,32 +268,14 @@ function PresetPreview({
               </div>
             </div>
           )}
-          {preset.hasImageTypes.length > 0 && (
+          {(preset.visualFeatureTypes ?? preset.visualFeatureTypes ?? []).length > 0 && (
             <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
-                {t('settings.redaction.imageGroup')} ({preset.hasImageTypes.length})
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {t('settings.redaction.imageGroup')} ({(preset.visualFeatureTypes ?? preset.visualFeatureTypes ?? []).length})
               </p>
               <div className={presetPreviewChipGridClass}>
-                {preset.hasImageTypes.map((id) => {
+                {(preset.visualFeatureTypes ?? preset.visualFeatureTypes ?? []).map((id: string) => {
                   const type = imageTypeById.get(id);
-                  const label = type ? localizeRecognitionTypeName(type, t) : id;
-                  return (
-                    <span key={id} className={cn(presetPreviewChipClass, 'truncate')} title={label}>
-                      {label}
-                    </span>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {(preset.vlmTypes ?? []).length > 0 && (
-            <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">
-                {t('settings.redaction.vlmGroup')} ({(preset.vlmTypes ?? []).length})
-              </p>
-              <div className={presetPreviewChipGridClass}>
-                {(preset.vlmTypes ?? []).map((id) => {
-                  const type = vlmTypeById.get(id);
                   const label = type ? localizeRecognitionTypeName(type, t) : id;
                   return (
                     <span key={id} className={cn(presetPreviewChipClass, 'truncate')} title={label}>

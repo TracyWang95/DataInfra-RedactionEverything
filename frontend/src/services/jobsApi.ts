@@ -14,7 +14,7 @@ import type {
   JobExportReportRedactedZip,
 } from '../types';
 
-export type JobTypeApi = 'text_batch' | 'image_batch' | 'smart_batch';
+export type JobTypeApi = 'text_batch' | 'image_batch' | 'smart_batch' | 'structured_batch';
 export type JobStatusFilterApi =
   | 'active'
   | 'awaiting_review'
@@ -197,10 +197,17 @@ function asNullableNumber(value: unknown): number | null {
 }
 
 function normalizeJobType(raw: unknown): JobTypeApi {
-  if (raw === 'text_batch' || raw === 'image_batch' || raw === 'smart_batch') return raw;
+  if (
+    raw === 'text_batch' ||
+    raw === 'image_batch' ||
+    raw === 'smart_batch' ||
+    raw === 'structured_batch'
+  )
+    return raw;
   if (raw === 'text') return 'text_batch';
   if (raw === 'image') return 'image_batch';
   if (raw === 'smart') return 'smart_batch';
+  if (raw === 'structured') return 'structured_batch';
   return 'text_batch';
 }
 
@@ -339,7 +346,7 @@ function normalizeExportReportVisualEvidence(
   return {
     total_boxes: asNumber(rawEvidence.total_boxes),
     selected_boxes: asNumber(rawEvidence.selected_boxes),
-    has_image_model: asNumber(rawEvidence.has_image_model),
+    visual_feature_model: asNumber(rawEvidence.visual_feature_model),
     local_fallback: asNumber(rawEvidence.local_fallback),
     ocr_has: asNumber(rawEvidence.ocr_has),
     table_structure: asNumber(rawEvidence.table_structure),

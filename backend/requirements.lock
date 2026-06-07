@@ -30,7 +30,7 @@ aiofiles==24.1.0
 # Local app/model environment. vLLM is installed in .venv-vllm by npm run setup.
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
 paddlepaddle-gpu==3.3.0
-paddleocr[doc-parser]==3.5.0
+paddleocr[doc-parser]==3.6.0
 llama-cpp-python[server]>=0.3.16
 
 # Utility libraries

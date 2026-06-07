@@ -13,6 +13,7 @@ PyMuPDF==1.27.2.2
 Pillow>=12.2.0
 numpy>=2.0.0
 pdf2image==1.17.0
+openpyxl>=3.1.5
 pywin32==311; sys_platform == 'win32'  # Windows: .doc processing
 
 # HTTP client
@@ -29,13 +30,16 @@ aiofiles>=24.1.0
 # with Paddle/PaddleX when installed into the same environment.
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
 paddlepaddle-gpu==3.3.0
-paddleocr[doc-parser]==3.5.0
+paddleocr[doc-parser]==3.6.0
 llama-cpp-python[server]>=0.3.16
 
 # Utility libraries
 PyJWT>=2.12.0
 passlib[bcrypt]==1.7.4
 json-repair>=0.58.0
+SQLAlchemy>=2.0.45
+PyMySQL>=1.1.1
+psycopg[binary]>=3.2.3
 
 # Observability
 python-json-logger>=2.0.0

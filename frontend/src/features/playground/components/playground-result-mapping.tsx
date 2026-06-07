@@ -39,7 +39,7 @@ export const MappingColumn: FC<MappingColumnProps> = ({
   return (
     <div
       className={cn(
-        'flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border bg-background',
+        'flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[20px] border bg-background',
         mobileTab === 'mapping' ? '' : 'hidden',
         'md:flex',
         className,
@@ -107,7 +107,7 @@ export const MappingColumn: FC<MappingColumnProps> = ({
           );
         })}
         {Object.keys(entityMap).length === 0 && (
-          <div className="m-3 rounded-2xl border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-center">
+          <div className="m-3 rounded-[20px] border border-dashed border-border/70 bg-muted/20 px-4 py-6 text-center">
             <p className="text-xs font-medium text-foreground">{t('playground.noRecords')}</p>
           </div>
         )}

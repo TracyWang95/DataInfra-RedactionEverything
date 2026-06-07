@@ -127,7 +127,7 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
             data = json.loads(path.read_text(encoding="utf-8"))
             ocr_has_types = data["ocr_has"] if isinstance(data["ocr_has"], list) else data["ocr_has"]["types"]
             domains = {item.get("data_domain") for item in ocr_has_types}
-            self.assertNotIn("visual_mark", domains, f"{path} mixes VLM visual taxonomy into text")
+            self.assertNotIn("visual_mark", domains, f"{path} mixes visual feature taxonomy into text")
             self.assertFalse(domains & forbidden_l1, f"{path} contains retired L1 domains")
 
     def test_birth_date_wins_same_span_dedup_over_date_and_age(self):

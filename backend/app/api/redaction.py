@@ -2,7 +2,7 @@
 匿名化处理 API 路由
 处理文档匿名化、对比等操作
 
-Thin routing layer — business logic lives in
+Thin routing layer 鈥?business logic lives in
 app.services.redaction_orchestrator.
 """
 import logging
@@ -45,7 +45,7 @@ async def execute_redaction(
     """
     执行文档匿名化
 
-    根据提供的实体列表和配置，对文档进行匿名化处理:
+    根据提供的实体列表和配置，对文档进行匿名化处理
     - 文本类文档: 替换敏感文本
     - 图片类文档: 对敏感区域执行马赛克、模糊或纯色遮罩
     """
@@ -75,7 +75,7 @@ async def execute_redaction(
     include_in_schema=False,
 )
 async def preview_entity_map(body: PreviewEntityMapRequest):
-    """根据当前勾选实体与替换模式，返回与 execute 一致的 entity_map（不写文件）。"""
+    """Preview entity replacement mapping without writing files."""
     return _orch.preview_entity_map(body.entities, body.config)
 
 
@@ -110,7 +110,7 @@ async def get_comparison(file_id: str, owner_id: str = Depends(require_auth)):
         return await _orch.get_comparison(file_id)
     except ValueError as exc:
         detail = str(exc)
-        if "尚未匿名化" in detail:
+        if "has not been redacted" in detail:
             raise HTTPException(status_code=400, detail=detail)
         raise HTTPException(status_code=404, detail=detail)
 
@@ -134,20 +134,19 @@ async def detect_sensitive_regions(
     request: VisionDetectRequest | None = None,
     owner_id: str = Depends(require_auth),
 ):
-    """
-    对图片/扫描件进行视觉识别
+    """Run visual recognition for one page."""
+    # PaddleOCR-VL + HaS Text handle OCR/semantics.
+    # LocateAnything handles all visual features.
+    # The orchestrator merges and deduplicates both stages.
 
-    OCR + HaS（文字）与 HaS Image（8081 YOLO，21 类隐私区域）双路识别，
-    由后端配置决定顺序或并行调度，最终合并去重。
-    """
+
     try:
         _fms.assert_file_owner(file_id, owner_id)
         return await _orch.detect_vision(
             file_id=file_id,
             page=page,
             selected_ocr_has_types=request.selected_ocr_has_types if request else None,
-            selected_has_image_types=request.selected_has_image_types if request else None,
-            selected_vlm_types=request.selected_vlm_types if request else None,
+            selected_visual_feature_types=request.selected_visual_feature_types if request else None,
             has_request=request is not None,
             force=force,
             include_result_image=include_result_image,
@@ -159,21 +158,22 @@ async def detect_sensitive_regions(
 
 @router.get("/redaction/entity-types", response_model=EntityTypeListResponse)
 async def get_entity_types():
-    """获取支持的实体类型列表"""
+    """Return supported entity types."""
     return {"entity_types": _orch.get_entity_types_list()}
 
 
 @router.get("/redaction/replacement-modes", response_model=ReplacementModeListResponse)
 async def get_replacement_modes():
-    """获取支持的替换模式列表"""
+    """Return supported replacement modes."""
     return {"replacement_modes": _orch.get_replacement_modes_list()}
 
 
 @router.get("/redaction/{file_id}/report", response_model=RedactionReport)
 async def get_redaction_report(file_id: str, owner_id: str = Depends(require_auth)):
-    """获取匿名化质量报告"""
+    """Return redaction quality report."""
     try:
         _fms.assert_file_owner(file_id, owner_id)
         return _orch.get_report(file_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+

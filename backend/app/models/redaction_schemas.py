@@ -26,7 +26,7 @@ __all__ = [
 
 
 class RedactionConfig(BaseModel):
-    """匿名化配置"""
+    """Redaction configuration."""
     replacement_mode: ReplacementMode = Field(default=ReplacementMode.SMART)
     entity_types: list[str] = Field(
         default=["PERSON", "PHONE", "ID_CARD"]
@@ -35,7 +35,7 @@ class RedactionConfig(BaseModel):
         default_factory=list, description="启用的自定义实体类型ID列表"
     )
     custom_replacements: dict[str, str] = Field(default_factory=dict)
-    # 图片 / 扫描件块级匿名化（与 HaS Image 文档一致：mosaic / blur / fill），与文本 replacement_mode 独立
+    # Block-level image redaction is independent from text replacement_mode.
     image_redaction_method: Literal["mosaic", "blur", "fill"] | None = Field(
         default="mosaic",
         description="图片类：马赛克、高斯模糊、纯色填充；未传时图片默认按 mosaic/75 处理",
@@ -44,19 +44,19 @@ class RedactionConfig(BaseModel):
         default=75,
         ge=1,
         le=100,
-        description="马赛克块尺寸 / 模糊半径的相对强度（1–100）",
+        description="Relative strength for image redaction.",
     )
     image_fill_color: str = Field(
         default="#000000",
-        description="fill 模式填充色（#RRGGBB）",
+        description="Fill color for fill mode (#RRGGBB).",
     )
 
 
 class RedactionRequest(BaseModel):
-    """匿名化请求"""
+    """Redaction request."""
     file_id: str = Field(..., description="文件ID")
-    entities: list[Entity] = Field(default_factory=list, description="要匿名化的实体列表")
-    bounding_boxes: list[BoundingBox] = Field(default_factory=list, description="要匿名化的图片区域")
+    entities: list[Entity] = Field(default_factory=list, description="Entities to redact")
+    bounding_boxes: list[BoundingBox] = Field(default_factory=list, description="Image regions to redact")
     config: RedactionConfig = Field(default_factory=RedactionConfig)
 
 
@@ -94,11 +94,11 @@ class NERRequest(BaseModel):
 
 
 class RedactionResult(BaseModel):
-    """匿名化结果"""
+    """Redaction result."""
     file_id: str
     output_file_id: str
     redacted_count: int
-    entity_map: dict[str, str] = Field(default_factory=dict, description="实体映射表")
+    entity_map: dict[str, str] = Field(default_factory=dict, description="Entity replacement map")
     download_url: str
     output_path: str | None = Field(default=None, exclude=True)
 
@@ -112,26 +112,25 @@ class CompareData(BaseModel):
 
 
 class VisionDetectRequest(BaseModel):
-    """视觉识别请求体"""
+    """Vision detection request."""
     selected_ocr_has_types: list[str] | None = None
-    selected_has_image_types: list[str] | None = None
-    selected_vlm_types: list[str] | None = None
+    selected_visual_feature_types: list[str] | None = None
 
 
 class RedactionReport(BaseModel):
-    """匿名化质量报告"""
+    """Redaction quality report."""
     file_id: str
     filename: str
     total_entities: int
     redacted_entities: int
-    entity_type_distribution: dict[str, int] = Field(default_factory=dict, description="各类型实体数量")
+    entity_type_distribution: dict[str, int] = Field(default_factory=dict, description="Entity counts by type")
     confidence_distribution: dict[str, int] = Field(
         default_factory=dict,
         description="置信度分布：high(>0.8), medium(0.5-0.8), low(<0.5)"
     )
     source_distribution: dict[str, int] = Field(
         default_factory=dict,
-        description="来源分布：llm, regex, manual, has"
+        description="Detection source distribution: ocr_has, visual_features, manual.",
     )
     coverage_rate: float = Field(default=0.0, description="匿名化覆盖率（已匿名化/总识别）")
     redaction_mode: str = ""
@@ -139,7 +138,8 @@ class RedactionReport(BaseModel):
 
 
 class RedactionVersionsResponse(BaseModel):
-    """匿名化版本历史响应"""
+    """Redaction version-history response."""
     file_id: str
     versions: list[dict] = Field(default_factory=list)
     total: int = 0
+

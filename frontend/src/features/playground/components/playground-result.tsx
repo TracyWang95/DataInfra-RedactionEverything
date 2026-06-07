@@ -284,7 +284,7 @@ export const PlaygroundResult: FC<PlaygroundResultProps> = ({
         />
       )}
 
-      <div className="mx-3 flex shrink-0 gap-1 rounded-t-2xl border border-border/60 border-b-0 bg-background px-2 pt-2 md:hidden">
+      <div className="mx-3 flex shrink-0 gap-1 rounded-t-[20px] border border-border/60 border-b-0 bg-background px-2 pt-2 md:hidden">
         {(
           [
             ['original', t('playground.mobile.original')],

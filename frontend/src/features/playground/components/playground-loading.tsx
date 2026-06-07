@@ -47,7 +47,7 @@ export const PlaygroundLoading: FC<PlaygroundLoadingProps> = memo(
         <div
           ref={panelRef}
           tabIndex={-1}
-          className="w-full max-w-md animate-scale-in cursor-default rounded-2xl border border-border/70 bg-[var(--surface-overlay)] px-4 py-3.5 text-left shadow-[var(--shadow-floating)] outline-none"
+          className="w-full max-w-md animate-scale-in cursor-default rounded-[20px] border border-border/70 bg-[var(--surface-overlay)] px-4 py-3.5 text-left shadow-[var(--shadow-floating)] outline-none"
         >
           <div className="mb-3 flex items-start gap-3">
             <div className="mt-0.5 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />

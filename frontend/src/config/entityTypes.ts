@@ -228,7 +228,7 @@ export const ENTITY_GROUPS: EntityGroup[] = [
 
 export const ALL_ENTITY_TYPES: EntityTypeConfig[] = ENTITY_GROUPS.flatMap((group) => group.types);
 
-const HAS_IMAGE_TYPE_IDS = new Set([
+const VISUAL_FEATURE_TYPE_IDS = new Set([
   'face',
   'fingerprint',
   'palmprint',
@@ -265,7 +265,7 @@ function prettifyTypeId(typeId: string) {
 
 export function getEntityGroup(typeId: string): EntityGroup | undefined {
   const canonicalTypeId = normalizeEntityTypeId(typeId);
-  if (HAS_IMAGE_TYPE_IDS.has(canonicalTypeId)) {
+  if (VISUAL_FEATURE_TYPE_IDS.has(canonicalTypeId)) {
     return ENTITY_GROUPS.find((group) => group.id === 'visual_mark');
   }
   return ENTITY_GROUPS.find((group) => group.types.some((type) => type.id === canonicalTypeId));

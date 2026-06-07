@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# file_store accessors – the store lives in the service layer.
+# file_store accessors 鈥?the store lives in the service layer.
 # ---------------------------------------------------------------------------
 
 def get_file_info(file_id: str) -> dict[str, Any] | None:
@@ -46,13 +46,11 @@ async def vision_detect(
     file_id: str,
     page: int,
     ocr_has_types: list[str] | None = None,
-    has_image_types: list[str] | None = None,
-    vlm_types: list[str] | None = None,
+    visual_feature_types: list[str] | None = None,
     include_result_image: bool = False,
     merge_existing: bool = False,
     signature_ocr_has_types: list[str] | None = None,
-    signature_has_image_types: list[str] | None = None,
-    signature_vlm_types: list[str] | None = None,
+    signature_visual_feature_types: list[str] | None = None,
     owner_id: str | None = None,
 ) -> Any:
     """Run dual-pipeline vision detection on a single page."""
@@ -64,15 +62,13 @@ async def vision_detect(
         file_id=file_id,
         page=page,
         selected_ocr_has_types=ocr_has_types,
-        selected_has_image_types=has_image_types,
-        selected_vlm_types=vlm_types,
+        selected_visual_feature_types=visual_feature_types,
         has_request=True,
         include_result_image=include_result_image,
         merge_existing=merge_existing,
         owner_id=owner_id,
         signature_selected_ocr_has_types=signature_ocr_has_types,
-        signature_selected_has_image_types=signature_has_image_types,
-        signature_selected_vlm_types=signature_vlm_types,
+        signature_selected_visual_feature_types=signature_visual_feature_types,
     )
 
 
@@ -92,3 +88,4 @@ async def execute_redaction_request(
         config=config,
     )
     await execute_redaction(req)
+

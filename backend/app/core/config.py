@@ -6,14 +6,21 @@ import json
 import logging
 import os
 import secrets
+import socket
+import subprocess
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse, urlunparse
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+_LOCAL_MODEL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_WSL_URL_CACHE_TTL_SEC = 30.0
+_WSL_URL_CACHE: dict[tuple[str, int], tuple[float, str | None]] = {}
 
 
 def _resolve_local_path(raw: str, *, base_dir: Path = BACKEND_DIR) -> str:
@@ -35,6 +42,75 @@ def _hide_file_windows(path: str) -> None:
         ctypes.windll.kernel32.SetFileAttributesW(path, 0x2)  # type: ignore[union-attr]
     except Exception:
         pass
+
+
+def _tcp_connects(host: str, port: int, timeout: float = 0.35) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _wsl_host_candidates() -> list[str]:
+    candidates: list[str] = []
+    explicit = os.environ.get("WSL_MODEL_HOST", "").strip()
+    if explicit:
+        candidates.append(explicit)
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["wsl.exe", "-e", "bash", "-lc", "hostname -I"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="ignore",
+                text=True,
+                timeout=2.0,
+                check=False,
+            )
+            for token in (result.stdout or "").split():
+                parts = token.split(".")
+                if len(parts) == 4 and all(part.isdigit() for part in parts):
+                    candidates.append(token)
+        except Exception:
+            logging.getLogger(__name__).debug("Unable to resolve WSL host", exc_info=True)
+    seen: set[str] = set()
+    return [item for item in candidates if item and not (item in seen or seen.add(item))]
+
+
+def _url_with_host(base_url: str, host: str) -> str:
+    parsed = urlparse(base_url)
+    netloc = host
+    if parsed.port:
+        netloc = f"{host}:{parsed.port}"
+    return urlunparse((parsed.scheme or "http", netloc, parsed.path.rstrip("/"), "", "", ""))
+
+
+def _resolve_wsl_localhost_url(base_url: str) -> str:
+    base = (base_url or "").rstrip("/")
+    parsed = urlparse(base)
+    host = (parsed.hostname or "").lower()
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if host not in _LOCAL_MODEL_HOSTS:
+        return base
+    if _tcp_connects(parsed.hostname or host, port):
+        return base
+
+    cache_key = (base, port)
+    now = time.monotonic()
+    cached = _WSL_URL_CACHE.get(cache_key)
+    if cached and now - cached[0] <= _WSL_URL_CACHE_TTL_SEC:
+        return cached[1] or base
+
+    for candidate in _wsl_host_candidates():
+        if _tcp_connects(candidate, port):
+            resolved = _url_with_host(base, candidate)
+            _WSL_URL_CACHE[cache_key] = (now, resolved)
+            logging.getLogger(__name__).info("Resolved local model service %s through WSL host %s", base, candidate)
+            return resolved
+
+    _WSL_URL_CACHE[cache_key] = (now, None)
+    return base
 
 
 def _load_or_create_jwt_secret(data_dir: str) -> str:
@@ -114,27 +190,40 @@ class Settings(BaseSettings):
     DATA_DIR: str = "./data"
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB
     ALLOWED_EXTENSIONS: list[str] = [
-        # 文本类
-        ".doc", ".docx", ".txt", ".rtf", ".md", ".html", ".htm",
+        # Documents
+        ".doc",
+        ".docx",
+        ".txt",
+        ".rtf",
+        ".md",
+        ".html",
+        ".htm",
         # PDF
         ".pdf",
-        # 图像类
-        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff",
+        # Images
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".bmp",
+        ".gif",
+        ".webp",
+        ".tif",
+        ".tiff",
     ]
 
-    # HaS Image YOLO 微服务（独立进程，端口 8081，与 PaddleOCR 8082 同级）
-    HAS_IMAGE_BASE_URL: str = "http://127.0.0.1:8081"
-    HAS_IMAGE_TIMEOUT: float = 120.0
-    HAS_IMAGE_CONF: float = 0.25
-
-    # OpenAI-compatible VLM service for checklist-driven visual features.
-    VLM_BASE_URL: str = "http://127.0.0.1:8090"
-    VLM_MODEL_NAME: str = "GLM-4.6V-Flash-Q4"
-    VLM_TIMEOUT: float = 60.0
-    VLM_COORD_MODE: int = 1000
-    VLM_MAX_IMAGE_SIDE: int = 1024
-    VLM_SIGNATURE_MAX_IMAGE_SIDE: int = 640
-    VLM_CONCURRENCY: int = 1
+    # LocateAnything visual feature service
+    VISUAL_FEATURES_BASE_URL: str = "http://127.0.0.1:8090"
+    VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
+    VISUAL_FEATURES_TIMEOUT: float = 240.0
+    VISUAL_FEATURES_CONF: float = 0.25
+    VISUAL_FEATURES_COORD_MODE: int = 1000
+    VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
+    VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
+    VISUAL_FEATURES_CONCURRENCY: int = 1
+    LOCATE_ANYTHING_MAX_NEW_TOKENS: int = 8192
+    LOCATE_ANYTHING_MAX_IMAGE_SIDE: int = 1408
+    LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
+    LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE: int = 1280
 
     # 本地持久化（空串 = 跟随 DATA_DIR 自动派生，见 model_validator）
     FILE_STORE_PATH: str = ""
@@ -146,13 +235,13 @@ class Settings(BaseSettings):
 
     # PaddleOCR-VL 微服务配置（独立进程，端口8082）
     OCR_BASE_URL: str = "http://127.0.0.1:8082"
-    # VL 推理常 >120s（大图/CPU/显卡繁忙时）；可用环境变量 OCR_TIMEOUT 覆盖
+    # VL 推理常 >120s（大图 CPU/显卡繁忙时）；可用环境变量 OCR_TIMEOUT 覆盖
     OCR_TIMEOUT: float = 360.0
     # PaddleOCR-VL generation budget. Long scanned contract pages can exceed
     # 512 tokens; keep this configurable so accuracy and latency can be tuned
     # per GPU.
-    OCR_MAX_NEW_TOKENS: int = 1024
-    # 主后端探测 OCR /health 的超时（秒）；首启加载模型较慢，过短会误显示「离线」
+    OCR_MAX_NEW_TOKENS: int = 2048
+    # 主后端探测 OCR /health 的超时（秒）；首次加载模型较慢，过短会被显示「离线」
     OCR_HEALTH_PROBE_TIMEOUT: float = 5.0
     BATCH_RECOGNITION_PAGE_TIMEOUT: float = 180.0
     # Per-file page-level concurrency for vision recognition. This is not batch
@@ -161,21 +250,30 @@ class Settings(BaseSettings):
     # count, and the validator below clamps operator overrides to 1..4. Lower
     # this to 1 when GPU memory is already above 90% or model services are cold.
     BATCH_RECOGNITION_PAGE_CONCURRENCY: int = 2
-    # Run OCR+HaS and HaS Image sequentially by default. On a single shared GPU,
-    # parallel page-internal inference has higher tail latency in practice.
-    VISION_DUAL_PIPELINE_PARALLEL: bool = True
+    # Single-GPU safety: OCR/HaS and LocateAnything run SEQUENTIALLY. On one GPU,
+    # running both heavy VLMs at once causes ~5-10x slowdown from contention
+    # (measured: 54s parallel vs ~10s serial on one file).
     SERIALIZE_SHARED_GPU_MODELS: bool = True
-    # PP-StructureV3 table fallback exposed by the same OCR microservice.
-    # It is slower than PaddleOCR-VL, so the backend only calls it for pages
-    # that look table-heavy or where VL produced too few text boxes.
+    # PaddleOCR-VL toggle. Dropped from the default deployment: when false the
+    # backend never calls the VL /ocr endpoint and routes all OCR through
+    # PP-StructureV3 (the current, faster, more precise path).
+    OCR_VL_ENABLED: bool = False
+    # PP-StructureV3 is the document OCR/layout path now that PaddleOCR-VL is
+    # dropped. Keep enabled.
     OCR_STRUCTURE_ENABLED: bool = True
     OCR_STRUCTURE_MIN_VL_BOXES: int = 12
-    # For document redaction, PP-StructureV3 is usually much faster and returns
-    # tighter OCR text boxes than PaddleOCR-VL. Use it as the primary text OCR
-    # path, then fall back to VL only when the result is too sparse or visual
-    # regions such as seals are explicitly needed from OCR.
+    # PP-StructureV3 is the primary (and only) document OCR path. The VL fusion
+    # supplement below stays off unless VL is re-enabled.
     OCR_STRUCTURE_PRIMARY: bool = True
     OCR_STRUCTURE_PRIMARY_MIN_BOXES: int = 8
+    OCR_MAX_IMAGE_SIDE: int = 2048
+    # When PP-StructureV3 already returns enough text boxes, use it directly by
+    # default. Enable this only when tighter PaddleOCR-VL text fusion is worth
+    # the extra GPU pass on the current hardware.
+    OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL: bool = False
+    # Use PP-StructureV3 as a short-field precision supplement for OCR/HaS
+    # semantic detection. Disabled by default to keep the OCR path VL-only.
+    OCR_STRUCTURE_TEXT_PRECISION_ENABLED: bool = False
     OCR_TEXT_BLOCK_CACHE_TTL_SEC: float = 300.0
     OCR_TEXT_BLOCK_CACHE_MAX_ITEMS: int = 128
     OCR_REQUIRE_VL_FOR_VISUAL_REGIONS: bool = False
@@ -194,16 +292,20 @@ class Settings(BaseSettings):
     HAS_TEXT_VLLM_BASE_URL: str = "http://127.0.0.1:8080/v1"
     HAS_TEXT_MODEL_NAME: str = ""
     HAS_TIMEOUT: float = 120.0
-    HAS_NER_CONTEXT_TOKENS: int = 16352
-    HAS_NER_MAX_TOKENS: int = 12800
+    HAS_NER_CONTEXT_TOKENS: int = 8192
+    HAS_NER_MAX_TOKENS: int = 8192
     HAS_NER_MAX_TYPES_PER_REQUEST: int = 12
     HAS_NER_CUSTOM_MAX_TYPES_PER_REQUEST: int = 16
     HAS_NER_TYPE_BATCH_TARGET_TOKENS: int = 900
-    HAS_NER_SINGLE_PASS_MAX_TYPES: int = 12
+    HAS_NER_SINGLE_PASS_MAX_TYPES: int = 96
+    HAS_NER_SINGLE_PASS_MAX_TEXT_CHARS: int = 1600
     HAS_NER_MAX_PARALLEL_REQUESTS: int = 4
     HAS_NER_BUILTIN_GUIDANCE_ENABLED: bool = False
     HAS_NER_CACHE_TTL_SEC: float = 300.0
     HAS_NER_CACHE_MAX_ITEMS: int = 256
+    # Structured table profiling uses HaS only as an enrichment layer. Keep it
+    # short so a cold or busy text model cannot block table review and delivery.
+    STRUCTURED_HAS_TIMEOUT: float = 6.0
     # Keep HaS Text OCR requests bounded. Scanned PDFs can produce coarse page
     # aggregates; HaS still decides semantics, but the backend should not send
     # unbounded OCR text into a cold local NER queue.
@@ -213,7 +315,7 @@ class Settings(BaseSettings):
     # OCR pages before sending them to HaS Text.
     HAS_VISION_MIN_TEXT_CHARS_FOR_NER: int = 1
 
-    # 兼容旧环境变量 HAS_BASE_URL
+    # 鍏煎鏃х幆澧冨彉閲?HAS_BASE_URL
     HAS_BASE_URL: str | None = None
 
     # 认证配置（JWT_SECRET_KEY 若未通过环境变量指定，则自动持久化到 data 目录）
@@ -240,6 +342,16 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_ocr_max_new_tokens(cls, v: int) -> int:
         return max(128, min(4096, v))
+
+    @field_validator("OCR_MAX_IMAGE_SIDE")
+    @classmethod
+    def _validate_ocr_max_image_side(cls, v: int) -> int:
+        return max(640, min(4096, v))
+
+    @field_validator("LOCATE_ANYTHING_MAX_IMAGE_SIDE")
+    @classmethod
+    def _validate_locate_anything_max_image_side(cls, v: int) -> int:
+        return max(640, min(4096, v))
 
     @field_validator("PDF_TEXT_LAYER_MIN_CHARS")
     @classmethod
@@ -280,6 +392,11 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_has_ner_single_pass_max_types(cls, v: int) -> int:
         return max(1, min(128, v))
+
+    @field_validator("HAS_NER_SINGLE_PASS_MAX_TEXT_CHARS")
+    @classmethod
+    def _validate_has_ner_single_pass_max_text_chars(cls, v: int) -> int:
+        return max(128, min(16384, v))
 
     @field_validator("HAS_NER_MAX_PARALLEL_REQUESTS")
     @classmethod
@@ -345,7 +462,7 @@ class Settings(BaseSettings):
     # 文件加密（默认关闭；启用后上传文件 AES-256-GCM 加密落盘）
     FILE_ENCRYPTION_ENABLED: bool = False
 
-    # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
+    # 鐥呮瘨鎵弿锛堥渶 ClamAV daemon 鍦?CLAMD_HOST:CLAMD_PORT 鐩戝惉锛?
     VIRUS_SCAN_ENABLED: bool = False
 
     # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）
@@ -373,7 +490,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _derive_paths_and_secrets(self) -> "Settings":
-        """在所有字段（含环境变量覆盖）解析完毕后，派生依赖 DATA_DIR 的路径。"""
+        """Derive repo-local paths after environment overrides are parsed."""
         self.DATA_DIR = _resolve_local_path(self.DATA_DIR)
         self.UPLOAD_DIR = _resolve_local_path(self.UPLOAD_DIR)
         self.OUTPUT_DIR = _resolve_local_path(self.OUTPUT_DIR)
@@ -417,12 +534,13 @@ class Settings(BaseSettings):
         env_file=str(BACKEND_DIR / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
     )
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """获取配置单例"""
+    """Return cached settings."""
     return Settings()
 
 
@@ -430,28 +548,28 @@ settings = get_settings()
 
 
 def get_has_chat_base_url() -> str:
-    """NER 使用的 OpenAI 兼容 API 根路径（…/v1）。"""
+    """Return the OpenAI-compatible base URL used by HaS Text."""
     s = get_settings()
     if s.HAS_TEXT_RUNTIME.strip().lower() == "vllm":
-        return s.HAS_TEXT_VLLM_BASE_URL.rstrip("/")
+        return _resolve_wsl_localhost_url(s.HAS_TEXT_VLLM_BASE_URL)
     if s.HAS_BASE_URL:
-        return s.HAS_BASE_URL.rstrip("/")
+        return _resolve_wsl_localhost_url(s.HAS_BASE_URL)
     if s.HAS_LLAMACPP_BASE_URL:
-        return s.HAS_LLAMACPP_BASE_URL.rstrip("/")
+        return _resolve_wsl_localhost_url(s.HAS_LLAMACPP_BASE_URL)
     from app.core.ner_runtime import load_ner_runtime
     rt = load_ner_runtime()
     if rt is not None:
-        return rt.llamacpp_base_url.rstrip("/")
-    return "http://127.0.0.1:8080/v1"
+        return _resolve_wsl_localhost_url(rt.llamacpp_base_url)
+    return _resolve_wsl_localhost_url("http://127.0.0.1:8080/v1")
 
 
 def get_has_health_check_url() -> str:
-    """健康检查 URL（llama.cpp /v1/models）。"""
+    """Return the HaS Text health check URL."""
     return f"{get_has_chat_base_url()}/models"
 
 
 def get_has_display_name() -> str:
-    """侧栏 /health/services 中文本 NER 展示名。"""
+    """Return the display name used by /health/services."""
     import os
     custom = (os.environ.get("HAS_NER_DISPLAY_NAME") or "").strip()
     if custom:

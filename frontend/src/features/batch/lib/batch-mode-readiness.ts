@@ -28,8 +28,7 @@ export function getBatchModeReadiness(
   const textReady = isServiceUsable(health.services.has_ner.status);
   const visionReady =
     isServiceUsable(health.services.paddle_ocr.status) ||
-    isServiceUsable(health.services.has_image.status) ||
-    isServiceUsable(health.services.vlm?.status ?? 'offline');
+    isServiceUsable(health.services.visual_features.status);
 
   if (mode === 'text') {
     return textReady ? { ready: true, reason: null } : { ready: false, reason: 'text_model' };

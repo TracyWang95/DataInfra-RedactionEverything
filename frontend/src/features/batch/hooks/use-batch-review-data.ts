@@ -167,13 +167,13 @@ function normalizeReviewBox(
 
 export function sanitizeReviewBoxSelection(
   box: EditorBox,
-  cfg: Pick<BatchWizardPersistedConfig, 'hasImageTypes'>,
+  cfg: Pick<BatchWizardPersistedConfig, 'visualFeatureTypes'>,
 ): EditorBox {
   const type = String(box.type ?? '');
   if (
-    box.source === 'has_image' &&
-    isDefaultExcludedPipelineTypeId('has_image', type) &&
-    !cfg.hasImageTypes.includes(type)
+    box.source === 'visual_features' &&
+    isDefaultExcludedPipelineTypeId('visual_features', type) &&
+    !cfg.visualFeatureTypes.includes(type)
   ) {
     return { ...box, selected: false };
   }
@@ -502,7 +502,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
           const pageCountFromInfo = normalizePage(info.page_count, 1);
           const boxes = raw
             .map((box, index) => normalizeReviewBox(box, index, 1))
-            .map((box) => sanitizeReviewBoxSelection(box, { hasImageTypes: cfg.hasImageTypes }));
+            .map((box) => sanitizeReviewBoxSelection(box, { visualFeatureTypes: cfg.visualFeatureTypes }));
           const maxBoxPage = boxes.reduce(
             (max, box) => Math.max(max, normalizePage(box.page, 1)),
             1,
@@ -604,7 +604,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
     },
     [
       activeJobId,
-      cfg.hasImageTypes,
+      cfg.visualFeatureTypes,
       cfg.replacementMode,
       isPreviewMode,
       itemIdByFileIdRef,
@@ -699,8 +699,9 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     selected_ocr_has_types: cfg.ocrHasTypes,
-                    selected_has_image_types: cfg.hasImageTypes,
-                    selected_vlm_types: cfg.vlmTypes ?? [],
+                    selected_visual_feature_types: Array.from(
+                      new Set([...cfg.visualFeatureTypes, ...(cfg.visualFeatureTypes ?? [])]),
+                    ),
                   }),
                   signal: controller.signal,
                 },
@@ -802,8 +803,8 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
     reviewTotalPages,
     cfg.selectedEntityTypeIds,
     cfg.ocrHasTypes,
-    cfg.hasImageTypes,
-    cfg.vlmTypes,
+    cfg.visualFeatureTypes,
+    cfg.visualFeatureTypes,
     cfg.replacementMode,
     reviewDraftDirtyRef,
     setMsg,

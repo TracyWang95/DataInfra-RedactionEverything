@@ -25,6 +25,10 @@ function asPngDataUrl(imageBase64: string | undefined): string {
   return imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`;
 }
 
+function isTiffFilename(filename: string | undefined): boolean {
+  return /\.(?:tif|tiff)$/i.test(filename || '');
+}
+
 export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
   const { fileInfo, redactionVersion = 0, showRedactedPreview } = options;
 
@@ -54,6 +58,9 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
     !!fileInfo &&
     (fileInfo.file_type === 'pdf_scanned' ||
       (fileInfo.file_type === 'pdf' && !!fileInfo.is_scanned));
+  const isTiffImageMode =
+    !!fileInfo && fileInfo.file_type === 'image' && isTiffFilename(fileInfo.filename);
+  const needsBrowserSafeImagePreview = isScannedPdfMode || isTiffImageMode;
   const shouldLoadRedactedPreview = showRedactedPreview ?? redactionVersion > 0;
   const visibleBoxes = boundingBoxes.filter((box) => Number(box.page || 1) === currentPage);
 
@@ -167,10 +174,9 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
       const key = `${fileId}:${page}`;
       if (pageImageCacheRef.current.has(key)) return;
       if (pageImageRequestRef.current.has(key)) return;
-      loadOriginalPreviewPage(fileId, page)
-        .catch(() => {
-          /* silent prefetch failure */
-        });
+      loadOriginalPreviewPage(fileId, page).catch(() => {
+        /* silent prefetch failure */
+      });
     },
     [loadOriginalPreviewPage, totalPages],
   );
@@ -219,7 +225,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
       return;
     }
 
-    if (isScannedPdfMode && fileInfo) {
+    if (needsBrowserSafeImagePreview && fileInfo) {
       const cacheKey = `${fileInfo.file_id}:${currentPage}`;
       const cached = pageImageCacheRef.current.get(cacheKey);
       if (cached) {
@@ -240,8 +246,9 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
           scheduleNeighborPrefetch(fileInfo.file_id, currentPage);
         })
         .catch(() => {
-          // PDF download URL can't render in <img>, so keep the previous page's
-          // image instead of falling back and showing a broken-image icon.
+          // PDF page renders and TIFF browser-safe previews are already the
+          // fallback path. Keep the previous image instead of showing a broken
+          // image icon when preview rendering fails.
         });
       return () => {
         cancelled = true;
@@ -269,7 +276,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
     };
   }, [
     imageUrlRaw,
-    isScannedPdfMode,
+    needsBrowserSafeImagePreview,
     fileInfo,
     currentPage,
     scheduleNeighborPrefetch,
@@ -289,7 +296,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
       return;
     }
 
-    if (isScannedPdfMode) {
+    if (needsBrowserSafeImagePreview) {
       const selectedPageBoxes = boundingBoxes
         .filter((box) => Number(box.page || 1) === currentPage && box.selected !== false)
         .map((box) => ({
@@ -297,12 +304,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
           page: Number(box.page || currentPage),
         }));
 
-      loadRedactedPreviewPage(
-        fileInfo.file_id,
-        currentPage,
-        selectedPageBoxes,
-        redactionVersion,
-      )
+      loadRedactedPreviewPage(fileInfo.file_id, currentPage, selectedPageBoxes, redactionVersion)
         .then((resolved) => {
           if (!cancelled) {
             setRedactedImageUrl(resolved);
@@ -353,6 +355,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
   }, [
     fileInfo,
     isScannedPdfMode,
+    needsBrowserSafeImagePreview,
     boundingBoxes,
     currentPage,
     redactionVersion,
@@ -423,21 +426,11 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
     async (
       fileId: string,
       ocrHasTypes: string[],
-      hasImageTypes: string[],
-      vlmTypesOrSetIsLoading: unknown,
-      setIsLoadingOrSetLoadingMessage?: unknown,
-      maybeSetLoadingMessage?: (v: string) => void,
+      visualFeatureTypes: string[],
+      setIsLoading: (v: boolean) => void,
+      setLoadingMessage: (v: string) => void,
     ) => {
       if (visionAbortRef.current) return;
-      const hasExplicitVlmTypes = Array.isArray(vlmTypesOrSetIsLoading);
-      const vlmTypes = hasExplicitVlmTypes ? vlmTypesOrSetIsLoading : [];
-      const setIsLoading = (
-        hasExplicitVlmTypes ? setIsLoadingOrSetLoadingMessage : vlmTypesOrSetIsLoading
-      ) as ((v: boolean) => void) | undefined;
-      const setLoadingMessage = (
-        hasExplicitVlmTypes ? maybeSetLoadingMessage : setIsLoadingOrSetLoadingMessage
-      ) as ((v: string) => void) | undefined;
-      if (!setIsLoading || !setLoadingMessage) return;
       const controller = new AbortController();
       visionAbortRef.current = controller;
       const previousBoxes = boundingBoxesRef.current;
@@ -449,8 +442,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
         const { boxes: nextBoxes, totalBoxes } = await runVisionDetectionPages({
           fileId,
           ocrHasTypes,
-          hasImageTypes,
-          vlmTypes,
+          visualFeatureTypes,
           totalPages: pages,
           signal: controller.signal,
           force: true,
@@ -498,7 +490,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
       popoutChannelRef.current?.close();
       const ch = new BroadcastChannel('playground-image-popout');
       popoutChannelRef.current = ch;
-      const popoutImageUrl = isScannedPdfMode ? imageUrl : imageUrlRaw;
+      const popoutImageUrl = needsBrowserSafeImagePreview ? imageUrl : imageUrlRaw;
 
       const sendInit = () => {
         ch.postMessage({
@@ -564,7 +556,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
       }, 1000);
     },
     [
-      isScannedPdfMode,
+      needsBrowserSafeImagePreview,
       imageUrl,
       imageUrlRaw,
       visibleBoxes,
@@ -592,9 +584,9 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
     if (!channel) return;
     channel.postMessage({
       type: 'image-update',
-      imageUrl: isScannedPdfMode ? imageUrl : imageUrlRaw || imageUrl,
+      imageUrl: needsBrowserSafeImagePreview ? imageUrl : imageUrlRaw || imageUrl,
     });
-  }, [imageUrlRaw, imageUrl, isScannedPdfMode]);
+  }, [imageUrlRaw, imageUrl, needsBrowserSafeImagePreview]);
 
   return {
     boundingBoxes,

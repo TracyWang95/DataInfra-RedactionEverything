@@ -1,12 +1,12 @@
 """
-娣峰悎NER璇嗗埆鏈嶅姟
-涓夐樁娈垫灦鏋勶細HaS锛堟湰鍦版ā鍨嬶級 鈫?姝ｅ垯 鈫?浜ゅ弶楠岃瘉
+混合NER识别服务
+三阶段架构：HaS（本地模型） → 正则 → 交叉验证
 
-鏍稿績鐗圭偣锛?
-1. HaS 浼樺厛锛氫娇鐢ㄦ湰鍦?HaS 妯″瀷杩涜璇箟 NER
-2. 姝ｅ垯琛ュ厖锛氶珮缃俊搴︽ā寮忓尮閰嶏紙韬唤璇併€佹墜鏈哄彿绛夛級
-3. 鎸囦唬娑堣В锛氬悓涓€瀹炰綋缁熶竴鏍囪
-4. 浜ゅ弶楠岃瘉锛氬幓閲嶅悎骞讹紝鎻愰珮鍑嗙‘鐜?
+核心特点：
+1. HaS 优先：使用本地 HaS 模型进行语义 NER
+2. 正则补充：高置信度模式匹配（身份证、手机号等）
+3. 指代消解：同一实体统一标识
+4. 交叉验证：去重合并，提高准确率
 """
 
 import logging
@@ -22,13 +22,13 @@ from app.models.schemas import Entity
 from app.models.type_mapping import canonical_type_id, linkage_groups_for_type
 from app.services.has_service import HaSService, has_service
 
-# 绫诲瀷鍒悕锛屽吋瀹?EntityTypeConfig 鍜?CustomEntityType
-EntityTypeConfig = Any  # 鍙渶瑕?id, name, regex_pattern, use_llm 绛夊瓧娈?
+# 绫诲瀷鍒悕锛屽吋瀹?EntityTypeConfig 鍜?CustomEntityType
+EntityTypeConfig = Any  # 鍙渶瑕?id, name, regex_pattern, use_llm 绛夊瓧娈?
 
 
 @dataclass
 class HybridEntity:
-    """娣峰悎璇嗗埆瀹炰綋"""
+    """混合识别实体"""
     id: str
     text: str
     type: str
@@ -36,8 +36,8 @@ class HybridEntity:
     end: int
     confidence: float
     source: str  # regex / has
-    tag: str | None = None  # HaS鏍煎紡鏍囩
-    coref_id: str | None = None  # 鎸囦唬娑堣ВID
+    tag: str | None = None  # HaS格式标签
+    coref_id: str | None = None  # 指代消解ID
 
 
 @dataclass(frozen=True)
@@ -47,18 +47,18 @@ class _HaSChunk:
 
 
 _ORG_ALIAS_SUFFIX_RE = re.compile(
-    r"(?:鏈夐檺璐ｄ换鍏徃|鑲′唤鏈夐檺鍏徃|鏈夐檺鍏徃|鍒嗗叕鍙竱鍏徃|闆嗗洟|淇濋櫓|閾惰|鏀|浜烘皯娉曢櫌|娉曢櫌|鍖婚櫌|寰嬪笀浜嬪姟鎵€)$"
+    r"(?:有限责任公司|股份有限公司|有限公司|分公司|公司|集团|保险|银行|支行|人民法院|法院|医院|律师事务所)$"
 )
 _ORG_ALIAS_GENERIC_WORD_RE = re.compile(
-    r"(?:涓浗|涓崕|鐪亅甯倈鍖簗鍘縷鏈夐檺璐ｄ换|鑲′唤|鏈夐檺|鍏徃|鍒嗗叕鍙竱闆嗗洟|鎺ц偂|"
-    r"绉戞妧|鎶€鏈瘄璐告槗|瀹炰笟|璐骇|淇濋櫓|閾惰|鏀|浜烘皯|娉曢櫌|鍖婚櫌|寰嬪笀|浜嬪姟鎵€)"
+    r"(?:中国|中华|省|市|区|县|有限责任|股份|有限|公司|分公司|集团|控股|"
+    r"科技|技术|贸易|实业|资产|保险|银行|支行|人民|法院|医院|律师|事务所)"
 )
 
 
 class HybridNERService:
     """HaS-first NER service with optional user-defined fallback."""
 
-    # NER 鏂囨湰闀垮害涓婇檺锛岃秴杩囨鍊兼埅鏂互闃叉鍐呭瓨/鏃堕棿鐖嗙偢
+    # NER 文本长度上限，超过此值截断以防止内存/时间爆炸
     MAX_TEXT_LENGTH = 500_000
 
     # HaS Text owns L3 semantic text entities by default. L1/L2 metadata is
@@ -183,13 +183,13 @@ class HybridNERService:
         entity_types: list[EntityTypeConfig],
     ) -> list[Entity]:
         """
-        娣峰悎璇嗗埆涓诲叆鍙ｏ紙HaS 浠呬娇鐢?NER 鍗曟鎺ㄧ悊锛汬ide 妯″紡宸茬Щ闄わ級
+        混合识别主入口（HaS 仅使用 NER 单次推理；Hide 模式已移除）
         """
         import time as _time
         _t0 = _time.perf_counter()
         all_entities: list[Entity] = []
 
-        # 鏂囨湰闀垮害淇濇姢 鈥?truncate to prevent OOM/timeout but warn clearly
+        # 文本长度保护 — truncate to prevent OOM/timeout but warn clearly
         original_length = len(text)
         if original_length > self.MAX_TEXT_LENGTH:
             logger.warning(
@@ -239,12 +239,12 @@ class HybridNERService:
         else:
             logger.info("Stage 2: user-defined regex skipped")
 
-        # Stage 3: 浜ゅ弶楠岃瘉 + 鎸囦唬娑堣В
+        # Stage 3: 交叉验证 + 指代消解
         logger.info("Stage 3: validation and coreference...")
         validated_entities = self._cross_validate(all_entities, text, enabled_type_ids)
         logger.info("  Kept %d entities after validation", len(validated_entities))
 
-        # Prometheus: NER 寤惰繜 + 瀹炰綋鏁?
+        # Prometheus: NER 延迟 + 实体数
         from app.core.metrics import NER_DURATION, NER_ENTITY_COUNT
         NER_DURATION.labels(backend="hybrid").observe(_time.perf_counter() - _t0)
         NER_ENTITY_COUNT.observe(len(validated_entities))
@@ -526,7 +526,7 @@ class HybridNERService:
             return []
         enabled_type_ids = enabled_type_ids or set()
 
-        # 1. 楠岃瘉瀹炰綋鏂囨湰鏄惁鍦ㄥ師鏂囦腑姝ｇ‘浣嶇疆
+        # 1. 验证实体文本是否在原文中正确位置
         semantic_type_ids = self.HAS_SEMANTIC_TYPE_IDS
         entities = sorted(
             entities,
@@ -548,7 +548,7 @@ class HybridNERService:
                     used_positions.add((entity.start, entity.end))
                     continue
 
-            # 灏濊瘯閲嶆柊瀹氫綅锛堥伩寮€宸插崰鐢ㄤ綅缃級
+            # 尝试重新定位（避开已占用位置）
             start_index = 0
             while True:
                 found = text.find(entity.text, start_index)
@@ -566,7 +566,7 @@ class HybridNERService:
                     break
                 start_index = found + len(entity.text)
 
-        # 2. 鍘婚噸锛堜紭鍏堜繚鐣欓珮缃俊搴︿笌姝ｅ垯缁撴灉锛?
+        # 2. 去重（优先保留高置信度与正则结果）
         def source_rank(source: str | None) -> int:
             order = {"regex": 3, "has": 2, "llm": 2, "manual": 1}
             return order.get(source or "", 0)
@@ -646,7 +646,7 @@ class HybridNERService:
                 text_type_to_coref[key] = f"coref_{coref_counter:03d}"
             entity.coref_id = text_type_to_coref[key]
 
-        # 4. 鎸変綅缃帓搴忓苟閲嶆柊鍒嗛厤ID
+        # 4. 按位置排序并重新分配ID
         deduped.sort(key=lambda e: e.start)
         for i, entity in enumerate(deduped):
             entity.id = f"entity_{i}"
@@ -951,17 +951,17 @@ class HybridNERService:
     @staticmethod
     def _org_suffix_family(text: str) -> str | None:
         compact = HybridNERService._compact_org_name(text)
-        if "娉曢櫌" in compact or "妫€瀵熼櫌" in compact:
+        if "法院" in compact or "检察院" in compact:
             return "judicial"
-        if "鍖婚櫌" in compact:
+        if "医院" in compact:
             return "medical"
-        if "寰嬪笀浜嬪姟鎵€" in compact or compact.endswith("浜嬪姟鎵€"):
+        if "律师事务所" in compact or compact.endswith("事务所"):
             return "law_firm"
-        if "閾惰" in compact or "鏀" in compact:
+        if "閾惰" in compact or "鏀" in compact:
             return "bank"
         if "淇濋櫓" in compact:
             return "insurance"
-        if any(suffix in compact for suffix in ("鍏徃", "闆嗗洟", "鏈夐檺", "鑲′唤")):
+        if any(suffix in compact for suffix in ("公司", "集团", "有限", "股份")):
             return "company"
         return None
 
@@ -984,7 +984,7 @@ class HybridNERService:
         return matched / len(short_text)
 
 
-# 鍏ㄥ眬鏈嶅姟瀹炰緥
+# 全局服务实例
 hybrid_ner_service = HybridNERService()
 
 

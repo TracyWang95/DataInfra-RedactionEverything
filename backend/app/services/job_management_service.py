@@ -317,6 +317,36 @@ def _safe_entity_count(info: dict[str, Any] | None) -> int:
         return 0
 
 
+def _is_structured_job(row_or_type: dict[str, Any] | str | None) -> bool:
+    if isinstance(row_or_type, dict):
+        row_or_type = row_or_type.get("job_type")
+    return str(row_or_type or "") == JobType.STRUCTURED_BATCH.value
+
+
+def _structured_file_meta(
+    file_id: str,
+    *,
+    owner_id: str | None,
+    job_id: str | None = None,
+) -> dict[str, Any] | None:
+    if not owner_id:
+        return None
+    try:
+        from app.services.structured_service import structured_item_meta
+        from app.services.structured_store import get_structured_store
+
+        meta = structured_item_meta(file_id, owner_id=owner_id)
+        if not meta:
+            return None
+        if job_id:
+            exports = get_structured_store().list_exports(owner_id=owner_id, job_id=job_id)
+            meta["has_output"] = any(str(export.get("dataset_id")) == file_id for export in exports)
+        return meta
+    except Exception:
+        logger.warning("structured dataset metadata unavailable for dataset %s", file_id, exc_info=True)
+        return None
+
+
 def lock_job_config(store: JobStore, job_id: str, row: dict[str, Any] | None = None) -> dict[str, Any]:
     """Persist immutable config metadata before a job leaves draft state."""
     current_row = row or store.get_job(job_id)
@@ -340,10 +370,18 @@ def lock_job_config(store: JobStore, job_id: str, row: dict[str, Any] | None = N
     return cfg
 
 
-def file_meta_for_item(file_id: str) -> dict[str, Any]:
+def file_meta_for_item(
+    file_id: str,
+    *,
+    owner_id: str | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
     """Get file metadata for a job item."""
     info, metadata_warning = _safe_file_info(file_id)
     if not info:
+        structured_meta = _structured_file_meta(file_id, owner_id=owner_id, job_id=job_id)
+        if structured_meta:
+            return structured_meta
         return {
             "filename": None,
             "file_type": None,
@@ -364,9 +402,9 @@ def file_meta_for_item(file_id: str) -> dict[str, Any]:
     }
 
 
-def item_to_out(row: dict[str, Any]) -> dict[str, Any]:
+def item_to_out(row: dict[str, Any], *, owner_id: str | None = None, job_id: str | None = None) -> dict[str, Any]:
     """Convert a job item row to output dict with file metadata."""
-    file_meta = file_meta_for_item(str(row["file_id"]))
+    file_meta = file_meta_for_item(str(row["file_id"]), owner_id=owner_id, job_id=job_id or str(row["job_id"]))
     return {
         "id": row["id"],
         "job_id": row["job_id"],
@@ -405,6 +443,22 @@ def _nav_review_confirmed(item: dict[str, Any], has_output: bool, skip_item_revi
 def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
     """Build job summary dict including progress and nav hints."""
     items = store.list_items(row["id"])
+    is_structured = _is_structured_job(row)
+    structured_export_dataset_ids: set[str] = set()
+    if is_structured:
+        try:
+            from app.services.structured_store import get_structured_store
+
+            structured_export_dataset_ids = {
+                str(export.get("dataset_id"))
+                for export in get_structured_store().list_exports(
+                    owner_id=str(row.get("owner_id") or "local_user"),
+                    job_id=str(row["id"]),
+                )
+                if export.get("dataset_id")
+            }
+        except Exception:
+            logger.debug("unable to read structured exports for job %s", row["id"], exc_info=True)
     first_awaiting: str | None = None
     redacted_count = 0
     reviewable_count = 0
@@ -415,10 +469,15 @@ def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
     for i in items:
         fid = str(i["file_id"])
         status = _status_value(i.get("status"))
-        info, metadata_warning = _safe_file_info(fid)
-        if metadata_warning == "file_metadata_unavailable":
-            metadata_degraded_count += 1
-        has_output, redacted_skip_reason = _redacted_output_state(info)
+        if is_structured:
+            metadata_warning = None
+            has_output = status == JobItemStatus.COMPLETED.value or fid in structured_export_dataset_ids
+            redacted_skip_reason = None if has_output else "missing_structured_export"
+        else:
+            info, metadata_warning = _safe_file_info(fid)
+            if metadata_warning == "file_metadata_unavailable":
+                metadata_degraded_count += 1
+            has_output, redacted_skip_reason = _redacted_output_state(info)
         if has_output:
             redacted_count += 1
         if status in REVIEWABLE_ITEM_STATUSES:
@@ -674,7 +733,8 @@ def create_job(store: JobStore, job_type_str: str, title: str, config: Any,
         owner_id=owner_id,
     )
     row = store.get_job(jid)
-    assert row
+    if not row:
+        raise RuntimeError("internal invariant: row is unexpectedly missing")
     return job_to_summary(row, store)
 
 
@@ -737,10 +797,14 @@ def get_job_detail(store: JobStore, job_id: str, owner_id: str | None = None) ->
     """Get full job detail with items. Raises ValueError if not found."""
     row = store.get_job(job_id)
     assert_job_owner(row, owner_id)
-    assert row
+    if not row:
+        raise RuntimeError("internal invariant: row is unexpectedly missing")
     items = store.list_items(job_id)
     base = job_to_summary(row, store)
-    base["items"] = [item_to_out(i) for i in items]
+    base["items"] = [
+        item_to_out(i, owner_id=str(row.get("owner_id") or owner_id or "local_user"), job_id=job_id)
+        for i in items
+    ]
     return base
 
 
@@ -881,7 +945,7 @@ def _empty_visual_evidence() -> dict[str, Any]:
     return {
         "total_boxes": 0,
         "selected_boxes": 0,
-        "has_image_model": 0,
+        "visual_feature_model": 0,
         "local_fallback": 0,
         "ocr_has": 0,
         "table_structure": 0,
@@ -927,8 +991,10 @@ def _visual_evidence_summary(info: dict[str, Any] | None) -> dict[str, Any]:
         elif isinstance(warnings, str):
             _increment_counter(evidence["warnings_by_key"], warnings)
 
-        if evidence_source == "has_image_model" or (source == "has_image" and "fallback" not in source_marker):
-            evidence["has_image_model"] += 1
+        if evidence_source == "visual_feature_model" or (
+            source == "visual_features" and "fallback" not in source_marker
+        ):
+            evidence["visual_feature_model"] += 1
         if "local_fallback" in source_marker:
             evidence["local_fallback"] += 1
         if source == "ocr_has" or evidence_source == "ocr_has":
@@ -945,7 +1011,7 @@ def _merge_visual_evidence(target: dict[str, Any], addition: dict[str, Any]) -> 
     scalar_keys = (
         "total_boxes",
         "selected_boxes",
-        "has_image_model",
+        "visual_feature_model",
         "local_fallback",
         "ocr_has",
         "table_structure",
@@ -1156,7 +1222,8 @@ def update_draft(store: JobStore, job_id: str, patch: dict[str, Any]) -> dict[st
         raise ValueError("nothing to update")
     store.touch_job_updated(job_id)
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1169,6 +1236,18 @@ def add_item(store: JobStore, job_id: str, file_id: str, sort_order: int | None)
         raise ValueError("job not found")
     if row["status"] not in (JobStatus.DRAFT.value,):
         raise ValueError("only draft jobs accept new items")
+    if _is_structured_job(row):
+        from app.services.structured_store import get_structured_store
+
+        owner_id = str(row.get("owner_id") or "local_user")
+        if not get_structured_store().get_dataset(file_id, owner_id=owner_id):
+            raise ValueError("dataset not found")
+        iid = store.add_item(job_id, file_id, sort_order=sort_order)
+        store.touch_job_updated(job_id)
+        ir = store.get_item(iid)
+        if not ir:
+            raise RuntimeError("internal invariant: ir is unexpectedly missing")
+        return item_to_out(ir, owner_id=owner_id, job_id=job_id)
     validate_file_allowed_for_job_type(
         job_type=row["job_type"],
         file_info=file_store.get(file_id),
@@ -1177,7 +1256,8 @@ def add_item(store: JobStore, job_id: str, file_id: str, sort_order: int | None)
     iid = store.add_item(job_id, file_id, sort_order=sort_order)
     store.touch_job_updated(job_id)
     ir = store.get_item(iid)
-    assert ir
+    if not ir:
+        raise RuntimeError("internal invariant: ir is unexpectedly missing")
     return item_to_out(ir)
 
 
@@ -1191,12 +1271,26 @@ def submit_job(store: JobStore, job_id: str) -> dict[str, Any]:
     items = store.list_items(job_id)
     if not items:
         raise ValueError("no items to submit")
-    for it in items:
-        validate_file_allowed_for_job_type(
-            job_type=row["job_type"],
-            file_info=file_store.get(str(it["file_id"])),
-            file_id=str(it["file_id"]),
-        )
+    if _is_structured_job(row):
+        from app.services.structured_service import get_or_create_policy, profile_dataset
+        from app.services.structured_store import get_structured_store
+
+        structured_store = get_structured_store()
+        owner_id = str(row.get("owner_id") or "local_user")
+        for it in items:
+            dataset_id = str(it["file_id"])
+            if not structured_store.get_dataset(dataset_id, owner_id=owner_id):
+                raise ValueError(f"dataset not found: {dataset_id}")
+            if not structured_store.get_profile(dataset_id, owner_id=owner_id):
+                profile_dataset(dataset_id, owner_id=owner_id, store=structured_store)
+            get_or_create_policy(dataset_id, owner_id=owner_id, store=structured_store)
+    else:
+        for it in items:
+            validate_file_allowed_for_job_type(
+                job_type=row["job_type"],
+                file_info=file_store.get(str(it["file_id"])),
+                file_id=str(it["file_id"]),
+            )
     try:
         lock_job_config(store, job_id, row)
         store.submit_job(job_id)
@@ -1207,17 +1301,28 @@ def submit_job(store: JobStore, job_id: str) -> dict[str, Any]:
         it for it in store.list_items(job_id)
         if it["status"] == JobItemStatus.PENDING.value
     ]
-    for it in sorted(pending_items, key=_recognition_queue_sort_key):
-        meta = _recognition_queue_meta_for_item(it)
-        logger.info(
-            "submit_job enqueue recognition item=%s priority=%s work=%s",
-            str(it["id"])[:8],
-            meta.get("priority_class"),
-            meta.get("estimated_work_units"),
-        )
-        enqueue_task("recognition", job_id, it["id"], it["file_id"], meta=meta)
+    if _is_structured_job(row):
+        for it in pending_items:
+            enqueue_task(
+                "structured",
+                job_id,
+                it["id"],
+                it["file_id"],
+                meta={"priority_class": 0, "estimated_work_units": 1},
+            )
+    else:
+        for it in sorted(pending_items, key=_recognition_queue_sort_key):
+            meta = _recognition_queue_meta_for_item(it)
+            logger.info(
+                "submit_job enqueue recognition item=%s priority=%s work=%s",
+                str(it["id"])[:8],
+                meta.get("priority_class"),
+                meta.get("estimated_work_units"),
+            )
+            enqueue_task("recognition", job_id, it["id"], it["file_id"], meta=meta)
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1228,7 +1333,8 @@ def cancel_job(store: JobStore, job_id: str) -> dict[str, Any]:
         raise ValueError("job not found")
     store.cancel_job(job_id)
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1265,16 +1371,27 @@ def requeue_failed(store: JobStore, job_id: str) -> dict[str, Any]:
         it for it in store.list_items(job_id)
         if it["status"] == JobItemStatus.PENDING.value
     ]
-    for it in sorted(pending_items, key=_recognition_queue_sort_key):
-        enqueue_task(
-            "recognition",
-            job_id,
-            it["id"],
-            it["file_id"],
-            meta=_recognition_queue_meta_for_item(it),
-        )
+    if _is_structured_job(row):
+        for it in pending_items:
+            enqueue_task(
+                "structured",
+                job_id,
+                it["id"],
+                it["file_id"],
+                meta={"priority_class": 0, "estimated_work_units": 1},
+            )
+    else:
+        for it in sorted(pending_items, key=_recognition_queue_sort_key):
+            enqueue_task(
+                "recognition",
+                job_id,
+                it["id"],
+                it["file_id"],
+                meta=_recognition_queue_meta_for_item(it),
+            )
     row2 = store.get_job(job_id)
-    assert row2
+    if not row2:
+        raise RuntimeError("internal invariant: row2 is unexpectedly missing")
     return job_to_summary(row2, store)
 
 
@@ -1336,7 +1453,8 @@ def approve_review(store: JobStore, job_id: str, item_id: str, reviewer: str = "
     except ValueError:
         raise
     ir = store.get_item(item_id)
-    assert ir
+    if not ir:
+        raise RuntimeError("internal invariant: ir is unexpectedly missing")
     store.touch_job_updated(job_id)
     refresh_job_status(store, job_id)
     # 触发匿名化任务
@@ -1352,7 +1470,8 @@ def reject_review(store: JobStore, job_id: str, item_id: str, reviewer: str = "l
     except ValueError:
         raise
     ir = store.get_item(item_id)
-    assert ir
+    if not ir:
+        raise RuntimeError("internal invariant: ir is unexpectedly missing")
     store.touch_job_updated(job_id)
     refresh_job_status(store, job_id)
     enqueue_task("recognition", job_id, item_id, ir["file_id"])
@@ -1431,5 +1550,6 @@ async def commit_review(
         raise
 
     item_done = store.get_item(item_id)
-    assert item_done
+    if not item_done:
+        raise RuntimeError("internal invariant: item_done is unexpectedly missing")
     return item_to_out(item_done)

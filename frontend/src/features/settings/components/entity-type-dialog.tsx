@@ -15,14 +15,6 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 interface EntityTypeForm {
   name: string;
@@ -106,7 +98,6 @@ export function EntityTypeDialog({
   onSave,
   mode,
   saving = false,
-  taxonomyLocked = false,
 }: EntityTypeDialogProps) {
   const t = useT();
   const effectiveTaxonomy = useMemo(() => getEffectiveTaxonomy(taxonomy), [taxonomy]);
@@ -139,11 +130,6 @@ export function EntityTypeDialog({
   }));
   const rawForm = formState.key === formKey ? formState.value : defaultForm;
 
-  const dataDomainOptions = useMemo(
-    () => effectiveTaxonomy.map(({ value, label }) => ({ value, label })),
-    [effectiveTaxonomy],
-  );
-
   const domainByValue = useMemo(
     () => new Map(effectiveTaxonomy.map((domain) => [domain.value, domain])),
     [effectiveTaxonomy],
@@ -174,12 +160,12 @@ export function EntityTypeDialog({
   );
 
   const canSubmit = Boolean(
-    form.name.trim() && form.data_domain.trim() && form.generic_target.trim(),
+    form.name.trim() && (form.use_llm || form.regex_pattern.trim()),
   );
 
   const dialogTitle = mode === 'create' ? '新建自定义识别项' : t('settings.editType');
   const dialogDescription =
-    '自定义识别项只使用模型语义识别。L1/L2 用于分类、默认归并和指代消歧，不会作为 NER 标签发送给模型。';
+    '语义标签：名称直接作为开放词表标签交给 HaS 识别。正则兜底：在文本链路最后一步用正则补充 HaS 未覆盖的内容。';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -202,58 +188,43 @@ export function EntityTypeDialog({
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label>一级分类 *</Label>
-              <Select
-                value={form.data_domain}
-                disabled={taxonomyLocked}
-                onValueChange={(value) =>
-                  setForm((current) => ({
-                    ...current,
-                    data_domain: value,
-                    generic_target:
-                      domainByValue.get(value)?.default_target ??
-                      domainByValue.get(value)?.targets[0]?.value ??
-                      current.generic_target,
-                  }))
-                }
+          <div className="flex flex-col gap-1.5">
+            <Label>类型</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={form.use_llm ? 'default' : 'outline'}
+                onClick={() => setForm((current) => ({ ...current, use_llm: true, regex_pattern: '' }))}
+                data-testid="entity-type-kind-semantic"
               >
-                <SelectTrigger data-testid="entity-type-data-domain">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {dataDomainOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <Label>二级分类 *</Label>
-              <Select
-                value={form.generic_target}
-                disabled={taxonomyLocked}
-                onValueChange={(value) =>
-                  setForm((current) => ({ ...current, generic_target: value }))
-                }
+                语义标签
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={!form.use_llm ? 'default' : 'outline'}
+                onClick={() => setForm((current) => ({ ...current, use_llm: false }))}
+                data-testid="entity-type-kind-regex"
               >
-                <SelectTrigger data-testid="entity-type-generic-target">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {genericTargetOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                正则兜底
+              </Button>
             </div>
           </div>
+
+          {!form.use_llm && (
+            <div className="flex flex-col gap-1.5">
+              <Label>正则表达式 *</Label>
+              <Input
+                value={form.regex_pattern}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, regex_pattern: event.target.value }))
+                }
+                placeholder="例如：(?<!\d)\d{17}[\dXx](?!\d)"
+                data-testid="entity-type-regex"
+              />
+            </div>
+          )}
 
           <div className="flex flex-col gap-1.5">
             <Label>描述</Label>
@@ -268,23 +239,6 @@ export function EntityTypeDialog({
             />
           </div>
 
-          <label className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/20 px-3 py-2.5 text-xs">
-            <Checkbox
-              className="mt-0.5"
-              checked={form.coref_enabled}
-              disabled={taxonomyLocked}
-              onCheckedChange={(next) =>
-                setForm((current) => ({ ...current, coref_enabled: Boolean(next) }))
-              }
-              data-testid="entity-type-coref-enabled"
-            />
-            <span className="leading-5">
-              <span className="block font-medium text-foreground">指代消歧补充</span>
-              <span className="block text-muted-foreground">
-                默认开启。系统会根据一级/二级分类推导归并范围，例如人员、组织、编号、账户、地址或日期。
-              </span>
-            </span>
-          </label>
         </div>
 
         <DialogFooter>
@@ -300,8 +254,6 @@ export function EntityTypeDialog({
             onClick={() =>
               onSave({
                 ...form,
-                regex_pattern: '',
-                use_llm: true,
                 tag_template: '',
               })
             }

@@ -29,41 +29,11 @@ export interface DefaultPipelineCoverage {
 }
 
 const DEFAULT_EXCLUDED_TEXT_TYPE_IDS = new Set<string>();
-const OCR_FALLBACK_ONLY_VISUAL_TYPE_IDS = new Set([
-  'signature',
-  'handwritten',
-  'hand_written',
-  'handwriting',
-  'handwritten_signature',
-]);
-const HAS_IMAGE_MODEL_TYPE_IDS = new Set([
-  'face',
-  'fingerprint',
-  'palmprint',
-  'id_card',
-  'hk_macau_permit',
-  'passport',
-  'employee_badge',
-  'license_plate',
-  'bank_card',
-  'physical_key',
-  'receipt',
-  'shipping_label',
-  'official_seal',
-  'whiteboard',
-  'sticky_note',
-  'mobile_screen',
-  'monitor_screen',
-  'medical_wristband',
-  'qr_code',
-  'barcode',
-]);
-export type PipelineMode = 'ocr_has' | 'has_image' | 'vlm';
+export type PipelineMode = 'ocr_has' | 'visual_features';
 
 const DEFAULT_EXCLUDED_PIPELINE_TYPE_IDS: Record<PipelineMode, ReadonlySet<string>> = {
   ocr_has: new Set(),
-  has_image: new Set(),
-  vlm: new Set(),
+  visual_features: new Set(),
 };
 
 export function normalizeVisualTypeId(id: string): string {
@@ -74,14 +44,6 @@ export function normalizeVisualTypeId(id: string): string {
     stamp_region: 'official_seal',
   };
   return aliases[normalized] ?? normalized;
-}
-
-export function isOcrFallbackOnlyVisualTypeId(id: string): boolean {
-  return OCR_FALLBACK_ONLY_VISUAL_TYPE_IDS.has(normalizeVisualTypeId(id));
-}
-
-export function isHasImageModelTypeId(id: string): boolean {
-  return HAS_IMAGE_MODEL_TYPE_IDS.has(normalizeVisualTypeId(id));
 }
 
 function enabledIds<T extends { id: string; enabled?: boolean }>(items: T[]): string[] {
@@ -118,7 +80,6 @@ export function isDefaultExcludedPipelineTypeId(
   id: string,
 ): boolean {
   if (mode === 'ocr_has' && isDefaultExcludedTextTypeId(id)) return true;
-  if (mode === 'has_image' && !isHasImageModelTypeId(id)) return true;
   return DEFAULT_EXCLUDED_PIPELINE_TYPE_IDS[mode].has(id);
 }
 
@@ -138,12 +99,9 @@ function enabledDefaultPipelineIds<T extends DefaultPipelineTypeLike>(
 
 function isPipelineTypeVisibleInConfig(
   type: DefaultPipelineTypeLike,
-  mode: PipelineMode,
+  _mode: PipelineMode,
 ): boolean {
   if (type.enabled === false) return false;
-  if (mode === 'has_image') {
-    return isHasImageModelTypeId(type.id);
-  }
   return true;
 }
 
@@ -157,6 +115,9 @@ export function buildDefaultPipelineTypeIds<T extends DefaultPipelineTypeLike>(
       pipeline.types.filter((type) => isDefaultPipelineType(type, mode)).map((type) => type.id),
     );
   if (builtinIds.length > 0) {
+    return builtinIds;
+  }
+  if (mode === 'visual_features') {
     return builtinIds;
   }
   return pipelines

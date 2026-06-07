@@ -59,20 +59,20 @@ export interface PipelineTypeConfig {
   enabled: boolean;
   order: number;
   rules?: string[];
-  checklist?: VlmChecklistItem[];
+  checklist?: VisualFeatureChecklistItem[];
   negative_prompt_enabled?: boolean;
   negative_prompt?: string | null;
   few_shot_enabled?: boolean;
-  few_shot_samples?: VlmFewShotSample[];
+  few_shot_samples?: VisualFeatureFewShotSample[];
 }
 
-export interface VlmChecklistItem {
+export interface VisualFeatureChecklistItem {
   rule: string;
   positive_prompt?: string | null;
   negative_prompt?: string | null;
 }
 
-export interface VlmFewShotSample {
+export interface VisualFeatureFewShotSample {
   type: 'positive' | 'negative';
   image: string;
   label?: string | null;
@@ -128,7 +128,8 @@ export function buildPipelineTypeId(name: string, mode: PipelineMode) {
     .replace(/[^a-zA-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .toLowerCase();
-  return normalized || `custom_${mode}_${Date.now()}`;
+  const suffix = normalized || Date.now().toString(36);
+  return `custom_${mode}_${suffix}`;
 }
 
 export function useEntityTypes() {
@@ -171,9 +172,21 @@ export function useEntityTypes() {
     try {
       setPipelinesLoading(true);
       setLoadError(null);
-      const normalized = ((await fetchRecognitionPipelines(1_200)) as PipelineConfig[]).map(
-        (p: PipelineConfig) =>
-          p.mode === 'has_image'
+      const fetched = (await fetchRecognitionPipelines(1_200)) as PipelineConfig[];
+      const merged = Array.from(
+        fetched.reduce((acc, pipeline) => {
+          const existing = acc.get(pipeline.mode);
+          acc.set(
+            pipeline.mode,
+            existing
+              ? { ...existing, types: [...existing.types, ...pipeline.types], enabled: existing.enabled || pipeline.enabled }
+              : pipeline,
+          );
+          return acc;
+        }, new Map<PipelineMode, PipelineConfig>()).values(),
+      );
+      const normalized = merged.map((p: PipelineConfig) =>
+          p.mode === 'visual_features'
             ? {
                 ...p,
                 name: t('settings.pipelineDisplayName.image'),
@@ -185,13 +198,7 @@ export function useEntityTypes() {
                   name: t('settings.pipelineDisplayName.ocr'),
                   description: t('settings.pipelineDescription.ocr'),
                 }
-              : p.mode === 'vlm'
-                ? {
-                    ...p,
-                    name: t('settings.pipelineDisplayName.vlm'),
-                    description: t('settings.pipelineDescription.vlm'),
-                  }
-                : p,
+              : p,
       );
       setPipelines(normalized);
     } catch (err) {

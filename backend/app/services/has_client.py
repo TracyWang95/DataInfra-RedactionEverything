@@ -28,7 +28,56 @@ from typing import Any
 
 from app.core.circuit_breaker import ner_breaker
 from app.core.retry import RETRYABLE_HTTPX, retry_sync
-from app.models.type_mapping import canonical_type_id, cn_to_id
+from app.models.type_mapping import canonical_type_id
+
+# 默认重试次数（max_retries 未显式传入时）
+_DEFAULT_MAX_RETRIES = 2
+# 重试退避基准秒数
+_RETRY_BASE_DELAY_SEC = 1.0
+# 采样温度（确定性输出）
+_MODEL_TEMPERATURE = 0.0
+# 采样 top_p
+_MODEL_TOP_P = 0.6
+# max_tokens 下限（_call_model 单次请求）
+_MIN_CALL_MAX_TOKENS = 32
+# 提示词 token 估算：ASCII 字符按 4 字符/token 折算
+_PROMPT_ASCII_CHARS_PER_TOKEN = 4
+# 提示词 token 估算：固定结构开销
+_PROMPT_TOKEN_OVERHEAD = 32
+# NER 类型批量目标 token 数下限
+_NER_TYPE_BATCH_TARGET_TOKENS_FLOOR = 320
+# 由目标 token 推导每批类型数的除数
+_NER_BATCH_TOKENS_PER_TYPE = 40
+# 每批类型数下限
+_NER_BATCH_MIN_TYPES = 8
+# 每批类型数上限
+_NER_BATCH_MAX_TYPES = 24
+# 单趟 NER 文本字符数下限
+_NER_SINGLE_PASS_MIN_CHARS = 128
+# NER 期望 max_tokens 下限
+_NER_DESIRED_MAX_TOKENS_FLOOR = 640
+# NER 期望 max_tokens：每个类型预算 token 数
+_NER_TOKENS_PER_TYPE = 72
+# NER 期望 max_tokens：文本字符折算除数
+_NER_TEXT_CHARS_PER_TOKEN = 2
+# NER 上下文窗口 token 数下限
+_NER_CONTEXT_TOKENS_FLOOR = 512
+# 上下文中预留给模板/分隔的 token 数
+_NER_CONTEXT_RESERVE_TOKENS = 160
+# 补全 token 上限下限
+_NER_COMPLETION_CAP_FLOOR = 384
+# 补全 token 占上下文窗口比例
+_NER_COMPLETION_CONTEXT_RATIO = 0.65
+# 受上下文余量约束后的 max_tokens 下限
+_NER_MAX_TOKENS_FLOOR = 64
+# 触发分批回退的类型数阈值
+_NER_REBATCH_TYPE_THRESHOLD = 24
+# 类型引导 description 最大字符数
+_TYPE_GUIDANCE_DESC_MAX_CHARS = 96
+# 健康检查结果缓存秒数
+_HEALTH_CHECK_CACHE_SEC = 5.0
+# 健康检查请求超时秒数
+_HEALTH_CHECK_TIMEOUT_SEC = 5.0
 
 
 @dataclass
@@ -69,11 +118,13 @@ class HaSClient:
     def __init__(
         self,
         base_url: str = None,
-        timeout: float = None
+        timeout: float = None,
+        max_retries: int | None = None,
     ):
         from app.core.config import settings
         self._base_url_override = base_url.rstrip("/") if base_url else None
         self.timeout = httpx.Timeout(timeout or settings.HAS_TIMEOUT)
+        self._max_retries = _DEFAULT_MAX_RETRIES if max_retries is None else max(0, int(max_retries))
         self._ner_cache_ttl_sec = settings.HAS_NER_CACHE_TTL_SEC
         self._ner_cache_max_items = settings.HAS_NER_CACHE_MAX_ITEMS
         self._ner_cache = self._SHARED_NER_CACHE
@@ -104,18 +155,18 @@ class HaSClient:
         base = self._effective_base_url()
         payload: dict[str, Any] = {
             "messages": messages,
-            "temperature": 0.0,
-            "top_p": 0.6,
+            "temperature": _MODEL_TEMPERATURE,
+            "top_p": _MODEL_TOP_P,
             "stream": False,
         }
         if max_tokens is not None:
-            payload["max_tokens"] = max(32, int(max_tokens))
+            payload["max_tokens"] = max(_MIN_CALL_MAX_TOKENS, int(max_tokens))
         if settings.HAS_TEXT_MODEL_NAME:
             payload["model"] = settings.HAS_TEXT_MODEL_NAME
         started = time.perf_counter()
         response = retry_sync(
             self._do_chat_request, base, payload,
-            max_retries=2, base_delay=1.0,
+            max_retries=self._max_retries, base_delay=_RETRY_BASE_DELAY_SEC,
             retryable_exceptions=RETRYABLE_HTTPX,
         )
         elapsed_ms = round((time.perf_counter() - started) * 1000)
@@ -192,13 +243,6 @@ class HaSClient:
 
         return "failed", None
 
-    @classmethod
-    def clear_shared_ner_cache(cls) -> None:
-        """Clear process-local NER cache and in-flight state."""
-        with cls._SHARED_NER_LOCK:
-            cls._SHARED_NER_CACHE.clear()
-            cls._SHARED_NER_INFLIGHT.clear()
-
     @staticmethod
     def _normalize_ner_type_name(type_name: str) -> str:
         value = str(type_name or "").strip()
@@ -208,6 +252,24 @@ class HaSClient:
             return canonical_type_id(value.upper())
 
         return value
+
+    @staticmethod
+    def _estimate_prompt_tokens(text: str) -> int:
+        """Conservative local estimate for vLLM context budgeting.
+
+        HaS prompts mix English instructions, Chinese type names, OCR Chinese,
+        JSON punctuation, and scanned text fragments. A len//2 estimate is too
+        optimistic for Chinese-heavy pages and can make vLLM reject the request
+        before inference starts.
+        """
+        ascii_chars = 0
+        non_ascii_chars = 0
+        for char in str(text or ""):
+            if ord(char) < 128:
+                ascii_chars += 1
+            else:
+                non_ascii_chars += 1
+        return max(1, ascii_chars // _PROMPT_ASCII_CHARS_PER_TOKEN + non_ascii_chars + _PROMPT_TOKEN_OVERHEAD)
 
     @classmethod
     def _normalize_ner_types(cls, entity_types: list[str] | None) -> list[str]:
@@ -334,6 +396,37 @@ class HaSClient:
         if cached is not None:
             return cached
 
+        from app.core.config import settings
+        if type_guidance is None:
+            configured_batch = max(1, int(settings.HAS_NER_MAX_TYPES_PER_REQUEST))
+            target = max(_NER_TYPE_BATCH_TARGET_TOKENS_FLOOR, int(settings.HAS_NER_TYPE_BATCH_TARGET_TOKENS))
+            target_batch = max(_NER_BATCH_MIN_TYPES, min(_NER_BATCH_MAX_TYPES, target // _NER_BATCH_TOKENS_PER_TYPE))
+            batch_size = max(1, min(configured_batch, target_batch))
+            single_pass_max_types = max(batch_size, int(settings.HAS_NER_SINGLE_PASS_MAX_TYPES))
+            single_pass_max_chars = max(_NER_SINGLE_PASS_MIN_CHARS, int(settings.HAS_NER_SINGLE_PASS_MAX_TEXT_CHARS))
+            should_single_pass = (
+                len(types) <= single_pass_max_types
+                and len(str(text or "")) <= single_pass_max_chars
+            )
+            if len(types) > batch_size and not should_single_pass:
+                logger.info(
+                    "HaS NER pre-batching %d types into chunks of %d",
+                    len(types),
+                    batch_size,
+                )
+                merged: dict[str, list[str]] = {}
+                for start in range(0, len(types), batch_size):
+                    part = self.ner(text, types[start:start + batch_size], None)
+                    for key, values in (part or {}).items():
+                        if not values:
+                            continue
+                        bucket = merged.setdefault(key, [])
+                        for value in values:
+                            if value not in bucket:
+                                bucket.append(value)
+                self._set_cached_ner(cache_key, merged)
+                return merged
+
         owns_request, request_event = self._begin_ner_request(cache_key)
         if not owns_request:
             if request_event is not None:
@@ -344,7 +437,6 @@ class HaSClient:
             logger.warning("HaS NER duplicate request finished without cacheable result")
             return {}
         types_str = json.dumps(types, ensure_ascii=False, separators=(",", ":"))
-        from app.core.config import settings
         guidance_block = f"\nType guidance:{guidance_text}" if guidance_text else ""
 
         # 与 HaS_Text_0209 模型卡 NER 模板一致（Specified types: 与 JSON 数组之间无空格）
@@ -356,12 +448,32 @@ Never output empty arrays. Do not return requested types with no matches. Do not
 If nothing matches, return {{}}.
 <text>{text}</text>"""
         configured_max_tokens = int(settings.HAS_NER_MAX_TOKENS)
-        desired_max_tokens = max(512, len(types) * 96 + len(text) // 3)
+        desired_max_tokens = max(
+            _NER_DESIRED_MAX_TOKENS_FLOOR,
+            min(configured_max_tokens, len(types) * _NER_TOKENS_PER_TYPE + len(text) // _NER_TEXT_CHARS_PER_TOKEN),
+        )
         # Keep the completion budget inside the locally served HaS context
-        # window. The default dev profile serves HaS Text with 8K context.
-        prompt_token_estimate = max(1, len(prompt) // 2)
-        context_room = int(settings.HAS_NER_CONTEXT_TOKENS) - prompt_token_estimate - 96
-        max_tokens = min(configured_max_tokens, desired_max_tokens, max(256, context_room))
+        # window. The 16 GB dev profile serves HaS Text with an 8K context so
+        # PaddleOCR-VL, PP-StructureV3 and LocateAnything can stay resident
+        # while giving OCR-derived NER enough completion budget.
+        context_tokens = max(_NER_CONTEXT_TOKENS_FLOOR, int(settings.HAS_NER_CONTEXT_TOKENS))
+        prompt_token_estimate = self._estimate_prompt_tokens(prompt)
+        context_room = context_tokens - prompt_token_estimate - _NER_CONTEXT_RESERVE_TOKENS
+        completion_cap = max(_NER_COMPLETION_CAP_FLOOR, min(configured_max_tokens, int(context_tokens * _NER_COMPLETION_CONTEXT_RATIO)))
+        max_tokens = min(
+            configured_max_tokens,
+            desired_max_tokens,
+            completion_cap,
+            max(_NER_MAX_TOKENS_FLOOR, context_room),
+        )
+        logger.info(
+            "HaS NER budget prompt_est=%d context=%d max_tokens=%d types=%d text_chars=%d",
+            prompt_token_estimate,
+            context_tokens,
+            max_tokens,
+            len(types),
+            len(text),
+        )
 
         messages = [
             {
@@ -376,10 +488,10 @@ If nothing matches, return {{}}.
             parse_mode, result = self._try_parse_json_object(response)
             if result is None:
                 logger.warning("HaS NER response could not be parsed as JSON: %.200s", response)
-                if type_guidance is None and len(types) > 24:
+                if type_guidance is None and len(types) > _NER_REBATCH_TYPE_THRESHOLD:
                     from app.core.config import settings
-                    target = max(320, int(settings.HAS_NER_TYPE_BATCH_TARGET_TOKENS))
-                    batch_size = max(8, min(24, target // 40))
+                    target = max(_NER_TYPE_BATCH_TARGET_TOKENS_FLOOR, int(settings.HAS_NER_TYPE_BATCH_TARGET_TOKENS))
+                    batch_size = max(_NER_BATCH_MIN_TYPES, min(_NER_BATCH_MAX_TYPES, target // _NER_BATCH_TOKENS_PER_TYPE))
                     merged: dict[str, list[str]] = {}
                     for start in range(0, len(types), batch_size):
                         part = self.ner(text, types[start:start + batch_size], None)
@@ -424,7 +536,7 @@ If nothing matches, return {{}}.
             description = re.sub(r"\s+", " ", str(item.get("description") or "").strip())
             entry: dict[str, Any] = {"type": type_name}
             if description:
-                entry["description"] = description[:96]
+                entry["description"] = description[:_TYPE_GUIDANCE_DESC_MAX_CHARS]
             normalized.append(entry)
         return normalized
 
@@ -593,49 +705,6 @@ Restore the original text based on the above mapping:
             logger.error("HaS Seek 失败: %s", e)
             return masked_text
 
-    def extract_entities_for_ui(
-        self,
-        text: str,
-        entity_types: list[str] | None = None
-    ) -> list[dict]:
-        """
-        提取实体用于前端展示
-
-        Returns:
-            [{"id", "text", "type", "start", "end", "tag", "source"}]
-        """
-        # 先做NER
-        ner_result = self.ner(text, entity_types)
-
-        entities = []
-        entity_id = 0
-
-        for entity_type, entity_list in ner_result.items():
-            for entity_text in entity_list:
-                # 在原文中查找位置
-                start = text.find(entity_text)
-                if start >= 0:
-                    entities.append({
-                        "id": f"has_{entity_id}",
-                        "text": entity_text,
-                        "type": self._map_type_to_english(entity_type),
-                        "start": start,
-                        "end": start + len(entity_text),
-                        "tag": None,  # 标签在hide时生成
-                        "source": "has",
-                        "confidence": 0.95,
-                    })
-                    entity_id += 1
-
-        # 按位置排序
-        entities.sort(key=lambda e: e["start"])
-
-        return entities
-
-    def _map_type_to_english(self, chinese_type: str) -> str:
-        """中文类型映射到英文（使用统一数据源）"""
-        return cn_to_id(chinese_type)
-
     @staticmethod
     def _is_live_health_payload(data: dict[str, Any]) -> bool:
         status = str(data.get("status", "")).strip().lower()
@@ -651,10 +720,10 @@ Restore the original text based on the above mapping:
         from app.core.health_checks import _tcp_port_open
         url = get_has_health_check_url()
         now = time.monotonic()
-        if now - self._health_checked_at < 5.0:
+        if now - self._health_checked_at < _HEALTH_CHECK_CACHE_SEC:
             return self._health_ready
         try:
-            response = self._http_client.get(url, timeout=5.0)
+            response = self._http_client.get(url, timeout=_HEALTH_CHECK_TIMEOUT_SEC)
             if response.status_code == 200:
                 try:
                     data = response.json()

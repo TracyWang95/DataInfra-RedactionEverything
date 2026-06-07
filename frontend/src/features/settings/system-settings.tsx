@@ -26,7 +26,6 @@ interface AdminUser {
   username: string;
   role: string;
   created_at?: string | null;
-  updated_at?: string | null;
 }
 
 async function parseJson<T>(res: Response): Promise<T | null> {
@@ -43,7 +42,7 @@ export function SystemSettings() {
   if (!status?.is_super_admin) {
     return (
       <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col bg-background">
-        <div className="page-shell">
+        <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
           <Alert variant="destructive">
             <AlertDescription>需要管理员权限。</AlertDescription>
           </Alert>
@@ -58,7 +57,7 @@ export function SystemSettings() {
         <Tabs defaultValue="runtime" className="page-stack gap-3 overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold tracking-tight">系统设置</h2>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">系统设置</h1>
               <p className="text-sm text-muted-foreground">运行配置、用户权限和本地服务监控。</p>
             </div>
             <TabsList className="rounded-xl border border-border/70 bg-muted/40 p-1">
@@ -134,10 +133,7 @@ function AdminRuntimePanel() {
 
   return (
     <section className="surface-subtle max-w-2xl space-y-4 p-4" data-testid="admin-runtime-panel">
-      <PanelHeading
-        title="运行配置"
-        description="控制后台批量任务队列。并发用户不会触发重新部署或换端口，而是在同一服务内排队执行。"
-      />
+      <PanelHeading title="运行配置" description="控制后台批量任务并发，不需要重启模型服务。" />
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -230,10 +226,7 @@ function AdminAccessPanel() {
   return (
     <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]" data-testid="admin-access-panel">
       <div className="surface-subtle space-y-4 p-4">
-        <PanelHeading
-          title="权限信息"
-          description="每个用户只访问自己上传的文件、任务和结果。普通用户也可以在登录页自行注册。"
-        />
+        <PanelHeading title="权限信息" description="每个用户只访问自己的文件、任务和结果。" />
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
@@ -277,7 +270,7 @@ function AdminAccessPanel() {
       </div>
 
       <div className="surface-subtle space-y-4 p-4">
-        <PanelHeading title="创建用户" description="管理员可预先创建普通用户或其他管理员。" />
+        <PanelHeading title="创建用户" description="管理员可以创建普通用户或管理员。" />
         <div className="space-y-2">
           <Label htmlFor="admin-new-username">用户名</Label>
           <Input id="admin-new-username" value={username} onChange={(event) => setUsername(event.target.value)} />
@@ -304,7 +297,7 @@ function AdminAccessPanel() {
           <Label htmlFor="admin-new-role">角色</Label>
           <select
             id="admin-new-role"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            className="flex h-10 w-full rounded-xl border border-input bg-[var(--surface-control)] px-3 py-2 text-sm shadow-[var(--shadow-control)]"
             value={role}
             onChange={(event) => setRole(event.target.value === 'super_admin' ? 'super_admin' : 'user')}
           >
@@ -328,10 +321,7 @@ function AdminMonitoringPanel() {
   return (
     <section className="surface-subtle space-y-4 p-4" data-testid="admin-monitoring-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <PanelHeading
-          title="服务监控"
-          description="查看后端、模型服务、GPU 显存和服务探测状态。"
-        />
+        <PanelHeading title="服务监控" description="查看模型服务、GPU 显存和健康探测状态。" />
         <Button variant="outline" size="sm" onClick={refresh}>
           <RefreshCw className={cn('mr-2 h-4 w-4', checking && 'animate-spin')} />
           刷新
@@ -342,7 +332,7 @@ function AdminMonitoringPanel() {
         <MetricCard label="后端探测" value={roundTripMs == null ? '-' : `${roundTripMs} ms`} />
         <MetricCard label="GPU 显存" value={gpuText(health)} />
       </div>
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {services.map(({ key, service }) => (
           <div key={key} className="rounded-lg border border-border bg-background p-3">
             <div className="flex items-center justify-between gap-2">
@@ -372,7 +362,7 @@ function PanelHeading({ title, description }: { title: string; description: stri
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border bg-background px-3 py-2">
+    <div className="rounded-lg border border-border bg-background p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 truncate text-sm font-semibold" title={value}>
         {value}
@@ -383,7 +373,7 @@ function MetricCard({ label, value }: { label: string; value: string }) {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="grid grid-cols-[4rem_minmax(0,1fr)] gap-2">
+    <div className="flex justify-between gap-2">
       <dt>{label}</dt>
       <dd className="truncate text-foreground" title={value}>
         {value}
@@ -407,15 +397,13 @@ function serviceRows(health: ServicesHealth | null): Array<{ key: string; servic
   const fallback: Required<ServicesHealth['services']> = {
     paddle_ocr: { name: 'PaddleOCR', status: 'offline' },
     has_ner: { name: 'HaS Text', status: 'offline' },
-    has_image: { name: 'HaS Image', status: 'offline' },
-    vlm: { name: 'VLM', status: 'offline' },
+    visual_features: { name: '视觉特征', status: 'offline' },
   };
   const services = health?.services ?? fallback;
   return [
     { key: 'paddle_ocr', service: services.paddle_ocr },
     { key: 'has_ner', service: services.has_ner },
-    { key: 'has_image', service: services.has_image },
-    { key: 'vlm', service: services.vlm ?? fallback.vlm },
+    { key: 'visual_features', service: services.visual_features },
   ];
 }
 

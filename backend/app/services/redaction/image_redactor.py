@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_IMAGE_REDACTION_METHOD = "mosaic"
 DEFAULT_IMAGE_REDACTION_STRENGTH = 75
+MIN_IMAGE_REDACTION_STRENGTH = 1  # lower clamp bound for redaction strength
+MAX_IMAGE_REDACTION_STRENGTH = 100  # upper clamp bound for redaction strength
 DEFAULT_IMAGE_FILL_COLOR = "#000000"
 _VALID_IMAGE_REDACTION_METHODS = {"mosaic", "blur", "fill"}
 _VISUAL_SAFE_FILL_RGB_MIN = 245
@@ -30,10 +32,8 @@ _VISUAL_BOX_TYPES = {
     "stamp",
 }
 _VISUAL_BOX_SOURCES = {
-    "has_image",
-    "has_image_model",
-    "vlm",
-    "vlm_model",
+    "visual_features",
+    "visual_feature_model",
     "local_fallback",
     "manual",
 }
@@ -61,7 +61,7 @@ def resolve_image_redaction_options(config: Any) -> tuple[str, int, str]:
         except (TypeError, ValueError):
             logger.warning("invalid image redaction strength %r; falling back to 75", raw_strength)
             strength = DEFAULT_IMAGE_REDACTION_STRENGTH
-    strength = max(1, min(100, strength))
+    strength = max(MIN_IMAGE_REDACTION_STRENGTH, min(MAX_IMAGE_REDACTION_STRENGTH, strength))
 
     fill_color = _config_value(config, "image_fill_color") or DEFAULT_IMAGE_FILL_COLOR
     return str(method), strength, str(fill_color)
@@ -162,7 +162,7 @@ def prepare_image_redaction(
 class ImageRedactorMixin:
     """
     图片匿名化方法集合
-    设计为 mixin，由 Redactor 类继承使用
+    璁捐涓?mixin锛岀敱 Redactor 绫荤户鎵夸娇鐢?
     要求宿主类具有 self.vision_service 属性（VisionService 实例）
     """
 

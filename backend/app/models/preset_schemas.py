@@ -1,4 +1,4 @@
-﻿"""
+"""
 Preset (batch-wizard configuration template) schemas.
 """
 from typing import Literal
@@ -47,15 +47,10 @@ class PresetPayload(BaseModel):
         description="OCR/HaS text type ids enabled for paged documents.",
         examples=[["PERSON", "EMAIL", "ORG", "CASE_NUMBER"]],
     )
-    hasImageTypes: list[str] = Field(
+    visualFeatureTypes: list[str] = Field(
         default_factory=list,
-        description="HaS Image category slugs enabled for visual recognition.",
+        description="Visual feature ids enabled for LocateAnything recognition.",
         examples=[["face", "official_seal", "qr_code"]],
-    )
-    vlmTypes: list[str] = Field(
-        default_factory=list,
-        description="VLM checklist visual feature ids enabled for visual recognition.",
-        examples=[["signature"]],
     )
     dataDomains: list[str] = Field(
         default_factory=list,
@@ -106,15 +101,10 @@ class PresetUpdate(BaseModel):
         description="Replacement OCR/HaS text type ids. Omit to keep the current value.",
         examples=[["PERSON", "PHONE", "EMAIL"]],
     )
-    hasImageTypes: list[str] | None = Field(
+    visualFeatureTypes: list[str] | None = Field(
         default=None,
-        description="Replacement HaS Image category slugs. Omit to keep the current value.",
+        description="Replacement visual feature ids. Omit to keep the current value.",
         examples=[["face", "official_seal"]],
-    )
-    vlmTypes: list[str] | None = Field(
-        default=None,
-        description="Replacement VLM checklist visual feature ids. Omit to keep the current value.",
-        examples=[["signature"]],
     )
     dataDomains: list[str] | None = Field(
         default=None,
@@ -148,7 +138,7 @@ class PresetOut(PresetPayload):
                     "kind": "full",
                     "selectedEntityTypeIds": ["PERSON", "ORG", "CASE_NUMBER", "AMOUNT"],
                     "ocrHasTypes": ["PERSON", "ORG", "CASE_NUMBER", "AMOUNT"],
-                    "hasImageTypes": ["official_seal", "qr_code"],
+                    "visualFeatureTypes": ["official_seal", "qr_code"],
                     "replacementMode": "structured",
                     "created_at": "2026-05-05T00:00:00+00:00",
                     "updated_at": "2026-05-05T00:00:00+00:00",
@@ -192,7 +182,7 @@ class PresetsListResponse(BaseModel):
                             "kind": "full",
                             "selectedEntityTypeIds": ["PERSON", "ORG", "CASE_NUMBER", "AMOUNT"],
                             "ocrHasTypes": ["PERSON", "ORG", "CASE_NUMBER", "AMOUNT"],
-                            "hasImageTypes": ["official_seal", "qr_code"],
+                            "visualFeatureTypes": ["official_seal", "qr_code"],
                             "replacementMode": "structured",
                             "created_at": "2026-05-05T00:00:00+00:00",
                             "updated_at": "2026-05-05T00:00:00+00:00",
@@ -255,4 +245,5 @@ class PresetImportRequest(BaseModel):
         description="True merges new user presets with existing ones; false replaces the user preset store.",
         examples=[False],
     )
+
 

@@ -26,7 +26,7 @@ from PIL import Image, ImageOps
 
 from app.core.config import settings
 from app.models.type_mapping import TYPE_ID_TO_CN
-from app.services.hybrid_vision_service import OCRTextBlock, SensitiveRegion
+from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 from app.services.vision.has_text_payload import (
     DEFAULT_HAS_TEXT_TYPE_IDS,
     _build_has_text_payload,
@@ -62,6 +62,249 @@ OCR_VISUAL_ENTITY_TYPES = {
     "WATERMARK",
 }
 
+# --- Tuning constants (extracted magic numbers) -------------------------------
+# Window (seconds) for treating a recent negative HaS health check as still valid.
+_HAS_NEGATIVE_HEALTH_TTL_SEC = 5.0
+
+# Default fallback median text-line height (px) when no block heights are known.
+_DEFAULT_BLOCK_HEIGHT_PX = 12.0
+
+# Amount-pair lookback: scan this many chars before the entity for 大写/小写 markers.
+_AMOUNT_PAIR_LOOKBACK_CHARS = 48
+# Sentinel "infinitely far" tail distance when no 小写 marker is present.
+_AMOUNT_PAIR_NO_LOWER_MARKER_UNITS = 999.0
+# Max visual units between 小写 marker and amount to treat as one upper/lower pair.
+_AMOUNT_PAIR_MAX_LOWER_TAIL_UNITS = 8.0
+
+# Standalone-amount digit-count bounds.
+_STANDALONE_AMOUNT_MIN_DIGITS = 4
+_STANDALONE_AMOUNT_MAX_DIGITS = 14
+# Probable amount-token digit-count bounds (with/without thousands separators).
+_AMOUNT_TOKEN_MIN_DIGITS = 5
+_AMOUNT_TOKEN_MAX_DIGITS = 14
+_AMOUNT_TOKEN_MIN_DIGITS_WITH_SEPARATOR = 4
+# An amount value signature drops a trailing ".00"; require more than this many digits first.
+_AMOUNT_TRAILING_ZEROS_MIN_DIGITS = 2
+
+# Visual-row grouping tolerance: fraction of median block height, with a floor.
+_VISUAL_ROW_TOLERANCE_HEIGHT_RATIO = 0.75
+_VISUAL_ROW_TOLERANCE_MIN_PX = 8.0
+# Amount-table column detection needs at least this many cells in a header row.
+_AMOUNT_TABLE_MIN_ROW_CELLS = 3
+# Horizontal padding around an amount column header: fraction of header width, with a floor.
+_AMOUNT_COLUMN_PAD_WIDTH_RATIO = 0.45
+_AMOUNT_COLUMN_PAD_MIN_PX = 12.0
+# Slack (px) below a header baseline when testing column membership.
+_AMOUNT_COLUMN_HEADER_SLACK_PX = 8
+
+# Person form-field value visual-unit bounds and label-proximity tuning.
+_PERSON_FIELD_LABEL_LOOKAHEAD_CHARS = 5
+_PERSON_FIELD_MIN_PREFIX_UNITS = 2.0
+_PERSON_FIELD_SHORT_LABEL_MAX_OFFSET = 2
+_PERSON_FIELD_LONG_PREFIX_UNITS = 4.0
+_PERSON_FIELD_VALUE_MAX_UNITS = 8.0
+_PERSON_FIELD_VALUE_MIN_UNITS = 2
+# Loose person-form expansion: max trailing-suffix length to treat as same value.
+_PERSON_FORM_EXPANSION_MAX_SUFFIX = 2
+# Quality scoring weights for person form-field candidate ranking.
+_PERSON_FIELD_ANCHOR_WEIGHT = 4
+_PERSON_FIELD_TRAILING_PENALTY = 3
+_PERSON_FIELD_MAX_DELIMITER_SCORE = 4
+_PERSON_FIELD_ODD_CHAR_PENALTY = 3
+# Drop a person candidate whose block overlaps an already-selected block by this ratio.
+_PERSON_FIELD_OVERLAP_DROP_RATIO = 0.65
+
+# Visual-line same-line tests.
+_SAME_LINE_VERTICAL_OVERLAP_RATIO = 0.35
+_SAME_LINE_CENTER_HEIGHT_RATIO = 0.65
+# Visual-line join gap cap: max(floor px, typical height * multiplier).
+_VISUAL_LINE_JOIN_GAP_MIN_PX = 28
+_VISUAL_LINE_JOIN_GAP_HEIGHT_MULT = 3.2
+# Short-CJK-prefix bridging bounds.
+_BRIDGE_LEFT_MIN_LEN = 2
+_BRIDGE_LEFT_MAX_LEN = 6
+_BRIDGE_RIGHT_MIN_LEN = 4
+_BRIDGE_RIGHT_MAX_LEN = 24
+_BRIDGE_COMBINED_MAX_LEN = 30
+_BRIDGE_LEFT_MIN_CJK = 2
+_BRIDGE_RIGHT_MIN_CJK = 3
+# Confidence discount applied to a unioned (reconstructed) virtual block.
+_UNION_BLOCK_CONFIDENCE_FACTOR = 0.95
+# Tall non-text glyph filter for visual-line reconstruction.
+_RECONSTRUCT_TALL_HEIGHT_MULT = 2.4
+_RECONSTRUCT_TALL_ASPECT_MULT = 1.8
+
+# Blank-page detection: minimum dimensions and ink-ratio thresholds.
+_BLANK_PAGE_MIN_WIDTH_PX = 600
+_BLANK_PAGE_MIN_HEIGHT_PX = 800
+_BLANK_PAGE_THUMBNAIL_PX = 512
+_BLANK_PAGE_DARK_PIXEL_MAX = 180
+_BLANK_PAGE_INK_PIXEL_MAX = 230
+_BLANK_PAGE_DARK_RATIO_MAX = 0.00002
+_BLANK_PAGE_INK_RATIO_MAX = 0.0001
+
+# Table-line heuristic: downsample size, dimension floor, darkness and line-count thresholds.
+_TABLE_HEURISTIC_THUMBNAIL_PX = 640
+_TABLE_HEURISTIC_MIN_DIM_PX = 80
+_TABLE_HEURISTIC_DARK_PIXEL_MAX = 90
+_TABLE_HEURISTIC_HORIZONTAL_DARK_RATIO = 0.35
+_TABLE_HEURISTIC_VERTICAL_DARK_RATIO = 0.25
+_TABLE_HEURISTIC_MIN_LINES = 3
+
+# Coarse multi-line block detection.
+_COARSE_MULTILINE_MIN_COMPACT_LEN = 40
+_COARSE_MULTILINE_HEIGHT_MULT = 1.7
+
+# Default OCR-item confidence when the service omits one.
+_DEFAULT_OCR_ITEM_CONFIDENCE = 0.9
+
+# OCR-block merge IOU thresholds and structure-precision supplement bounds.
+_MERGE_DUPLICATE_IOU = 0.5
+_MERGE_OVERLAP_IOU = 0.85
+_SHORT_FIELD_MIN_COMPACT_LEN = 4
+_SHORT_FIELD_MAX_COMPACT_LEN = 80
+_SHORT_FIELD_MAX_DELIMITERS = 4
+_SUPPLEMENT_WIDTH_RATIO = 1.2
+_SUPPLEMENT_HEIGHT_RATIO = 2.2
+_SUPPLEMENT_SIMILARITY_MIN = 0.55
+_SUPPLEMENT_WIDER_RATIO = 1.1
+_SUPPLEMENT_LONGER_TEXT_MARGIN = 6
+
+# Red stamp pixel test thresholds.
+_RED_STAMP_MIN_RED = 115
+_RED_STAMP_RED_MINUS_GREEN = 30
+_RED_STAMP_RED_MINUS_BLUE = 30
+_RED_STAMP_OTHER_CHANNEL_FLOOR = 135
+_RED_STAMP_OTHER_CHANNEL_RATIO = 0.78
+
+# Seal-splitting geometry and red-row projection tuning.
+_SEAL_SPLIT_MIN_DIM_PX = 40
+_SEAL_SPLIT_MIN_ASPECT = 1.25
+_SEAL_SPLIT_MIN_WIDTH_PX = 80
+_SEAL_SPLIT_MIN_WIDTH_IMG_RATIO = 0.075
+_SEAL_SMOOTH_RADIUS_MIN = 2
+_SEAL_SMOOTH_RADIUS_MAX = 7
+_SEAL_SMOOTH_RADIUS_HEIGHT_DIVISOR = 80
+_SEAL_ACTIVE_THRESHOLD_MIN = 12
+_SEAL_ACTIVE_THRESHOLD_WIDTH_RATIO = 0.10
+_SEAL_CLOSE_GAP_MIN = 8
+_SEAL_CLOSE_GAP_MAX = 24
+_SEAL_CLOSE_GAP_HEIGHT_DIVISOR = 18
+_SEAL_MIN_BAND_HEIGHT_MIN = 28
+_SEAL_MIN_BAND_HEIGHT_MAX = 90
+_SEAL_MIN_BAND_HEIGHT_WIDTH_RATIO = 0.35
+_SEAL_PEAK_PROMINENCE_RATIO = 0.35
+_SEAL_PEAK_MIN_DISTANCE_MIN = 48
+_SEAL_PEAK_MIN_DISTANCE_WIDTH_RATIO = 0.55
+_SEAL_MAX_PEAKS = 4
+_SEAL_HALF_BAND_MIN = 64
+_SEAL_HALF_BAND_WIDTH_RATIO = 0.52
+_SEAL_BAND_BOX_MIN_PX = 24
+_SEAL_BAND_BOX_MIN_WIDTH_RATIO = 0.18
+_SEAL_BAND_PAD_MIN = 6
+_SEAL_BAND_PAD_RATIO = 0.06
+
+# Seal region overlay color (legacy /ocr path).
+_SEAL_REGION_COLOR = (255, 0, 0)
+
+# HTML table virtual-cell confidence discount.
+_TABLE_CELL_CONFIDENCE_FACTOR = 0.9
+
+# Bridge NER payload character cap.
+_BRIDGE_PAYLOAD_MAX_CHARS = 1200
+# Minimum entity text length by type for NER results.
+_NER_DEFAULT_MIN_LEN = 2
+_NER_MIN_LEN_BY_TYPE = {
+    "PERSON": 2,
+    "ORG": 2,
+    "ADDRESS": 4,
+}
+
+# Document-title visual suffix lookahead (chars) for PROPERTY entities.
+_PROPERTY_TITLE_TAIL_LOOKAHEAD_CHARS = 12
+
+# Per-character visual-unit weights.
+_CHAR_UNIT_SPACE = 0.25
+_CHAR_UNIT_CJK = 1.0
+_CHAR_UNIT_ALNUM = 0.56
+_CHAR_UNIT_PUNCT = 0.35
+_CHAR_UNIT_OTHER = 0.65
+_CHAR_UNIT_MIN_TOTAL = 0.01
+
+# Form-field label/value width tuning.
+_FORM_LABEL_MAX_UNITS = 8.0
+_FORM_ROW_MIN_WIDTH_HEIGHT_MULT = 8
+_FORM_ROW_MIN_DELIMITERS = 3
+_FIELD_VALUE_WIDTH_MIN_HEIGHT_PX = 10
+_FIELD_VALUE_WIDTH_HEIGHT_RATIO = 0.65
+
+# Visual-wrap break search window and scoring.
+_WRAP_BREAK_SEARCH_WINDOW = 12
+_WRAP_BREAK_SCORE_PUNCT = 30
+_WRAP_BREAK_SCORE_AMOUNT_PREFIX = 24
+_WRAP_BREAK_SCORE_AMOUNT_DIGIT = 20
+_WRAP_BREAK_SCORE_SPACE = 12
+
+# Typical text-line height inference: minimum block height to consider.
+_TEXTLINE_MIN_HEIGHT_PX = 4
+
+# Entity-region estimation tuning.
+_COMPRESSED_LINES_MIN_HEIGHT_MULT = 1.5
+_COMPRESSED_LINES_PER_LINE_MULT = 0.65
+_MULTILINE_SPLIT_HEIGHT_MULT = 1.7
+_VISUAL_LINE_HEIGHT_MULT = 1.55
+_LINE_HEIGHT_CAP_MULT = 1.2
+_ENTITY_REGION_PAD_X_RATIO = 0.006
+_ENTITY_REGION_PAD_X_MIN = 2
+_ENTITY_REGION_MIN_WIDTH_FLOOR = 18
+_ENTITY_REGION_MIN_WIDTH_PER_CHAR = 10
+_ENTITY_REGION_START_RATIO_CLAMP = 1.0
+_ENTITY_REGION_WIDTH_RATIO_FLOOR = 0.01
+
+# Dedupe priority and ranking tuning.
+_DEDUPE_BUCKET_PX = 4
+_DEDUPE_AMOUNT_OVERLAP_DUP = 0.35
+_DEDUPE_DEFAULT_OVERLAP_DUP = 0.7
+_DEDUPE_SAME_LINE_VERTICAL_OVERLAP = 0.55
+_DEDUPE_SAME_LINE_BOX_OVERLAP = 0.25
+_DEDUPE_SAME_LINE_HORIZONTAL_GAP_RATIO = 0.6
+_DEDUPE_SHORT_VALUE_MAX_UNITS = 6.0
+_DEDUPE_SAME_CENTER_HEIGHT_RATIO = 0.65
+_DEDUPE_LONG_VALUE_MIN_UNITS = 6.0
+_DEDUPE_PRIORITY = {
+    "BANK_NAME": 5,
+    "BANK_ACCOUNT": 5,
+    "PHONE": 5,
+    "ID_CARD": 5,
+    "AMOUNT": 5,
+    "PERSON": 5,
+    "ORG": 3,
+    "LEGAL_PARTY": 2,
+}
+_DEDUPE_SOURCE_RANK_FORM_FIELD = 3
+_DEDUPE_SOURCE_RANK_TEXT_MATCH = 2
+_DEDUPE_SOURCE_RANK_VISUAL_TABLE = 1
+
+# Amount coordinate-conflict resolution tuning.
+_AMOUNT_CONFLICT_MIN_AMOUNTS = 3
+_AMOUNT_COLUMN_CLUSTER_TOLERANCE_PX = 70
+_AMOUNT_COLUMN_DOMINANT_MIN_CLUSTER = 3
+_AMOUNT_CONFLICT_OVERLAP_MIN = 0.85
+
+# Entity-to-OCR matching: fuzzy match and per-type width-cap tuning.
+_FUZZY_MATCH_MIN_ENTITY_LEN = 4
+_FUZZY_MATCH_BLOCK_LEN_MULT = 3
+_FUZZY_MATCH_BLOCK_LEN_FLOOR = 24
+_FUZZY_MATCH_RATIO = 0.9
+_FUZZY_MATCH_CONFIDENCE = 0.9
+_TABLE_FALLBACK_CONFIDENCE = 0.8
+_TOKEN_CAP_MIN_PX = 24
+_TOKEN_CAP_HEIGHT_FLOOR = 10
+_TOKEN_CAP_HEIGHT_RATIO = 0.75
+_AMOUNT_TOKEN_CAP_MIN_PX = 28
+_AMOUNT_TOKEN_CAP_PERCENT_HEIGHT_RATIO = 0.42
+_AMOUNT_TOKEN_CAP_HEIGHT_RATIO = 0.75
+
 _OCR_TEXT_BLOCK_CACHE_LOCK = threading.Lock()
 _OCR_TEXT_BLOCK_CACHE: OrderedDict[
     tuple[Any, ...],
@@ -87,7 +330,7 @@ def _get_has_text_ner_lock() -> asyncio.Lock:
 
     llama.cpp serves one small local model for all scanned-PDF pages. Letting
     page workers submit concurrent NER calls tends to increase cold-start tail
-    latency without improving recall, while OCR and HaS Image can still run on
+    latency without improving recall, while OCR and visual feature grounding can still run on
     their own paths.
     """
     global _HAS_TEXT_NER_LOCK, _HAS_TEXT_NER_LOCK_LOOP
@@ -162,7 +405,7 @@ def _has_recent_negative_health(has_client: Any) -> bool:
         return False
     if bool(getattr(has_client, "_health_ready", False)):
         return False
-    return time.monotonic() - checked_at < 5.0
+    return time.monotonic() - checked_at < _HAS_NEGATIVE_HEALTH_TTL_SEC
 
 
 def _get_cached_has_text_ner(
@@ -279,7 +522,7 @@ def _amount_value_signature(text: str) -> str:
     """
     raw = str(text or "")
     digits = _amount_digit_signature(raw)
-    if len(digits) > 2 and digits.endswith("00") and any(ch in raw for ch in ".,\uff0c\uff0e"):
+    if len(digits) > _AMOUNT_TRAILING_ZEROS_MIN_DIGITS and digits.endswith("00") and any(ch in raw for ch in ".,\uff0c\uff0e"):
         return digits[:-2]
     return digits
 
@@ -342,19 +585,19 @@ def _extend_amount_pair_for_visual_match(
         return entity_text, start
 
     end = start + len(entity_text)
-    if start > 0 and block_text[start - 1] in "（(":
+    if start > 0 and block_text[start - 1] in "，,":
         start -= 1
-    if end < len(block_text) and block_text[end] in "）)":
+    if end < len(block_text) and block_text[end] in "，,":
         end += 1
 
-    before_start = max(0, start - 48)
+    before_start = max(0, start - _AMOUNT_PAIR_LOOKBACK_CHARS)
     before = block_text[before_start:start]
     lower_pos = before.rfind("小写")
     upper_pos = before.rfind("人民币大写")
     if upper_pos < 0:
         upper_pos = before.rfind("大写")
-    lower_tail_units = _char_visual_units(before[lower_pos:]) if lower_pos >= 0 else 999.0
-    if upper_pos >= 0 and lower_pos >= 0 and upper_pos < lower_pos and lower_tail_units <= 8.0:
+    lower_tail_units = _char_visual_units(before[lower_pos:]) if lower_pos >= 0 else _AMOUNT_PAIR_NO_LOWER_MARKER_UNITS
+    if upper_pos >= 0 and lower_pos >= 0 and upper_pos < lower_pos and lower_tail_units <= _AMOUNT_PAIR_MAX_LOWER_TAIL_UNITS:
         phrase_start = before_start + upper_pos
         phrase = block_text[phrase_start:end].strip()
         leading_trim = len(block_text[phrase_start:end]) - len(block_text[phrase_start:end].lstrip())
@@ -425,13 +668,23 @@ def _iter_probable_amount_tokens(text: str) -> list[str]:
 
         last_digit_end = i
         saw_separator = False
+        saw_decimal = False
         while i < len(raw):
             if raw[i].isdigit():
                 last_digit_end = i + 1
                 i += 1
                 continue
-            if raw[i] in ",，.． " and i + 1 < len(raw) and raw[i + 1].isdigit():
+            if raw[i] in ",，" and i + 1 < len(raw) and raw[i + 1].isdigit():
                 saw_separator = True
+                i += 1
+                continue
+            if (
+                raw[i] in ".．"
+                and not saw_decimal
+                and i + 1 < len(raw)
+                and raw[i + 1].isdigit()
+            ):
+                saw_decimal = True
                 i += 1
                 continue
             break
@@ -440,8 +693,8 @@ def _iter_probable_amount_tokens(text: str) -> list[str]:
         candidate = _compact_amount_candidate(raw[start:end])
         digit_count = _amount_digit_count(candidate)
         if not (
-            5 <= digit_count <= 14
-            or (saw_separator and 4 <= digit_count <= 14)
+            _AMOUNT_TOKEN_MIN_DIGITS <= digit_count <= _AMOUNT_TOKEN_MAX_DIGITS
+            or (saw_separator and _AMOUNT_TOKEN_MIN_DIGITS_WITH_SEPARATOR <= digit_count <= _AMOUNT_TOKEN_MAX_DIGITS)
         ):
             i = start + 1
             continue
@@ -459,7 +712,7 @@ def _is_probable_table_amount_token(text: str) -> bool:
     if any(ch.isalpha() for ch in compact):
         return False
     digits = _amount_digit_count(compact)
-    return 5 <= digits <= 14 and bool(_iter_probable_amount_tokens(compact))
+    return _AMOUNT_TOKEN_MIN_DIGITS <= digits <= _AMOUNT_TOKEN_MAX_DIGITS and bool(_iter_probable_amount_tokens(compact))
 
 
 _AMOUNT_TABLE_HEADER_KEYWORDS = (
@@ -500,7 +753,7 @@ def _block_center_y(block: OCRTextBlock) -> float:
 def _median_block_height(blocks: list[OCRTextBlock]) -> float:
     heights = sorted(float(block.height) for block in blocks if block.height > 0)
     if not heights:
-        return 12.0
+        return _DEFAULT_BLOCK_HEIGHT_PX
     return heights[(len(heights) - 1) // 2]
 
 
@@ -514,7 +767,7 @@ def _group_blocks_into_visual_rows(blocks: list[OCRTextBlock]) -> list[list[OCRT
     if not relevant:
         return []
 
-    tolerance = max(8.0, _median_block_height(relevant) * 0.75)
+    tolerance = max(_VISUAL_ROW_TOLERANCE_MIN_PX, _median_block_height(relevant) * _VISUAL_ROW_TOLERANCE_HEIGHT_RATIO)
     rows: list[list[OCRTextBlock]] = []
     row_centers: list[float] = []
     for block in sorted(relevant, key=lambda item: (_block_center_y(item), item.left)):
@@ -541,7 +794,7 @@ def _group_blocks_into_visual_rows(blocks: list[OCRTextBlock]) -> list[list[OCRT
 def _amount_table_column_ranges(rows: list[list[OCRTextBlock]]) -> list[tuple[float, float, float]]:
     ranges: list[tuple[float, float, float]] = []
     for row in rows:
-        if len(row) < 3:
+        if len(row) < _AMOUNT_TABLE_MIN_ROW_CELLS:
             continue
         row_text = " ".join(block.text for block in row)
         if not _has_any_compact_keyword(row_text, _AMOUNT_TABLE_HEADER_KEYWORDS):
@@ -549,7 +802,7 @@ def _amount_table_column_ranges(rows: list[list[OCRTextBlock]]) -> list[tuple[fl
         for block in row:
             if not _has_any_compact_keyword(block.text, _AMOUNT_TABLE_HEADER_KEYWORDS):
                 continue
-            pad = max(12.0, float(block.width) * 0.45)
+            pad = max(_AMOUNT_COLUMN_PAD_MIN_PX, float(block.width) * _AMOUNT_COLUMN_PAD_WIDTH_RATIO)
             ranges.append((
                 max(0.0, float(block.left) - pad),
                 float(block.left + block.width) + pad,
@@ -561,7 +814,7 @@ def _amount_table_column_ranges(rows: list[list[OCRTextBlock]]) -> list[tuple[fl
 def _is_in_amount_semantic_column(block: OCRTextBlock, ranges: list[tuple[float, float, float]]) -> bool:
     center = _block_center_x(block)
     top = float(block.top)
-    return any(left <= center <= right and top >= header_bottom - 8 for left, right, header_bottom in ranges)
+    return any(left <= center <= right and top >= header_bottom - _AMOUNT_COLUMN_HEADER_SLACK_PX for left, right, header_bottom in ranges)
 
 
 def _append_unique_amount_entity(
@@ -582,11 +835,11 @@ def _is_standalone_amount_ocr_block(text: str) -> bool:
     compact = _compact_amount_candidate(text)
     if not compact:
         return False
-    allowed = set("0123456789.,，．。¥￥$€£+-()（）[] ")
+    allowed = set("0123456789.,，￥¥$€£-()（）[] ")
     if any(ch not in allowed for ch in compact):
         return False
     digits = _amount_digit_count(compact)
-    if digits < 4 or digits > 14:
+    if digits < _STANDALONE_AMOUNT_MIN_DIGITS or digits > _STANDALONE_AMOUNT_MAX_DIGITS:
         return False
     return bool(_amount_value_signature(compact))
 
@@ -646,17 +899,196 @@ def _augment_amount_entities_from_ocr(
     return augmented
 
 
+_PERSON_FIELD_LABELS = ("姓名", "患者姓名", "病人姓名")
+_PERSON_FIELD_STOP_LABELS = (
+    "性别",
+    "年龄",
+    "年",
+    "床号",
+    "住院号",
+    "登记号",
+    "科别",
+    "病区",
+    "日期",
+    "时间",
+)
+
+
+def _is_person_value_char(ch: str) -> bool:
+    return "\u4e00" <= ch <= "\u9fff" or ch.isalpha() or ch in "·.-"
+
+
+def _looks_like_next_short_form_label(raw: str, cursor: int, chars: list[str]) -> bool:
+    if _char_visual_units("".join(chars)) < _PERSON_FIELD_MIN_PREFIX_UNITS:
+        return False
+    window = raw[cursor : cursor + _PERSON_FIELD_LABEL_LOOKAHEAD_CHARS]
+    for offset, ch in enumerate(window):
+        if ch not in _FORM_FIELD_DELIMITERS:
+            continue
+        if offset <= 0:
+            return False
+        label = window[:offset]
+        if not all(("\u4e00" <= item <= "\u9fff") or item.isalpha() for item in label):
+            return False
+        return offset <= _PERSON_FIELD_SHORT_LABEL_MAX_OFFSET or _char_visual_units("".join(chars)) >= _PERSON_FIELD_LONG_PREFIX_UNITS
+    return False
+
+
+def _iter_person_form_field_values(text: str) -> list[str]:
+    values: list[str] = []
+    raw = str(text or "")
+    if not raw:
+        return values
+
+    for label in _PERSON_FIELD_LABELS:
+        search_from = 0
+        while True:
+            label_pos = raw.find(label, search_from)
+            if label_pos < 0:
+                break
+            cursor = label_pos + len(label)
+            while cursor < len(raw) and raw[cursor].isspace():
+                cursor += 1
+            if cursor >= len(raw) or raw[cursor] not in _FORM_FIELD_DELIMITERS:
+                search_from = label_pos + len(label)
+                continue
+            cursor += 1
+            while cursor < len(raw) and raw[cursor].isspace():
+                cursor += 1
+
+            chars: list[str] = []
+            while cursor < len(raw):
+                if any(raw.startswith(stop_label, cursor) for stop_label in _PERSON_FIELD_STOP_LABELS):
+                    break
+                if _looks_like_next_short_form_label(raw, cursor, chars):
+                    break
+                ch = raw[cursor]
+                if ch.isspace() or ch in _FORM_FIELD_DELIMITERS:
+                    break
+                if not _is_person_value_char(ch):
+                    break
+                chars.append(ch)
+                cursor += 1
+                if _char_visual_units("".join(chars)) > _PERSON_FIELD_VALUE_MAX_UNITS:
+                    break
+            value = "".join(chars).strip("路銉?- ")
+            if _PERSON_FIELD_VALUE_MIN_UNITS <= _char_visual_units(value) <= _PERSON_FIELD_VALUE_MAX_UNITS and value not in values:
+                values.append(value)
+            search_from = max(cursor, label_pos + len(label))
+    return values
+
+
+def _is_loose_person_form_expansion(candidate: str, value: str) -> bool:
+    if not candidate or not value or candidate == value:
+        return False
+    if not candidate.startswith(value):
+        return False
+    suffix = candidate[len(value) :]
+    if len(suffix) > _PERSON_FORM_EXPANSION_MAX_SUFFIX:
+        return False
+    if suffix and all(ch == value[-1] for ch in suffix):
+        return True
+    return any(label.startswith(suffix) or suffix.startswith(label) for label in _PERSON_FIELD_STOP_LABELS)
+
+
+def _ocr_block_area(block: OCRTextBlock) -> int:
+    return max(1, int(block.width)) * max(1, int(block.height))
+
+
+def _ocr_block_smaller_overlap(left: OCRTextBlock, right: OCRTextBlock) -> float:
+    x1 = max(int(left.left), int(right.left))
+    y1 = max(int(left.top), int(right.top))
+    x2 = min(int(left.left + left.width), int(right.left + right.width))
+    y2 = min(int(left.top + left.height), int(right.top + right.height))
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    overlap = (x2 - x1) * (y2 - y1)
+    return overlap / max(1, min(_ocr_block_area(left), _ocr_block_area(right)))
+
+
+def _person_form_field_quality(block: OCRTextBlock, value: str) -> tuple[int, int, int]:
+    compact_text = _compact_text(block.text)
+    anchor_score = 0
+    for label in _PERSON_FIELD_LABELS:
+        if label and label in compact_text:
+            anchor_score += _PERSON_FIELD_ANCHOR_WEIGHT
+    trailing_field_penalty = 0
+    for label in _PERSON_FIELD_STOP_LABELS:
+        if label and label in compact_text:
+            trailing_field_penalty += _PERSON_FIELD_TRAILING_PENALTY
+    delimiter_score = min(
+        _PERSON_FIELD_MAX_DELIMITER_SCORE,
+        sum(1 for ch in str(block.text or "") if ch in _FORM_FIELD_DELIMITERS),
+    )
+    odd_penalty = sum(1 for ch in value if ch in "'`\"?？")
+    return (
+        anchor_score + delimiter_score - trailing_field_penalty - odd_penalty * _PERSON_FIELD_ODD_CHAR_PENALTY,
+        -_ocr_block_area(block),
+        len(value),
+    )
+
+
+def _rank_person_form_field_candidates(
+    ocr_blocks: list[OCRTextBlock],
+) -> list[tuple[str, OCRTextBlock]]:
+    candidates: list[tuple[str, OCRTextBlock, tuple[int, int, int]]] = []
+    for block in ocr_blocks:
+        for value in _iter_person_form_field_values(str(block.text or "")):
+            candidates.append((value, block, _person_form_field_quality(block, value)))
+
+    selected: list[tuple[str, OCRTextBlock]] = []
+    selected_blocks: list[OCRTextBlock] = []
+    for value, block, _quality in sorted(candidates, key=lambda item: item[2], reverse=True):
+        if any(_ocr_block_smaller_overlap(block, existing) >= _PERSON_FIELD_OVERLAP_DROP_RATIO for existing in selected_blocks):
+            continue
+        selected.append((value, block))
+        selected_blocks.append(block)
+    return selected
+
+
+def _augment_person_entities_from_ocr_form_fields(
+    entities: list[dict[str, str]],
+    ocr_blocks: list[OCRTextBlock],
+    selected_type_ids: list[str],
+) -> list[dict[str, str]]:
+    """Recover compact form names from OCR labels such as 姓名: before matching."""
+    if "PERSON" not in selected_type_ids:
+        return entities
+    augmented = list(entities)
+    seen = {
+        _compact_text(entity.get("text", ""))
+        for entity in augmented
+        if _canonical_image_text_type(entity.get("type")) == "PERSON"
+    }
+    for value, _block in _rank_person_form_field_candidates(ocr_blocks):
+        compact = _compact_text(value)
+        if not compact or compact in seen:
+            continue
+        augmented = [
+            entity
+            for entity in augmented
+            if not (
+                _canonical_image_text_type(entity.get("type")) == "PERSON"
+                and _is_loose_person_form_expansion(_compact_text(entity.get("text", "")), compact)
+            )
+        ]
+        seen.add(compact)
+        augmented.append({"type": "PERSON", "text": value, "source": "form_field_ocr"})
+        logger.debug("Form field person recalled from OCR: %s", value)
+    return augmented
+
+
 def _blocks_same_visual_line(left: OCRTextBlock, right: OCRTextBlock) -> bool:
     left_top = float(left.top)
     right_top = float(right.top)
     left_bottom = left_top + max(1.0, float(left.height))
     right_bottom = right_top + max(1.0, float(right.height))
     overlap = min(left_bottom, right_bottom) - max(left_top, right_top)
-    if overlap > 0 and overlap / max(1.0, min(float(left.height), float(right.height))) >= 0.35:
+    if overlap > 0 and overlap / max(1.0, min(float(left.height), float(right.height))) >= _SAME_LINE_VERTICAL_OVERLAP_RATIO:
         return True
     left_center = left_top + float(left.height) / 2
     right_center = right_top + float(right.height) / 2
-    return abs(left_center - right_center) <= max(float(left.height), float(right.height)) * 0.65
+    return abs(left_center - right_center) <= max(float(left.height), float(right.height)) * _SAME_LINE_CENTER_HEIGHT_RATIO
 
 
 def _should_join_visual_line_blocks(left: OCRTextBlock, right: OCRTextBlock) -> bool:
@@ -666,7 +1098,7 @@ def _should_join_visual_line_blocks(left: OCRTextBlock, right: OCRTextBlock) -> 
     if gap < 0:
         return False
     typical_height = max(1, int(max(left.height, right.height)))
-    return gap <= max(28, int(typical_height * 3.2))
+    return gap <= max(_VISUAL_LINE_JOIN_GAP_MIN_PX, int(typical_height * _VISUAL_LINE_JOIN_GAP_HEIGHT_MULT))
 
 
 def _is_plain_cjk_or_alnum(text: str) -> bool:
@@ -681,15 +1113,15 @@ def _cjk_count(text: str) -> int:
 def _should_bridge_short_cjk_prefix(left: OCRTextBlock, right: OCRTextBlock) -> bool:
     left_text = _compact_text(left.text)
     right_text = _compact_text(right.text)
-    if not (2 <= len(left_text) <= 6 and 4 <= len(right_text) <= 24):
+    if not (_BRIDGE_LEFT_MIN_LEN <= len(left_text) <= _BRIDGE_LEFT_MAX_LEN and _BRIDGE_RIGHT_MIN_LEN <= len(right_text) <= _BRIDGE_RIGHT_MAX_LEN):
         return False
-    if len(left_text + right_text) > 30:
+    if len(left_text + right_text) > _BRIDGE_COMBINED_MAX_LEN:
         return False
     if not (_is_plain_cjk_or_alnum(left_text) and _is_plain_cjk_or_alnum(right_text)):
         return False
     if any(ch.isdigit() for ch in left_text):
         return False
-    return _cjk_count(left_text) >= 2 and _cjk_count(right_text) >= 3
+    return _cjk_count(left_text) >= _BRIDGE_LEFT_MIN_CJK and _cjk_count(right_text) >= _BRIDGE_RIGHT_MIN_CJK
 
 
 def _join_visual_line_text(left: str, right: str) -> str:
@@ -711,7 +1143,7 @@ def _union_ocr_blocks(blocks: list[OCRTextBlock], text: str) -> OCRTextBlock:
             [right, bottom],
             [left, bottom],
         ],
-        confidence=min(float(block.confidence) for block in blocks) * 0.95,
+        confidence=min(float(block.confidence) for block in blocks) * _UNION_BLOCK_CONFIDENCE_FACTOR,
     )
 
 
@@ -725,8 +1157,8 @@ def reconstruct_visual_line_blocks(ocr_blocks: list[OCRTextBlock]) -> list[OCRTe
         and not str(block.text or "").lstrip().startswith("<table")
         and not (
             typical_height
-            and block.height > typical_height * 2.4
-            and block.width < block.height * 1.8
+            and block.height > typical_height * _RECONSTRUCT_TALL_HEIGHT_MULT
+            and block.width < block.height * _RECONSTRUCT_TALL_ASPECT_MULT
         )
     ]
     if len(text_blocks) < 2:
@@ -899,26 +1331,26 @@ def prepare_image(image_bytes: bytes) -> tuple[Image.Image, int, int]:
 
 def _is_effectively_blank_page(image: Image.Image) -> tuple[bool, float, float]:
     """Return whether a page is blank enough to skip expensive OCR inference."""
-    if image.width < 600 or image.height < 800:
+    if image.width < _BLANK_PAGE_MIN_WIDTH_PX or image.height < _BLANK_PAGE_MIN_HEIGHT_PX:
         return False, 1.0, 1.0
 
     sample = image.convert("RGB")
-    sample.thumbnail((512, 512))
+    sample.thumbnail((_BLANK_PAGE_THUMBNAIL_PX, _BLANK_PAGE_THUMBNAIL_PX))
     gray = sample.convert("L")
     pixels = list(gray.getdata())
     total = len(pixels)
     if total == 0:
         return True, 0.0, 0.0
 
-    dark_pixels = sum(1 for value in pixels if value < 180)
-    ink_pixels = sum(1 for value in pixels if value < 230)
+    dark_pixels = sum(1 for value in pixels if value < _BLANK_PAGE_DARK_PIXEL_MAX)
+    ink_pixels = sum(1 for value in pixels if value < _BLANK_PAGE_INK_PIXEL_MAX)
     dark_ratio = dark_pixels / total
     ink_ratio = ink_pixels / total
 
     # Keep this threshold deliberately low: it only skips pages with essentially
     # no visible ink, while preserving faint scans, small seals, and single-line
     # pages for the semantic OCR path.
-    return dark_ratio <= 0.00002 and ink_ratio <= 0.0001, dark_ratio, ink_ratio
+    return dark_ratio <= _BLANK_PAGE_DARK_RATIO_MAX and ink_ratio <= _BLANK_PAGE_INK_RATIO_MAX, dark_ratio, ink_ratio
 
 
 # ---------------------------------------------------------------------------
@@ -973,38 +1405,71 @@ def run_paddle_ocr(
     table_like = _looks_like_table(image) if adaptive_mode else False
     needs_table_precision = bool(selected & TABLE_PRECISION_ENTITY_TYPES)
     needs_ocr_visual_regions = bool(selected & OCR_VISUAL_ENTITY_TYPES)
+    needs_text_precision = adaptive_mode and bool(selected - OCR_VISUAL_ENTITY_TYPES)
 
-    use_structure_primary = (
-        settings.OCR_STRUCTURE_ENABLED
-        and settings.OCR_STRUCTURE_PRIMARY
-        and not require_visual_regions
-        and not needs_ocr_visual_regions
+    vl_disabled = not bool(getattr(settings, "OCR_VL_ENABLED", True))
+    use_structure_primary = settings.OCR_STRUCTURE_ENABLED and (
+        vl_disabled
+        or (
+            settings.OCR_STRUCTURE_PRIMARY
+            and (not require_visual_regions or needs_ocr_visual_regions)
+        )
     )
 
     primary_structure_blocks: list[OCRTextBlock] | None = None
+    primary_structure_visual_regions: list[SensitiveRegion] = []
     if use_structure_primary:
-        primary_structure_blocks = _run_structure_service(
+        primary_structure_blocks, primary_structure_visual_regions = _run_structure_service_with_visuals(
             image,
             ocr_service,
             stage_status=stage_status,
             image_bytes=image_bytes(),
         )
         min_blocks = max(1, int(settings.OCR_STRUCTURE_PRIMARY_MIN_BOXES))
-        if len(primary_structure_blocks) >= min_blocks:
+        if primary_structure_visual_regions and (require_visual_regions or needs_ocr_visual_regions) and not needs_text_precision:
             logger.info(
-                "Using PP-StructureV3 primary OCR path: %d blocks (min=%d, table_like=%s, table_types=%s)",
+                "Using PP-StructureV3 primary visual path: %d text blocks, %d visual regions",
                 len(primary_structure_blocks),
-                min_blocks,
-                table_like,
-                needs_table_precision,
+                len(primary_structure_visual_regions),
             )
-            return primary_structure_blocks, []
-        if primary_structure_blocks:
+            return primary_structure_blocks, primary_structure_visual_regions
+        if len(primary_structure_blocks) >= min_blocks:
+            if needs_text_precision and bool(settings.OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL):
+                logger.info(
+                    "PP-StructureV3 primary OCR found %d blocks; retaining PaddleOCR-VL supplement for text-coordinate fusion",
+                    len(primary_structure_blocks),
+                )
+            elif needs_ocr_visual_regions and not primary_structure_visual_regions:
+                logger.info(
+                    "PP-StructureV3 primary OCR found %d blocks but no visual regions; retaining PaddleOCR-VL visual supplement",
+                    len(primary_structure_blocks),
+                )
+            else:
+                if needs_text_precision:
+                    logger.info(
+                        "Using PP-StructureV3 primary OCR path: %d blocks; PaddleOCR-VL supplement disabled",
+                        len(primary_structure_blocks),
+                    )
+                else:
+                    logger.info(
+                        "Using PP-StructureV3 primary OCR path: %d blocks (min=%d, table_like=%s, table_types=%s)",
+                        len(primary_structure_blocks),
+                        min_blocks,
+                        table_like,
+                        needs_table_precision,
+                    )
+                return primary_structure_blocks, primary_structure_visual_regions
+        elif primary_structure_blocks:
             logger.info(
                 "PP-StructureV3 primary OCR was sparse (%d < %d); falling back to PaddleOCR-VL",
                 len(primary_structure_blocks),
                 min_blocks,
             )
+
+    if vl_disabled:
+        # PaddleOCR-VL is disabled: never call /ocr (it would 503). Use whatever
+        # PP-StructureV3 produced (even if sparse) as the OCR result.
+        return (primary_structure_blocks or []), primary_structure_visual_regions
 
     blocks, visual_regions = _run_ocr_service(
         image,
@@ -1013,6 +1478,8 @@ def run_paddle_ocr(
         image_bytes=image_bytes(),
         service_available_checked=True,
     )
+    if primary_structure_visual_regions:
+        visual_regions = [*primary_structure_visual_regions, *visual_regions]
     should_structure_fallback = (
         settings.OCR_STRUCTURE_ENABLED
         and (
@@ -1020,25 +1487,30 @@ def run_paddle_ocr(
             or _has_coarse_markup_blocks(blocks)
             or (adaptive_mode and table_like and needs_table_precision)
             or (needs_table_precision and _has_coarse_multiline_blocks(blocks))
+            or (needs_text_precision and bool(primary_structure_blocks))
+            or (needs_text_precision and bool(settings.OCR_STRUCTURE_TEXT_PRECISION_ENABLED))
         )
     )
     if should_structure_fallback:
         if primary_structure_blocks is not None:
             structure_blocks = primary_structure_blocks
+            structure_visual_regions = primary_structure_visual_regions
             if stage_status is not None:
                 stage_status["ocr_structure_fallback_reused_primary"] = True
         else:
-            structure_blocks = _run_structure_service(
+            structure_blocks, structure_visual_regions = _run_structure_service_with_visuals(
                 image,
                 ocr_service,
                 stage_status=stage_status,
                 image_bytes=image_bytes(),
             )
+        if structure_visual_regions and structure_visual_regions is not primary_structure_visual_regions:
+            visual_regions = [*visual_regions, *structure_visual_regions]
         if structure_blocks:
             before = len(blocks)
             blocks = _merge_ocr_blocks(blocks, structure_blocks)
             logger.info(
-                "PP-StructureV3 table fallback added %d blocks (%d -> %d)",
+                "PP-StructureV3 OCR supplement added %d blocks (%d -> %d)",
                 len(structure_blocks),
                 before,
                 len(blocks),
@@ -1053,22 +1525,22 @@ def run_paddle_ocr(
 def _looks_like_table(image: Image.Image) -> bool:
     gray = image.convert("L")
     # Downsample for a cheap table-line heuristic.
-    gray.thumbnail((640, 640))
+    gray.thumbnail((_TABLE_HEURISTIC_THUMBNAIL_PX, _TABLE_HEURISTIC_THUMBNAIL_PX))
     width, height = gray.size
-    if width < 80 or height < 80:
+    if width < _TABLE_HEURISTIC_MIN_DIM_PX or height < _TABLE_HEURISTIC_MIN_DIM_PX:
         return False
     pixels = gray.load()
     horizontal = 0
     vertical = 0
     for y in range(height):
-        dark = sum(1 for x in range(width) if pixels[x, y] < 90)
-        if dark / width > 0.35:
+        dark = sum(1 for x in range(width) if pixels[x, y] < _TABLE_HEURISTIC_DARK_PIXEL_MAX)
+        if dark / width > _TABLE_HEURISTIC_HORIZONTAL_DARK_RATIO:
             horizontal += 1
     for x in range(width):
-        dark = sum(1 for y in range(height) if pixels[x, y] < 90)
-        if dark / height > 0.25:
+        dark = sum(1 for y in range(height) if pixels[x, y] < _TABLE_HEURISTIC_DARK_PIXEL_MAX)
+        if dark / height > _TABLE_HEURISTIC_VERTICAL_DARK_RATIO:
             vertical += 1
-    return horizontal >= 3 and vertical >= 3
+    return horizontal >= _TABLE_HEURISTIC_MIN_LINES and vertical >= _TABLE_HEURISTIC_MIN_LINES
 
 
 def _should_run_structure_fallback(image: Image.Image, blocks: list[OCRTextBlock]) -> bool:
@@ -1088,7 +1560,7 @@ def _has_coarse_multiline_blocks(blocks: list[OCRTextBlock]) -> bool:
         if block.text.lstrip().startswith(("<table", "<div")):
             return True
         compact_len = len(_compact_text(block.text))
-        if compact_len >= 40 and block.height > typical_height * 1.7:
+        if compact_len >= _COARSE_MULTILINE_MIN_COMPACT_LEN and block.height > typical_height * _COARSE_MULTILINE_HEIGHT_MULT:
             return True
     return False
 
@@ -1131,7 +1603,7 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
                 top=top,
                 width=right - left,
                 height=bottom - top,
-                confidence=float(getattr(item, "confidence", 0.9) or 0.9),
+                confidence=float(getattr(item, "confidence", _DEFAULT_OCR_ITEM_CONFIDENCE) or _DEFAULT_OCR_ITEM_CONFIDENCE),
                 source="ocr_seal",
             )
             visual_regions.extend(_split_merged_seal_region(image, region))
@@ -1141,36 +1613,35 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
         blocks.append(OCRTextBlock(
             text=text,
             polygon=[[left, top], [right, top], [right, bottom], [left, bottom]],
-            confidence=float(getattr(item, "confidence", 0.9) or 0.9),
+            confidence=float(getattr(item, "confidence", _DEFAULT_OCR_ITEM_CONFIDENCE) or _DEFAULT_OCR_ITEM_CONFIDENCE),
         ))
     return blocks, visual_regions
 
 
-def _run_structure_service(
+def _run_structure_service_with_visuals(
     image: Image.Image,
     ocr_service: Any,
     stage_status: dict[str, Any] | None = None,
     image_bytes: bytes | None = None,
-) -> list[OCRTextBlock]:
+) -> tuple[list[OCRTextBlock], list[SensitiveRegion]]:
     stage_start = time.perf_counter()
     if not ocr_service or not hasattr(ocr_service, "extract_structure_boxes"):
         _record_ocr_stage_duration(stage_status, "structure", stage_start)
-        return []
+        return [], []
     if image_bytes is None:
         image_bytes = _image_png_bytes(image)
     cache_key = _ocr_cache_key("structure", image, image_bytes, ocr_service)
     cached = _get_cached_ocr_output(cache_key, "structure", stage_status)
     if cached is not None:
-        blocks, _visual_regions = cached
         _record_ocr_stage_duration(stage_status, "structure", stage_start)
-        return blocks
+        return cached
 
     owns_inflight, inflight = _begin_ocr_output_inflight(cache_key)
     if not owns_inflight:
-        blocks, _visual_regions = _wait_for_ocr_output_inflight(inflight)
+        blocks, visual_regions = _wait_for_ocr_output_inflight(inflight)
         _record_ocr_cache_stage(stage_status, "structure", "shared_inflight")
         _record_ocr_stage_duration(stage_status, "structure", stage_start)
-        return blocks
+        return blocks, visual_regions
 
     try:
         items = ocr_service.extract_structure_boxes(image_bytes)
@@ -1178,16 +1649,16 @@ def _run_structure_service(
         logger.warning("PP-StructureV3 fallback failed: %s", e)
         _finish_ocr_output_inflight(cache_key, inflight, ([], []))
         _record_ocr_stage_duration(stage_status, "structure", stage_start)
-        return []
+        return [], []
     try:
-        blocks, _visual_regions = _ocr_items_to_blocks(items, image)
+        blocks, visual_regions = _ocr_items_to_blocks(items, image)
     except Exception as e:
         _finish_ocr_output_inflight(cache_key, inflight, None, e)
         raise
-    _set_cached_ocr_output(cache_key, blocks, [])
-    _finish_ocr_output_inflight(cache_key, inflight, (blocks, []))
+    _set_cached_ocr_output(cache_key, blocks, visual_regions)
+    _finish_ocr_output_inflight(cache_key, inflight, (blocks, visual_regions))
     _record_ocr_stage_duration(stage_status, "structure", stage_start)
-    return blocks
+    return blocks, visual_regions
 
 
 def _merge_ocr_blocks(primary: list[OCRTextBlock], extra: list[OCRTextBlock]) -> list[OCRTextBlock]:
@@ -1211,16 +1682,44 @@ def _merge_ocr_blocks(primary: list[OCRTextBlock], extra: list[OCRTextBlock]) ->
         area_b = max(1, (bx2 - bx1) * (by2 - by1))
         return inter / (area_a + area_b - inter)
 
+    def looks_like_short_field(block: OCRTextBlock) -> bool:
+        text = str(block.text or "").strip()
+        compact = _compact_text(text)
+        if len(compact) < _SHORT_FIELD_MIN_COMPACT_LEN or len(compact) > _SHORT_FIELD_MAX_COMPACT_LEN:
+            return False
+        if not any(separator in text for separator in (":", "：")):
+            return False
+        if text.count(":") + text.count("：") > _SHORT_FIELD_MAX_DELIMITERS:
+            return False
+        return block.width > 0 and block.height > 0
+
+    def is_structure_precision_supplement(existing: OCRTextBlock, candidate: OCRTextBlock) -> bool:
+        if not looks_like_short_field(candidate):
+            return False
+        existing_text = _compact_text(existing.text)
+        candidate_text = _compact_text(candidate.text)
+        if not existing_text or not candidate_text or existing_text == candidate_text:
+            return False
+        if candidate.width > existing.width * _SUPPLEMENT_WIDTH_RATIO or candidate.height > existing.height * _SUPPLEMENT_HEIGHT_RATIO:
+            return False
+        similar = SequenceMatcher(None, candidate_text, existing_text).ratio()
+        if candidate_text not in existing_text and existing_text not in candidate_text and similar < _SUPPLEMENT_SIMILARITY_MIN:
+            return False
+        return existing.width > candidate.width * _SUPPLEMENT_WIDER_RATIO or len(existing_text) > len(candidate_text) + _SUPPLEMENT_LONGER_TEXT_MARGIN
+
     for block in extra:
         if _is_coarse_markup_block(block):
             continue
         compact = _compact_text(block.text)
         duplicate = False
         for existing in merged:
-            if compact and compact == _compact_text(existing.text) and iou(block, existing) > 0.5:
+            overlap = iou(block, existing)
+            if compact and compact == _compact_text(existing.text) and overlap > _MERGE_DUPLICATE_IOU:
                 duplicate = True
                 break
-            if iou(block, existing) > 0.85:
+            if overlap > _MERGE_OVERLAP_IOU:
+                if is_structure_precision_supplement(existing, block):
+                    continue
                 duplicate = True
                 break
         if not duplicate:
@@ -1230,11 +1729,11 @@ def _merge_ocr_blocks(primary: list[OCRTextBlock], extra: list[OCRTextBlock]) ->
 
 def _is_red_stamp_pixel(r: int, g: int, b: int) -> bool:
     return (
-        r >= 115
-        and r - g >= 30
-        and r - b >= 30
-        and g <= max(135, int(r * 0.78))
-        and b <= max(135, int(r * 0.78))
+        r >= _RED_STAMP_MIN_RED
+        and r - g >= _RED_STAMP_RED_MINUS_GREEN
+        and r - b >= _RED_STAMP_RED_MINUS_BLUE
+        and g <= max(_RED_STAMP_OTHER_CHANNEL_FLOOR, int(r * _RED_STAMP_OTHER_CHANNEL_RATIO))
+        and b <= max(_RED_STAMP_OTHER_CHANNEL_FLOOR, int(r * _RED_STAMP_OTHER_CHANNEL_RATIO))
     )
 
 
@@ -1249,13 +1748,13 @@ def _split_merged_seal_region(image: Image.Image, region: SensitiveRegion) -> li
     """
     if region.entity_type != "SEAL":
         return [region]
-    if region.width < 40 or region.height < 40:
+    if region.width < _SEAL_SPLIT_MIN_DIM_PX or region.height < _SEAL_SPLIT_MIN_DIM_PX:
         return [region]
-    if region.height < region.width * 1.25:
+    if region.height < region.width * _SEAL_SPLIT_MIN_ASPECT:
         return [region]
 
     img_w, img_h = image.size
-    if region.width < max(80, int(img_w * 0.075)):
+    if region.width < max(_SEAL_SPLIT_MIN_WIDTH_PX, int(img_w * _SEAL_SPLIT_MIN_WIDTH_IMG_RATIO)):
         return [region]
     x1 = max(0, min(region.left, img_w - 1))
     y1 = max(0, min(region.top, img_h - 1))
@@ -1275,14 +1774,14 @@ def _split_merged_seal_region(image: Image.Image, region: SensitiveRegion) -> li
 
     # Smooth the projection so sparse red text and broken rings are treated as
     # one seal band while preserving larger vertical gaps between stamps.
-    radius = max(2, min(7, height // 80))
+    radius = max(_SEAL_SMOOTH_RADIUS_MIN, min(_SEAL_SMOOTH_RADIUS_MAX, height // _SEAL_SMOOTH_RADIUS_HEIGHT_DIVISOR))
     smoothed = [
         sum(red_rows[max(0, y - radius): min(height, y + radius + 1)])
         for y in range(height)
     ]
-    active_threshold = max(12, int(width * 0.10))
-    close_gap = max(8, min(24, height // 18))
-    min_band_height = max(28, min(90, int(region.width * 0.35)))
+    active_threshold = max(_SEAL_ACTIVE_THRESHOLD_MIN, int(width * _SEAL_ACTIVE_THRESHOLD_WIDTH_RATIO))
+    close_gap = max(_SEAL_CLOSE_GAP_MIN, min(_SEAL_CLOSE_GAP_MAX, height // _SEAL_CLOSE_GAP_HEIGHT_DIVISOR))
+    min_band_height = max(_SEAL_MIN_BAND_HEIGHT_MIN, min(_SEAL_MIN_BAND_HEIGHT_MAX, int(region.width * _SEAL_MIN_BAND_HEIGHT_WIDTH_RATIO)))
 
     bands: list[tuple[int, int]] = []
     in_band = False
@@ -1313,19 +1812,19 @@ def _split_merged_seal_region(image: Image.Image, region: SensitiveRegion) -> li
                 if (
                     smoothed[y] >= smoothed[y - 1]
                     and smoothed[y] >= smoothed[y + 1]
-                    and smoothed[y] >= max_projection * 0.35
+                    and smoothed[y] >= max_projection * _SEAL_PEAK_PROMINENCE_RATIO
                 ):
                     peak_candidates.append((float(smoothed[y]), y))
         peaks: list[int] = []
-        min_peak_distance = max(48, int(width * 0.55))
+        min_peak_distance = max(_SEAL_PEAK_MIN_DISTANCE_MIN, int(width * _SEAL_PEAK_MIN_DISTANCE_WIDTH_RATIO))
         for _score, y in sorted(peak_candidates, reverse=True):
             if all(abs(y - existing) >= min_peak_distance for existing in peaks):
                 peaks.append(y)
-            if len(peaks) >= 4:
+            if len(peaks) >= _SEAL_MAX_PEAKS:
                 break
         peaks.sort()
         if len(peaks) >= 2:
-            half_band = max(64, int(width * 0.52))
+            half_band = max(_SEAL_HALF_BAND_MIN, int(width * _SEAL_HALF_BAND_WIDTH_RATIO))
             bands = [
                 (max(0, peak - half_band), min(height - 1, peak + half_band))
                 for peak in peaks
@@ -1351,9 +1850,9 @@ def _split_merged_seal_region(image: Image.Image, region: SensitiveRegion) -> li
         by1, by2 = min(red_ys), max(red_ys)
         box_w = bx2 - bx1 + 1
         box_h = by2 - by1 + 1
-        if box_w < max(24, region.width * 0.18) or box_h < max(24, region.width * 0.18):
+        if box_w < max(_SEAL_BAND_BOX_MIN_PX, region.width * _SEAL_BAND_BOX_MIN_WIDTH_RATIO) or box_h < max(_SEAL_BAND_BOX_MIN_PX, region.width * _SEAL_BAND_BOX_MIN_WIDTH_RATIO):
             continue
-        pad = max(6, int(max(box_w, box_h) * 0.06))
+        pad = max(_SEAL_BAND_PAD_MIN, int(max(box_w, box_h) * _SEAL_BAND_PAD_RATIO))
         left = max(0, x1 + bx1 - pad)
         top = max(0, y1 + by1 - pad)
         right = min(img_w, x1 + bx2 + pad + 1)
@@ -1455,7 +1954,7 @@ def _run_ocr_service(
                 height=bottom - top,
                 confidence=item.confidence,
                 source="paddleocr_vl",
-                color=(255, 0, 0),
+                color=_SEAL_REGION_COLOR,
             )
             split_regions = _split_merged_seal_region(image, region)
             visual_regions.extend(split_regions)
@@ -1596,7 +2095,7 @@ def extract_table_cells(table_html: str, block: OCRTextBlock) -> list[OCRTextBlo
                     [cell_left + cell_width, cell_top + cell_height],
                     [cell_left, cell_top + cell_height],
                 ],
-                confidence=block.confidence * 0.9,
+                confidence=block.confidence * _TABLE_CELL_CONFIDENCE_FACTOR,
             ))
 
     return virtual_blocks
@@ -1883,7 +2382,7 @@ async def run_has_text_analysis(
         if bridge_blocks:
             bridge_payload = _build_has_text_payload(
                 bridge_blocks,
-                max_chars=min(settings.HAS_VISION_MAX_TEXT_CHARS, 1200),
+                max_chars=min(settings.HAS_VISION_MAX_TEXT_CHARS, _BRIDGE_PAYLOAD_MAX_CHARS),
                 max_block_chars=settings.HAS_VISION_MAX_BLOCK_CHARS,
             )
             bridge_text = bridge_payload.content
@@ -1908,11 +2407,7 @@ async def run_has_text_analysis(
                             bridge_ner_result = result if isinstance(result, dict) else {}
 
         entities = []
-        min_len_by_type = {
-            "PERSON": 2,
-            "ORG": 2,
-            "ADDRESS": 4,
-        }
+        min_len_by_type = _NER_MIN_LEN_BY_TYPE
 
         merged_ner_result = dict(ner_result)
         for entity_type, entity_list in bridge_ner_result.items():
@@ -1928,11 +2423,11 @@ async def run_has_text_analysis(
             if not entity_list:
                 continue
 
-            normalized_type = chinese_to_id.get(entity_type)
-            if not normalized_type:
-                logger.debug("HaS skipped unrequested type bucket: %s", entity_type)
-                continue
-            min_len = min_len_by_type.get(normalized_type, 2)
+            # Open vocabulary: the type IS what the model returned. If it matches a
+            # label we sent for a schema item, use that item's id; otherwise keep the
+            # raw model label (识别出来是啥就是啥) — never drop, never reconcile.
+            normalized_type = chinese_to_id.get(entity_type, entity_type)
+            min_len = min_len_by_type.get(normalized_type, _NER_DEFAULT_MIN_LEN)
 
             for entity_text in entity_list:
                 text = entity_text.strip() if entity_text else ""
@@ -1948,6 +2443,7 @@ async def run_has_text_analysis(
                 })
                 logger.debug("HaS found entity: %s (%s)", text, normalized_type)
 
+        entities = _augment_person_entities_from_ocr_form_fields(entities, candidate_blocks, selected_type_ids)
         entities = _augment_amount_entities_from_ocr(entities, candidate_blocks, selected_type_ids)
         logger.info("HaS total %d sensitive entities found", len(entities))
         _record_has_text_metric(stage_status, "has_text_entity_count", len(entities))
@@ -1997,15 +2493,15 @@ def _entity_type_from_block_context(entity_type: str, entity_text: str, block_te
 def _extend_entity_for_visual_match(entity_type: str, block_text: str, entity_text: str, start: int) -> str:
     """Extend short semantic values to adjacent visual suffixes in the same line.
 
-    HaS/field completion often returns the core business object ("采购项目"),
-    while the visible document title appends a generic suffix such as "合同".
+    HaS/field completion often returns the core business object, while the
+    visible document title appends a generic suffix such as "合同".
     For redaction coordinates, the suffix belongs to the same visual phrase and
     must be covered to avoid readable tail characters.
     """
     if entity_type != "PROPERTY" or start < 0:
         return entity_text
     tail_start = start + len(entity_text)
-    tail = _compact_text(block_text[tail_start: tail_start + 12])
+    tail = _compact_text(block_text[tail_start: tail_start + _PROPERTY_TITLE_TAIL_LOOKAHEAD_CHARS])
     for suffix in sorted(DOCUMENT_TITLE_SUFFIXES, key=len, reverse=True):
         if tail.startswith(suffix):
             return entity_text + suffix
@@ -2016,49 +2512,85 @@ def _char_visual_units(text: str) -> float:
     total = 0.0
     for ch in text or "":
         if ch.isspace():
-            total += 0.25
+            total += _CHAR_UNIT_SPACE
         elif "\u4e00" <= ch <= "\u9fff":
-            total += 1.0
+            total += _CHAR_UNIT_CJK
         elif ch.isdigit() or ("a" <= ch.lower() <= "z"):
-            total += 0.56
+            total += _CHAR_UNIT_ALNUM
         elif ch in ".,:;()[]{}<>-/\\|_+=*&^%$#@!?~`'\"":
-            total += 0.35
+            total += _CHAR_UNIT_PUNCT
         else:
-            total += 0.65
-    return max(total, 0.01)
+            total += _CHAR_UNIT_OTHER
+    return max(total, _CHAR_UNIT_MIN_TOTAL)
 
 
 def _char_unit(ch: str) -> float:
     return _char_visual_units(ch)
 
 
+_FORM_FIELD_DELIMITERS = frozenset(":：")
+
+
+def _is_form_label_char(ch: str) -> bool:
+    return "\u4e00" <= ch <= "\u9fff" or ch.isalpha()
+
+
+def _form_field_marker_before_entity(line_text: str, start_pos: int) -> str | None:
+    if start_pos <= 0:
+        return None
+    prefix = line_text[:start_pos].rstrip()
+    if not prefix or prefix[-1] not in _FORM_FIELD_DELIMITERS:
+        return None
+    label_end = len(prefix) - 1
+    label_start = label_end
+    while label_start > 0 and _is_form_label_char(prefix[label_start - 1]):
+        label_start -= 1
+    label = prefix[label_start:label_end]
+    if not label:
+        return None
+    if _char_visual_units(label) > _FORM_LABEL_MAX_UNITS:
+        return None
+    return prefix[label_start:]
+
+
+def _looks_like_compact_form_row(line_text: str, block: OCRTextBlock, line_height: int) -> bool:
+    if block.width <= max(1, line_height) * _FORM_ROW_MIN_WIDTH_HEIGHT_MULT:
+        return False
+    return sum(1 for ch in str(line_text or "") if ch in _FORM_FIELD_DELIMITERS) >= _FORM_ROW_MIN_DELIMITERS
+
+
+def _field_value_width_cap(entity_text: str, line_height: int, pad_x: int) -> int:
+    return int(_char_visual_units(entity_text) * max(_FIELD_VALUE_WIDTH_MIN_HEIGHT_PX, line_height * _FIELD_VALUE_WIDTH_HEIGHT_RATIO)) + pad_x * 2
+
+
 def _find_wrap_break(text: str, start: int, estimated: int) -> int:
     """Choose a natural visual-wrap boundary near an estimated character index."""
     if not text:
         return start
-    lo = max(start + 1, estimated - 12)
-    hi = min(len(text) - 1, estimated + 12)
+    lo = max(start + 1, estimated - _WRAP_BREAK_SEARCH_WINDOW)
+    hi = min(len(text) - 1, estimated + _WRAP_BREAK_SEARCH_WINDOW)
     if lo > hi:
         return max(start + 1, min(len(text) - 1, estimated))
 
     # Prefer punctuation after the mark, then currency/digit starts. This keeps
     # amounts and identifiers intact when a long OCR row was visually wrapped.
-    punctuation = "，,。.;；、)）]】"
+    punctuation = "，。;；、：:)]）】"
+    amount_prefixes = "￥¥$€£"
     best: tuple[int, int] | None = None
     for idx in range(lo, hi + 1):
         ch = text[idx]
         score = 0
         break_after = True
         if ch in punctuation:
-            score = 30
-        elif ch in "￥¥" and idx > start:
-            score = 24
+            score = _WRAP_BREAK_SCORE_PUNCT
+        elif ch in amount_prefixes and idx > start:
+            score = _WRAP_BREAK_SCORE_AMOUNT_PREFIX
             break_after = False
-        elif ch.isdigit() and idx > start and text[idx - 1] in "￥¥":
-            score = 20
+        elif ch.isdigit() and idx > start and text[idx - 1] in amount_prefixes:
+            score = _WRAP_BREAK_SCORE_AMOUNT_DIGIT
             break_after = False
         elif ch.isspace():
-            score = 12
+            score = _WRAP_BREAK_SCORE_SPACE
         if score:
             distance = abs(idx - estimated)
             candidate = idx + 1 if break_after else idx
@@ -2105,7 +2637,7 @@ def _infer_typical_textline_height(blocks: list[OCRTextBlock]) -> int | None:
     heights = [
         block.height
         for block in blocks
-        if block.height > 4
+        if block.height > _TEXTLINE_MIN_HEIGHT_PX
         and block.width > block.height
         and not block.text.lstrip().startswith(("<table", "<div"))
     ]
@@ -2132,14 +2664,19 @@ def _estimate_entity_region(
     block_text = block.text or ""
     explicit_lines = [line for line in block_text.splitlines() if line.strip()]
     lines = explicit_lines or [block_text]
+    compressed_explicit_lines = (
+        len(explicit_lines) > 1
+        and typical_line_height is not None
+        and block.height < typical_line_height * max(_COMPRESSED_LINES_MIN_HEIGHT_MULT, len(explicit_lines) * _COMPRESSED_LINES_PER_LINE_MULT)
+    )
 
     line_index = 0
     line_text = block_text
     start_pos = occurrence_start if occurrence_start is not None else block_text.find(entity_text)
 
-    line_count = max(len(lines), 1)
-    if line_count == 1 and typical_line_height and block.height > typical_line_height * 1.7:
-        visual_line_height = max(1, int(typical_line_height * 1.55))
+    line_count = 1 if compressed_explicit_lines else max(len(lines), 1)
+    if line_count == 1 and typical_line_height and block.height > typical_line_height * _MULTILINE_SPLIT_HEIGHT_MULT:
+        visual_line_height = max(1, int(typical_line_height * _VISUAL_LINE_HEIGHT_MULT))
         line_count = max(2, round(block.height / visual_line_height))
         visual_lines = _split_visual_lines(block_text, line_count)
         absolute_start = max(start_pos, 0)
@@ -2173,28 +2710,37 @@ def _estimate_entity_region(
                 line_text = line
                 start_pos = pos
                 break
+    if compressed_explicit_lines:
+        line_index = 0
 
     line_top = block.top + int(block.height * line_index / line_count)
     next_line_top = block.top + int(block.height * (line_index + 1) / line_count)
     line_height = max(1, next_line_top - line_top)
     if typical_line_height:
-        capped_height = max(1, int(typical_line_height * 1.2))
+        capped_height = max(1, int(typical_line_height * _LINE_HEIGHT_CAP_MULT))
         if line_height > capped_height:
             line_top += max(0, (line_height - capped_height) // 2)
             line_height = capped_height
 
+    start_pos = max(start_pos, 0)
     before_text = line_text[:start_pos]
     text_units = _char_visual_units(line_text)
     before_units = _char_visual_units(before_text) if before_text else 0.0
     entity_units = _char_visual_units(entity_text)
-    start_pos = max(start_pos, 0)
-    start_ratio = max(0.0, min(before_units / text_units, 1.0))
-    width_ratio = max(entity_units / text_units, 0.01)
+    start_ratio = max(0.0, min(before_units / text_units, _ENTITY_REGION_START_RATIO_CLAMP))
+    width_ratio = max(entity_units / text_units, _ENTITY_REGION_WIDTH_RATIO_FLOOR)
 
-    pad_x = max(2, int(block.width * 0.006))
+    pad_x = max(_ENTITY_REGION_PAD_X_MIN, int(block.width * _ENTITY_REGION_PAD_X_RATIO))
     sub_left = int(block.left + start_ratio * block.width) - pad_x
     sub_width = int(width_ratio * block.width) + pad_x * 2
-    min_width = min(block.width, max(18, len(entity_text) * 10))
+    min_width = min(block.width, max(_ENTITY_REGION_MIN_WIDTH_FLOOR, len(entity_text) * _ENTITY_REGION_MIN_WIDTH_PER_CHAR))
+
+    field_marker = _form_field_marker_before_entity(line_text, start_pos)
+    if field_marker and _looks_like_compact_form_row(line_text, block, line_height):
+        # start_pos is already after the compact form label (for example
+        # "姓名:"). Keep the exact text anchor and only cap the value width,
+        # otherwise short values drift into the following field.
+        sub_width = min(sub_width, max(min_width, _field_value_width_cap(entity_text, line_height, pad_x)))
 
     sub_left = max(block.left, sub_left)
     sub_width = max(min_width, sub_width)
@@ -2206,23 +2752,14 @@ def _estimate_entity_region(
 
 def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]:
     """Drop duplicate OCR matches that point at the same visual box/text."""
-    priority = {
-        "BANK_NAME": 5,
-        "BANK_ACCOUNT": 5,
-        "PHONE": 5,
-        "ID_CARD": 5,
-        "AMOUNT": 5,
-        "PERSON": 5,
-        "ORG": 3,
-        "LEGAL_PARTY": 2,
-    }
+    priority = _DEDUPE_PRIORITY
     chosen: dict[tuple, SensitiveRegion] = {}
     for region in regions:
         key = (
-            region.left // 4,
-            region.top // 4,
-            region.width // 4,
-            region.height // 4,
+            region.left // _DEDUPE_BUCKET_PX,
+            region.top // _DEDUPE_BUCKET_PX,
+            region.width // _DEDUPE_BUCKET_PX,
+            region.height // _DEDUPE_BUCKET_PX,
             _compact_text(region.text),
         )
         existing = chosen.get(key)
@@ -2243,19 +2780,102 @@ def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]
         smaller = max(1, min(a.width * a.height, b.width * b.height))
         return inter / smaller
 
+    def vertical_overlap_ratio(a: SensitiveRegion, b: SensitiveRegion) -> float:
+        y1 = max(a.top, b.top)
+        y2 = min(a.top + a.height, b.top + b.height)
+        if y2 <= y1:
+            return 0.0
+        return (y2 - y1) / max(1, min(a.height, b.height))
+
+    def region_rank(region: SensitiveRegion) -> tuple[int, int, int, int]:
+        source = str(region.source or "").lower()
+        source_rank = (
+            _DEDUPE_SOURCE_RANK_FORM_FIELD
+            if "form_field_ocr" in source
+            else _DEDUPE_SOURCE_RANK_TEXT_MATCH
+            if "text_match" in source
+            else _DEDUPE_SOURCE_RANK_VISUAL_TABLE
+            if "visual_line" in source or "table" in source
+            else 0
+        )
+        area = max(1, region.width * region.height)
+        text = _compact_text(region.text)
+        if region.entity_type == "PERSON":
+            return (source_rank, priority.get(region.entity_type, 1), len(text), -area)
+        return (source_rank, priority.get(region.entity_type, 1), -area, len(text))
+
+    same_line_dedupe_types = {
+        "PERSON",
+        "AGE",
+        "GENDER",
+        "DATE",
+        "TIME",
+        "BIRTH_DATE",
+        "INSTITUTION_NAME",
+        "COMPANY_NAME",
+        "GOVERNMENT_AGENCY",
+        "WORK_UNIT",
+        "DEPARTMENT_NAME",
+        "PROJECT_NAME",
+        "CASE_NUMBER",
+    }
+
+    def same_text_line_duplicate(a: SensitiveRegion, b: SensitiveRegion) -> bool:
+        if a.entity_type != b.entity_type:
+            return False
+        if a.entity_type not in same_line_dedupe_types:
+            return False
+        text = _compact_text(a.text)
+        if not text or text != _compact_text(b.text):
+            return False
+        if vertical_overlap_ratio(a, b) < _DEDUPE_SAME_LINE_VERTICAL_OVERLAP:
+            return False
+        if overlap_ratio(a, b) >= _DEDUPE_SAME_LINE_BOX_OVERLAP:
+            return True
+        # No box overlap: a same-text pair on one line is only an OCR split of a
+        # SINGLE value when the boxes are horizontally adjacent. Two same-text
+        # boxes far apart on the same line are DISTINCT occurrences (e.g. the same
+        # date printed under both 甲方 and 乙方) and must each be redacted.
+        horizontal_gap = max(a.left, b.left) - min(a.left + a.width, b.left + b.width)
+        if horizontal_gap > _DEDUPE_SAME_LINE_HORIZONTAL_GAP_RATIO * max(a.width, b.width):
+            return False
+        short_value = _char_visual_units(text) <= _DEDUPE_SHORT_VALUE_MAX_UNITS
+        same_center_line = abs((a.top + a.height / 2) - (b.top + b.height / 2)) <= max(a.height, b.height) * _DEDUPE_SAME_CENTER_HEIGHT_RATIO
+        if short_value and same_center_line:
+            return True
+        return _char_visual_units(text) >= _DEDUPE_LONG_VALUE_MIN_UNITS and same_center_line
+
     deduped: list[SensitiveRegion] = []
     for region in sorted(
         chosen.values(),
-        key=lambda r: priority.get(r.entity_type, 1),
+        key=lambda r: (
+            priority.get(r.entity_type, 1),
+            len(_compact_text(r.text)),
+            r.confidence,
+        ),
         reverse=True,
     ):
-        duplicate = any(
-            _compact_text(region.text) == _compact_text(existing.text)
-            and overlap_ratio(region, existing) >= (0.35 if region.entity_type == "AMOUNT" else 0.7)
-            for existing in deduped
-        )
-        if not duplicate:
+        region_text = _compact_text(region.text)
+        duplicate_index: int | None = None
+        for index, existing in enumerate(deduped):
+            duplicate = (
+                (
+                    region_text == _compact_text(existing.text)
+                    or (
+                        region.entity_type == existing.entity_type
+                        and region_text
+                        and _compact_text(existing.text).startswith(region_text)
+                    )
+                )
+                and overlap_ratio(region, existing) >= (_DEDUPE_AMOUNT_OVERLAP_DUP if region.entity_type == "AMOUNT" else _DEDUPE_DEFAULT_OVERLAP_DUP)
+            ) or same_text_line_duplicate(region, existing)
+            if duplicate:
+                duplicate_index = index
+                break
+        if duplicate_index is None:
             deduped.append(region)
+        elif region_rank(region) > region_rank(deduped[duplicate_index]):
+            deduped[duplicate_index] = region
     return _filter_amount_coordinate_conflicts(deduped)
 
 
@@ -2269,11 +2889,11 @@ def _amount_region_value(region: SensitiveRegion) -> int:
 
 def _filter_amount_coordinate_conflicts(regions: list[SensitiveRegion]) -> list[SensitiveRegion]:
     amounts = [region for region in regions if region.entity_type == "AMOUNT"]
-    if len(amounts) < 3:
+    if len(amounts) < _AMOUNT_CONFLICT_MIN_AMOUNTS:
         return regions
 
     numeric_amounts = [region for region in amounts if _amount_region_value(region) > 0]
-    if len(numeric_amounts) < 3:
+    if len(numeric_amounts) < _AMOUNT_CONFLICT_MIN_AMOUNTS:
         return regions
 
     centers = sorted(
@@ -2286,19 +2906,19 @@ def _filter_amount_coordinate_conflicts(regions: list[SensitiveRegion]) -> list[
             column_clusters.append([region])
             continue
         cluster_center = sum(item.left + item.width / 2 for item in column_clusters[-1]) / len(column_clusters[-1])
-        if abs(center - cluster_center) <= 70:
+        if abs(center - cluster_center) <= _AMOUNT_COLUMN_CLUSTER_TOLERANCE_PX:
             column_clusters[-1].append(region)
         else:
             column_clusters.append([region])
     dominant_columns = [
         sum(item.left + item.width / 2 for item in cluster) / len(cluster)
         for cluster in column_clusters
-        if len(cluster) >= 3
+        if len(cluster) >= _AMOUNT_COLUMN_DOMINANT_MIN_CLUSTER
     ]
 
     def near_dominant_column(region: SensitiveRegion) -> bool:
         center = region.left + region.width / 2
-        return any(abs(center - column) <= 70 for column in dominant_columns)
+        return any(abs(center - column) <= _AMOUNT_COLUMN_CLUSTER_TOLERANCE_PX for column in dominant_columns)
 
     keep_ids = {id(region) for region in regions}
     by_value: dict[str, list[SensitiveRegion]] = {}
@@ -2335,7 +2955,7 @@ def _filter_amount_coordinate_conflicts(regions: list[SensitiveRegion]) -> list[
             for other in remaining_amounts[index + 1 :]
             if id(other) in keep_ids
             and _amount_value_signature(other.text) != _amount_value_signature(region.text)
-            and smaller_overlap(region, other) >= 0.85
+            and smaller_overlap(region, other) >= _AMOUNT_CONFLICT_OVERLAP_MIN
         ]
         if not conflicts:
             continue
@@ -2394,12 +3014,22 @@ def match_entities_to_ocr(
             continue
 
         type_mapping = {
-            "人名": "PERSON", "姓名": "PERSON", "昵称": "NICKNAME",
-            "实验室名称": "LAB_NAME", "实验室": "LAB_NAME", "机构": "INSTITUTION_NAME",
-            "电话": "PHONE", "手机号": "PHONE", "电话号码": "PHONE",
-            "身份证": "ID_CARD", "身份证号": "ID_CARD",
-            "银行卡": "BANK_CARD", "银行卡号": "BANK_CARD",
-            "地址": "ADDRESS", "公司": "COMPANY_NAME", "公司名称": "COMPANY_NAME",
+            "人名": "PERSON",
+            "姓名": "PERSON",
+            "昵称": "NICKNAME",
+            "实验室名称": "LAB_NAME",
+            "实验室": "LAB_NAME",
+            "机构": "INSTITUTION_NAME",
+            "电话": "PHONE",
+            "手机号": "PHONE",
+            "电话号码": "PHONE",
+            "身份证": "ID_CARD",
+            "身份证号": "ID_CARD",
+            "银行卡": "BANK_CARD",
+            "银行卡号": "BANK_CARD",
+            "地址": "ADDRESS",
+            "公司": "COMPANY_NAME",
+            "公司名称": "COMPANY_NAME",
         }
         normalized_type = _canonical_image_text_type(type_mapping.get(entity_type, entity_type.upper()))
 
@@ -2454,11 +3084,11 @@ def match_entities_to_ocr(
                         occurrence_start=visual_occurrence_start,
                     )
                     if contextual_type in {"PHONE", "ID_CARD", "BANK_ACCOUNT", "BANK_CARD", "DATE", "PERSON"}:
-                        token_cap = max(24, int(_char_visual_units(visual_text) * max(10, sub_height * 0.75)))
+                        token_cap = max(_TOKEN_CAP_MIN_PX, int(_char_visual_units(visual_text) * max(_TOKEN_CAP_HEIGHT_FLOOR, sub_height * _TOKEN_CAP_HEIGHT_RATIO)))
                         sub_width = min(sub_width, token_cap)
                     elif contextual_type == "AMOUNT" and "大写" not in visual_text and "小写" not in visual_text:
-                        height_factor = 0.42 if _is_percent_value_text(visual_text) else 0.75
-                        token_cap = max(28, int(_char_visual_units(visual_text) * max(10, sub_height * height_factor)))
+                        height_factor = _AMOUNT_TOKEN_CAP_PERCENT_HEIGHT_RATIO if _is_percent_value_text(visual_text) else _AMOUNT_TOKEN_CAP_HEIGHT_RATIO
+                        token_cap = max(_AMOUNT_TOKEN_CAP_MIN_PX, int(_char_visual_units(visual_text) * max(_TOKEN_CAP_HEIGHT_FLOOR, sub_height * height_factor)))
                         sub_width = min(sub_width, token_cap)
 
                     regions.append(SensitiveRegion(
@@ -2471,7 +3101,7 @@ def match_entities_to_ocr(
                         confidence=1.0,
                         source=(
                             entity_source
-                            if entity_source == "table_semantic"
+                            if entity_source in {"table_semantic", "form_field_ocr"}
                             else
                             "table_cell_match"
                             if is_table_virtual
@@ -2489,8 +3119,8 @@ def match_entities_to_ocr(
                 continue
 
             # Fuzzy match (handles minor OCR errors)
-            elif not matched and len(entity_text) >= 4 and len(block_text) <= max(len(entity_text) * 3, 24) and (
-                SequenceMatcher(None, entity_text, block_text).ratio() > 0.9
+            elif not matched and len(entity_text) >= _FUZZY_MATCH_MIN_ENTITY_LEN and len(block_text) <= max(len(entity_text) * _FUZZY_MATCH_BLOCK_LEN_MULT, _FUZZY_MATCH_BLOCK_LEN_FLOOR) and (
+                SequenceMatcher(None, entity_text, block_text).ratio() > _FUZZY_MATCH_RATIO
             ):
                 regions.append(SensitiveRegion(
                     text=entity_text,
@@ -2499,7 +3129,7 @@ def match_entities_to_ocr(
                     top=block.top,
                     width=block.width,
                     height=block.height,
-                    confidence=0.9,
+                    confidence=_FUZZY_MATCH_CONFIDENCE,
                     source="fuzzy_match",
                 ))
                 logger.debug("MATCH '%s' ~ '%s...' (fuzzy)", entity_text, block_text[:20])
@@ -2517,7 +3147,7 @@ def match_entities_to_ocr(
                         top=block.top,
                         width=block.width,
                         height=block.height,
-                        confidence=0.8,
+                        confidence=_TABLE_FALLBACK_CONFIDENCE,
                         source="table_fallback",
                     ))
                     logger.debug(

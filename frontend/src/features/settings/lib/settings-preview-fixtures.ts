@@ -24,7 +24,7 @@ export type PreviewPipelineType = {
 };
 
 export type PreviewPipeline = {
-  mode: 'ocr_has' | 'has_image' | 'vlm';
+  mode: 'ocr_has' | 'visual_features';
   name: string;
   description: string;
   enabled: boolean;
@@ -316,7 +316,7 @@ export function buildPreviewPipelines(t: Translate): PreviewPipeline[] {
       types: buildRepeatedTypes(ocrBaseTypes, 24),
     },
     {
-      mode: 'has_image',
+      mode: 'visual_features',
       name: t('settings.pipelineDisplayName.image'),
       description: t('settings.pipelineDescription.image'),
       enabled: true,
@@ -335,7 +335,7 @@ export function buildPreviewPresets(t: Translate): RecognitionPreset[] {
       kind: 'text',
       selectedEntityTypeIds: ['person_name', 'id_card', 'company_name', 'address'],
       ocrHasTypes: [],
-      hasImageTypes: [],
+      visualFeatureTypes: [],
       replacementMode: 'structured',
       created_at: now,
       updated_at: now,
@@ -346,7 +346,7 @@ export function buildPreviewPresets(t: Translate): RecognitionPreset[] {
       kind: 'vision',
       selectedEntityTypeIds: [],
       ocrHasTypes: ['seal_text', 'handwritten_name'],
-      hasImageTypes: ['receipt_region', 'portrait_face', 'stamp_region'],
+      visualFeatureTypes: ['receipt_region', 'portrait_face', 'stamp_region'],
       replacementMode: 'structured',
       created_at: now,
       updated_at: now,
@@ -357,7 +357,7 @@ export function buildPreviewPresets(t: Translate): RecognitionPreset[] {
       kind: 'full',
       selectedEntityTypeIds: ['person_name', 'project_name', 'company_name'],
       ocrHasTypes: ['seal_text'],
-      hasImageTypes: ['receipt_region', 'stamp_region'],
+      visualFeatureTypes: ['receipt_region', 'stamp_region'],
       replacementMode: 'structured',
       created_at: now,
       updated_at: now,
@@ -368,7 +368,7 @@ export function buildPreviewPresets(t: Translate): RecognitionPreset[] {
       kind: 'full',
       selectedEntityTypeIds: ['person_name', 'case_number', 'company_name', 'address'],
       ocrHasTypes: ['seal_text', 'margin_note'],
-      hasImageTypes: ['qr_region', 'watermark_region'],
+      visualFeatureTypes: ['qr_region', 'watermark_region'],
       replacementMode: 'structured',
       created_at: now,
       updated_at: now,
@@ -379,7 +379,7 @@ export function buildPreviewPresets(t: Translate): RecognitionPreset[] {
       kind: 'text',
       selectedEntityTypeIds: ['person_name', 'bank_card', 'contract_amount', 'email_address'],
       ocrHasTypes: [],
-      hasImageTypes: [],
+      visualFeatureTypes: [],
       replacementMode: 'structured',
       created_at: now,
       updated_at: now,

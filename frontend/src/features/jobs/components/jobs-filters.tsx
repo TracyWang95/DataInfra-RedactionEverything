@@ -31,7 +31,7 @@ export function JobsFilters({
   const t = useT();
 
   return (
-    <section className="saas-panel mb-2 grid shrink-0 gap-2.5 rounded-[18px] border-border/70 bg-card/95 p-2.5 shadow-[var(--shadow-control)] xl:grid-cols-[minmax(260px,0.7fr)_minmax(520px,1fr)_auto] xl:items-center 2xl:p-3">
+    <section className="saas-panel mb-2 grid shrink-0 gap-2.5 rounded-[20px] border-border/70 bg-card/95 p-2.5 shadow-[var(--shadow-control)] xl:grid-cols-[minmax(260px,0.7fr)_minmax(520px,1fr)_auto] xl:items-center 2xl:p-3">
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
           <span className="saas-kicker inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap !px-2 !py-1">
@@ -62,7 +62,7 @@ export function JobsFilters({
           disabled={tableBusy}
           data-testid="jobs-refresh-btn"
           title={t('jobs.refreshTitle')}
-          className="h-8 min-w-[7.5rem] shrink-0 justify-center rounded-lg px-2.5 text-xs whitespace-nowrap"
+          className="h-8 min-w-[5.5rem] shrink-0 justify-center rounded-lg px-2.5 text-xs whitespace-nowrap"
         >
           <RefreshCw data-icon="inline-start" className={refreshing ? 'animate-spin' : ''} />
           {refreshing ? t('jobs.refreshing') : t('jobs.clickRefresh')}
@@ -100,7 +100,7 @@ function MetricPill({
       <div
         className={
           tone === 'alert'
-            ? 'truncate text-sm font-semibold leading-4 tabular-nums text-destructive'
+            ? 'truncate text-sm font-semibold leading-4 tabular-nums text-[var(--error-foreground)]'
             : 'truncate text-sm font-semibold leading-4 tabular-nums text-foreground'
         }
       >

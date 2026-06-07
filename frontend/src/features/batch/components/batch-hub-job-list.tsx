@@ -158,7 +158,7 @@ const JobRow = memo(function JobRow({
     >
       <div className="min-w-0 space-y-1">
         <div className="flex min-w-0 flex-nowrap items-center gap-2">
-          <Badge variant="secondary" className="shrink-0 rounded-full px-2 py-0.5 text-[10px]">
+          <Badge variant="secondary" className="shrink-0 rounded-full px-2.5 py-0.5">
             {t('batchHub.batch')}
           </Badge>
           <span

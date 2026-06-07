@@ -67,6 +67,11 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
+function wslEnvVar(name, fallback = '') {
+  const value = env[name] ?? fallback;
+  return `${name}=${shellQuote(value)}`;
+}
+
 function required(name) {
   const value = env[name];
   if (!value) throw new PublicStartupError('config');
@@ -104,7 +109,7 @@ const env = {
   CUDA_VISIBLE_DEVICES: fileEnv.CUDA_VISIBLE_DEVICES || process.env.CUDA_VISIBLE_DEVICES || '0',
   OCR_VL_BACKEND: fileEnv.OCR_VL_BACKEND || 'vllm-server',
   OCR_VLLM_URL: fileEnv.OCR_VLLM_URL || 'http://127.0.0.1:8118/v1',
-  OCR_VL_API_MODEL_NAME: fileEnv.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.5-0.9B',
+  OCR_VL_API_MODEL_NAME: fileEnv.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.6-0.9B',
 };
 
 const wslHost = process.platform === 'win32' ? getWslHost() : '127.0.0.1';
@@ -112,10 +117,8 @@ env.WSL_MODEL_HOST = wslHost;
 env.HAS_TEXT_RUNTIME = env.HAS_TEXT_RUNTIME || 'vllm';
 env.HAS_TEXT_VLLM_BASE_URL = preferWslUrl(env.HAS_TEXT_VLLM_BASE_URL, 8080, '/v1');
 env.OCR_BASE_URL = preferWslUrl(env.OCR_BASE_URL, 8082);
-
-for (const key of ['HAS_IMAGE_WEIGHTS', 'GLM_FLASH_SERVER_BIN', 'GLM_FLASH_MODEL_FOR_SERVER', 'GLM_FLASH_MMPROJ_FOR_SERVER']) {
-  if (env[key]) env[key] = wslToWin(env[key]);
-}
+env.LOCATE_ANYTHING_ENABLED = env.LOCATE_ANYTHING_ENABLED || '1';
+env.VISUAL_FEATURES_BASE_URL = preferWslUrl(env.VISUAL_FEATURES_BASE_URL, Number(env.LOCATE_ANYTHING_PORT || 8090));
 const winEnv = { ...env, PYTHONPATH: backendDir };
 
 const windowsVenv = env.WINDOWS_VENV_DIR || '.venv';
@@ -123,7 +126,13 @@ const windowsPython = env.WINDOWS_PYTHON || path.join(repoRoot, windowsVenv, 'Sc
 const appPython = path.posix.join(required('VENV_DIR'), 'bin', 'python');
 const vllmPython = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'python');
 const vllmBin = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'vllm');
-const glmPort = env.GLM_FLASH_PORT || '8090';
+const locatePort = env.LOCATE_ANYTHING_PORT || '8090';
+// PaddleOCR-VL is optional. Default OFF: the text path uses PP-StructureV3,
+// so the heavy VL model is not started, freeing GPU memory for HaS / LocateAnything.
+const ocrVlEnabled = !['0', 'false', 'no', 'off', ''].includes(
+  String(env.OCR_VL_ENABLED ?? '0').trim().toLowerCase(),
+);
+winEnv.OCR_VL_ENABLED = ocrVlEnabled ? '1' : '0';
 const children = [];
 
 function nvidiaDllDirs() {
@@ -233,21 +242,25 @@ async function waitJson(url, predicate, label, timeoutMs = 240000) {
 async function startVllmServices() {
   const wslRoot = winToWsl(repoRoot);
   const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
-  spawnWsl(
-    'paddle-vllm',
-    [
-      `cd ${shellQuote(wslRoot)} &&`,
-      `CUDA_VISIBLE_DEVICES=${cuda}`,
-      shellQuote(vllmPython),
-      shellQuote(vllmBin),
-      'serve PaddlePaddle/PaddleOCR-VL',
-      '--host 0.0.0.0 --port 8118',
-      '--served-model-name PaddleOCR-VL-1.5-0.9B',
-      '--trust-remote-code',
-      ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
-    ].join(' '),
-  );
-  await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 360000);
+  if (ocrVlEnabled) {
+    spawnWsl(
+      'paddle-vllm',
+      [
+        `cd ${shellQuote(wslRoot)} &&`,
+        `CUDA_VISIBLE_DEVICES=${cuda}`,
+        shellQuote(vllmPython),
+        shellQuote(vllmBin),
+        'serve PaddlePaddle/PaddleOCR-VL-1.6',
+        '--host 0.0.0.0 --port 8118',
+        '--served-model-name PaddleOCR-VL-1.6-0.9B',
+        '--trust-remote-code',
+        ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
+      ].join(' '),
+    );
+    await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000);
+  } else {
+    console.log('[dev] PaddleOCR-VL (8118) skipped: text path uses PP-StructureV3 (set OCR_VL_ENABLED=1 to enable VL)');
+  }
 
   spawnWsl(
     'has-text-vllm',
@@ -264,7 +277,32 @@ async function startVllmServices() {
       ...splitArgs(env.HAS_TEXT_VLLM_EXTRA_ARGS).map(shellQuote),
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 360000);
+  await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 720000);
+
+  // LocateAnything Qwen2 text backbone served by vLLM (prompt-embeds). The
+  // LocateAnything service (8090) runs the MoonViT vision tower locally and
+  // posts stitched image+text embeds here. Only started in vLLM mode.
+  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0' && (env.LOCATE_ANYTHING_VLLM_URL || '').trim()) {
+    const locateLmModel = env.LOCATE_ANYTHING_LM_MODEL_DIR || '/mnt/d/has_models/locate_qwen2_model';
+    spawnWsl(
+      'locate-lm-vllm',
+      [
+        `cd ${shellQuote(wslRoot)} &&`,
+        `CUDA_VISIBLE_DEVICES=${cuda}`,
+        'HF_HUB_OFFLINE=1',
+        'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True',
+        shellQuote(vllmPython),
+        shellQuote(vllmBin),
+        'serve',
+        shellQuote(locateLmModel),
+        `--served-model-name ${shellQuote(env.LOCATE_ANYTHING_VLLM_MODEL || 'locate_qwen2_model')}`,
+        '--host 0.0.0.0 --port 8091',
+        '--enable-prompt-embeds',
+        ...splitArgs(env.LOCATE_ANYTHING_LM_VLLM_EXTRA_ARGS).map(shellQuote),
+      ].join(' '),
+    );
+    await waitJson(`http://${wslHost}:8091/v1/models`, (body) => Array.isArray(body.data), 'locate-lm-vllm', 720000);
+  }
 }
 
 async function startOcrWrapper() {
@@ -276,24 +314,83 @@ async function startOcrWrapper() {
       `cd ${shellQuote(wslBackend)} &&`,
       `CUDA_VISIBLE_DEVICES=${cuda}`,
       `PYTHONPATH=${shellQuote(wslBackend)}`,
-      `OCR_VL_BACKEND=${shellQuote(env.OCR_VL_BACKEND || 'vllm-server')}`,
+      `OCR_VL_ENABLED=${shellQuote(ocrVlEnabled ? '1' : '0')}`,
+      `OCR_VL_BACKEND=${shellQuote(ocrVlEnabled ? (env.OCR_VL_BACKEND || 'vllm-server') : '')}`,
       `OCR_VLLM_URL=${shellQuote(env.OCR_VLLM_URL || 'http://127.0.0.1:8118/v1')}`,
-      `OCR_VL_API_MODEL_NAME=${shellQuote(env.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.5-0.9B')}`,
+      `OCR_VL_API_MODEL_NAME=${shellQuote(env.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.6-0.9B')}`,
+      wslEnvVar('OCR_MAX_IMAGE_SIDE', '2048'),
+      wslEnvVar('OCR_MAX_NEW_TOKENS', '2048'),
+      wslEnvVar('OCR_VL_WARMUP', ocrVlEnabled ? '1' : '0'),
+      wslEnvVar('OCR_STRUCTURE_ENABLED', '1'),
+      wslEnvVar('OCR_STRUCTURE_PRIMARY', '1'),
+      wslEnvVar('OCR_STRUCTURE_WARMUP', '1'),
+      wslEnvVar('OCR_STRUCTURE_RELEASE_AFTER_REQUEST', '0'),
       `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=${shellQuote(env.PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK || 'True')}`,
       shellQuote(appPython),
       'scripts/ocr_server.py',
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:8082/health`, (body) => body.ready === true, 'ocr-wrapper', 360000);
+  await waitJson(`http://${wslHost}:8082/health`, (body) => body.ready === true, 'ocr-wrapper', 720000);
+}
+
+async function startLocateAnything() {
+  const wslRoot = winToWsl(repoRoot);
+  const wslBackend = winToWsl(backendDir);
+  const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
+  const locateDeps = env.LOCATE_ANYTHING_DEPS || '/home/tracy/.cache/datainfra-redaction/locateanything-hf-deps';
+  const locatePythonPath = [locateDeps, path.posix.join(wslBackend, 'scripts'), wslBackend].join(':');
+  spawnWsl(
+    'locateanything',
+    [
+      `cd ${shellQuote(wslRoot)} &&`,
+      `CUDA_VISIBLE_DEVICES=${cuda}`,
+      'HF_HUB_OFFLINE=1',
+      'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True',
+      wslEnvVar('LOCATE_ANYTHING_MODEL_NAME', 'LocateAnything-3B'),
+      wslEnvVar('LOCATE_ANYTHING_MAX_IMAGE_SIDE', '1280'),
+      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE', '1280'),
+      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE', '1280'),
+      wslEnvVar('LOCATE_ANYTHING_MAX_NEW_TOKENS', '8192'),
+      wslEnvVar('LOCATE_ANYTHING_GENERATION_MODE', 'hybrid'),
+      wslEnvVar('LOCATE_ANYTHING_FAST_FIRST', '1'),
+      wslEnvVar('LOCATE_ANYTHING_FAST_FIRST_FALLBACK_ON_EMPTY', '1'),
+      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_TILE_FALLBACK_MAX_TILES', '1'),
+      wslEnvVar('LOCATE_ANYTHING_TEMPERATURE', '0.7'),
+      wslEnvVar('LOCATE_ANYTHING_VLLM_URL', ''),
+      wslEnvVar('LOCATE_ANYTHING_VLLM_MODEL', 'locate_qwen2_model'),
+      `PYTHONPATH=${shellQuote(locatePythonPath)}`,
+      shellQuote(vllmPython),
+      'backend/scripts/locate_anything_server.py',
+      '--model',
+      shellQuote(env.LOCATE_ANYTHING_MODEL || '/mnt/d/has_models/LocateAnything-3B-HF'),
+      '--backend',
+      shellQuote(env.LOCATE_ANYTHING_BACKEND || 'hf'),
+      '--host',
+      '0.0.0.0',
+      '--port',
+      shellQuote(locatePort),
+      '--dtype',
+      shellQuote(env.LOCATE_ANYTHING_DTYPE || 'bfloat16'),
+    ].join(' '),
+  );
+  await waitJson(`http://${wslHost}:${locatePort}/health`, (body) => body.ready === true, 'locateanything', 720000);
 }
 
 async function runWarmup() {
-  console.log('[dev] running warmup');
+  console.log('[dev] running warmup (best-effort)');
   const child = spawnLogged('warmup', windowsPython, ['scripts/warmup_models.py'], { cwd: backendDir, env: winEnv });
-  await new Promise((resolve, reject) => {
-    child.on('exit', (code) =>
-      code === 0 ? resolve() : reject(new PublicStartupError('warmup')),
-    );
+  // Warmup is a pre-load optimization, not a readiness gate: every service was
+  // already confirmed online via waitJson before this. A slow cold inference
+  // (e.g. the 3B LocateAnything first /detect) must NOT tear down a healthy
+  // stack, so treat warmup as best-effort and continue regardless of exit code.
+  await new Promise((resolve) => {
+    child.on('exit', (code) => {
+      if (code !== 0) {
+        console.log(`[dev] warmup exited code=${code}; continuing (models are up, first request may be slower)`);
+      }
+      resolve();
+    });
+    child.on('error', () => resolve());
   });
 }
 
@@ -311,53 +408,13 @@ async function main() {
 
   await startVllmServices();
 
-  if ((env.GLM_FLASH_ENABLED || '1') !== '0') {
-    spawnLogged('glm-vlm', required('GLM_FLASH_SERVER_BIN'), [
-      '-m',
-      required('GLM_FLASH_MODEL_FOR_SERVER'),
-      '--mmproj',
-      required('GLM_FLASH_MMPROJ_FOR_SERVER'),
-      '--host',
-      '0.0.0.0',
-      '--port',
-      glmPort,
-      '-a',
-      env.GLM_FLASH_ALIAS || env.VLM_MODEL_NAME || 'GLM-4.6V-Flash-Q4',
-      '--jinja',
-      '-ngl',
-      env.GLM_FLASH_N_GPU_LAYERS || 'auto',
-      '--flash-attn',
-      'on',
-      '-fit',
-      'on',
-      '-c',
-      env.GLM_FLASH_N_CTX || '2048',
-      '-np',
-      env.GLM_FLASH_N_PARALLEL || '1',
-      '-ctk',
-      env.GLM_FLASH_CACHE_TYPE_K || 'q8_0',
-      '-ctv',
-      env.GLM_FLASH_CACHE_TYPE_V || 'q8_0',
-      '--temp',
-      '0.8',
-      '--top-p',
-      '0.6',
-      '--top-k',
-      '2',
-      '--repeat-penalty',
-      '1.1',
-      '--metrics',
-      '--device',
-      env.GLM_FLASH_DEVICE || 'CUDA0',
-      ...(env.GLM_FLASH_MMPROJ_OFFLOAD === '0' ? [] : ['--mmproj-offload']),
-    ]);
-    await waitJson(`http://127.0.0.1:${glmPort}/v1/models`, (body) => Array.isArray(body.data), 'glm-vlm', 360000);
+  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0') {
+    await startLocateAnything();
   }
 
   await startOcrWrapper();
 
-  spawnLogged('has-image', windowsPython, ['scripts/has_image_server.py'], { cwd: backendDir, env: winEnv });
-  await waitJson('http://127.0.0.1:8081/health', (body) => body.ready === true, 'has-image', 180000);
+  await waitJson(`${env.VISUAL_FEATURES_BASE_URL || `http://127.0.0.1:${locatePort}`}/health`, (body) => body.ready === true, 'visual-features', 180000);
 
   spawnLogged('backend', windowsPython, ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'], {
     cwd: backendDir,

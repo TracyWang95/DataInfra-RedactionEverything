@@ -13,7 +13,7 @@ export type ReviewBoxQualityIssue =
   | 'seamSeal'
   | 'warning';
 
-export type ReviewBoxSourceKind = 'hasImage' | 'fallback' | 'ocrHas' | 'table';
+export type ReviewBoxSourceKind = 'visualFeature' | 'fallback' | 'ocrHas' | 'table';
 
 export const REVIEW_BOX_QUALITY_ISSUE_ORDER: readonly ReviewBoxQualityIssue[] = [
   'fallback',
@@ -25,6 +25,17 @@ export const REVIEW_BOX_QUALITY_ISSUE_ORDER: readonly ReviewBoxQualityIssue[] = 
   'largeRegion',
   'warning',
 ];
+
+const LOW_CONFIDENCE_THRESHOLD = 0.55;
+const LARGE_OCR_AREA_THRESHOLD = 0.2;
+const LARGE_OCR_WIDTH_THRESHOLD = 0.6;
+const LARGE_OCR_HEIGHT_THRESHOLD = 0.25;
+const EDGE_MARGIN = 0.04;
+const EDGE_FAR_MARGIN = 0.96;
+const SEAM_MARGIN = 0.025;
+const SEAM_FAR_MARGIN = 0.975;
+const SEAM_MAX_WIDTH = 0.07;
+const SEAM_MIN_HEIGHT = 0.1;
 
 export function formatSourceDetail(value: string | undefined): string {
   const normalized = (value ?? '').replace(/[_-]+/g, ' ').trim();
@@ -78,12 +89,12 @@ export function getReviewBoxSourceKind(box: EditorBox): ReviewBoxSourceKind | nu
     return 'ocrHas';
   }
   if (
-    sourceValues.has('has_image') ||
-    sourceValues.has('has_image_model') ||
-    sourceDetail === 'has_image' ||
-    sourceDetail.startsWith('has_image_')
+    sourceValues.has('visual_features') ||
+    sourceValues.has('visual_feature_model') ||
+    sourceDetail === 'visual_features' ||
+    sourceDetail.startsWith('visual_features_')
   ) {
-    return 'hasImage';
+    return 'visualFeature';
   }
 
   return null;
@@ -100,7 +111,10 @@ function hasCoarseMarkup(text: string | undefined): boolean {
 
 function isLargeOcrBox(box: EditorBox): boolean {
   if (box.source !== 'ocr_has') return false;
-  return box.width * box.height >= 0.2 || (box.width >= 0.6 && box.height >= 0.25);
+  return (
+    box.width * box.height >= LARGE_OCR_AREA_THRESHOLD ||
+    (box.width >= LARGE_OCR_WIDTH_THRESHOLD && box.height >= LARGE_OCR_HEIGHT_THRESHOLD)
+  );
 }
 
 function isSealBox(box: EditorBox): boolean {
@@ -108,18 +122,27 @@ function isSealBox(box: EditorBox): boolean {
 }
 
 function isEdgeBox(box: EditorBox): boolean {
-  return box.x <= 0.04 || box.y <= 0.04 || box.x + box.width >= 0.96 || box.y + box.height >= 0.96;
+  return (
+    box.x <= EDGE_MARGIN ||
+    box.y <= EDGE_MARGIN ||
+    box.x + box.width >= EDGE_FAR_MARGIN ||
+    box.y + box.height >= EDGE_FAR_MARGIN
+  );
 }
 
 function isSideSeamBox(box: EditorBox): boolean {
-  return box.x <= 0.025 || box.x + box.width >= 0.975 || (box.width <= 0.07 && box.height >= 0.10);
+  return (
+    box.x <= SEAM_MARGIN ||
+    box.x + box.width >= SEAM_FAR_MARGIN ||
+    (box.width <= SEAM_MAX_WIDTH && box.height >= SEAM_MIN_HEIGHT)
+  );
 }
 
 export function getReviewBoxQualityIssueKeys(box: EditorBox): ReviewBoxQualityIssue[] {
   const issues: ReviewBoxQualityIssue[] = [];
   const { evidenceSource, source, sourceDetail, warnings } = sourceEvidence(box);
 
-  if (typeof box.confidence === 'number' && box.confidence > 0 && box.confidence < 0.55) {
+  if (typeof box.confidence === 'number' && box.confidence > 0 && box.confidence < LOW_CONFIDENCE_THRESHOLD) {
     issues.push('lowConfidence');
   }
   if (

@@ -26,18 +26,15 @@ export async function batchVision(
   fileId: string,
   page: number,
   selectedOcrHasTypes: string[],
-  selectedHasImageTypes: string[],
-  selectedVlmTypes: string[],
+  selectedVisualFeatureTypes: string[],
   signal?: AbortSignal,
 ): Promise<VisionResult> {
-  const data = {
-    selected_ocr_has_types: selectedOcrHasTypes,
-    selected_has_image_types: selectedHasImageTypes,
-    selected_vlm_types: selectedVlmTypes,
-  };
   return post<VisionResult>(
     `/redaction/${fileId}/vision?page=${page}&include_result_image=false`,
-    data,
+    {
+      selected_ocr_has_types: selectedOcrHasTypes,
+      selected_visual_feature_types: Array.from(new Set(selectedVisualFeatureTypes)),
+    },
     {
       signal,
       timeout: BATCH_TIMEOUT,
@@ -53,7 +50,6 @@ export async function batchExecute(request: RedactionRequest): Promise<Redaction
   return post<RedactionResult>('/redaction/execute', request, { timeout: BATCH_TIMEOUT });
 }
 
-/** 与后端 execute 一致的 entity_map 预览（不落盘） */
 export async function batchPreviewEntityMap(body: {
   entities: unknown[];
   config: Record<string, unknown>;
@@ -79,18 +75,17 @@ export async function batchPreviewImage(body: {
   return data.image_base64 ?? '';
 }
 
-/** 将 file_store 中的 bounding_boxes 规范为单层数组（多页合并） */
 export function flattenBoundingBoxesFromStore(raw: unknown): Array<Record<string, unknown>> {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw as Array<Record<string, unknown>>;
   if (typeof raw === 'object') {
     const out: Array<Record<string, unknown>> = [];
-    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      const pageNum = Number(k) || 1;
-      const arr = Array.isArray(v) ? v : [];
-      for (const b of arr) {
-        if (b && typeof b === 'object') {
-          out.push({ ...(b as object), page: (b as { page?: number }).page ?? pageNum });
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      const pageNum = Number(key) || 1;
+      const pageBoxes = Array.isArray(value) ? value : [];
+      for (const box of pageBoxes) {
+        if (box && typeof box === 'object') {
+          out.push({ ...(box as object), page: (box as { page?: number }).page ?? pageNum });
         }
       }
     }
@@ -99,37 +94,26 @@ export function flattenBoundingBoxesFromStore(raw: unknown): Array<Record<string
   return [];
 }
 
-/** 批量向导 session 分「文本类批量」与「图片类文本批量」两套 */
 export type BatchWizardMode = 'text' | 'image' | 'smart';
 
 const LEGACY_BATCH_WIZARD_KEY = 'batchWizard:config:v1';
 
-/**
- * 图片类文本批量单独升到 v2：v1 里常存 hasImageTypes=[]（旧默认），会导致 YOLO 始终不选；v2 起无旧 session 时按「默认」全选两条链。
- */
 export function batchWizardStorageKey(mode: BatchWizardMode): string {
-  if (mode === 'image') return 'batchWizard:config:v2:image';
-  if (mode === 'smart') return 'batchWizard:config:v2:smart';
-  return `batchWizard:config:v1:${mode}`;
+  if (mode === 'image') return 'batchWizard:config:v3:image';
+  if (mode === 'smart') return 'batchWizard:config:v3:smart';
+  return `batchWizard:config:v3:${mode}`;
 }
 
 export interface BatchWizardPersistedConfig {
   selectedEntityTypeIds: string[];
   ocrHasTypes: string[];
-  hasImageTypes: string[];
-  vlmTypes?: string[];
+  visualFeatureTypes: string[];
   replacementMode: 'structured' | 'smart' | 'mask';
-  /** 图片类批量：HaS Image 风格块级脱敏（与文本替换模式无关） */
   imageRedactionMethod?: 'mosaic' | 'blur' | 'fill';
   imageRedactionStrength?: number;
   imageFillColor?: string;
-  /** 文本脱敏配置清单（HaS NER + 替换模式） */
   presetTextId?: string | null;
-  /** 图像脱敏配置清单（图片类文本 + 图像特征） */
   presetVisionId?: string | null;
-  /**
-   * 默认处理路径：queue=与后台 Worker 队列协同（推荐）；local=倾向在本页跑完识别与导出
-   */
   executionDefault?: 'queue' | 'local';
 }
 
@@ -138,35 +122,43 @@ export function loadBatchWizardConfig(
 ): BatchWizardPersistedConfig | null {
   try {
     const key = batchWizardStorageKey(mode);
-    let s = sessionStorage.getItem(key);
-    if (!s && mode === 'text') {
-      s = sessionStorage.getItem(LEGACY_BATCH_WIZARD_KEY);
-      if (s) {
+    let rawJson = sessionStorage.getItem(key);
+    if (!rawJson && mode === 'text') {
+      rawJson = sessionStorage.getItem(LEGACY_BATCH_WIZARD_KEY);
+      if (rawJson) {
         try {
-          sessionStorage.setItem(key, s);
+          sessionStorage.setItem(key, rawJson);
           sessionStorage.removeItem(LEGACY_BATCH_WIZARD_KEY);
         } catch {
           /* ignore */
         }
       }
     }
-    if (!s) return null;
-    const raw = JSON.parse(s) as Record<string, unknown>;
-    const hasImageTypes = (raw.hasImageTypes as string[] | undefined) ?? [];
-    const vlmTypes = (raw.vlmTypes as string[] | undefined) ?? [];
+    if (!rawJson) return null;
+    const raw = JSON.parse(rawJson) as Record<string, unknown>;
     const base = raw as unknown as BatchWizardPersistedConfig;
-    const legacyPid = (raw.presetId as string | null | undefined) ?? null;
+    const legacyPresetId = (raw.presetId as string | null | undefined) ?? null;
     return {
       ...base,
-      hasImageTypes,
-      vlmTypes,
+      selectedEntityTypeIds: Array.isArray(raw.selectedEntityTypeIds)
+        ? (raw.selectedEntityTypeIds as string[])
+        : [],
+      ocrHasTypes: Array.isArray(raw.ocrHasTypes) ? (raw.ocrHasTypes as string[]) : [],
+      visualFeatureTypes: Array.isArray(raw.visualFeatureTypes)
+        ? (raw.visualFeatureTypes as string[])
+        : [],
+      replacementMode:
+        raw.replacementMode === 'smart' || raw.replacementMode === 'mask'
+          ? raw.replacementMode
+          : 'structured',
       presetTextId:
-        (raw.presetTextId as string | null | undefined) ?? legacyPid ?? base.presetTextId ?? null,
+        (raw.presetTextId as string | null | undefined) ?? legacyPresetId ?? base.presetTextId ?? null,
       presetVisionId:
         (raw.presetVisionId as string | null | undefined) ??
-        legacyPid ??
+        legacyPresetId ??
         base.presetVisionId ??
         null,
+      executionDefault: raw.executionDefault === 'local' ? 'local' : 'queue',
     };
   } catch {
     return null;
@@ -174,11 +166,11 @@ export function loadBatchWizardConfig(
 }
 
 export function saveBatchWizardConfig(
-  c: BatchWizardPersistedConfig,
+  config: BatchWizardPersistedConfig,
   mode: BatchWizardMode = 'text',
 ): void {
   try {
-    sessionStorage.setItem(batchWizardStorageKey(mode), JSON.stringify(c));
+    sessionStorage.setItem(batchWizardStorageKey(mode), JSON.stringify(config));
   } catch {
     /* ignore */
   }

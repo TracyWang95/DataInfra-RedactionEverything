@@ -26,7 +26,7 @@ ACTIVE_ITEM_STATUSES = frozenset(
 
 
 class JobRunnerPorts:
-    """识别 / 匿名化步骤（测试替换为 Mock）。"""
+    """Recognition and redaction worker ports."""
 
     async def parse_file(self, file_id: str) -> None:
         raise NotImplementedError
@@ -56,7 +56,7 @@ def _walk_job_to(store: JobStore, job_id: str, target: JobStatus) -> None:
         try:
             store.update_job_status(job_id, step)
         except Exception as e:
-            logger.debug("_walk_job_to: skip %s→%s for job %s: %s", current, step.value, job_id, e)
+            logger.debug("_walk_job_to: skip %s鈫?s for job %s: %s", current, step.value, job_id, e)
         if step == target:
             return
 
@@ -131,17 +131,17 @@ async def _run_recognition(
                 store.update_job_status(job_row["id"], JobStatus.PROCESSING)
             except Exception:
                 logger.debug("job %s already in non-DRAFT state, skip PROCESSING transition", job_row["id"][:8])
-            logger.info("[worker] item=%s file=%s → parse_file", item_id[:8], file_id[:8])
+            logger.info("[worker] item=%s file=%s 鈫?parse_file", item_id[:8], file_id[:8])
             await ports.parse_file(file_id)
 
             from app.services.file_operations import get_file_info
             fi = get_file_info(file_id) or {}
             ft = str(fi.get("file_type", ""))
             is_img = ft == "image" or bool(fi.get("is_scanned"))
-            logger.info("[worker] item=%s file=%s → file_type=%s is_img=%s", item_id[:8], file_id[:8], ft, is_img)
+            logger.info("[worker] item=%s file=%s 鈫?file_type=%s is_img=%s", item_id[:8], file_id[:8], ft, is_img)
             if is_img:
                 store.update_item_status(item_id, JobItemStatus.VISION)
-                logger.info("[worker] item=%s file=%s → vision_pages START", item_id[:8], file_id[:8])
+                logger.info("[worker] item=%s file=%s 鈫?vision_pages START", item_id[:8], file_id[:8])
                 await ports.vision_pages(file_id, cfg)
             else:
                 store.update_item_status(item_id, JobItemStatus.NER)
@@ -230,11 +230,16 @@ class DefaultJobRunnerPorts(JobRunnerPorts):
         from app.services.vision_config import resolve_optional_type_list
 
         ocr_types = resolve_optional_type_list(job_config, "ocr_has_types", "selected_ocr_has_types")
-        has_img = resolve_optional_type_list(job_config, "has_image_types", "selected_has_image_types")
-        vlm_types = resolve_optional_type_list(job_config, "vlm_types", "selected_vlm_types")
+        configured_visual_types = resolve_optional_type_list(
+            job_config,
+            "visual_feature_types",
+            "visualFeatureTypes",
+            "selected_visual_feature_types",
+        )
+        visual_feature_types = configured_visual_types
         fi = get_file_info(file_id) or {}
         pages = int(fi.get("page_count") or 1)
-        # Forward empty lists as-is — orchestrator treats [] as an explicit
+        # Forward empty lists as-is 鈥?orchestrator treats [] as an explicit
         # deselection of that pipeline. Missing selections stay None so the
         # orchestrator can apply its default type set.
         page_timeout = float(settings.BATCH_RECOGNITION_PAGE_TIMEOUT)
@@ -270,13 +275,11 @@ class DefaultJobRunnerPorts(JobRunnerPorts):
         async def run_page_set(
             *,
             selected_ocr: list[str] | None,
-            selected_image: list[str] | None,
-            selected_vlm: list[str] | None,
+            selected_visual_features: list[str] | None,
             concurrency: int,
             merge_existing: bool = False,
             signature_ocr: list[str] | None = None,
-            signature_image: list[str] | None = None,
-            signature_vlm: list[str] | None = None,
+            signature_visual_features: list[str] | None = None,
             stage_name: str = "vision",
         ) -> None:
             page_sem = asyncio.Semaphore(max(1, concurrency))
@@ -288,13 +291,11 @@ class DefaultJobRunnerPorts(JobRunnerPorts):
                             vision_detect(
                                 file_id,
                                 p,
-                                selected_ocr,
-                                selected_image,
-                                selected_vlm,
+                                ocr_has_types=selected_ocr,
+                                visual_feature_types=selected_visual_features,
                                 merge_existing=merge_existing,
                                 signature_ocr_has_types=signature_ocr,
-                                signature_has_image_types=signature_image,
-                                signature_vlm_types=signature_vlm,
+                                signature_visual_feature_types=signature_visual_features,
                             ),
                             timeout=page_timeout,
                         )
@@ -312,34 +313,30 @@ class DefaultJobRunnerPorts(JobRunnerPorts):
                     task.cancel()
                 raise
 
-        if pages > 1 and vlm_types != []:
+        if pages > 1 and visual_feature_types != []:
             logger.info(
-                "Vision multi-page scheduling: OCR+HaS/HaS Image first (concurrency=%d), then VLM merge pass (concurrency=1)",
+                "Vision multi-page scheduling: OCR first (concurrency=%d), then visual features merge pass (concurrency=1)",
                 page_concurrency,
             )
             await run_page_set(
                 selected_ocr=ocr_types,
-                selected_image=has_img,
-                selected_vlm=[],
+                selected_visual_features=[],
                 concurrency=page_concurrency,
-                stage_name="vision non-VLM",
+                stage_name="vision OCR",
             )
             await run_page_set(
                 selected_ocr=[],
-                selected_image=[],
-                selected_vlm=vlm_types,
+                selected_visual_features=visual_feature_types,
                 concurrency=1,
                 merge_existing=True,
                 signature_ocr=ocr_types,
-                signature_image=has_img,
-                signature_vlm=vlm_types,
-                stage_name="vision VLM",
+                signature_visual_features=visual_feature_types,
+                stage_name="vision visual features",
             )
         else:
             await run_page_set(
                 selected_ocr=ocr_types,
-                selected_image=has_img,
-                selected_vlm=vlm_types,
+                selected_visual_features=visual_feature_types,
                 concurrency=page_concurrency,
             )
 
@@ -396,5 +393,6 @@ class DefaultJobRunnerPorts(JobRunnerPorts):
 
 def default_job_runner_ports() -> JobRunnerPorts:
     return DefaultJobRunnerPorts()
+
 
 

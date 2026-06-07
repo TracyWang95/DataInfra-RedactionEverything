@@ -37,15 +37,15 @@ export function AppHeader() {
         : t('health.backendDown');
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 backdrop-blur-2xl sm:px-6">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border/70 bg-background/95 px-4 backdrop-blur-2xl sm:px-6">
       <div className="flex min-h-[40px] min-w-0 flex-1 items-center gap-3">
         <SidebarTrigger className="lg:hidden" aria-label={t('layout.toggleSidebar')} />
-        <div className="flex min-w-0 flex-col justify-center lg:hidden">
-          <h1 className="truncate text-lg font-semibold leading-tight tracking-[-0.04em] text-foreground">
+        <div className="flex min-w-0 flex-col justify-center lg:hidden" aria-label={title}>
+          <div className="truncate text-lg font-semibold leading-tight tracking-tight text-foreground">
             {title}
-          </h1>
+          </div>
           {sub && (
-            <p className="mt-1 truncate text-xs leading-snug text-muted-foreground sm:text-sm">
+            <p className="mt-1 truncate text-xs leading-snug text-muted-foreground">
               {sub}
             </p>
           )}
@@ -113,6 +113,16 @@ function getPageHeader(
   if (pathname === '/') return { title: t('page.start.title'), sub: t('page.start.sub') };
   if (pathname === '/batch' || pathname.startsWith('/batch/'))
     return { title: t('page.batch.title'), sub: t('page.batch.sub') };
+  if (pathname === '/structured')
+    return { title: t('page.structured.title'), sub: t('page.structured.sub') };
+  if (pathname === '/structured/files')
+    return { title: t('nav.structured.files'), sub: t('nav.structured.files.sub') };
+  if (pathname === '/structured/database')
+    return { title: t('nav.structured.database'), sub: t('nav.structured.database.sub') };
+  if (pathname === '/structured/datasets')
+    return { title: t('nav.structured.datasets'), sub: t('nav.structured.datasets.sub') };
+  if (pathname === '/structured/delivery')
+    return { title: t('nav.structured.delivery'), sub: t('nav.structured.delivery.sub') };
   if (pathname.startsWith('/settings/redaction'))
     return { title: t('page.redactionList.title'), sub: t('page.redactionList.sub') };
   if (pathname === '/settings') return { title: t('page.config.title'), sub: t('page.config.sub') };

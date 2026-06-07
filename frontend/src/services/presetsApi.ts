@@ -14,8 +14,7 @@ export interface RecognitionPreset {
   kind?: PresetKind;
   selectedEntityTypeIds: string[];
   ocrHasTypes: string[];
-  hasImageTypes: string[];
-  vlmTypes?: string[];
+  visualFeatureTypes?: string[];
   dataDomains?: string[];
   genericTargets?: string[];
   linkageGroups?: string[];
@@ -30,8 +29,7 @@ export interface PresetPayload {
   kind: PresetKind;
   selectedEntityTypeIds: string[];
   ocrHasTypes: string[];
-  hasImageTypes: string[];
-  vlmTypes: string[];
+  visualFeatureTypes?: string[];
   dataDomains?: string[];
   genericTargets?: string[];
   linkageGroups?: string[];

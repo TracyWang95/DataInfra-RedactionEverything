@@ -4,7 +4,7 @@
 在路由处理器与底层 Redactor/VisionService 之间的编排层：
 - 匿名化执行与 file_store 更新
 - entity_map 管理与版本追踪
-- 报告生成（实体/bbox 统计）
+- 报告生成（实体 bbox 统计）
 - 视觉检测编排
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.has_image_categories import has_only_ocr_fallback_visual_slugs
+from app.core.visual_feature_categories import has_only_ocr_fallback_visual_slugs
 from app.core.persistence import to_jsonable
 from app.models.schemas import (
     BoundingBox,
@@ -72,10 +72,13 @@ def _selected_request_item_count(entities: list[Any], boxes: list[Any]) -> int:
     )
 
 
-def _default_has_image_types(types: list[Any]) -> list[Any]:
-    from app.core.has_image_categories import DEFAULT_EXCLUDED_HAS_IMAGE_SLUGS
-
-    return [t for t in types if getattr(t, "id", None) not in DEFAULT_EXCLUDED_HAS_IMAGE_SLUGS]
+def _default_pipeline_types(types: list[Any]) -> list[Any]:
+    return [
+        t
+        for t in types
+        if getattr(t, "enabled", True) is not False
+        and getattr(t, "default_enabled", False) is True
+    ]
 
 
 def _vision_type_ids(types: list[Any] | None) -> list[str]:
@@ -85,18 +88,18 @@ def _vision_type_ids(types: list[Any] | None) -> list[str]:
 def _vision_signature(
     page: int,
     ocr_has_types: list[Any] | None,
-    has_image_types: list[Any] | None,
-    vlm_types: list[Any] | None = None,
+    visual_feature_types: list[Any] | None,
 ) -> dict[str, Any]:
     from app.core.config import settings
 
     return {
-        "version": 3,
+        "version": 4,
         "page": int(page),
         "ocr_has_types": _vision_type_ids(ocr_has_types),
-        "has_image_types": _vision_type_ids(has_image_types),
-        "vlm_types": _vision_type_ids(vlm_types),
-        "vlm_signature_max_side": int(getattr(settings, "VLM_SIGNATURE_MAX_IMAGE_SIDE", 640) or 640),
+        "visual_feature_types": _vision_type_ids(visual_feature_types),
+        "visual_signature_max_side": int(
+            getattr(settings, "VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE", 640) or 640
+        ),
     }
 
 
@@ -172,7 +175,7 @@ async def execute_redaction(request: RedactionRequest) -> RedactionResult:
     file_id = request.file_id
 
     if file_id not in file_store:
-        raise ValueError("文件不存在")
+        raise ValueError("file not found")
 
     file_info = file_store[file_id]
 
@@ -284,12 +287,12 @@ async def get_comparison(file_id: str) -> CompareData:
     file_store = _get_file_store()
 
     if file_id not in file_store:
-        raise ValueError("文件不存在")
+        raise ValueError("file not found")
 
     file_info = file_store[file_id]
 
     if "output_path" not in file_info:
-        raise ValueError("文件尚未匿名化")
+        raise ValueError("file has not been redacted")
 
     redactor = Redactor()
     compare_data = await redactor.get_comparison(file_info)
@@ -307,7 +310,7 @@ def get_versions(file_id: str) -> dict[str, Any]:
     file_store = _get_file_store()
 
     if file_id not in file_store:
-        raise ValueError("文件不存在")
+        raise ValueError("file not found")
 
     history = file_store[file_id].get("redaction_history", [])
     return {"file_id": file_id, "versions": history, "total": len(history)}
@@ -321,16 +324,14 @@ async def detect_vision(
     file_id: str,
     page: int = 1,
     selected_ocr_has_types: list[str] | None = None,
-    selected_has_image_types: list[str] | None = None,
-    selected_vlm_types: list[str] | None = None,
+    selected_visual_feature_types: list[str] | None = None,
     has_request: bool = True,
     force: bool = False,
     include_result_image: bool = True,
     merge_existing: bool = False,
     owner_id: str | None = None,
     signature_selected_ocr_has_types: list[str] | None = None,
-    signature_selected_has_image_types: list[str] | None = None,
-    signature_selected_vlm_types: list[str] | None = None,
+    signature_selected_visual_feature_types: list[str] | None = None,
 ) -> VisionResult:
     """
     Run dual-pipeline vision detection. Raises ValueError if file not found.
@@ -343,7 +344,7 @@ async def detect_vision(
     async with lock:
         file_info = file_store.get(file_id)
         if not file_info:
-            raise ValueError("文件不存在")
+            raise ValueError("file not found")
         snapshot = dict(file_info)
     owner_id = owner_id or str(snapshot.get("owner_id") or "local_user")
 
@@ -351,121 +352,95 @@ async def detect_vision(
     from app.services.pipeline_service import get_pipeline, get_pipeline_types_for_mode
 
     all_ocr_has_types = get_pipeline_types_for_mode("ocr_has", owner_id=owner_id)
-    default_has_image_types = _default_has_image_types(
-        get_pipeline_types_for_mode("has_image", owner_id=owner_id)
+    default_ocr_has_types = _default_pipeline_types(all_ocr_has_types)
+    default_visual_feature_types = _default_pipeline_types(
+        get_pipeline_types_for_mode("visual_features", owner_id=owner_id)
     )
-    selectable_has_image_types = get_pipeline_types_for_mode(
-        "has_image",
-        enabled_only=False,
-        owner_id=owner_id,
-    )
-    selectable_vlm_types = get_pipeline_types_for_mode(
-        "vlm",
+    selectable_visual_feature_types = get_pipeline_types_for_mode(
+        "visual_features",
         enabled_only=False,
         owner_id=owner_id,
     )
 
     sel_ocr_ids: set[str] | None = None
-    sel_img_ids: set[str] | None = None
-    sel_vlm_ids: set[str] | None = None
+    sel_visual_ids: set[str] | None = None
 
-    if not has_request:
-        sel_img_ids = set()
-        sel_vlm_ids = set()
-    else:
+    if has_request:
         if selected_ocr_has_types is not None:
             sel_ocr_ids = set(selected_ocr_has_types or [])
-        if selected_has_image_types is not None:
-            sel_img_ids = set(selected_has_image_types or [])
-        if selected_vlm_types is not None:
-            sel_vlm_ids = set(selected_vlm_types or [])
+        if selected_visual_feature_types is not None:
+            sel_visual_ids = set(selected_visual_feature_types or [])
 
     if sel_ocr_ids is not None:
         ocr_has_types = [t for t in all_ocr_has_types if t.id in sel_ocr_ids]
     else:
-        ocr_has_types = all_ocr_has_types
+        ocr_has_types = default_ocr_has_types
 
-    if sel_img_ids is not None:
-        has_image_types = [t for t in selectable_has_image_types if t.id in sel_img_ids]
+    if sel_visual_ids is not None:
+        visual_feature_types = [t for t in selectable_visual_feature_types if t.id in sel_visual_ids]
     else:
-        has_image_types = default_has_image_types
-
-    if sel_vlm_ids is not None:
-        vlm_types = [t for t in selectable_vlm_types if t.id in sel_vlm_ids]
-    else:
-        vlm_types = []
+        visual_feature_types = default_visual_feature_types
 
     if (
         selected_ocr_has_types is not None
         and len(selected_ocr_has_types) > 0
         and len(ocr_has_types) == 0
-        and len(all_ocr_has_types) > 0
+        and len(default_ocr_has_types) > 0
     ):
         logger.warning(
-            "selected_ocr_has_types contains no valid IDs; fallback to default enabled OCR+HaS types."
+            "selected_ocr_has_types contains no valid IDs; fallback to default OCR+HaS types."
         )
-        ocr_has_types = all_ocr_has_types
+        ocr_has_types = default_ocr_has_types
 
     if (
-        selected_has_image_types is not None
-        and len(selected_has_image_types) > 0
-        and len(has_image_types) == 0
-        and len(default_has_image_types) > 0
+        sel_visual_ids is not None
+        and len(sel_visual_ids) > 0
+        and len(visual_feature_types) == 0
+        and len(default_visual_feature_types) > 0
     ):
-        if has_only_ocr_fallback_visual_slugs(selected_has_image_types):
+        if has_only_ocr_fallback_visual_slugs(list(sel_visual_ids)):
             logger.info(
-                "selected_has_image_types contains OCR/local-fallback-only visual IDs; "
-                "HaS Image model will not run for these IDs."
+                "selected visual feature types contain OCR/local-fallback-only IDs; "
+                "LocateAnything will not run for these IDs."
             )
         else:
             logger.warning(
-                "selected_has_image_types contains no valid IDs; fallback to default enabled HaS Image types."
+                "selected visual feature types contain no valid IDs; fallback to default enabled visual feature types."
             )
-            has_image_types = default_has_image_types
+            visual_feature_types = default_visual_feature_types
 
     ocr_pipeline = get_pipeline("ocr_has", owner_id=owner_id)
-    image_pipeline = get_pipeline("has_image", owner_id=owner_id)
-    vlm_pipeline = get_pipeline("vlm", owner_id=owner_id)
+    visual_pipeline = get_pipeline("visual_features", owner_id=owner_id)
     ocr_has_enabled = bool(ocr_pipeline and ocr_pipeline.enabled and len(ocr_has_types) > 0)
-    has_image_enabled = (
-        image_pipeline
-        and image_pipeline.enabled
-        and len(has_image_types) > 0
-    )
-    vlm_enabled = (
-        vlm_pipeline
-        and vlm_pipeline.enabled
-        and len(vlm_types) > 0
+    visual_features_enabled = (
+        visual_pipeline
+        and visual_pipeline.enabled
+        and len(visual_feature_types) > 0
     )
 
     if ocr_pipeline and ocr_pipeline.enabled and len(ocr_has_types) == 0:
         logger.info(
-            "OCR+HaS 跳过：前端传入的类型列表为空（selected_ocr_has_types=[] 表示不跑文字 OCR）。"
-            "若希望识别文字，请在侧栏勾选至少一类 OCR+HaS 类型，或清除 localStorage 键 ocrHasTypes 后刷新。"
+            "OCR+HaS skipped because selected_ocr_has_types=[] was supplied."
         )
 
     logger.info("OCR+HaS selected: %s", [t.id for t in ocr_has_types] if ocr_has_types else [])
-    logger.info("HaS Image selected: %s", [t.id for t in has_image_types] if has_image_types else [])
-    logger.info("VLM selected: %s", [t.id for t in vlm_types] if vlm_types else [])
+    logger.info("Visual features selected: %s", [t.id for t in visual_feature_types] if visual_feature_types else [])
 
     effective_ocr_types = ocr_has_types if ocr_has_enabled else None
-    effective_has_image_types = has_image_types if has_image_enabled else None
-    effective_vlm_types = vlm_types if vlm_enabled else None
+    effective_visual_feature_types = visual_feature_types if visual_features_enabled else None
 
     signature_ocr_types = effective_ocr_types
-    signature_has_image_types = effective_has_image_types
-    signature_vlm_types = effective_vlm_types
+    signature_visual_feature_types = effective_visual_feature_types
     if signature_selected_ocr_has_types is not None:
         sig_ocr_ids = set(signature_selected_ocr_has_types or [])
         signature_ocr_types = [t for t in all_ocr_has_types if t.id in sig_ocr_ids] if sig_ocr_ids else None
-    if signature_selected_has_image_types is not None:
-        sig_img_ids = set(signature_selected_has_image_types or [])
-        signature_has_image_types = [t for t in selectable_has_image_types if t.id in sig_img_ids] if sig_img_ids else None
-    if signature_selected_vlm_types is not None:
-        sig_vlm_ids = set(signature_selected_vlm_types or [])
-        signature_vlm_types = [t for t in selectable_vlm_types if t.id in sig_vlm_ids] if sig_vlm_ids else None
+    sig_visual_ids: set[str] | None = None
+    if signature_selected_visual_feature_types is not None:
+        sig_visual_ids = set(signature_selected_visual_feature_types or [])
+    if sig_visual_ids is not None:
+        signature_visual_feature_types = [t for t in selectable_visual_feature_types if t.id in sig_visual_ids] if sig_visual_ids else None
 
-    signature = _vision_signature(page, signature_ocr_types, signature_has_image_types, signature_vlm_types)
+    signature = _vision_signature(page, signature_ocr_types, signature_visual_feature_types)
     if not force:
         cached = _cached_vision_result(file_id, page, snapshot, signature, started)
         if cached is not None:
@@ -481,13 +456,15 @@ async def detect_vision(
         logger.info("Vision force refresh file=%s page=%d", file_id[:8], page)
 
     vision_service = VisionService()
+    # 正则兜底需要租户上下文：在文本链路运行前把 owner 设到 OCR/HaS 单例上
+    from app.services.ocr_has_vision_service import get_ocr_has_vision_service
+    get_ocr_has_vision_service().current_owner_id = owner_id
     bounding_boxes, result_image = await vision_service.detect_with_dual_pipeline(
         file_path=snapshot["file_path"],
         file_type=snapshot["file_type"],
         page=page,
         ocr_has_types=effective_ocr_types,
-        has_image_types=effective_has_image_types,
-        vlm_types=effective_vlm_types,
+        visual_feature_types=effective_visual_feature_types,
         include_result_image=include_result_image,
     )
     warnings = list(getattr(vision_service, "last_warnings", []) or [])
@@ -574,7 +551,7 @@ def get_report(file_id: str) -> RedactionReport:
     file_store = _get_file_store()
 
     if file_id not in file_store:
-        raise ValueError("文件不存在")
+        raise ValueError("file not found")
 
     file_info = file_store[file_id]
     entities = file_info.get("entities", [])
@@ -695,3 +672,4 @@ def get_replacement_modes_list() -> list[dict[str, Any]]:
             "description": "手动指定每个敏感信息的替换文本",
         },
     ]
+

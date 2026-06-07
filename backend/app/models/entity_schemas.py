@@ -1,6 +1,5 @@
 """
-Entity and bounding-box models, custom entity type definitions,
-and entity-type list responses.
+Entity, bounding-box, custom type, and option-list schemas.
 """
 from datetime import datetime
 from typing import Literal
@@ -20,31 +19,32 @@ __all__ = [
 ]
 
 
-# ============ 自定义实体类型 ============
-
 class CustomEntityType(BaseModel):
-    """自定义实体类型定义"""
-    id: str = Field(..., description="类型唯一ID")
-    name: str = Field(..., description="类型名称，如'涉案金额'")
-    description: str = Field(default="", description="语义描述，用于AI理解")
-    examples: list[str] = Field(default_factory=list, description="示例文本，帮助AI识别")
-    color: str = Field(default="#6B7280", description="显示颜色")
-    replacement_template: str = Field(default="[{name}]", description="替换模板")
-    enabled: bool = Field(default=True, description="是否启用")
+    """Custom text entity type."""
+
+    id: str = Field(..., description="Stable type id")
+    name: str = Field(..., description="Display name")
+    description: str = Field(default="", description="Semantic description")
+    examples: list[str] = Field(default_factory=list, description="Example text snippets")
+    color: str = Field(default="#6B7280", description="Display color")
+    replacement_template: str = Field(default="[{name}]", description="Replacement template")
+    enabled: bool = Field(default=True, description="Whether this type is enabled")
     created_at: datetime = Field(default_factory=datetime.now)
 
 
 class CustomEntityTypeCreate(BaseModel):
-    """创建自定义实体类型请求"""
-    name: str = Field(..., description="类型名称")
-    description: str = Field(..., description="语义描述，用于AI理解匹配")
-    examples: list[str] = Field(default_factory=list, description="示例文本")
-    color: str = Field(default="#6B7280", description="显示颜色")
-    replacement_template: str = Field(default="[{name}]", description="替换模板")
+    """Request body for creating a custom text entity type."""
+
+    name: str = Field(..., description="Display name")
+    description: str = Field(..., description="Semantic description")
+    examples: list[str] = Field(default_factory=list, description="Example text snippets")
+    color: str = Field(default="#6B7280", description="Display color")
+    replacement_template: str = Field(default="[{name}]", description="Replacement template")
 
 
 class CustomEntityTypeUpdate(BaseModel):
-    """更新自定义实体类型请求"""
+    """Request body for updating a custom text entity type."""
+
     name: str | None = None
     description: str | None = None
     examples: list[str] | None = None
@@ -53,73 +53,76 @@ class CustomEntityTypeUpdate(BaseModel):
     enabled: bool | None = None
 
 
-# ============ 请求模型 ============
-
 class Entity(BaseModel):
-    """识别到的实体"""
-    id: str = Field(..., description="实体唯一ID")
-    text: str = Field(..., description="原始文本")
-    type: str = Field(..., description="实体类型（内置类型或自定义类型ID）")
-    start: int = Field(..., description="起始位置")
-    end: int = Field(..., description="结束位置")
-    page: int = Field(default=1, description="所在页码")
-    confidence: float = Field(default=1.0, description="置信度")
+    """Recognized text entity."""
+
+    id: str = Field(..., description="Entity id")
+    text: str = Field(..., description="Original text")
+    type: str = Field(..., description="Entity type id")
+    start: int = Field(..., description="Start offset")
+    end: int = Field(..., description="End offset")
+    page: int = Field(default=1, description="Page number")
+    confidence: float = Field(default=1.0, description="Recognition confidence")
     source: Literal["regex", "llm", "manual", "has"] | None = Field(
-        default=None, description="实体来源"
+        default=None,
+        description="Text entity source",
     )
-    coref_id: str | None = Field(None, description="指代消解ID")
-    replacement: str | None = Field(None, description="替换文本")
-    selected: bool = Field(default=True, description="是否选中进行匿名化")
-    custom_type_id: str | None = Field(None, description="自定义类型ID（如果是自定义类型）")
+    coref_id: str | None = Field(None, description="Coreference group id")
+    replacement: str | None = Field(None, description="Replacement text")
+    selected: bool = Field(default=True, description="Whether selected for redaction")
+    custom_type_id: str | None = Field(None, description="Custom type id")
 
 
 class BoundingBox(BaseModel):
-    """图片中的敏感区域边界框"""
-    id: str = Field(..., description="区域唯一ID")
-    x: float = Field(..., description="左上角 X 坐标")
-    y: float = Field(..., description="左上角 Y 坐标")
-    width: float = Field(..., description="宽度")
-    height: float = Field(..., description="高度")
-    page: int = Field(default=1, description="所在页码")
-    type: str = Field(..., description="实体类型")
-    text: str | None = Field(None, description="识别到的文本")
-    selected: bool = Field(default=True, description="是否选中进行匿名化")
+    """Recognized image or document region."""
+
+    id: str = Field(..., description="Region id")
+    x: float = Field(..., description="Normalized left coordinate")
+    y: float = Field(..., description="Normalized top coordinate")
+    width: float = Field(..., description="Normalized width")
+    height: float = Field(..., description="Normalized height")
+    page: int = Field(default=1, description="Page number")
+    type: str = Field(..., description="Region type id")
+    text: str | None = Field(None, description="Recognized text or label")
+    selected: bool = Field(default=True, description="Whether selected for redaction")
     confidence: float = Field(default=1.0, description="Detection confidence")
-    source: Literal["ocr_has", "has_image", "vlm", "manual"] | None = Field(
-        default=None, description="来源: ocr_has=OCR+HaS, has_image=HaS Image YOLO, manual=手动"
+    source: Literal["ocr_has", "visual_features", "manual"] | None = Field(
+        default=None,
+        description="Detection source",
     )
     source_detail: str | None = Field(default=None, description="Detailed detector source")
-    evidence_source: Literal["ocr_has", "has_image_model", "vlm_model", "local_fallback", "manual"] | None = Field(
-        default=None,
-        description=(
-            "Detector evidence source. Keeps source backward-compatible while "
-            "distinguishing HaS Image model hits from local fallback detections."
-        ),
-    )
+    evidence_source: Literal[
+        "ocr_has",
+        "visual_feature_model",
+        "local_fallback",
+        "manual",
+    ] | None = Field(default=None, description="Detector evidence source")
     warnings: list[str] = Field(default_factory=list, description="Region quality warnings")
 
 
-# ============ 实体类型 / 匿名化端点响应 ============
-
 class EntityTypeItem(BaseModel):
-    """单个实体类型展示项"""
+    """Entity type option item."""
+
     value: str
     label: str
     color: str
 
 
 class EntityTypeListResponse(BaseModel):
-    """实体类型列表响应"""
+    """Entity type option response."""
+
     entity_types: list[EntityTypeItem]
 
 
 class ReplacementModeItem(BaseModel):
-    """单个替换模式展示项"""
+    """Replacement mode option item."""
+
     value: str
     label: str
     description: str
 
 
 class ReplacementModeListResponse(BaseModel):
-    """替换模式列表响应"""
+    """Replacement mode option response."""
+
     replacement_modes: list[ReplacementModeItem]

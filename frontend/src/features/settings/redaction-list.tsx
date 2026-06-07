@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InteractionLockOverlay } from '@/components/InteractionLockOverlay';
 import { useRedactionPresets } from './hooks/use-redaction-presets';
@@ -38,13 +38,13 @@ export function RedactionList() {
               <Skeleton className="h-5 w-40" />
               <Skeleton className="h-4 w-80 max-w-full" />
             </CardHeader>
-            <CardContent className="flex flex-col gap-4">
+            <CardContent className="flex flex-col gap-3">
               <Skeleton className="h-20 w-full rounded-xl" />
-              <div className="grid gap-2 md:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-2">
                 <Skeleton className="h-16 w-full rounded-xl" />
                 <Skeleton className="h-16 w-full rounded-xl" />
               </div>
-              <div className="grid gap-2 md:grid-cols-2">
+              <div className="grid gap-3 md:grid-cols-2">
                 <Skeleton className="h-[22rem] w-full rounded-xl" />
                 <Skeleton className="h-[22rem] w-full rounded-xl" />
               </div>
@@ -56,47 +56,49 @@ export function RedactionList() {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+    <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
-        {state.loadError && (
-          <Alert variant="destructive">
-            <AlertDescription>{state.loadError}</AlertDescription>
-          </Alert>
-        )}
+        <div className="page-stack gap-3 overflow-hidden">
+          {state.loadError && (
+            <Alert variant="destructive">
+              <AlertDescription>{state.loadError}</AlertDescription>
+            </Alert>
+          )}
 
-        <Card className="page-surface overflow-hidden rounded-2xl border-border/70 shadow-[var(--shadow-control)]">
-          <CardHeader className="px-4 pb-2 pt-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <CardTitle className="text-sm">{t('settings.redaction.configTitle')}</CardTitle>
-                <CardDescription className="mt-0.5 text-xs leading-5">
-                  {t('settings.redaction.configDesc')}
-                </CardDescription>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 whitespace-nowrap"
-                  onClick={() => state.openNew('text')}
-                  data-testid="new-text-preset"
-                >
-                  {t('settings.redaction.newText')}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 whitespace-nowrap"
-                  onClick={() => state.openNew('vision')}
-                  data-testid="new-vision-preset"
-                >
-                  {t('settings.redaction.newVision')}
-                </Button>
-              </div>
+          <header className="flex flex-none flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <span className="saas-kicker">{t('nav.redactionList.sub')}</span>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+                {t('settings.redaction.configTitle')}
+              </h1>
+              <p className="max-w-4xl text-sm leading-6 text-muted-foreground">
+                {t('settings.redaction.configDesc')}
+              </p>
             </div>
-          </CardHeader>
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="whitespace-nowrap"
+                onClick={() => state.openNew('text')}
+                data-testid="new-text-preset"
+              >
+                {t('settings.redaction.newText')}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="whitespace-nowrap"
+                onClick={() => state.openNew('vision')}
+                data-testid="new-vision-preset"
+              >
+                {t('settings.redaction.newVision')}
+              </Button>
+            </div>
+          </header>
 
-          <CardContent className="page-surface-body flex flex-col gap-3 p-4">
+          <Card className="page-surface overflow-hidden border-border/70 shadow-[var(--shadow-control)]">
+            <CardContent className="page-surface-body flex flex-col gap-3 p-4">
             <RedactionBridgeConfig
               bridgeText={state.bridgeText}
               bridgeVision={state.bridgeVision}
@@ -148,8 +150,9 @@ export function RedactionList() {
                 }
               />
             </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       <RedactionPresetDialog

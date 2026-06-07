@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 
 WORD_XML_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
+# PyMuPDF save garbage-collection level (aggressive cleanup of unused objects)
+PDF_SAVE_GARBAGE_LEVEL = 4
+# Largest/default font size (pt) for inline PDF replacement labels
+PDF_LABEL_FONT_SIZE_MAX = 10.0
+# Smallest preferred font size (pt) before width-based shrinking kicks in
+PDF_LABEL_FONT_SIZE_MIN = 6.0
+# Absolute floor font size (pt) after width-based shrinking
+PDF_LABEL_FONT_SIZE_FLOOR = 5.0
+# Fraction of rect height used as the base label font size
+PDF_LABEL_HEIGHT_FONT_RATIO = 0.78
+
 
 class TextRedactorMixin:
     """
@@ -394,30 +405,6 @@ class TextRedactorMixin:
             )
         return result
 
-    def _copy_run_format(self, source_run, target_run):
-        """复制 run 的格式样式（克隆底层 rPr，避免字体族丢失）"""
-        from copy import deepcopy
-
-        source_r = source_run._element
-        target_r = target_run._element
-
-        # 保留字符样式引用（有些文档字体通过字符样式继承）
-        try:
-            if source_run.style is not None:
-                target_run.style = source_run.style
-        except (AttributeError, ValueError, KeyError):
-            pass
-
-        # 移除目标 run 默认生成的 rPr，避免与源格式叠加冲突
-        target_rPr = target_r.rPr
-        if target_rPr is not None:
-            target_r.remove(target_rPr)
-
-        # 直接克隆源 run 的全部字符格式（包含 rFonts/eastAsia/theme/size/color 等）
-        source_rPr = source_r.rPr
-        if source_rPr is not None:
-            target_r.insert(0, deepcopy(source_rPr))
-
     async def _redact_txt(
         self,
         input_path: str,
@@ -517,7 +504,7 @@ class TextRedactorMixin:
                         align=fitz.TEXT_ALIGN_LEFT,
                     )
 
-        doc.save(output_path, garbage=4, deflate=True, clean=True)
+        doc.save(output_path, garbage=PDF_SAVE_GARBAGE_LEVEL, deflate=True, clean=True)
         doc.close()
 
         return redacted_count
@@ -526,12 +513,18 @@ class TextRedactorMixin:
     def _fit_pdf_replacement_font_size(rect: fitz.Rect, text: str) -> float:
         """Choose a conservative font size for inline PDF replacement labels."""
         if not text:
-            return 10.0
-        base_size = max(6.0, min(10.0, rect.height * 0.78))
+            return PDF_LABEL_FONT_SIZE_MAX
+        base_size = max(
+            PDF_LABEL_FONT_SIZE_MIN,
+            min(PDF_LABEL_FONT_SIZE_MAX, rect.height * PDF_LABEL_HEIGHT_FONT_RATIO),
+        )
         estimated_width = fitz.get_text_length(text, fontsize=base_size)
         if estimated_width <= max(1.0, rect.width):
             return base_size
-        return max(5.0, min(base_size, base_size * rect.width / max(1.0, estimated_width)))
+        return max(
+            PDF_LABEL_FONT_SIZE_FLOOR,
+            min(base_size, base_size * rect.width / max(1.0, estimated_width)),
+        )
 
     def _extract_docx_text(self, file_path: str) -> str:
         """提取 Word 文档文本（含表格，与 FileParser._parse_docx 结构一致）"""

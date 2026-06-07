@@ -62,22 +62,22 @@ def test_tenant_vision_pipeline_types_are_isolated(monkeypatch, tmp_path):
     _scope_runtime_config(monkeypatch, tmp_path)
 
     custom = PipelineTypeConfig(
-        id="custom_alice_signature",
+        id="custom_visual_features_alice_signature",
         name="Alice Signature",
         description="Alice-only signature prompt",
         color="#6B7280",
         enabled=True,
         order=100,
     )
-    created, error = pipeline_service.add_pipeline_type("vlm", custom, owner_id="alice")
+    created, error = pipeline_service.add_pipeline_type("visual_features", custom, owner_id="alice")
 
     assert error == ""
     assert created is not None
-    assert "custom_alice_signature" in {
-        item.id for item in pipeline_service.get_pipeline_types("vlm", False, owner_id="alice") or []
+    assert "custom_visual_features_alice_signature" in {
+        item.id for item in pipeline_service.get_pipeline_types("visual_features", False, owner_id="alice") or []
     }
-    assert "custom_alice_signature" not in {
-        item.id for item in pipeline_service.get_pipeline_types("vlm", False, owner_id="bob") or []
+    assert "custom_visual_features_alice_signature" not in {
+        item.id for item in pipeline_service.get_pipeline_types("visual_features", False, owner_id="bob") or []
     }
 
 

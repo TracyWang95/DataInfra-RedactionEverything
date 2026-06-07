@@ -223,9 +223,9 @@ const PlaygroundInner: FC = () => {
             <section className="flex flex-none flex-wrap items-end justify-between gap-3">
               <div className="min-w-0 space-y-1">
                 <span className="saas-kicker">{t('playground.upload.kicker')}</span>
-                <h2 className="text-2xl font-semibold tracking-tight text-foreground">
+                <h1 className="text-2xl font-semibold tracking-tight text-foreground">
                   {t('playground.title')}
-                </h2>
+                </h1>
                 <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
                   {t('page.playground.sub')}
                 </p>
