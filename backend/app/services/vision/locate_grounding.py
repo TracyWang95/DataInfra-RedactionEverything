@@ -14,6 +14,7 @@ import httpx
 from PIL import Image, ImageOps
 
 from app.core.config import settings
+from app.core.retry import RETRYABLE_HTTPX, retry_async
 from app.core.visual_feature_categories import (
     DEFAULT_VISUAL_FEATURE_SLUGS,
     SLUG_TO_NAME_ZH,
@@ -21,7 +22,6 @@ from app.core.visual_feature_categories import (
     is_visual_feature_slug,
     normalize_visual_slug,
 )
-from app.core.retry import RETRYABLE_HTTPX, retry_async
 from app.models.schemas import BoundingBox
 from app.services import model_config_service
 

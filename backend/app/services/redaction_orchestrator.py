@@ -16,8 +16,8 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from app.core.visual_feature_categories import has_only_ocr_fallback_visual_slugs
 from app.core.persistence import to_jsonable
+from app.core.visual_feature_categories import has_only_ocr_fallback_visual_slugs
 from app.models.schemas import (
     BoundingBox,
     CompareData,

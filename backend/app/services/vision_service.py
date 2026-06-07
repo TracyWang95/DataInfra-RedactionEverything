@@ -31,11 +31,11 @@ from app.core.visual_feature_categories import (
 from app.models.schemas import BoundingBox, FileType
 from app.services.file_parser import FileParser
 from app.services.ocr_has_vision_service import get_ocr_has_vision_service
+from app.services.vision.locate_grounding import LocateAnythingGroundingService
 from app.services.vision.ocr_artifact_filter import (
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
 )
-from app.services.vision.locate_grounding import LocateAnythingGroundingService
 from app.services.vision.seal_detector import detect_dark_seal_regions, detect_red_seal_regions
 
 VISUAL_TYPE_LABELS_ZH = {
