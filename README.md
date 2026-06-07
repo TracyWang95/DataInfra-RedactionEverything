@@ -21,7 +21,6 @@ RedactionEverything is a local-first redaction workbench for sensitive informati
   <a href="#overview">Overview</a> &middot;
   <a href="#positioning">Positioning</a> &middot;
   <a href="#features">Features</a> &middot;
-  <a href="#latest-validated-updates">Latest Updates</a> &middot;
   <a href="#quick-start">Quick Start</a> &middot;
   <a href="#architecture">Architecture</a> &middot;
   <a href="#model-services">Model Services</a> &middot;
@@ -79,37 +78,6 @@ The distinction is scope, not rhetoric:
 | Seal recovery | A local OpenCV detector supplements LocateAnything by recovering red and dark/gray binding and edge seals, deduplicated against existing seal boxes. |
 | Configurable schemas | Built-in general, legal, finance, and healthcare presets; custom text and visual items are supported, with exact tags (no family collapse). |
 | Local deployment | Frontend, backend, and model services can run on a local or intranet GPU workstation. |
-
----
-
-## Latest Validated Updates
-
-The current branch focuses on converging the visual pipeline, improving visual inference speed, and tightening the recognition schemas. The changes are general engineering improvements rather than document-specific rules:
-
-| Area | Update |
-|---|---|
-| Converged visual pipeline | The split HaS-Image-YOLO + GLM-VLM visual path was replaced by a single **LocateAnything-3B** visual feature service that covers the fixed presets, user-defined visual labels, and signatures. Visual privacy targets are now configured and displayed as one "visual features" capability. |
-| Binding-seal (骑缝章) recovery | A local OpenCV seal detector supplements LocateAnything by recovering **red and dark/gray** edge and binding seals that the grounding model misses. It is a pure supplement, deduplicated against existing seal boxes by IoU and overlap. |
-| Visual inference speed | LocateAnything uses a maskless-SDPA fast path for single images and a startup warm-to-target loop, so the first user request is already warmed. First detection latency dropped from ~30s to a few seconds. |
-| Streamlined recognition checklists | System presets were narrowed and de-duplicated. The **default** checklist is now a general nine-item set; legal, finance, and healthcare presets each carry only their domain-specific items. Recognition items are atomic and exact-tagged. |
-| New healthcare atoms | Added 登记号 (registration number) and 住院号 (inpatient number) as first-class healthcare identifiers, distinct from medical record number. |
-| Single-GPU scheduling | GPU-heavy inference is guarded by a shared queue so OCR, HaS NER, and LocateAnything do not overload a single 16 GB GPU. |
-| OCR and table recall | OCR text boxes use stronger coordinate, fuzzy, and visual-line matching so spaced or fragmented organization names are recovered; table headers, cells, and numeric columns recover sensitive values such as unit prices, totals, accounts, and contract amounts. |
-| User and tenant isolation | Recognition items, presets, visual pipeline settings, files, jobs, review drafts, history, previews, exports, and cleanup actions are scoped to the authenticated user. `super_admin` keeps system configuration and user-management privileges. |
-| UI/UX polish | A broad atomic UI pass (typography, alignment, spacing, color, radii, status badges) plus a global header/sidebar divider alignment so chrome lines up on every page. |
-
-Validation commands used for this pass:
-
-```bash
-cd backend
-ruff check app/
-python -c "from app.main import app; print(app.title)"
-
-cd ../frontend
-npm run build
-```
-
-The UI regression was run with Playwright against the local services and checked single-file and batch upload, recognition, review, redaction, ZIP export, quality-report export, console errors, and narrow-screen overflow.
 
 ---
 
