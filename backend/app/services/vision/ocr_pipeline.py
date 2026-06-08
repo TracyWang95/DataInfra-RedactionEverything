@@ -2747,6 +2747,15 @@ def _estimate_entity_region(
     if sub_left + sub_width > block.left + block.width:
         sub_width = max(1, block.left + block.width - sub_left)
 
+    if len([_l for _l in block_text.splitlines() if _l.strip()]) <= 1:
+        # A block that holds a single visual line of text (e.g. PaddleOCR-VL
+        # returns one box per line) must keep its full vertical extent. The
+        # multi-line split heuristic above can mis-fire when thin OCR fragments
+        # drag typical_line_height down, collapsing the entity box to a sliver
+        # that no longer covers the glyphs. Anchor to the block for single lines.
+        line_top = block.top
+        line_height = block.height
+
     return sub_left, line_top, sub_width, line_height
 
 
