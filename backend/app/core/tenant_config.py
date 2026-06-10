@@ -37,11 +37,29 @@ def normalize_owner_id(owner_id: str | None) -> str | None:
     return safe or None
 
 
+def _tenants_base_dir() -> str:
+    return os.path.realpath(os.path.join(settings.DATA_DIR, "tenants"))
+
+
+def _contained_tenant_path(*parts: str) -> str:
+    """Join path parts under the tenants base and reject any escape.
+
+    normalize_owner_id() already strips path separators, but the explicit
+    containment check is the actual security boundary: any resolved path that
+    leaves the tenants directory is rejected regardless of how it was built.
+    """
+    base = _tenants_base_dir()
+    candidate = os.path.realpath(os.path.join(base, *parts))
+    if candidate != base and not candidate.startswith(base + os.sep):
+        raise ValueError("tenant path escapes the tenants directory")
+    return candidate
+
+
 def tenant_dir(owner_id: str) -> str:
     owner = normalize_owner_id(owner_id)
     if not owner:
         raise ValueError("owner_id is required for tenant-scoped config")
-    return os.path.join(settings.DATA_DIR, "tenants", owner)
+    return _contained_tenant_path(owner)
 
 
 def tenant_store_path(owner_id: str | None, legacy_path: str, filename: str) -> str:
@@ -55,7 +73,7 @@ def tenant_store_path(owner_id: str | None, legacy_path: str, filename: str) -> 
     if not owner:
         return legacy_path
 
-    path = os.path.join(tenant_dir(owner), filename)
+    path = _contained_tenant_path(owner, filename)
     if owner == "admin" and legacy_path and os.path.exists(legacy_path) and not os.path.exists(path):
         with store_lock(path):
             if not os.path.exists(path):
