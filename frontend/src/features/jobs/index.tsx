@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useT } from '@/i18n';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -51,19 +50,10 @@ export function Jobs() {
           loading={s.loading}
           refreshing={s.refreshing}
           tableLoading={s.tableLoading}
-          total={s.total}
-          page={s.page}
           pageSize={s.rowsPageSize}
-          totalPages={s.totalPages}
-          expandedJobIds={s.expandedJobIds}
-          jobDetails={s.jobDetails}
-          detailLoadingIds={s.detailLoadingIds}
           deletingJobId={s.deletingJobId}
-          requeueingJobId={s.requeueingJobId}
           tableBusy={s.tableBusy}
-          onToggleExpand={s.toggleExpand}
           onDelete={s.requestDelete}
-          onRequeueFailed={s.onRequeueFailed}
           tab={s.tab}
           onTabChange={s.changeTab}
         />

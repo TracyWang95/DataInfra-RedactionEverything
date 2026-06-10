@@ -12,7 +12,6 @@ python-docx==1.2.0
 PyMuPDF==1.27.2.2
 Pillow>=12.2.0
 numpy>=2.0.0
-pdf2image==1.17.0
 openpyxl>=3.1.5
 pywin32==311; sys_platform == 'win32'  # Windows: .doc processing
 
@@ -23,21 +22,25 @@ httpx>=0.28.0
 nvidia-ml-py>=12.535.133
 aiofiles>=24.1.0
 
-# Local app/model environment. PaddlePaddle GPU is installed explicitly by
-# `npm run setup` from the official CUDA wheel index, and is repeated here so
+# Local app/model environment. PaddlePaddle GPU is pulled from the official
+# CUDA wheel index via the extra-index-url below, so
 # `pip install -r backend/requirements.txt` keeps the app venv complete.
-# vLLM intentionally lives in .venv-vllm because its Torch/CUDA stack conflicts
-# with Paddle/PaddleX when installed into the same environment.
+# vLLM intentionally lives in a separate WSL venv (VLLM_VENV_DIR) because its
+# Torch/CUDA stack conflicts with Paddle/PaddleX in the same environment.
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
 paddlepaddle-gpu==3.3.0
 paddleocr[doc-parser]==3.6.0
+# Used by the legacy Windows fallback helper backend/scripts/start_has_python.py
+# (Docker's ner service uses the ghcr.io/ggerganov/llama.cpp:server image instead).
 llama-cpp-python[server]>=0.3.16
 
 # Utility libraries
 PyJWT>=2.12.0
-passlib[bcrypt]==1.7.4
 json-repair>=0.58.0
 SQLAlchemy>=2.0.45
+# PyMySQL / psycopg: runtime drivers for structured DB connections — loaded
+# dynamically by SQLAlchemy via mysql+pymysql:// and postgresql+psycopg://
+# URLs built in app/services/structured_service.py (no direct import).
 PyMySQL>=1.1.1
 psycopg[binary]>=3.2.3
 

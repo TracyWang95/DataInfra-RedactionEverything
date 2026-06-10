@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 export { SettingsHub as Settings } from './settings-hub';
 export { SystemSettings } from './system-settings';

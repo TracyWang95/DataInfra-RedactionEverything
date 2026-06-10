@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { ReplacementMode } from '@/types';
 import {
@@ -85,7 +84,9 @@ export function triggerDownload(blob: Blob, filename: string) {
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // Revoke later so the browser has time to start the download (a synchronous
+  // revoke can cancel it in some browsers).
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export function defaultConfig(): BatchWizardPersistedConfig {

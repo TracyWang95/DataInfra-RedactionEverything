@@ -5,6 +5,7 @@ import base64
 import csv
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -47,7 +48,7 @@ class LoadedTable:
 
 _COLUMN_NAME_HINTS: list[tuple[str, str, str, float]] = [
     (r"(phone|mobile|tel|手机号|手机|电话|联系方式|联系电话)", "PHONE", "high", 0.95),
-    (r"(email|mail|閭|鐢靛瓙閭欢)", "EMAIL", "high", 0.95),
+    (r"(email|mail|邮箱|电子邮件)", "EMAIL", "high", 0.95),
     (r"(id.?card|身份证|证件号|证件号码|identity)", "ID_CARD", "critical", 0.95),
     (r"(bank.?card|银行卡号|银行账号|账户|账号)", "BANK_CARD", "critical", 0.88),
     (r"(password|passwd|pwd|密码|口令)", "USERNAME_PASSWORD", "critical", 0.98),
@@ -56,7 +57,7 @@ _COLUMN_NAME_HINTS: list[tuple[str, str, str, float]] = [
     (
         r"(^name$|full.?name|customer.?name|user.?name|receiver.?name|contact.?name|person.?name|"
         r"employee.?name|staff.?name|agent.?name|account.?name|payer.?name|payee.?name|owner.?name|"
-        r"legal.?representative|姓名|联系人|客户名|用户名|收件人|经办人|代理人|负责人|开户名|账户名",
+        r"legal.?representative|姓名|联系人|客户名|用户名|收件人|经办人|代理人|负责人|开户名|账户名)",
         "PERSON",
         "high",
         0.72,
@@ -66,7 +67,7 @@ _COLUMN_NAME_HINTS: list[tuple[str, str, str, float]] = [
     (r"(date|time|created|updated|生日|出生|日期|时间)", "DATE", "medium", 0.72),
     (r"(ip地址|ip$|ip_|ipaddress)", "IP_ADDRESS", "medium", 0.92),
     (r"(mac地址|mac$|mac_)", "MAC_ADDRESS", "medium", 0.9),
-    (r"(url|website|site|缃戝潃|閾炬帴)", "URL_WEBSITE", "medium", 0.88),
+    (r"(url|website|site|网址|链接)", "URL_WEBSITE", "medium", 0.88),
     (r"(license|plate|车牌)", "LICENSE_PLATE", "high", 0.84),
     (r"(contract|合同号|订单号|单据号|编号|流水号)", "DOCUMENT_NUMBER", "medium", 0.7),
 ]
@@ -1222,6 +1223,38 @@ def quote_sa_table(sa: Any, engine: Any, *, schema_name: str | None, table_name:
     return table
 
 
+def _validate_db_host_allowed(host: str) -> None:
+    """SSRF guard: when STRUCTURED_DB_HOST_ALLOWLIST is set, reject hosts outside it.
+
+    Allowlist entries are exact hostnames or IP / CIDR networks. ``None`` means
+    no restriction (default), preserving the local-tool use case of connecting
+    to the user's own databases.
+    """
+    allowlist = settings.STRUCTURED_DB_HOST_ALLOWLIST
+    if allowlist is None:
+        return
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        addr = None
+    for raw_entry in allowlist:
+        entry = str(raw_entry).strip()
+        if not entry:
+            continue
+        if host == entry:
+            return
+        if addr is not None:
+            try:
+                if addr in ipaddress.ip_network(entry, strict=False):
+                    return
+            except ValueError:
+                continue
+    raise ValueError(
+        f"database host '{host}' is blocked by STRUCTURED_DB_HOST_ALLOWLIST; "
+        "add the exact hostname or an IP/CIDR entry to the allowlist to permit this connection"
+    )
+
+
 def build_sqlalchemy_url(payload: dict[str, Any]) -> str:
     engine = str(payload.get("engine") or "")
     if engine == "mysql":
@@ -1238,6 +1271,7 @@ def build_sqlalchemy_url(payload: dict[str, Any]) -> str:
     username = str(payload.get("username") or "")
     password = str(payload.get("password") or "")
     host = str(payload.get("host") or "localhost")
+    _validate_db_host_allowed(host)
     database = str(payload.get("database") or "")
     from urllib.parse import quote_plus
 

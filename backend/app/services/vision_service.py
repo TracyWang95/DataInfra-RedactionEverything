@@ -31,12 +31,17 @@ from app.core.visual_feature_categories import (
 from app.models.schemas import BoundingBox, FileType
 from app.services.file_parser import FileParser
 from app.services.ocr_has_vision_service import get_ocr_has_vision_service
+from app.services.vision.image_pipeline import (
+    PreviewBox,
+    SourcePipeline,
+    draw_preview_boxes,
+)
 from app.services.vision.locate_grounding import LocateAnythingGroundingService
 from app.services.vision.ocr_artifact_filter import (
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
 )
-from app.services.vision.seal_detector import detect_dark_seal_regions, detect_red_seal_regions
+from app.services.vision.seal_detector import detect_red_seal_regions
 
 VISUAL_TYPE_LABELS_ZH = {
     **SLUG_TO_NAME_ZH,
@@ -49,10 +54,6 @@ VISUAL_TYPE_LABELS_ZH = {
 # filters second-guessing LA's detections.
 _DEDUP_IOU = 0.3
 _DEDUP_CONTAINMENT = 0.72
-# An LA signature folds in an OCR name box it overlaps even slightly: the printed
-# name is the same person and the signature is the redaction region.
-_SIG_NAME_FOLD_IOU = 0.05
-_SIG_NAME_FOLD_CONTAINMENT = 0.35
 # LA boxes the dense stroke core of a signature; pad it so redaction covers the
 # whole handwritten mark.
 _SIGNATURE_REDACTION_PAD = 0.18
@@ -68,27 +69,6 @@ _PDF_TEXT_LAYER_PROBE_LOCKS_LOOP: asyncio.AbstractEventLoop | None = None
 # counts as a strong sparse signal and short-circuits future probes.
 _SPARSE_PROBE_STRONG_SIGNAL_DIVISOR = 4
 
-# --- Same-text-line OCR duplicate detection -----------------------------------
-# Floor to avoid divide-by-zero when normalizing vertical overlap.
-_SAME_LINE_MIN_HEIGHT_EPS = 1e-6
-# Two same-text boxes are a same-line duplicate only above these overlaps.
-_SAME_LINE_VERTICAL_OVERLAP_MIN = 0.55
-_SAME_LINE_SMALLER_OVERLAP_MIN = 0.25
-# How far box centers may differ (as a fraction of the taller box) to count as
-# one text line.
-_SAME_LINE_CENTER_TOLERANCE_RATIO = 0.65
-# Boxes farther apart than this fraction of the wider box are distinct
-# occurrences, not an OCR split of one value.
-_SAME_LINE_HORIZONTAL_GAP_RATIO = 0.6
-# Length window distinguishing a split value from coincidental same text.
-_SAME_LINE_SHORT_TEXT_MAX = 6
-_SAME_LINE_MIN_MATCH_LEN = 4
-
-# --- OCR box ranking ----------------------------------------------------------
-# Scales normalized name-box area into an integer sort key.
-_OCR_NAME_AREA_SORT_SCALE = 1_000_000
-# Cap text length contribution when ranking non-name OCR boxes.
-_OCR_TEXT_LEN_RANK_CAP = 24
 
 # --- OCR rule-line removal ----------------------------------------------------
 # Minimum run length (px floor, plus page-fraction) for a horizontal/vertical
@@ -148,13 +128,6 @@ _OCR_REGION_NARROW_PAGE_WIDTH_RATIO = 0.12
 _OCR_REGION_GEOMETRY_PAD_WIDTH_RATIO = 0.10
 _OCR_REGION_GEOMETRY_PAD_HEIGHT_RATIO = 0.35
 _OCR_REGION_PAD_Y_RATIO = 0.25
-
-# --- Result image drawing -----------------------------------------------------
-_DRAW_FONT_SIZE = 16
-_DRAW_BOX_OUTLINE_WIDTH = 2
-_DRAW_LABEL_MAX_LEN = 12
-_DRAW_LABEL_OFFSET_WITH_FONT = 20
-_DRAW_LABEL_OFFSET_NO_FONT = 12
 
 # --- Redaction effects --------------------------------------------------------
 # Redaction strength is a 1-100 slider.
@@ -764,214 +737,25 @@ class VisionService:
     def _deduplicate_boxes(
         self,
         boxes: list[BoundingBox],
-        iou_threshold: float = _DEDUP_IOU,
+        iou_threshold: float | None = None,
     ) -> list[BoundingBox]:
-        """Deduplicate boxes efficiently after sorting by x position."""
+        """Geometric dedup only: a single IoU pass, no type/source/text/ranking
+        rules. Boxes whose IoU with a kept box is >= the threshold are the same
+        physical region; the larger box is kept so redaction coverage never
+        shrinks. Every removed hardcoded rule (signature-name folding, same-line
+        heuristics, LA-wins precedence, containment ratios) could drop a genuine
+        PII box — i.e. cause a missed redaction. Pure IoU only merges boxes that
+        occupy essentially the same pixels, so distinct detections are kept.
+        """
         if len(boxes) <= 1:
             return boxes
+        from app.services.vision.region_merger import deduplicate_by_iou
 
-        ocr_boxes = [b for b in boxes if b.source == "ocr_has"]
-        visual_boxes = [b for b in boxes if b.source == "visual_features"]
-        other_boxes = [b for b in boxes if b.source not in ("ocr_has", "visual_features")]
-
-        def _norm_type(value: str | None) -> str:
-            normalized = str(value or "").strip().lower()
-            return normalized.replace("-", "_").replace(" ", "_")
-
-        def _is_signature_box(box: BoundingBox) -> bool:
-            return _norm_type(box.type) in {"signature", "handwriting", "approval_mark"}
-
-        def _is_ocr_name_like(box: BoundingBox) -> bool:
-            box_type = _norm_type(box.type)
-            return box.source == "ocr_has" and box_type in {
-                "person",
-                "name",
-                "姓名",
-                "人名",
-                "signer",
-                "legal_representative",
-                "representative",
-            }
-
-        def _compact_text(value: str | None) -> str:
-            return "".join(str(value or "").split())
-
-        def _same_type(a: BoundingBox, b: BoundingBox) -> bool:
-            """Only dedupe boxes of the EXACT same schema type — no family grouping.
-
-            Open-vocabulary results are presented raw: a qr_code never collapses
-            into a barcode, nor a company_name into an "org". OCR text spans and
-            visual regions of different schemas can validly overlap, so spatial
-            overlap alone is never enough to dedupe across types.
-            """
-            return _norm_type(a.type) == _norm_type(b.type)
-
-        same_line_text_targets = {
-            "person",
-            "name",
-            "姓名",
-            "人名",
-            "age",
-            "gender",
-            "date",
-            "time",
-            "birth_date",
-            "org",
-            "organization",
-            "institution_name",
-            "company_name",
-            "government_agency",
-            "work_unit",
-            "department_name",
-            "project_name",
-            "case_number",
-        }
-
-        def _vertical_overlap_ratio(a: BoundingBox, b: BoundingBox) -> float:
-            y1 = max(a.y, b.y)
-            y2 = min(a.y + a.height, b.y + b.height)
-            if y2 <= y1:
-                return 0.0
-            return (y2 - y1) / max(_SAME_LINE_MIN_HEIGHT_EPS, min(a.height, b.height))
-
-        def _same_text_line_duplicate(a: BoundingBox, b: BoundingBox) -> bool:
-            if a.page != b.page or not _same_type(a, b):
-                return False
-            target = _norm_type(a.type)
-            if target not in same_line_text_targets:
-                return False
-            text = _compact_text(a.text)
-            if not text or text != _compact_text(b.text):
-                return False
-            if _vertical_overlap_ratio(a, b) < _SAME_LINE_VERTICAL_OVERLAP_MIN:
-                return False
-            if self._calculate_smaller_overlap(a, b) >= _SAME_LINE_SMALLER_OVERLAP_MIN:
-                return True
-            same_center_line = abs((a.y + a.height / 2) - (b.y + b.height / 2)) <= max(a.height, b.height) * _SAME_LINE_CENTER_TOLERANCE_RATIO
-            if not same_center_line:
-                return False
-            # Only an OCR split of a SINGLE value when the boxes are horizontally
-            # adjacent. Far-apart same-text boxes on one line are distinct
-            # occurrences (e.g. the same date under both 甲方 and 乙方) — keep both.
-            horizontal_gap = max(a.x, b.x) - min(a.x + a.width, b.x + b.width)
-            if horizontal_gap > _SAME_LINE_HORIZONTAL_GAP_RATIO * max(a.width, b.width):
-                return False
-            return len(text) <= _SAME_LINE_SHORT_TEXT_MAX or len(text) >= _SAME_LINE_MIN_MATCH_LEN
-
-        def _ocr_box_rank(box: BoundingBox) -> tuple[int, int, int, float]:
-            detail = str(box.source_detail or "").lower()
-            detail_rank = (
-                3
-                if "form_field_ocr" in detail
-                else 2
-                if "text_match" in detail
-                else 1
-                if "visual_line" in detail or "table" in detail
-                else 0
-            )
-            text = _compact_text(box.text)
-            odd_chars = sum(1 for char in text if char in "'`’\"?？")
-            if _norm_type(box.type) in {"person", "name", "姓名", "人名"}:
-                return (detail_rank, -odd_chars, -int((box.width * box.height) * _OCR_NAME_AREA_SORT_SCALE), -len(text))
-            return (detail_rank, -odd_chars, min(len(text), _OCR_TEXT_LEN_RANK_CAP), -(box.width * box.height))
-
-        def _dedupe_ocr_same_target_boxes(items: list[BoundingBox]) -> list[BoundingBox]:
-            kept: list[BoundingBox] = []
-            for candidate in sorted(items, key=lambda item: (item.page, _norm_type(item.type), item.x, item.y)):
-                duplicate_index: int | None = None
-                for index, existing in enumerate(kept):
-                    if existing.page != candidate.page or not _same_type(candidate, existing):
-                        continue
-                    if (
-                        self._calculate_iou(candidate, existing) > iou_threshold
-                        or self._calculate_smaller_overlap(candidate, existing) >= _DEDUP_CONTAINMENT
-                        or _same_text_line_duplicate(candidate, existing)
-                    ):
-                        duplicate_index = index
-                        break
-                if duplicate_index is None:
-                    kept.append(candidate)
-                    continue
-                existing = kept[duplicate_index]
-                if _ocr_box_rank(candidate) > _ocr_box_rank(existing):
-                    kept[duplicate_index] = candidate
-            return kept
-
-        ocr_boxes = _dedupe_ocr_same_target_boxes(ocr_boxes)
-
-        # An LA signature absorbs the printed name it covers: drop the overlapping
-        # OCR name box and fold its text into the signature as evidence (the
-        # signature is the redaction region; the printed name is the same person).
-        visual_signature_boxes = [b for b in visual_boxes if _is_signature_box(b)]
-        suppressed_ocr_ids: set[str] = set()
-        enhanced_signatures: dict[str, BoundingBox] = {}
-        for sig in visual_signature_boxes:
-            evidence: list[str] = []
-            for ocr in ocr_boxes:
-                if not _is_ocr_name_like(ocr) or sig.page != ocr.page:
-                    continue
-                if (
-                    self._calculate_iou(sig, ocr) > _SIG_NAME_FOLD_IOU
-                    or self._calculate_smaller_overlap(sig, ocr) >= _SIG_NAME_FOLD_CONTAINMENT
-                ):
-                    suppressed_ocr_ids.add(ocr.id)
-                    text = _compact_text(ocr.text)
-                    if text and text not in evidence:
-                        evidence.append(text)
-            if evidence:
-                base_text = _compact_text(sig.text)
-                merged_text = base_text if base_text and base_text != _compact_text(sig.type) else "签字"
-                enhanced_signatures[sig.id] = sig.model_copy(
-                    update={
-                        "text": f"{merged_text}（OCR: {'、'.join(evidence[:3])}）",
-                        "source_detail": f"{sig.source_detail}:ocr_name_suppressed",
-                    },
-                )
-        if suppressed_ocr_ids:
-            logger.info("DEDUP folded %d OCR name box(es) into overlapping LA signature(s)", len(suppressed_ocr_ids))
-
-        ocr_boxes = [b for b in ocr_boxes if b.id not in suppressed_ocr_ids]
-        visual_boxes = [enhanced_signatures.get(b.id, b) for b in visual_boxes]
-
-        def _overlaps_any(
-            candidate: BoundingBox,
-            existing: list[BoundingBox],
-            *,
-            require_same_visual_target: bool = False,
-        ) -> bool:
-            """Return whether candidate overlaps any existing box above threshold."""
-            cx_end = candidate.x + candidate.width
-            for eb in existing:
-                # Skip boxes that cannot overlap on the x axis.
-                if eb.x > cx_end or eb.x + eb.width < candidate.x:
-                    continue
-                if require_same_visual_target and not _same_type(candidate, eb):
-                    continue
-                if (
-                    self._calculate_iou(candidate, eb) > iou_threshold
-                    or self._calculate_smaller_overlap(candidate, eb) >= _DEDUP_CONTAINMENT
-                ):
-                    return True
-            return False
-
-        # LA (visual_features) is authoritative for visual families: keep every LA
-        # box, then keep only OCR boxes that do NOT overlap a same-family LA box.
-        # This is the inverse of the old OCR-wins precedence — LA wins ties.
-        visual_boxes.sort(key=lambda b: b.x)
-        result = list(visual_boxes)
-        for ocr_box in ocr_boxes:
-            if not _overlaps_any(ocr_box, visual_boxes, require_same_visual_target=True):
-                result.append(ocr_box)
-
-        other_boxes.sort(key=lambda b: b.x)
-        for other_box in other_boxes:
-            if not _overlaps_any(other_box, result, require_same_visual_target=True):
-                result.append(other_box)
-
+        kwargs = {} if iou_threshold is None else {"iou_threshold": iou_threshold}
+        result = deduplicate_by_iou(boxes, lambda b: (b.x, b.y, b.width, b.height), **kwargs)
         removed_count = len(boxes) - len(result)
         if removed_count > 0:
-            logger.info("DEDUP removed %d duplicate boxes", removed_count)
-
+            logger.info("DEDUP removed %d duplicate boxes (IoU only)", removed_count)
         return result
 
     async def _detect_with_pdf_text_layer(
@@ -1051,8 +835,20 @@ class VisionService:
 
         img = Image.open(io.BytesIO(image_data))
         img = ImageOps.exif_transpose(img)
-        width, height = img.size
 
+        # 像素级过滤/收紧是纯 CPU 工作，放 worker 线程避免阻塞事件循环。
+        bounding_boxes = await asyncio.to_thread(
+            self._filter_ocr_has_regions, img, regions, page
+        )
+        return bounding_boxes, result_image_base64
+
+    def _filter_ocr_has_regions(
+        self,
+        img: Image.Image,
+        regions: list,
+        page: int,
+    ) -> list[BoundingBox]:
+        width, height = img.size
         bounding_boxes = []
         for i, region in enumerate(regions):
             normalized_region_type = self._norm_box_type(region.entity_type)
@@ -1130,7 +926,7 @@ class VisionService:
             )
             bounding_boxes.append(bbox)
 
-        return bounding_boxes, result_image_base64
+        return bounding_boxes
 
     @staticmethod
     def _should_keep_ocr_has_region(entity_type: str, text: str | None) -> bool:
@@ -1259,17 +1055,17 @@ class VisionService:
 
         LA recall is borderline on thin 骑缝章 (binding-seal) fragments at the page
         edge: the same seal is caught on some pages but dropped on others. This
-        image-analysis fallback recovers those misses for both red stamps and
-        dark/photocopied (black/grey) seals. It is a pure SUPPLEMENT — it only
-        appends seal boxes that do NOT overlap an already-known seal, uses the
-        detector's tight boxes with no geometric expansion, and never drops OCR
-        text. Both prior fallback regressions (an expanded box covering a company
-        name; dropping OCR text inside seal regions) are therefore structurally
-        avoided.
+        image-analysis fallback recovers those red-stamp misses. It is a pure
+        SUPPLEMENT — it only appends seal boxes that do NOT overlap an already-known
+        seal, uses the detector's tight boxes with no geometric expansion, and never
+        drops OCR text. Both prior fallback regressions (an expanded box covering a
+        company name; dropping OCR text inside seal regions) are therefore
+        structurally avoided. (A dark/photocopied-seal detector was removed: it
+        false-positived on dark printed boxes such as a customs 审结 stamp frame.)
         """
         try:
             img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
-            detections = [("red", detect_red_seal_regions(img)), ("dark", detect_dark_seal_regions(img))]
+            detections = [("red", detect_red_seal_regions(img))]
         except Exception:
             logger.warning("cv2 seal fallback failed on page %d", page, exc_info=True)
             return []
@@ -1291,8 +1087,8 @@ class VisionService:
                     source_detail=f"seal_detector:{kind}_fallback",
                     evidence_source="visual_feature_model",
                 )
-                # Skip if it overlaps an LA seal, a red-cv2 seal, or another dark box
-                # already accepted this page (so one seal is never double-boxed).
+                # Skip if it overlaps an LA seal or a cv2 seal already accepted this
+                # page (so one seal is never double-boxed).
                 if any(
                     self._calculate_smaller_overlap(candidate, seal) >= _DEDUP_CONTAINMENT
                     or self._calculate_iou(candidate, seal) > _DEDUP_IOU
@@ -1322,14 +1118,23 @@ class VisionService:
         checklist_boxes: list[BoundingBox] = []
         checklist_duration_ms: dict[str, int] = {}
         if checklist_types:
-            checklist_boxes, checklist_duration_ms = await self.visual_grounding.detect_checklist(
-                image_data,
-                page,
-                checklist_types,
-            )
+            try:
+                checklist_boxes, checklist_duration_ms = await self.visual_grounding.detect_checklist(
+                    image_data,
+                    page,
+                    checklist_types,
+                )
+            except Exception as e:
+                # 自定义 checklist 失败不应连带丢掉已算出的固定类目框。
+                logger.warning("LocateAnything checklist stage failed on page %d: %s", page, e)
+                self.last_warnings.append(f"visual checklist failed on page {page}: {e}")
         boxes = [*locate_boxes, *checklist_boxes]
         if self._visual_slug_requested(pipeline_types, "official_seal"):
-            boxes = [*boxes, *self._supplement_seals(image_data, page, boxes)]
+            # cv2 形态学是同步 CPU 工作，放 worker 线程避免阻塞事件循环。
+            supplemental = await asyncio.to_thread(
+                self._supplement_seals, image_data, page, boxes
+            )
+            boxes = [*boxes, *supplemental]
         self.last_visual_feature_stage_duration_ms = {
             **stage_duration_ms,
             **{f"custom_{key}": value for key, value in checklist_duration_ms.items()},
@@ -1370,54 +1175,24 @@ class VisionService:
         image: Image.Image,
         bounding_boxes: list[BoundingBox],
     ) -> str:
-
-        draw_image = image.copy()
-        draw = ImageDraw.Draw(draw_image)
-        width, height = draw_image.size
-
-        font = None
-        font_paths = [
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simsun.ttc",
-        ]
-        try:
-            from PIL import ImageFont
-
-            for fp in font_paths:
-                if os.path.exists(fp):
-                    font = ImageFont.truetype(fp, _DRAW_FONT_SIZE)
-                    break
-        except OSError:
-            pass
-
-        type_colors = {
-            "face": "#EF4444",
-            "qr_code": "#10B981",
-            "official_seal": "#DC2626",
-            "id_card": "#F97316",
-            "bank_card": "#EC4899",
-            "PERSON": "#3B82F6",
-            "ID_CARD": "#EF4444",
-        }
-
+        """Thin adapter: normalized boxes -> pixel PreviewBoxes -> shared core."""
+        width, height = image.size
+        preview_boxes = []
         for bbox in bounding_boxes:
-            x1 = int(bbox.x * width)
-            y1 = int(bbox.y * height)
-            x2 = int((bbox.x + bbox.width) * width)
-            y2 = int((bbox.y + bbox.height) * height)
-
-            color = type_colors.get(bbox.type, "#6B7280")
-
-            draw.rectangle([x1, y1, x2, y2], outline=color, width=_DRAW_BOX_OUTLINE_WIDTH)
-
-            label_zh = bbox.text or VISUAL_TYPE_LABELS_ZH.get(bbox.type, bbox.type)
-            if len(label_zh) > _DRAW_LABEL_MAX_LEN:
-                label_zh = label_zh[:_DRAW_LABEL_MAX_LEN] + "..."
-            label = f"{label_zh}"
-            if font:
-                draw.text((x1, max(0, y1 - _DRAW_LABEL_OFFSET_WITH_FONT)), label, fill=color, font=font)
-            else:
-                draw.text((x1, max(0, y1 - _DRAW_LABEL_OFFSET_NO_FONT)), label, fill=color)
+            pipeline = (
+                SourcePipeline.VISUAL
+                if bbox.source == "visual_features"
+                else SourcePipeline.TEXT
+            )
+            preview_boxes.append(PreviewBox(
+                left=int(bbox.x * width),
+                top=int(bbox.y * height),
+                right=int((bbox.x + bbox.width) * width),
+                bottom=int((bbox.y + bbox.height) * height),
+                label=bbox.text or VISUAL_TYPE_LABELS_ZH.get(bbox.type, bbox.type),
+                pipeline=pipeline,
+            ))
+        draw_image = draw_preview_boxes(image, preview_boxes)
 
         buffer = io.BytesIO()
         draw_image.save(buffer, format="PNG")
@@ -1559,30 +1334,34 @@ class VisionService:
         import fitz
 
         doc = fitz.open(file_path)
-        new_doc = fitz.open()
-        mat = fitz.Matrix(_PDF_REDACTION_RENDER_SCALE, _PDF_REDACTION_RENDER_SCALE)
+        try:
+            new_doc = fitz.open()
+            try:
+                mat = fitz.Matrix(_PDF_REDACTION_RENDER_SCALE, _PDF_REDACTION_RENDER_SCALE)
 
-        for page_index in range(len(doc)):
-            page = doc[page_index]
-            page_no = page_index + 1
-            page_boxes = [b for b in bounding_boxes if b.selected and (b.page or 1) == page_no]
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            for bbox in page_boxes:
-                self._apply_box_effect(img, bbox, pix.width, pix.height, image_method, strength, fill_color)
-            buf = io.BytesIO()
-            # Scanned PDFs are redacted by rasterizing each page and applying
-            # the selected explicit masking effect to each selected region.
-            # Embedding those page rasters as PNGs bloats delivery PDFs badly;
-            # high-quality JPEG keeps exported packages practical for real scans.
-            img.save(buf, format="JPEG", quality=settings.REDACTION_PDF_JPEG_QUALITY, optimize=True)
-            buf.seek(0)
-            new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
-            new_page.insert_image(new_page.rect, stream=buf.read())
+                for page_index in range(len(doc)):
+                    page = doc[page_index]
+                    page_no = page_index + 1
+                    page_boxes = [b for b in bounding_boxes if b.selected and (b.page or 1) == page_no]
+                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                    for bbox in page_boxes:
+                        self._apply_box_effect(img, bbox, pix.width, pix.height, image_method, strength, fill_color)
+                    buf = io.BytesIO()
+                    # Scanned PDFs are redacted by rasterizing each page and applying
+                    # the selected explicit masking effect to each selected region.
+                    # Embedding those page rasters as PNGs bloats delivery PDFs badly;
+                    # high-quality JPEG keeps exported packages practical for real scans.
+                    img.save(buf, format="JPEG", quality=settings.REDACTION_PDF_JPEG_QUALITY, optimize=True)
+                    buf.seek(0)
+                    new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
+                    new_page.insert_image(new_page.rect, stream=buf.read())
 
-        doc.close()
-        new_doc.save(output_path, garbage=4, deflate=True, clean=True)
-        new_doc.close()
+                new_doc.save(output_path, garbage=4, deflate=True, clean=True)
+            finally:
+                new_doc.close()
+        finally:
+            doc.close()
 
         return output_path
 

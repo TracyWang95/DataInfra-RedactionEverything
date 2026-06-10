@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import type { FC } from 'react';
 import { Card } from '@/components/ui/card';
@@ -193,19 +192,6 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
             </TabsContent>
           </div>
 
-          <div
-            className="page-surface-footer !bg-transparent !backdrop-blur-none"
-            style={{ padding: '0.125rem 1rem 0.25rem' }}
-          >
-            <p
-              className="text-center text-xs leading-none text-muted-foreground"
-              data-testid="playground-type-summary"
-            >
-              {rec.typeTab === 'vision'
-                ? `${t('playground.ocrShort')} ${rec.selectedOcrHasTypes.length} / ${t('playground.visualFeatureShort')} ${selectedVisualTypeCount}`
-                : `${rec.selectedTypes.length} / ${rec.entityTypes.length} ${t('playground.selected')}`}
-            </p>
-          </div>
         </Tabs>
       </Card>
       <PresetSaveDialog rec={rec} />

@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { t } from '@/i18n';
 
 export interface ServiceInfo {
   name: string;
@@ -53,11 +53,14 @@ const LIVE_SERVICE_STATUSES = new Set([
   'loading',
 ]);
 
-const serviceFallbacks: Required<ServicesHealth['services']> = {
-  paddle_ocr: { name: 'PaddleOCR', status: 'offline' },
-  has_ner: { name: 'HaS Text', status: 'offline' },
-  visual_features: { name: '视觉特征', status: 'offline' },
-};
+// Built lazily so the localized fallback name follows the active locale.
+function buildServiceFallbacks(): Required<ServicesHealth['services']> {
+  return {
+    paddle_ocr: { name: 'PaddleOCR', status: 'offline' },
+    has_ner: { name: 'HaS Text', status: 'offline' },
+    visual_features: { name: t('health.serviceName.visualFeatures'), status: 'offline' },
+  };
+}
 
 type HealthStoreSnapshot = {
   health: ServicesHealth | null;
@@ -150,6 +153,7 @@ function normalizeGpuProcesses(value: unknown): GpuProcessInfo[] {
 export function normalizeHealthPayload(value: unknown): ServicesHealth {
   const data = value && typeof value === 'object' ? (value as Partial<ServicesHealth>) : {};
   const services = data.services && typeof data.services === 'object' ? data.services : {};
+  const serviceFallbacks = buildServiceFallbacks();
   const normalizedServices = {
     paddle_ocr: normalizeService(
       (services as Partial<ServicesHealth['services']>).paddle_ocr,

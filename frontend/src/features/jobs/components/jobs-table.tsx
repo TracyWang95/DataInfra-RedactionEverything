@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import {
   memo,
@@ -9,17 +8,21 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
-  type RefObject,
 } from 'react';
 import { ArrowRight, Eye, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { t, useI18n } from '@/i18n';
+import { t, useI18n, useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/EmptyState';
+import {
+  clampPageSize,
+  interpolateDensity,
+  useProportionalRowHeight,
+} from '@/components/hooks/useProportionalRowHeight';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import type { JobDetail, JobSummary } from '@/services/jobsApi';
+import type { JobSummary } from '@/services/jobsApi';
 import type { JobsStatusFilter } from '../hooks/use-jobs';
 import {
   buildJobPrimaryNavigationLabels,
@@ -86,19 +89,10 @@ type JobsTableProps = {
   loading: boolean;
   refreshing: boolean;
   tableLoading?: boolean;
-  total: number;
-  page: number;
   pageSize: number;
-  totalPages: number;
-  expandedJobIds: Set<string>;
-  jobDetails: Record<string, JobDetail>;
-  detailLoadingIds: Set<string>;
   deletingJobId: string | null;
-  requeueingJobId: string | null;
   tableBusy: boolean;
-  onToggleExpand: (job: JobSummary) => void;
   onDelete: (job: JobSummary) => void;
-  onRequeueFailed: (job: JobSummary) => void;
   tab?: JobsStatusFilter;
   onTabChange?: (tab: JobsStatusFilter) => void;
 };
@@ -108,12 +102,6 @@ const jobsGridStyle: CSSProperties = {
     'minmax(210px,1.16fr) minmax(44px,0.24fr) minmax(54px,0.28fr) minmax(54px,0.28fr) minmax(50px,0.26fr) minmax(155px,0.82fr) minmax(96px,0.48fr) minmax(124px,0.58fr) minmax(72px,0.36fr) minmax(72px,0.36fr) minmax(60px,0.3fr)',
   columnGap: '10px',
 };
-
-const FALLBACK_TABLE_BODY_HEIGHT = 600;
-
-function getStableJobsBodyMinHeight(): string {
-  return '0px';
-}
 
 function stopRowClick(event: ReactMouseEvent) {
   event.stopPropagation();
@@ -145,18 +133,11 @@ type JobsTableDensity = {
 };
 
 function normalizeJobsPageSize(pageSize: number): number {
-  const safePageSize = Math.min(
-    Math.max(Math.round(pageSize), JOBS_MIN_PAGE_SIZE),
-    JOBS_MAX_PAGE_SIZE,
-  );
-  return safePageSize;
+  return clampPageSize(pageSize, JOBS_MIN_PAGE_SIZE, JOBS_MAX_PAGE_SIZE);
 }
 
 function getJobsTableDensity(pageSize: number, rowHeight: number): JobsTableDensity {
-  const safePageSize = normalizeJobsPageSize(pageSize);
-  const densityRatio =
-    Math.log(safePageSize / JOBS_MIN_PAGE_SIZE) / Math.log(JOBS_MAX_PAGE_SIZE / JOBS_MIN_PAGE_SIZE);
-  const interpolate = (max: number, min: number): number => max - (max - min) * densityRatio;
+  const interpolate = interpolateDensity(pageSize, JOBS_MIN_PAGE_SIZE, JOBS_MAX_PAGE_SIZE);
 
   return {
     rowHeight,
@@ -180,36 +161,6 @@ function getJobsSkeletonCount(pageSize: number): number {
   return normalizeJobsPageSize(pageSize);
 }
 
-function useProportionalJobsRowHeight(
-  pageSize: number,
-  bodyRef: RefObject<HTMLDivElement | null>,
-): number {
-  const [bodyHeight, setBodyHeight] = useState(FALLBACK_TABLE_BODY_HEIGHT);
-
-  useEffect(() => {
-    const element = bodyRef.current;
-    if (!element) return;
-
-    const update = () => {
-      const nextHeight = element.clientHeight || FALLBACK_TABLE_BODY_HEIGHT;
-      setBodyHeight((prev) => (Math.abs(prev - nextHeight) < 0.5 ? prev : nextHeight));
-    };
-
-    update();
-    const ResizeObserverCtor = window.ResizeObserver;
-    if (!ResizeObserverCtor) {
-      window.addEventListener('resize', update);
-      return () => window.removeEventListener('resize', update);
-    }
-
-    const observer = new ResizeObserverCtor(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [bodyRef]);
-
-  return bodyHeight / normalizeJobsPageSize(pageSize);
-}
-
 export function JobsTable({
   rows,
   loading,
@@ -222,14 +173,20 @@ export function JobsTable({
   tab,
   onTabChange,
 }: JobsTableProps) {
+  const t = useT();
   const bodyRef = useRef<HTMLDivElement>(null);
-  const rowHeight = useProportionalJobsRowHeight(pageSize, bodyRef);
+  const rowHeight = useProportionalRowHeight({
+    pageSize,
+    minPageSize: JOBS_MIN_PAGE_SIZE,
+    maxPageSize: JOBS_MAX_PAGE_SIZE,
+    bodyRef,
+  });
   const density = useMemo(() => getJobsTableDensity(pageSize, rowHeight), [pageSize, rowHeight]);
   const safePageSize = normalizeJobsPageSize(pageSize);
   const fillerRowCount = Math.max(0, safePageSize - rows.length);
   const bodyStyle: CSSProperties = {
     height: 0,
-    minHeight: getStableJobsBodyMinHeight(),
+    minHeight: 0,
     overscrollBehavior: 'contain',
     scrollbarGutter: 'stable',
   };
@@ -331,7 +288,7 @@ export function JobsTable({
   );
 }
 
-function getJobsTabLabel(value: JobsStatusFilter): string {
+function getJobsTabLabel(t: (key: string) => string, value: JobsStatusFilter): string {
   if (value === 'all') return t('jobs.tab.all');
   if (value === 'active') return t('jobs.filter.active');
   if (value === 'awaiting_review') return t('jobs.filter.awaitingReview');
@@ -347,6 +304,7 @@ function JobsFilterMenu({
   tab: JobsStatusFilter;
   onTabChange: (tab: JobsStatusFilter) => void;
 }) {
+  const t = useT();
   const [filterOpen, setFilterOpen] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
   const hasActiveFilter = tab !== 'all';
@@ -404,7 +362,7 @@ function JobsFilterMenu({
                   className={filterTabClass}
                   data-testid={`jobs-tab-${value}`}
                 >
-                  {getJobsTabLabel(value)}
+                  {getJobsTabLabel(t, value)}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -474,6 +432,7 @@ const JobRow = memo(function JobRow({
   onDelete,
   stopEvent,
 }: JobRowProps) {
+  const t = useT();
   const navLabels = buildJobPrimaryNavigationLabels(t);
   const primary = resolveJobPrimaryNavigation({
     jobId: job.id,

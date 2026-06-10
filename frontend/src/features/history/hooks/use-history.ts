@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -12,7 +11,7 @@ import { t } from '@/i18n';
 import { fileApi, getBatchZipManifest, redactionApi } from '@/services/api';
 import { showToast } from '@/components/Toast';
 import { HISTORY_ACTIVE_POLL_MS, HISTORY_EMPTY_RESULT_POLL_MS } from '@/constants/timing';
-import { getStorageItem, setStorageItem } from '@/lib/storage';
+import { getStorageItem, scopedStorageKey, setStorageItem } from '@/lib/storage';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import { resolveRedactionState } from '@/utils/redactionState';
 import type { CompareData, FileListItem, FileListResponse } from '@/types';
@@ -112,7 +111,11 @@ function makeHistoryListCacheKey(
   pageSize: number,
 ): string {
   const safeJobId = jobId ?? '_none_';
-  return `${HISTORY_LIST_CACHE_PREFIX}:${source}:${encodeURIComponent(safeJobId)}:${page}:${pageSize}`;
+  // Owner-scoped (same pattern as presets): switching accounts naturally
+  // misses the previous user's cache entries.
+  return scopedStorageKey(
+    `${HISTORY_LIST_CACHE_PREFIX}:${source}:${encodeURIComponent(safeJobId)}:${page}:${pageSize}`,
+  );
 }
 
 function isFreshHistoryListCache(entry: CachedHistoryList): boolean {
@@ -286,7 +289,9 @@ function triggerDownload(blob: Blob, filename: string) {
   a.href = url;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(url);
+  // Revoke later so the browser has time to start the download (a synchronous
+  // revoke can cancel it in some browsers).
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export function previewMimeForRow(row: FileListItem): string {
@@ -412,9 +417,12 @@ export function useHistory() {
   const urlJobId = searchParams.get('jobId');
   const initialSourceTab =
     urlSource === 'batch' ? 'batch' : urlSource === 'playground' ? 'playground' : 'all';
-  const initialCache = readHistoryListCache(initialSourceTab, urlJobId, 1, 10, {
-    allowStale: true,
-  });
+  // Lazy init: avoid a synchronous localStorage read + JSON.parse on every render.
+  const [initialCache] = useState(() =>
+    readHistoryListCache(initialSourceTab, urlJobId, 1, 10, {
+      allowStale: true,
+    }),
+  );
 
   const [rows, setRows] = useState<FileListItem[]>(() => initialCache?.files ?? []);
   const [total, setTotal] = useState(() => initialCache?.total ?? 0);
@@ -518,6 +526,11 @@ export function useHistory() {
     return ft === 'pdf' || ft === 'pdf_scanned';
   }, []);
 
+  // TIFF/BMP can't render in <img>; the /page-image endpoint serves a PNG render.
+  const needsServerPngPreview = useCallback((row: FileListItem) => {
+    return /\.(?:tif|tiff|bmp)$/i.test(String(row.original_filename ?? ''));
+  }, []);
+
   const fetchPageImages = useCallback(async (fileId: string, page: number) => {
     const base = `/files/${encodeURIComponent(fileId)}/page-image?page=${page}`;
     const [origRes, redRes] = await Promise.all([
@@ -555,12 +568,13 @@ export function useHistory() {
         setCompareTotalPages(pageCount);
 
         if (useBinaryPreview) {
-          if (isPdfRow(row)) {
-            // PDF: per-page PNG via /page-image endpoint
+          if (isPdfRow(row) || needsServerPngPreview(row)) {
+            // PDF pages, or TIFF/BMP single images: server renders a browser-safe
+            // PNG via /page-image (raw <img src> can't decode those formats).
             const urls = await fetchPageImages(row.file_id, 1);
             setCompareBlobUrls(urls);
           } else {
-            // Single image: download full file as blob
+            // Browser-renderable single image: download full file as blob
             const mime = previewMimeForRow(row);
             const [original, redacted] = await Promise.all([
               blobUrlFromFileDownload(row.file_id, false, mime),
@@ -575,7 +589,7 @@ export function useHistory() {
         setCompareLoading(false);
       }
     },
-    [revokeCompareBlobs, isPdfRow, fetchPageImages],
+    [revokeCompareBlobs, isPdfRow, needsServerPngPreview, fetchPageImages],
   );
 
   // When user changes compare page (PDF pagination), re-fetch page images.

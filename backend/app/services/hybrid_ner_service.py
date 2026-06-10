@@ -22,8 +22,8 @@ from app.models.schemas import Entity
 from app.models.type_mapping import canonical_type_id, linkage_groups_for_type
 from app.services.has_service import HaSService, has_service
 
-# 绫诲瀷鍒悕锛屽吋瀹?EntityTypeConfig 鍜?CustomEntityType
-EntityTypeConfig = Any  # 鍙渶瑕?id, name, regex_pattern, use_llm 绛夊瓧娈?
+# 类型别名，兼容 EntityTypeConfig 和 CustomEntityType
+EntityTypeConfig = Any  # 只需要 id, name, regex_pattern, use_llm 等字段
 
 
 @dataclass
@@ -302,7 +302,7 @@ class HybridNERService:
         clean_name = str(name or "").strip()
         if not clean_name:
             return []
-        parts = [p.strip() for p in re.split(r"[/锛忋€?锛?锛?)锛堬級\s]+", clean_name) if p.strip()]
+        parts = [p.strip() for p in re.split(r"[/／（）()\s]+", clean_name) if p.strip()]
         return [clean_name, *parts]
 
     def _select_has_semantic_types(
@@ -483,7 +483,7 @@ class HybridNERService:
             if len(paragraph) <= self.MAX_HAS_LINE_CHARS * 2:
                 yield paragraph
                 continue
-            for part in re.split(r"(?<=[銆傦紱;])\s*", paragraph):
+            for part in re.split(r"(?<=[。；;])\s*", paragraph):
                 part = part.strip()
                 if part:
                     yield part
@@ -957,9 +957,9 @@ class HybridNERService:
             return "medical"
         if "律师事务所" in compact or compact.endswith("事务所"):
             return "law_firm"
-        if "閾惰" in compact or "鏀" in compact:
+        if "银行" in compact or "支行" in compact:
             return "bank"
-        if "淇濋櫓" in compact:
+        if "保险" in compact:
             return "insurance"
         if any(suffix in compact for suffix in ("公司", "集团", "有限", "股份")):
             return "company"

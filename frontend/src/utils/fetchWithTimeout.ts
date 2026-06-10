@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { authFetch } from '@/services/api-client';
 
@@ -11,19 +10,22 @@ export function fetchWithTimeout(
   const ac = new AbortController();
   const timer = window.setTimeout(() => ac.abort(), timeoutMs);
 
+  const onOuterAbort = () => {
+    clearTimeout(timer);
+    ac.abort();
+  };
+
   if (outerSignal) {
     if (outerSignal.aborted) {
       clearTimeout(timer);
       return Promise.reject(new DOMException('Aborted', 'AbortError'));
     }
-    outerSignal.addEventListener('abort', () => {
-      clearTimeout(timer);
-      ac.abort();
-    });
+    outerSignal.addEventListener('abort', onOuterAbort, { once: true });
   }
 
   return authFetch(input, { ...rest, signal: ac.signal }).finally(() => {
     window.clearTimeout(timer);
+    outerSignal?.removeEventListener('abort', onOuterAbort);
   });
 }
 

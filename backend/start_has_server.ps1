@@ -1,8 +1,5 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 # Legacy Windows helper for starting only the HaS Text service with llama-server.
-# The main supported dev entry is still `npm run dev:models` from WSL/Linux.
+# The main supported dev entry is still `npm run dev` (full stack via scripts/dev.mjs, WSL required).
 
 $ErrorActionPreference = "Stop"
 
@@ -36,7 +33,7 @@ if (-Not $ModelPath) {
     Write-Host "Expected project filename:" -ForegroundColor Yellow
     Write-Host "  $CanonicalModelName" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Recommended setup is documented in docs/MODELS.md." -ForegroundColor Yellow
+    Write-Host "Recommended setup is documented in the README (Docker GPU model files section)." -ForegroundColor Yellow
     Write-Host "Typical Windows/WSL target: D:\has_models\$CanonicalModelName" -ForegroundColor Cyan
     Write-Host "Docker target: backend\models\has\$CanonicalModelName" -ForegroundColor Cyan
     Write-Host ""

@@ -213,6 +213,54 @@ class FileStoreDB:
         rows = self._cached_all_rows()
         return [(file_id, json.loads(data_json)) for file_id, data_json in rows]
 
+    def items_for_owner(self, owner_id: str, *, default_owner: str = "local_user") -> list[tuple[str, dict]]:
+        """Like :meth:`items`, but filtered to one owner in SQL.
+
+        Avoids deserializing every tenant's rows on list hot paths. The owner
+        predicate mirrors ``str(info.get("owner_id") or default_owner)``.
+        Row order matches :meth:`items` (no ORDER BY).
+        """
+        def op():
+            with self._lock:
+                with self._connect() as conn:
+                    return conn.execute(
+                        """
+                        SELECT file_id, data_json FROM file_store
+                        WHERE COALESCE(
+                            NULLIF(CAST(json_extract(data_json, '$.owner_id') AS TEXT), ''),
+                            ?
+                        ) = ?
+                        """,
+                        (default_owner, str(owner_id)),
+                    ).fetchall()
+
+        rows = self._run_with_retry("items_for_owner", op)
+        return [(r["file_id"], json.loads(r["data_json"])) for r in rows]
+
+    def project_fields(self, fields: tuple[str, ...]) -> list[tuple[str, dict]]:
+        """SQL projection: return only the given top-level JSON fields per row.
+
+        Avoids full-document deserialization for stats/listing scans. Missing
+        fields surface as ``None``, matching ``info.get(field)`` semantics.
+        """
+        select_parts = ", ".join(
+            f"json_extract(data_json, ?) AS f{i}" for i in range(len(fields))
+        )
+        params = tuple(f"$.{field}" for field in fields)
+
+        def op():
+            with self._lock:
+                with self._connect() as conn:
+                    return conn.execute(
+                        f"SELECT file_id, {select_parts} FROM file_store", params
+                    ).fetchall()
+
+        rows = self._run_with_retry("project_fields", op)
+        return [
+            (r["file_id"], {field: r[f"f{i}"] for i, field in enumerate(fields)})
+            for r in rows
+        ]
+
     def keys(self) -> list[str]:
         rows = self._cached_all_rows()
         return [file_id for file_id, _data_json in rows]

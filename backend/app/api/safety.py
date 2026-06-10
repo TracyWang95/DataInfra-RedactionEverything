@@ -56,7 +56,7 @@ async def storage_info(owner_id: str = Depends(require_auth)):
 
     upload_size = 0
     output_size = 0
-    for _fid, info in get_file_store().items():
+    for _fid, info in get_file_store().project_fields(("owner_id", "file_path", "output_path")):
         if file_owner_id(info) != owner_id:
             continue
         for key, expected_dir in (("file_path", settings.UPLOAD_DIR), ("output_path", settings.OUTPUT_DIR)):

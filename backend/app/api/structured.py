@@ -56,11 +56,15 @@ async def upload_structured_file(
     owner_id: str = Depends(require_auth),
     store: StructuredStore = Depends(get_structured_store),
 ) -> dict[str, Any]:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
     try:
+        # 早校验扩展名，避免为不支持的类型读入整个文件体
+        structured_service.extension_kind(file.filename)
         content = await file.read()
         path, kind = structured_service.save_structured_upload(
             owner_id=owner_id,
-            filename=file.filename or "structured-data",
+            filename=file.filename,
             content=content,
         )
         result = structured_service.register_file_source(

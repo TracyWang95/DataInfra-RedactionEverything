@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 export type JobTypeForNav = 'text_batch' | 'image_batch' | 'smart_batch' | 'structured_batch';
 

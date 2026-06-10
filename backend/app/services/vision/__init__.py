@@ -1,6 +1,9 @@
 """Vision subpackage public helpers."""
 from app.services.vision.image_pipeline import (
+    PreviewBox,
+    SourcePipeline,
     apply_redaction,
+    draw_preview_boxes,
     draw_regions_on_image,
     match_ocr_to_visual_regions,
 )
@@ -14,8 +17,7 @@ from app.services.vision.ocr_pipeline import (
 )
 from app.services.vision.region_merger import (
     calc_iou_boxes,
-    calc_iou_regions,
-    merge_regions,
+    deduplicate_by_iou,
 )
 
 __all__ = [
@@ -28,10 +30,12 @@ __all__ = [
     "match_entities_to_ocr",
     # image_pipeline
     "match_ocr_to_visual_regions",
+    "PreviewBox",
+    "SourcePipeline",
+    "draw_preview_boxes",
     "draw_regions_on_image",
     "apply_redaction",
     # region_merger
     "calc_iou_boxes",
-    "calc_iou_regions",
-    "merge_regions",
+    "deduplicate_by_iou",
 ]

@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 import {
@@ -502,6 +501,22 @@ export function usePlaygroundRecognition() {
     applyVisionPresetToPlayground,
   ]);
 
+  const getTypeConfig = useCallback(
+    (typeId: string): { name: string; color: string } => {
+      const config = entityTypes.find((type) => type.id === typeId);
+      return config || { name: typeId, color: '#6366F1' };
+    },
+    [entityTypes],
+  );
+
+  const getVisionTypeConfig = useCallback(
+    (typeId: string): { name: string; color: string } => {
+      const config = visionTypes.find((type) => type.id === typeId);
+      return config || { name: typeId, color: '#6366F1' };
+    },
+    [visionTypes],
+  );
+
   const sortedEntityTypes = useMemo(() => sortEntityTypes(entityTypes), [entityTypes]);
 
   const playgroundTextGroups = useMemo(
@@ -592,13 +607,7 @@ export function usePlaygroundRecognition() {
     updateOcrHasTypes,
     updateVisualFeatureTypes,
     presetApplySeq,
-    getTypeConfig: (typeId: string): { name: string; color: string } => {
-      const config = entityTypes.find((type) => type.id === typeId);
-      return config || { name: typeId, color: '#6366F1' };
-    },
-    getVisionTypeConfig: (typeId: string): { name: string; color: string } => {
-      const config = visionTypes.find((type) => type.id === typeId);
-      return config || { name: typeId, color: '#6366F1' };
-    },
+    getTypeConfig,
+    getVisionTypeConfig,
   };
 }

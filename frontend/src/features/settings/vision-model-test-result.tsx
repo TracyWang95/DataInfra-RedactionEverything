@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { cn } from '@/lib/utils';
 import { tonePanelClass } from '@/utils/toneClasses';

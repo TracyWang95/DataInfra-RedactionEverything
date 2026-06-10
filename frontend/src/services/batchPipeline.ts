@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import type {
   ParseResult,
@@ -58,12 +57,15 @@ export async function batchPreviewEntityMap(body: {
   return data.entity_map ?? {};
 }
 
-export async function batchPreviewImage(body: {
-  file_id: string;
-  page?: number;
-  bounding_boxes: unknown[];
-  config: Record<string, unknown>;
-}): Promise<string> {
+export async function batchPreviewImage(
+  body: {
+    file_id: string;
+    page?: number;
+    bounding_boxes: unknown[];
+    config: Record<string, unknown>;
+  },
+  signal?: AbortSignal,
+): Promise<string> {
   const page = body.page ?? 1;
   const data = await post<{ image_base64?: string }>(
     `/redaction/${encodeURIComponent(body.file_id)}/preview-image?page=${page}`,
@@ -71,6 +73,7 @@ export async function batchPreviewImage(body: {
       bounding_boxes: body.bounding_boxes,
       config: body.config,
     },
+    { signal },
   );
   return data.image_base64 ?? '';
 }

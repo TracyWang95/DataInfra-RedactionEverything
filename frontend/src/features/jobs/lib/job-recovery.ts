@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import type { JobDetail, JobItemRow } from '@/services/jobsApi';
 import { buildBatchWorkbenchUrl } from '@/utils/jobPrimaryNavigation';

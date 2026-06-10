@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import gc
 import math
 import os
 import tempfile
 import time
+from collections.abc import Iterable
 from io import BytesIO
-from typing import Any, Iterable
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +32,12 @@ _structure: Any | None = None
 _ready = False
 _model_name = "PaddleOCR-VL-1.6-0.9B"
 _paddle_device = ""
+
+# Serializes all Paddle inference (predictors are not thread-safe) while the
+# event loop stays free: endpoints run inference via asyncio.to_thread inside
+# this lock, so /health keeps responding during long predictions. The lock must
+# wrap EVERY Paddle inference call site; /health must never take it.
+_infer_lock = asyncio.Lock()
 
 MAX_SIDE = int(os.environ.get("OCR_MAX_IMAGE_SIDE", "1600"))
 SEAL_TEXT = "[公章]"
@@ -66,6 +74,10 @@ class OCRBox(BaseModel):
     height: float
     confidence: float = DEFAULT_CONFIDENCE
     label: str = "text"
+    # Per-character boxes (normalized) for this line, left-to-right. Lets the
+    # backend redact the exact pixels of an entity instead of estimating a
+    # sub-span or masking the whole block.
+    chars: list[dict[str, Any]] = []
 
 
 class OCRResponse(BaseModel):
@@ -455,6 +467,7 @@ def map_boxes_to_original(items: list[OCRBox]) -> list[OCRBox]:
                 height=max(0.0, min(float(item.height), 1.0)),
                 confidence=item.confidence,
                 label=item.label,
+                chars=item.chars,
             )
         )
     return mapped
@@ -604,6 +617,102 @@ def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
     return raw
 
 
+_word_engine: Any = None
+_word_engine_failed = False
+
+
+def get_word_engine() -> Any | None:
+    """Lazy PaddleOCR with per-character boxes (return_word_box). Mobile det/rec
+    keep the extra GPU cost tiny (~0.3 GB). Init is attempted once: a failure
+    sets a sentinel so every later request does not retry the heavy init."""
+    global _word_engine, _word_engine_failed
+    if _word_engine is not None:
+        return _word_engine
+    if _word_engine_failed:
+        return None
+    try:
+        from paddleocr import PaddleOCR
+
+        _word_engine = PaddleOCR(
+            return_word_box=True,
+            use_textline_orientation=False,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            text_detection_model_name="PP-OCRv5_mobile_det",
+            text_recognition_model_name="PP-OCRv5_mobile_rec",
+        )
+        print("[OCR] word-box engine loaded", flush=True)
+    except Exception as exc:
+        print(f"[OCR] word-box engine init failed (will not retry): {exc}", flush=True)
+        _word_engine = None
+        _word_engine_failed = True
+    return _word_engine
+
+
+def _char_box_xyxy(box: Any) -> tuple[float, float, float, float]:
+    import numpy as np
+
+    arr = np.asarray(box, dtype=float)
+    if arr.ndim == 1 and arr.size == 4:
+        x1, y1, x2, y2 = arr.tolist()
+    else:
+        pts = arr.reshape(-1, 2)
+        x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
+        x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
+    return float(x1), float(y1), float(x2), float(y2)
+
+
+def _extract_char_boxes(image: Image.Image) -> list[dict[str, Any]]:
+    engine = get_word_engine()
+    if engine is None:
+        return []
+    width, height = image.size
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
+        temp_path = file.name
+        image.save(file, format="PNG")
+    chars: list[dict[str, Any]] = []
+    try:
+        for result in engine.predict(temp_path):
+            try:
+                line_chars = result["text_word"]
+                line_boxes = result["text_word_boxes"]
+            except (KeyError, TypeError):
+                continue
+            for words, boxes in zip(line_chars, line_boxes, strict=False):
+                for ch, box in zip(words, boxes, strict=False):
+                    x1, y1, x2, y2 = _char_box_xyxy(box)
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                    chars.append({
+                        "c": str(ch),
+                        "x": x1 / width,
+                        "y": y1 / height,
+                        "w": (x2 - x1) / width,
+                        "h": (y2 - y1) / height,
+                    })
+    except Exception as exc:
+        print(f"[OCR] char-box extraction failed: {exc}", flush=True)
+    finally:
+        _remove_file(temp_path)
+    return chars
+
+
+def _attach_chars(boxes: list[OCRBox], chars: list[dict[str, Any]]) -> None:
+    """Attach to each line box the char boxes whose center falls inside it,
+    ordered left-to-right."""
+    if not chars:
+        return
+    for box in boxes:
+        bx1, by1 = box.x, box.y
+        bx2, by2 = box.x + box.width, box.y + box.height
+        inside = [
+            ch for ch in chars
+            if bx1 <= ch["x"] + ch["w"] / 2 <= bx2 and by1 <= ch["y"] + ch["h"] / 2 <= by2
+        ]
+        inside.sort(key=lambda c: c["x"])
+        box.chars = inside
+
+
 def extract_structure(image: Image.Image, request: StructureRequest) -> list[OCRBox]:
     engine = get_structure_engine()
     if not engine:
@@ -695,14 +804,20 @@ async def ocr_extract(request: OCRRequest) -> OCRResponse:
     start = time.perf_counter()
     try:
         image_bytes = base64.b64decode(request.image)
+        # prepare_image decodes the pixel data; a truncated/corrupt payload that
+        # fails there is still a client error (400), not a server fault.
+        _original, ocr_image, _scale_x, _scale_y = prepare_image(image_bytes)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid base64 image") from exc
 
-    _original, ocr_image, _scale_x, _scale_y = prepare_image(image_bytes)
-    try:
-        items = extract_vl(ocr_image, max_new_tokens=request.max_new_tokens)
-    finally:
-        trim_cuda_cache("ocr")
+    # Inference runs in a worker thread under the module lock so /health stays
+    # responsive while keeping the single-request serial semantics (the Paddle
+    # predictor is not thread-safe).
+    async with _infer_lock:
+        try:
+            items = await asyncio.to_thread(extract_vl, ocr_image, request.max_new_tokens)
+        finally:
+            trim_cuda_cache("ocr")
 
     mapped = map_boxes_to_original(items)
     elapsed = time.perf_counter() - start
@@ -720,16 +835,23 @@ async def structure_extract(request: StructureRequest) -> OCRResponse:
     start = time.perf_counter()
     try:
         image_bytes = base64.b64decode(request.image)
+        # prepare_image decodes the pixel data; a truncated/corrupt payload that
+        # fails there is still a client error (400), not a server fault.
+        _original, ocr_image, _scale_x, _scale_y = prepare_image(image_bytes)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid base64 image") from exc
 
-    _original, ocr_image, _scale_x, _scale_y = prepare_image(image_bytes)
-    try:
-        items = extract_structure(ocr_image, request)
-        mapped = map_boxes_to_original(items)
-    finally:
-        release_structure_engine_if_configured()
-        trim_cuda_cache("structure")
+    # Both Paddle inference passes (structure + char boxes) run in worker
+    # threads under the module lock so /health stays responsive while keeping
+    # the single-request serial semantics (predictors are not thread-safe).
+    async with _infer_lock:
+        try:
+            items = await asyncio.to_thread(extract_structure, ocr_image, request)
+            mapped = map_boxes_to_original(items)
+            _attach_chars(mapped, await asyncio.to_thread(_extract_char_boxes, ocr_image))
+        finally:
+            release_structure_engine_if_configured()
+            trim_cuda_cache("structure")
 
     elapsed = time.perf_counter() - start
     print(f"[OCR] Structure {len(mapped)} boxes in {elapsed:.2f}s", flush=True)

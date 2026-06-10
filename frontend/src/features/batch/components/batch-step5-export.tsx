@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { memo, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Download, FileJson, RefreshCw, ShieldCheck } from 'lucide-react';

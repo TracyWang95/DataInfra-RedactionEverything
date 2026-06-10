@@ -64,6 +64,9 @@ jobs:
       - name: Import FastAPI app
         run: python -c "from app.main import app; print(app.title)"
 
+      - name: Run backend tests
+        run: python -m pytest tests -q
+
   docker-build:
     name: Docker build verification
     runs-on: ubuntu-latest

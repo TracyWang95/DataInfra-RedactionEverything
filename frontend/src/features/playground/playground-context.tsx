@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { createContext, useContext, useMemo, type FC, type ReactNode } from 'react';
 import { usePlayground } from './hooks/use-playground';

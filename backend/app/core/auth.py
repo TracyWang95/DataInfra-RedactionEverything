@@ -29,7 +29,9 @@ _LOGIN_ATTEMPT_TTL_SECONDS = _LOGIN_LOCKOUT_SECONDS
 _login_attempts: dict[str, dict[str, float]] = {}
 _login_attempts_lock = threading.Lock()
 _auth_file_lock = threading.RLock()
-_auth_version_cache: int | None = None
+# Cache the parsed auth.json document (not just the global version) so that
+# per-user auth_version lookups stay cheap on the request hot path.
+_auth_doc_cache: dict | None = None
 _auth_version_cache_mtime: float | None = None
 _auth_version_cache_path: str | None = None
 logger = logging.getLogger(__name__)
@@ -107,10 +109,10 @@ def _load_auth() -> dict:
 
 
 def _save_auth_unlocked(data: dict) -> None:
-    global _auth_version_cache, _auth_version_cache_mtime, _auth_version_cache_path
+    global _auth_doc_cache, _auth_version_cache_mtime, _auth_version_cache_path
     _atomic_write_json(_AUTH_FILE, data)
     _atomic_write_json(_get_auth_backup_file(), data)
-    _auth_version_cache = _extract_auth_version(data)
+    _auth_doc_cache = data
     _auth_version_cache_path = _AUTH_FILE
     _auth_version_cache_mtime = _get_auth_file_mtime()
 
@@ -128,6 +130,21 @@ def _extract_auth_version(auth: dict) -> int:
         return 0
 
 
+def _extract_user_auth_version(auth: dict, subject: str | None) -> int:
+    """Per-user token version; falls back to the legacy global auth_version.
+
+    Old auth.json files have no per-user field, so existing tokens (which
+    carry the global version) keep validating after an upgrade.
+    """
+    user = _users(auth).get(subject) if subject else None
+    if isinstance(user, dict) and "auth_version" in user:
+        try:
+            return max(0, int(user["auth_version"]))
+        except (TypeError, ValueError):
+            pass
+    return _extract_auth_version(auth)
+
+
 def _get_auth_file_mtime() -> float | None:
     try:
         return os.path.getmtime(_AUTH_FILE)
@@ -136,40 +153,56 @@ def _get_auth_file_mtime() -> float | None:
 
 
 def _invalidate_auth_version_cache_unlocked() -> None:
-    global _auth_version_cache, _auth_version_cache_mtime, _auth_version_cache_path
-    _auth_version_cache = None
+    global _auth_doc_cache, _auth_version_cache_mtime, _auth_version_cache_path
+    _auth_doc_cache = None
     _auth_version_cache_mtime = None
     _auth_version_cache_path = None
 
 
+def _load_auth_doc_cached() -> dict:
+    """Return the parsed auth document, re-reading only when mtime changes."""
+    global _auth_doc_cache, _auth_version_cache_mtime, _auth_version_cache_path
+    with _auth_file_lock:
+        if _auth_version_cache_path != _AUTH_FILE:
+            _invalidate_auth_version_cache_unlocked()
+
+        current_mtime = _get_auth_file_mtime()
+        if (
+            _auth_doc_cache is not None
+            and current_mtime is not None
+            and _auth_version_cache_mtime == current_mtime
+        ):
+            return _auth_doc_cache
+
+        auth = _load_auth_unlocked()
+        _auth_doc_cache = auth
+        _auth_version_cache_path = _AUTH_FILE
+        _auth_version_cache_mtime = _get_auth_file_mtime()
+        return auth
+
+
 def get_auth_version() -> int:
     """Return the global auth version used to invalidate older tokens."""
-    global _auth_version_cache, _auth_version_cache_mtime, _auth_version_cache_path
     try:
-        with _auth_file_lock:
-            if _auth_version_cache_path != _AUTH_FILE:
-                _invalidate_auth_version_cache_unlocked()
+        return _extract_auth_version(_load_auth_doc_cached())
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
 
-            current_mtime = _get_auth_file_mtime()
-            if (
-                _auth_version_cache is not None
-                and current_mtime is not None
-                and _auth_version_cache_mtime == current_mtime
-            ):
-                return _auth_version_cache
 
-            auth = _load_auth_unlocked()
-            version = _extract_auth_version(auth)
-            _auth_version_cache = version
-            _auth_version_cache_path = _AUTH_FILE
-            _auth_version_cache_mtime = _get_auth_file_mtime()
-            return version
+def get_user_auth_version(username: str | None) -> int:
+    """Return the token version for one user (global fallback for legacy data)."""
+    try:
+        return _extract_user_auth_version(_load_auth_doc_cached(), username)
     except AuthStateError as exc:
         raise _auth_state_unavailable() from exc
 
 
 def bump_auth_version() -> int:
-    """Invalidate all previously issued tokens by incrementing auth_version."""
+    """Invalidate all previously issued tokens by incrementing auth_version.
+
+    Kept for backward compatibility; per-user revocation should use
+    :func:`bump_user_auth_version`.
+    """
     try:
         with _auth_file_lock:
             auth = _load_auth_unlocked()
@@ -177,6 +210,28 @@ def bump_auth_version() -> int:
 
             next_version = current_version + 1
             auth["auth_version"] = next_version
+            _save_auth_unlocked(auth)
+            return next_version
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+
+
+def bump_user_auth_version(username: str | None) -> int:
+    """Invalidate previously issued tokens for a single user only.
+
+    Unknown subjects fall back to the legacy global bump so behaviour matches
+    the pre-multi-user implementation.
+    """
+    subject = normalize_username(username, default=_LEGACY_SUBJECT)
+    try:
+        with _auth_file_lock:
+            auth = _load_auth_unlocked()
+            users = _users(auth)
+            if subject not in users:
+                return bump_auth_version()
+            next_version = _extract_user_auth_version(auth, subject) + 1
+            users[subject] = {**dict(users.get(subject) or {}), "auth_version": next_version}
+            auth["users"] = users
             _save_auth_unlocked(auth)
             return next_version
     except AuthStateError as exc:
@@ -264,7 +319,7 @@ def create_token(subject: str = _LEGACY_SUBJECT) -> str:
         "role": (user or {}).get("role") or _ROLE_USER,
         "exp": expire,
         "jti": uuid.uuid4().hex,
-        "auth_version": get_auth_version(),
+        "auth_version": get_user_auth_version(subject),
     }
     return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
@@ -281,7 +336,7 @@ def decode_token(token: str) -> dict:
     if jti and get_blacklist().is_revoked(jti):
         raise HTTPException(status_code=401, detail="Token has been revoked.")
 
-    if int(payload.get("auth_version", 0)) != get_auth_version():
+    if int(payload.get("auth_version", 0)) != get_user_auth_version(payload.get("sub")):
         raise HTTPException(status_code=401, detail="Token is no longer valid.")
     return payload
 
@@ -352,11 +407,11 @@ def set_password(
             if subject == _LEGACY_SUBJECT:
                 auth["password_hash"] = users[subject]["password_hash"]
 
-            current_version = _extract_auth_version(auth)
+            current_version = _extract_user_auth_version(auth, subject)
 
             if invalidate_existing_tokens:
                 current_version += 1
-                auth["auth_version"] = current_version
+                users[subject]["auth_version"] = current_version
 
             _save_auth_unlocked(auth)
             return current_version

@@ -467,45 +467,47 @@ class TextRedactorMixin:
     ) -> int:
         """PDF 文档匿名化（文本型）"""
         doc = fitz.open(input_path)
-        redacted_count = 0
+        try:
+            redacted_count = 0
 
-        # 构建替换映射
-        replacements = {}
-        for entity in entities:
-            if entity.text not in replacements:
-                replacements[entity.text] = context.get_replacement(entity)
+            # 构建替换映射
+            replacements = {}
+            for entity in entities:
+                if entity.text not in replacements:
+                    replacements[entity.text] = context.get_replacement(entity)
 
-        # 对每一页进行处理
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            replacement_inserts: list[tuple[fitz.Rect, str]] = []
+            # 对每一页进行处理
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                replacement_inserts: list[tuple[fitz.Rect, str]] = []
 
-            for old_text, new_text in replacements.items():
-                # 查找文本位置
-                text_instances = page.search_for(old_text)
+                for old_text, new_text in replacements.items():
+                    # 查找文本位置
+                    text_instances = page.search_for(old_text)
 
-                for inst in text_instances:
-                    # Use a real PDF redaction annotation so original text is
-                    # removed from the content stream, not merely covered.
-                    rect = fitz.Rect(inst)
-                    page.add_redact_annot(rect, fill=(1, 1, 1))
-                    replacement_inserts.append((rect, new_text))
+                    for inst in text_instances:
+                        # Use a real PDF redaction annotation so original text is
+                        # removed from the content stream, not merely covered.
+                        rect = fitz.Rect(inst)
+                        page.add_redact_annot(rect, fill=(1, 1, 1))
+                        replacement_inserts.append((rect, new_text))
 
-                    redacted_count += 1
+                        redacted_count += 1
 
-            if replacement_inserts:
-                page.apply_redactions()
-                for rect, new_text in replacement_inserts:
-                    page.insert_textbox(
-                        rect,
-                        new_text,
-                        fontsize=self._fit_pdf_replacement_font_size(rect, new_text),
-                        color=(0, 0, 0),
-                        align=fitz.TEXT_ALIGN_LEFT,
-                    )
+                if replacement_inserts:
+                    page.apply_redactions()
+                    for rect, new_text in replacement_inserts:
+                        page.insert_textbox(
+                            rect,
+                            new_text,
+                            fontsize=self._fit_pdf_replacement_font_size(rect, new_text),
+                            color=(0, 0, 0),
+                            align=fitz.TEXT_ALIGN_LEFT,
+                        )
 
-        doc.save(output_path, garbage=PDF_SAVE_GARBAGE_LEVEL, deflate=True, clean=True)
-        doc.close()
+            doc.save(output_path, garbage=PDF_SAVE_GARBAGE_LEVEL, deflate=True, clean=True)
+        finally:
+            doc.close()
 
         return redacted_count
 
@@ -548,10 +550,12 @@ class TextRedactorMixin:
     def _extract_pdf_text(self, file_path: str) -> str:
         """提取 PDF 文档文本"""
         doc = fitz.open(file_path)
-        text = ""
-        for page in doc:
-            text += page.get_text() + "\n"
-        doc.close()
+        try:
+            text = ""
+            for page in doc:
+                text += page.get_text() + "\n"
+        finally:
+            doc.close()
         return text
 
     def _read_txt(self, file_path: str) -> str:

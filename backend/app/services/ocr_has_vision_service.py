@@ -17,17 +17,8 @@ logger = logging.getLogger(__name__)
 
 from PIL import Image
 
+from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
 from app.models.type_mapping import canonical_type_id
-
-VISUAL_ONLY_ENTITY_TYPES = {
-    "SEAL",
-    "SIGNATURE",
-    "FINGERPRINT",
-    "PHOTO",
-    "QR_CODE",
-    "HANDWRITING",
-    "WATERMARK",
-}
 
 IMAGE_TEXT_ENTITY_TYPE_ALIASES = {
     "DATETIME": "DATE",
@@ -94,6 +85,9 @@ class OCRTextBlock:
     text: str
     polygon: list[list[float]]  # 四边形顶点 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
     confidence: float = 1.0
+    # Per-character boxes in PIXEL coords, L→R: [{"c","x1","y1","x2","y2"}, ...].
+    # Lets matching redact an entity's exact pixels instead of estimating.
+    chars: list = field(default_factory=list)
 
     # 构造后缓存的 bbox 值
     _bbox_cache: tuple[int, int, int, int] = field(default=(0, 0, 0, 0), init=False, repr=False)
@@ -383,7 +377,7 @@ class OcrHasVisionService:
         """
         检测敏感信息并在图像上绘制
 
-        娴佺▼锛?
+        流程：
         1. PaddleOCR 提取所有文字和精确坐标
         2. HaS 分析文字内容，识别敏感实体（不依赖坐标）
         3. 用文字匹配把敏感实体映射回 OCR 坐标

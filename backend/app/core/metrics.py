@@ -1,7 +1,7 @@
 """
 Prometheus 监控指标 — 识别/匿名化延迟、错误率、队列深度。
 
-/metrics 绔偣鐢?main.py 鎸傝浇銆?
+/metrics 端点由 main.py 挂载。
 """
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from starlette.requests import Request
@@ -97,7 +97,7 @@ HTTP_REQUEST_DURATION = Histogram(
 
 
 async def metrics_endpoint(request: Request) -> Response:
-    """GET /metrics 鈥?Prometheus scrape 绔偣"""
+    """GET /metrics — Prometheus scrape 端点"""
     return Response(
         content=generate_latest(),
         media_type=CONTENT_TYPE_LATEST,

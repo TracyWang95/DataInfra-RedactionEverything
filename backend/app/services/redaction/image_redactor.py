@@ -162,7 +162,7 @@ def prepare_image_redaction(
 class ImageRedactorMixin:
     """
     图片匿名化方法集合
-    璁捐涓?mixin锛岀敱 Redactor 绫荤户鎵夸娇鐢?
+    设计为 mixin，由 Redactor 类继承使用
     要求宿主类具有 self.vision_service 属性（VisionService 实例）
     """
 

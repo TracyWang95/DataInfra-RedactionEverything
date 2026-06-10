@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.core.persistence import load_json, save_json
-from app.core.tenant_config import tenant_store_path
+from app.core.tenant_config import store_lock, tenant_store_path
 from app.models.schemas import (
     PresetCreate,
     PresetImportItem,
@@ -238,24 +238,25 @@ def list_presets(
 
 
 def create(payload: PresetCreate, owner_id: str | None = None) -> PresetOut:
-    presets = _load_store(owner_id)
-    ts = _now_iso()
-    row = {
-        "id": str(uuid.uuid4()),
-        "name": payload.name.strip(),
-        "kind": payload.kind,
-        "selectedEntityTypeIds": payload.selectedEntityTypeIds,
-        "ocrHasTypes": payload.ocrHasTypes,
-        "visualFeatureTypes": list(dict.fromkeys(payload.visualFeatureTypes)),
-        "dataDomains": payload.dataDomains,
-        "genericTargets": payload.genericTargets,
-        "linkageGroups": payload.linkageGroups,
-        "replacementMode": payload.replacementMode,
-        "created_at": ts,
-        "updated_at": ts,
-    }
-    presets.append(row)
-    _save_store(presets, owner_id)
+    with store_lock(_preset_store_path(owner_id)):
+        presets = _load_store(owner_id)
+        ts = _now_iso()
+        row = {
+            "id": str(uuid.uuid4()),
+            "name": payload.name.strip(),
+            "kind": payload.kind,
+            "selectedEntityTypeIds": payload.selectedEntityTypeIds,
+            "ocrHasTypes": payload.ocrHasTypes,
+            "visualFeatureTypes": list(dict.fromkeys(payload.visualFeatureTypes)),
+            "dataDomains": payload.dataDomains,
+            "genericTargets": payload.genericTargets,
+            "linkageGroups": payload.linkageGroups,
+            "replacementMode": payload.replacementMode,
+            "created_at": ts,
+            "updated_at": ts,
+        }
+        presets.append(row)
+        _save_store(presets, owner_id)
     return _to_out(row)
 
 
@@ -268,32 +269,33 @@ def update(
 
     if is_builtin(preset_id):
         return None
-    presets = _load_store(owner_id)
-    for index, preset in enumerate(presets):
-        if preset.get("id") != preset_id:
-            continue
-        if patch.name is not None:
-            preset["name"] = patch.name.strip()
-        if patch.kind is not None:
-            preset["kind"] = patch.kind
-        if patch.selectedEntityTypeIds is not None:
-            preset["selectedEntityTypeIds"] = patch.selectedEntityTypeIds
-        if patch.ocrHasTypes is not None:
-            preset["ocrHasTypes"] = patch.ocrHasTypes
-        if patch.visualFeatureTypes is not None:
-            preset["visualFeatureTypes"] = list(dict.fromkeys(patch.visualFeatureTypes))
-        if patch.dataDomains is not None:
-            preset["dataDomains"] = patch.dataDomains
-        if patch.genericTargets is not None:
-            preset["genericTargets"] = patch.genericTargets
-        if patch.linkageGroups is not None:
-            preset["linkageGroups"] = patch.linkageGroups
-        if patch.replacementMode is not None:
-            preset["replacementMode"] = patch.replacementMode
-        preset["updated_at"] = _now_iso()
-        presets[index] = preset
-        _save_store(presets, owner_id)
-        return _to_out(preset)
+    with store_lock(_preset_store_path(owner_id)):
+        presets = _load_store(owner_id)
+        for index, preset in enumerate(presets):
+            if preset.get("id") != preset_id:
+                continue
+            if patch.name is not None:
+                preset["name"] = patch.name.strip()
+            if patch.kind is not None:
+                preset["kind"] = patch.kind
+            if patch.selectedEntityTypeIds is not None:
+                preset["selectedEntityTypeIds"] = patch.selectedEntityTypeIds
+            if patch.ocrHasTypes is not None:
+                preset["ocrHasTypes"] = patch.ocrHasTypes
+            if patch.visualFeatureTypes is not None:
+                preset["visualFeatureTypes"] = list(dict.fromkeys(patch.visualFeatureTypes))
+            if patch.dataDomains is not None:
+                preset["dataDomains"] = patch.dataDomains
+            if patch.genericTargets is not None:
+                preset["genericTargets"] = patch.genericTargets
+            if patch.linkageGroups is not None:
+                preset["linkageGroups"] = patch.linkageGroups
+            if patch.replacementMode is not None:
+                preset["replacementMode"] = patch.replacementMode
+            preset["updated_at"] = _now_iso()
+            presets[index] = preset
+            _save_store(presets, owner_id)
+            return _to_out(preset)
     return None
 
 
@@ -302,11 +304,12 @@ def delete(preset_id: str, owner_id: str | None = None) -> bool:
 
     if is_builtin(preset_id):
         return False
-    presets = _load_store(owner_id)
-    next_presets = [preset for preset in presets if preset.get("id") != preset_id]
-    if len(next_presets) == len(presets):
-        return False
-    _save_store(next_presets, owner_id)
+    with store_lock(_preset_store_path(owner_id)):
+        presets = _load_store(owner_id)
+        next_presets = [preset for preset in presets if preset.get("id") != preset_id]
+        if len(next_presets) == len(presets):
+            return False
+        _save_store(next_presets, owner_id)
     return True
 
 
@@ -329,17 +332,19 @@ def import_presets(request: PresetImportRequest, owner_id: str | None = None) ->
         if preset.id not in builtin_ids
     ]
     if request.merge:
-        existing = _load_store(owner_id)
-        existing_ids = {preset.get("id") for preset in existing if isinstance(preset, dict)}
-        imported_count = 0
-        for preset in incoming:
-            if preset.get("id") in existing_ids:
-                continue
-            existing.append(preset)
-            existing_ids.add(preset.get("id"))
-            imported_count += 1
-        _save_store(existing, owner_id)
+        with store_lock(_preset_store_path(owner_id)):
+            existing = _load_store(owner_id)
+            existing_ids = {preset.get("id") for preset in existing if isinstance(preset, dict)}
+            imported_count = 0
+            for preset in incoming:
+                if preset.get("id") in existing_ids:
+                    continue
+                existing.append(preset)
+                existing_ids.add(preset.get("id"))
+                imported_count += 1
+            _save_store(existing, owner_id)
         return imported_count
 
-    _save_store(incoming, owner_id)
+    with store_lock(_preset_store_path(owner_id)):
+        _save_store(incoming, owner_id)
     return len(incoming)

@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import React, { memo, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { ImagePlus, Trash2 } from 'lucide-react';
@@ -27,20 +26,12 @@ export interface BoundingBox {
   warnings?: string[];
 }
 
-interface TypeOption {
-  id: string;
-  name: string;
-  color: string;
-}
-
 interface ImageBBoxEditorProps {
   imageSrc: string;
   boxes: BoundingBox[];
   onBoxesChange: (boxes: BoundingBox[]) => void;
   onBoxesCommit?: (prevBoxes: BoundingBox[], nextBoxes: BoundingBox[]) => void;
   getTypeConfig: (typeId: string) => { name: string; color: string };
-  availableTypes?: TypeOption[];
-  defaultType?: string;
 
   readOnly?: boolean;
 
@@ -231,8 +222,6 @@ function ImageBBoxEditor({
   onBoxesChange,
   onBoxesCommit,
   getTypeConfig,
-  availableTypes: _availableTypes = [],
-  defaultType: _defaultType = 'CUSTOM',
   readOnly = false,
   viewportTopSlot,
   viewportBottomSlot,

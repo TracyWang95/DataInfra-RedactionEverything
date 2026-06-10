@@ -5,6 +5,7 @@ from pathlib import Path
 from app.models.schemas import Entity
 from app.models.type_mapping import canonical_type_id, cn_to_id, id_to_cn, linkage_groups_for_type
 from app.services.entity_type_service import (
+    PRESET_ENTITY_TYPES,
     EntityTypeConfig,
     build_tag_template,
     get_default_generic_types,
@@ -32,7 +33,7 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
             ["person_like"],
         )
 
-    def test_custom_type_is_model_driven_and_tagged_from_l3_name(self):
+    def test_custom_type_keeps_recognition_config_and_is_tagged_from_l3_name(self):
         custom = EntityTypeConfig(
             id="custom_supplier_doc_no",
             name="文书编号",
@@ -46,20 +47,26 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
 
         normalized = normalize_custom_entity_type(custom)
 
-        self.assertIsNone(normalized.regex_pattern)
-        self.assertTrue(normalized.use_llm)
+        # Recognition config (regex / use_llm) is preserved as configured;
+        # taxonomy-derived fields are normalized.
+        self.assertEqual(normalized.regex_pattern, r"\d+")
+        self.assertFalse(normalized.use_llm)
         self.assertEqual(normalized.linkage_groups, ["identifier_like"])
         self.assertEqual(normalized.tag_template, "<文书编号[{index}]>")
 
     def test_tag_template_defaults_to_l3_label(self):
         self.assertEqual(build_tag_template("出生日期"), "<出生日期[{index}]>")
 
-    def test_default_l3_atoms_include_address_birth_date_and_document_number(self):
+    def test_l3_atoms_birth_date_and_document_number_exist_but_defaults_stay_narrow(self):
         default_ids = {item.id for item in get_default_generic_types()}
 
         self.assertIn("ADDRESS", default_ids)
-        self.assertIn("BIRTH_DATE", default_ids)
-        self.assertIn("DOCUMENT_NUMBER", default_ids)
+        # BIRTH_DATE / DOCUMENT_NUMBER remain first-class L3 atoms but are
+        # opt-in: the default generic schema was narrowed to the core 9 types.
+        self.assertNotIn("BIRTH_DATE", default_ids)
+        self.assertNotIn("DOCUMENT_NUMBER", default_ids)
+        self.assertTrue(PRESET_ENTITY_TYPES["BIRTH_DATE"].enabled)
+        self.assertTrue(PRESET_ENTITY_TYPES["DOCUMENT_NUMBER"].enabled)
         self.assertEqual(canonical_type_id("LEGAL_CASE_ID"), "DOCUMENT_NUMBER")
         self.assertEqual(cn_to_id("出生日期"), "BIRTH_DATE")
         self.assertEqual(cn_to_id("文书编号"), "DOCUMENT_NUMBER")
@@ -70,14 +77,13 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
         self.assertEqual(linkage_groups_for_type("DOCUMENT_NUMBER"), {"identifier_like"})
 
     def test_l1_domains_do_not_use_l2_concepts(self):
-        default_types = get_default_generic_types()
-        domains = {item.data_domain for item in default_types}
+        domains = {item.data_domain for item in PRESET_ENTITY_TYPES.values()}
         self.assertNotIn("identifier_code", domains)
         self.assertNotIn("sensitive_attribute", domains)
 
-        birth_date = next(item for item in default_types if item.id == "BIRTH_DATE")
-        age = next(item for item in default_types if item.id == "AGE")
-        document_number = next(item for item in default_types if item.id == "DOCUMENT_NUMBER")
+        birth_date = PRESET_ENTITY_TYPES["BIRTH_DATE"]
+        age = PRESET_ENTITY_TYPES["AGE"]
+        document_number = PRESET_ENTITY_TYPES["DOCUMENT_NUMBER"]
 
         self.assertEqual((birth_date.data_domain, birth_date.generic_target), ("pii", "GEN_DATE_TIME"))
         self.assertEqual((age.data_domain, age.generic_target), ("pii", "GEN_ATTRIBUTE_STATUS"))
@@ -115,6 +121,8 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
         ]
 
         for path in text_paths:
+            if "data" in path.parts and not path.exists():
+                continue  # runtime snapshot, absent in CI / fresh checkouts
             data = json.loads(path.read_text(encoding="utf-8"))
             domains = {item.get("data_domain") for item in data.values()}
             self.assertFalse(domains & forbidden_l1, f"{path} contains retired L1 domains")
@@ -124,6 +132,8 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
             root / "backend" / "data" / "pipelines.json",
         ]
         for path in pipeline_paths:
+            if "data" in path.parts and not path.exists():
+                continue  # runtime snapshot, absent in CI / fresh checkouts
             data = json.loads(path.read_text(encoding="utf-8"))
             ocr_has_types = data["ocr_has"] if isinstance(data["ocr_has"], list) else data["ocr_has"]["types"]
             domains = {item.get("data_domain") for item in ocr_has_types}
@@ -234,28 +244,24 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
         )
         selected = set(medical.get("selectedEntityTypeIds") or [])
         ocr_has = set(medical.get("ocrHasTypes") or [])
-        electronic_record_atoms = {
-            "MED_PATIENT",
-            "MED_CLINICIAN",
+        # The medical-release preset redacts identity/administrative atoms and
+        # deliberately keeps clinical content (diagnosis, medication, ...).
+        identity_atoms = {
+            "PERSON",
+            "ID_CARD",
             "MED_INSTITUTION",
-            "MED_DEPARTMENT",
             "MED_RECORD_ID",
-            "MED_DIAGNOSIS",
-            "MED_MEDICATION",
-            "MED_EXAM_RESULT",
-            "MED_CHIEF_COMPLAINT",
-            "MED_PRESENT_ILLNESS",
-            "MED_PAST_HISTORY",
-            "MED_ALLERGY_HISTORY",
-            "MED_PROCEDURE",
-            "MED_ORDER",
-            "MED_VITAL_SIGN",
+            "INPATIENT_NO",
+            "REGISTRATION_NO",
         }
+        clinical_atoms = {"MED_DIAGNOSIS", "MED_MEDICATION", "MED_EXAM_RESULT"}
 
         self.assertNotIn("HEALTH_INFO", selected)
         self.assertNotIn("HEALTH_INFO", ocr_has)
-        self.assertTrue(electronic_record_atoms.issubset(selected))
-        self.assertTrue(electronic_record_atoms.issubset(ocr_has))
+        self.assertTrue(identity_atoms.issubset(selected))
+        self.assertTrue(identity_atoms.issubset(ocr_has))
+        self.assertFalse(clinical_atoms & selected)
+        self.assertFalse(clinical_atoms & ocr_has)
 
 
 if __name__ == "__main__":

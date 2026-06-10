@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { showToast } from '@/components/Toast';
@@ -146,6 +145,12 @@ export function usePlayground() {
     return latestFileIdRef.current === fileId && asyncResultEpochRef.current === epoch;
   }, []);
 
+  // Destructured so handleRerunNer can depend on the exact fields it uses
+  // instead of the whole (per-render) ctx objects.
+  const { setRecognitionIssue } = fileCtx;
+  const { handleRerunNerImage } = imageCtx;
+  const { handleRerunNerText } = entityCtx;
+
   const handleRerunNer = useCallback(async () => {
     if (!fileCtx.fileInfo) return;
     const blocker = getRecognitionBlocker({
@@ -154,13 +159,13 @@ export function usePlayground() {
       content: fileCtx.content,
     });
     if (blocker) {
-      fileCtx.setRecognitionIssue(blocker);
+      setRecognitionIssue(blocker);
       showToast(blocker, 'info');
       return;
     }
-    fileCtx.setRecognitionIssue(null);
+    setRecognitionIssue(null);
     if (fileCtx.isImageMode) {
-      await imageCtx.handleRerunNerImage(
+      await handleRerunNerImage(
         fileCtx.fileInfo.file_id,
         recognition.selectedOcrHasTypes,
         recognition.selectedVisualFeatureTypes,
@@ -168,14 +173,27 @@ export function usePlayground() {
         fileCtx.setLoadingMessage,
       );
     } else {
-      await entityCtx.handleRerunNerText(
+      await handleRerunNerText(
         fileCtx.fileInfo.file_id,
         recognition.selectedTypesRef.current,
         fileCtx.setIsLoading,
         fileCtx.setLoadingMessage,
       );
     }
-  }, [entityCtx, fileCtx, getRecognitionBlocker, imageCtx, recognition]);
+  }, [
+    fileCtx.content,
+    fileCtx.fileInfo,
+    fileCtx.isImageMode,
+    fileCtx.setIsLoading,
+    fileCtx.setLoadingMessage,
+    getRecognitionBlocker,
+    handleRerunNerImage,
+    handleRerunNerText,
+    recognition.selectedOcrHasTypes,
+    recognition.selectedTypesRef,
+    recognition.selectedVisualFeatureTypes,
+    setRecognitionIssue,
+  ]);
 
   const presetSeqRef = useRef(recognition.presetApplySeq);
   useEffect(() => {

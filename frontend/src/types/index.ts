@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 // ---------------------------------------------------------------------------
 // Shared / canonical type definitions used across features (history, batch

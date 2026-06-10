@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useState } from 'react';
 import { useT } from '@/i18n';
@@ -23,7 +22,7 @@ export function SettingsHub() {
     pipelines,
     loading,
     pipelinesLoading,
-    llmTypes,
+    textRuleTypes,
     loadError,
     importFileRef,
     createType,
@@ -94,7 +93,7 @@ export function SettingsHub() {
         name: form.name,
         description: form.description,
         regex_pattern: form.regex_pattern,
-        use_llm: true,
+        use_llm: form.use_llm,
         tag_template: form.tag_template,
         data_domain: form.data_domain,
         generic_target: form.generic_target,
@@ -176,7 +175,7 @@ export function SettingsHub() {
             </div>
             <div className="flex min-h-0 flex-1 overflow-hidden">
               <EntityTypeList
-                types={llmTypes}
+                types={textRuleTypes}
                 variant="llm"
                 onAdd={openAdd}
                 onEdit={openEdit}
@@ -253,7 +252,6 @@ export function SettingsHub() {
             : { use_llm: true, coref_enabled: true }
         }
         taxonomy={textTaxonomy}
-        taxonomyLocked={Boolean(editingType && !editingType.id.startsWith('custom_'))}
         onSave={(form) => void handleSave(form)}
       />
       {confirmState && (

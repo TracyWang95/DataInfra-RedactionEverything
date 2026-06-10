@@ -82,6 +82,20 @@ DEFAULT_VISUAL_FEATURE_SLUGS: tuple[str, ...] = tuple(
 )
 
 
+# Visual-only entity type IDs (uppercase semantic type ids, not visual slugs):
+# regions of these types come from the visual channel and are never sent to
+# HaS Text. Shared by ocr_has_vision_service / has_text_payload / ocr_pipeline.
+VISUAL_ONLY_ENTITY_TYPES = frozenset({
+    "SEAL",
+    "SIGNATURE",
+    "FINGERPRINT",
+    "PHOTO",
+    "QR_CODE",
+    "HANDWRITING",
+    "WATERMARK",
+})
+
+
 def normalize_visual_slug(value: object) -> str:
     raw = str(value or "").strip().lower().replace("-", "_")
     raw = re.sub(r"[^a-z0-9_]+", "_", raw)

@@ -843,7 +843,7 @@ class ReviewCommitBody(ReviewDraftBody):
 
 
 class BatchDetailsBody(BaseModel):
-    """Request body for POST /jobs/batch-details 鈥?fetch multiple job details at once."""
+    """Request body for POST /jobs/batch-details — fetch multiple job details at once."""
     ids: list[str] = Field(..., min_length=0, max_length=50)
 
 

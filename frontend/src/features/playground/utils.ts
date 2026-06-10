@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { t } from '@/i18n';
 import { PLAYGROUND_VISION_PAGE_CONCURRENCY } from '@/constants/timing';

@@ -1,7 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Plus, Upload, X } from 'lucide-react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -177,6 +176,8 @@ export function PipelineConfigPanel({
   const [form, setForm] = useState<PipelineTypeForm>(() => emptyForm());
   const [page, setPage] = useState(1);
   const sampleInputRef = useRef<HTMLInputElement>(null);
+  const nameInputId = useId();
+  const descriptionInputId = useId();
 
   const ocrPipeline = pipelines.find((pipeline) => pipeline.mode === 'ocr_has');
   const visualPipeline = pipelines.find((pipeline) => pipeline.mode === 'visual_features');
@@ -252,8 +253,9 @@ export function PipelineConfigPanel({
       label: sample.label.trim() || null,
       filename: sample.filename ?? null,
     }));
+    let ok: boolean;
     if (editing) {
-      await onUpdateType(editing.mode, editing.type.id, {
+      ok = await onUpdateType(editing.mode, editing.type.id, {
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         examples: editing.type.examples || [],
@@ -268,7 +270,7 @@ export function PipelineConfigPanel({
         few_shot_samples: samples,
       });
     } else {
-      await onCreateType(dialogMode, form.name, form.description, {
+      ok = await onCreateType(dialogMode, form.name, form.description, {
         rules,
         checklist,
         negative_prompt_enabled: negativePrompt.length > 0,
@@ -277,6 +279,7 @@ export function PipelineConfigPanel({
         few_shot_samples: samples,
       });
     }
+    if (!ok) return;
 
     setDialogMode(null);
     setEditing(null);
@@ -534,8 +537,9 @@ export function PipelineConfigPanel({
 
           <div className="flex max-h-[72vh] flex-col gap-4 overflow-y-auto py-2 pr-1">
             <div className="flex flex-col gap-1.5">
-              <Label>{t('settings.nameLabel')} *</Label>
+              <Label htmlFor={nameInputId}>{t('settings.nameLabel')} *</Label>
               <Input
+                id={nameInputId}
                 value={form.name}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, name: event.target.value }))
@@ -550,8 +554,9 @@ export function PipelineConfigPanel({
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <Label>{t('settings.descLabel')}</Label>
+              <Label htmlFor={descriptionInputId}>{t('settings.descLabel')}</Label>
               <Textarea
+                id={descriptionInputId}
                 value={form.description}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, description: event.target.value }))

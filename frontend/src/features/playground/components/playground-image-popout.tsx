@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { type FC, useEffect, useRef, useState } from 'react';
 import ImageBBoxEditor, { type BoundingBox } from '@/components/ImageBBoxEditor';
@@ -19,7 +18,6 @@ export const PlaygroundImagePopout: FC = () => {
   const [imageUrl, setImageUrl] = useState<string>('');
   const [boxes, setBoxes] = useState<BoundingBox[]>([]);
   const [types, setTypes] = useState<TypeOption[]>([]);
-  const [defaultType, setDefaultType] = useState<string>('CUSTOM');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [ready, setReady] = useState(false);
@@ -36,7 +34,6 @@ export const PlaygroundImagePopout: FC = () => {
         setImageUrl(d.rawImageUrl || d.imageUrl || '');
         setBoxes(d.boxes ?? []);
         setTypes(d.visionTypes ?? []);
-        setDefaultType(d.defaultType ?? 'CUSTOM');
         setCurrentPage(Number(d.currentPage || 1));
         setTotalPages(Math.max(1, Number(d.totalPages || 1)));
         setReady(true);
@@ -109,8 +106,6 @@ export const PlaygroundImagePopout: FC = () => {
         onBoxesChange={handleBoxesChange}
         onBoxesCommit={handleBoxesCommit}
         getTypeConfig={getTypeConfig}
-        availableTypes={types}
-        defaultType={defaultType}
         viewportTopSlot={
           totalPages > 1 ? (
             <div className="w-full min-w-[320px]">

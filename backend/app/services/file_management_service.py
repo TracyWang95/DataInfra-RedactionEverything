@@ -32,6 +32,7 @@ from app.core.file_validation import (
     TEXT_EXTENSIONS as _TEXT_EXTENSIONS,  # noqa: F401
 )
 from app.core.persistence import load_json
+from app.models.errors import NotFoundError
 from app.models.schemas import (
     BatchDownloadRequest,
     FileType,
@@ -99,7 +100,7 @@ def file_owner_id(info: dict | None) -> str:
 def assert_file_owner(file_id: str, owner_id: str | None) -> dict:
     info = file_store.get(file_id)
     if not info or (owner_id and file_owner_id(info) != owner_id):
-        raise ValueError("file not found")
+        raise NotFoundError("file not found")
     return info
 
 
@@ -619,10 +620,10 @@ def build_batch_zip(request: BatchDownloadRequest, owner_id: str | None = None) 
             logger.warning("Unable to read job item statuses for redacted ZIP", exc_info=True)
 
     for fid in unique_ids:
-        if fid not in file_store:
+        info = file_store.get(fid)
+        if info is None:
             skipped.append({"file_id": fid, "reason": "file_not_found"})
             continue
-        info = file_store[fid]
         if owner_id and file_owner_id(info) != owner_id:
             skipped.append({"file_id": fid, "reason": "file_not_found"})
             continue

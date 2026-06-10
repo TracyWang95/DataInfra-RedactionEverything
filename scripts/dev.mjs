@@ -12,21 +12,52 @@ const logsDir = path.join(repoRoot, 'logs');
 mkdirSync(logsDir, { recursive: true });
 
 class PublicStartupError extends Error {
-  constructor(code) {
+  constructor(code, detail = '') {
     super('startup failed');
     this.code = code;
+    this.detail = detail;
   }
 }
 
 const PUBLIC_STARTUP_MESSAGES = {
   config: 'Missing required local configuration. Check .env and .env.example.',
   wsl: 'Could not resolve WSL IP. Start from Windows with WSL available.',
-  service: 'A required local service was not ready before timeout. Inspect logs/dev-session.log.',
+  service: 'A required local service was not ready before timeout. Inspect the matching logs/<service>.log.',
+  port: 'A required port is already in use, likely by a previous session. Run "npm run stop" first.',
   warmup: 'Model warmup failed. Inspect logs/warmup.log and service logs.',
   venv: 'Missing Windows project venv. Create the project .venv once, then run npm run dev again.',
   platform: 'This local hybrid profile must be started from Windows.',
-  generic: 'startup failed; inspect logs/dev-session.log and per-service logs for details.',
+  generic: 'startup failed; inspect the logs/<service>.log files for details.',
 };
+
+// WSL-side process cleanup used by shutdown(). KEEP IN SYNC with the identical
+// sequence in scripts/stop-dev.mjs (each file maintains its own copy; update
+// both together). Patterns match process features instead of absolute venv
+// paths so they work on any machine. The [x] first-character bracket prevents
+// pkill -f from matching this very `bash -lc` command line (a self-kill would
+// abort the sequence midway). "[v]llm serve" covers all three vLLM servers
+// (8118 paddle / 8080 has-text / 8091 locate-lm).
+const WSL_KILL_SEQUENCE = [
+  'set +e',
+  'pkill -TERM -f "[v]llm serve" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[P]addlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[H]aS_4.0_0.6B" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_qwen2_model" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[s]cripts/ocr_server.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_anything_server.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_anything_eval.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_anything_tile_eval.py" >/dev/null 2>&1 || true',
+  'sleep 2',
+  'pkill -KILL -f "[v]llm serve" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[P]addlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[H]aS_4.0_0.6B" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_qwen2_model" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[s]cripts/ocr_server.py" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_anything_server.py" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_anything_eval.py" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_anything_tile_eval.py" >/dev/null 2>&1 || true',
+  'for port in 8080 8082 8090 8091 8118; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
+].join('; ');
 
 function parseEnv(filePath) {
   if (!existsSync(filePath)) return {};
@@ -74,7 +105,7 @@ function wslEnvVar(name, fallback = '') {
 
 function required(name) {
   const value = env[name];
-  if (!value) throw new PublicStartupError('config');
+  if (!value) throw new PublicStartupError('config', `missing ${name} (set it in .env)`);
   return value;
 }
 
@@ -102,6 +133,10 @@ const fileEnv = {
   ...parseEnv(path.join(repoRoot, '.env')),
 };
 
+// NOTE: .env file values intentionally take precedence over inherited shell
+// variables (spread order below). The project .env files are the single source
+// of truth for this local hybrid profile, so a stale exported variable in the
+// calling shell cannot silently redirect a service.
 const env = {
   ...process.env,
   ...fileEnv,
@@ -112,27 +147,23 @@ const env = {
   OCR_VL_API_MODEL_NAME: fileEnv.OCR_VL_API_MODEL_NAME || 'PaddleOCR-VL-1.6-0.9B',
 };
 
-const wslHost = process.platform === 'win32' ? getWslHost() : '127.0.0.1';
-env.WSL_MODEL_HOST = wslHost;
-env.HAS_TEXT_RUNTIME = env.HAS_TEXT_RUNTIME || 'vllm';
-env.HAS_TEXT_VLLM_BASE_URL = preferWslUrl(env.HAS_TEXT_VLLM_BASE_URL, 8080, '/v1');
-env.OCR_BASE_URL = preferWslUrl(env.OCR_BASE_URL, 8082);
-env.LOCATE_ANYTHING_ENABLED = env.LOCATE_ANYTHING_ENABLED || '1';
-env.VISUAL_FEATURES_BASE_URL = preferWslUrl(env.VISUAL_FEATURES_BASE_URL, Number(env.LOCATE_ANYTHING_PORT || 8090));
-const winEnv = { ...env, PYTHONPATH: backendDir };
+// Values that need WSL or .env resolution are initialized in initRuntimeConfig()
+// (called from main()) so that failures route through main().catch and map to a
+// PUBLIC_STARTUP_MESSAGES code. A top-level throw would bypass that handler.
+let wslHost = '127.0.0.1';
+let winEnv = { ...env, PYTHONPATH: backendDir };
+let appPython = '';
+let vllmPython = '';
+let vllmBin = '';
 
 const windowsVenv = env.WINDOWS_VENV_DIR || '.venv';
 const windowsPython = env.WINDOWS_PYTHON || path.join(repoRoot, windowsVenv, 'Scripts', 'python.exe');
-const appPython = path.posix.join(required('VENV_DIR'), 'bin', 'python');
-const vllmPython = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'python');
-const vllmBin = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'vllm');
 const locatePort = env.LOCATE_ANYTHING_PORT || '8090';
 // PaddleOCR-VL is optional. Default OFF: the text path uses PP-StructureV3,
 // so the heavy VL model is not started, freeing GPU memory for HaS / LocateAnything.
 const ocrVlEnabled = !['0', 'false', 'no', 'off', ''].includes(
   String(env.OCR_VL_ENABLED ?? '0').trim().toLowerCase(),
 );
-winEnv.OCR_VL_ENABLED = ocrVlEnabled ? '1' : '0';
 const children = [];
 
 function nvidiaDllDirs() {
@@ -147,7 +178,21 @@ function nvidiaDllDirs() {
   return dirs;
 }
 
-winEnv.PATH = [...nvidiaDllDirs(), path.dirname(windowsPython), process.env.PATH || ''].join(path.delimiter);
+function initRuntimeConfig() {
+  wslHost = process.platform === 'win32' ? getWslHost() : '127.0.0.1';
+  env.WSL_MODEL_HOST = wslHost;
+  env.HAS_TEXT_RUNTIME = env.HAS_TEXT_RUNTIME || 'vllm';
+  env.HAS_TEXT_VLLM_BASE_URL = preferWslUrl(env.HAS_TEXT_VLLM_BASE_URL, 8080, '/v1');
+  env.OCR_BASE_URL = preferWslUrl(env.OCR_BASE_URL, 8082);
+  env.LOCATE_ANYTHING_ENABLED = env.LOCATE_ANYTHING_ENABLED || '1';
+  env.VISUAL_FEATURES_BASE_URL = preferWslUrl(env.VISUAL_FEATURES_BASE_URL, Number(env.LOCATE_ANYTHING_PORT || 8090));
+  appPython = path.posix.join(required('VENV_DIR'), 'bin', 'python');
+  vllmPython = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'python');
+  vllmBin = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'vllm');
+  winEnv = { ...env, PYTHONPATH: backendDir };
+  winEnv.OCR_VL_ENABLED = ocrVlEnabled ? '1' : '0';
+  winEnv.PATH = [...nvidiaDllDirs(), path.dirname(windowsPython), process.env.PATH || ''].join(path.delimiter);
+}
 
 function logPath(name) {
   return path.join(logsDir, `${name}.log`);
@@ -177,6 +222,12 @@ function spawnLogged(name, command, args, options = {}) {
     windowsHide: true,
   });
   children.push(child);
+  // Resolves when the process exits; lets waitJson fail fast on early crashes
+  // instead of polling a dead service until timeout.
+  child.exited = new Promise((resolve) => {
+    child.on('exit', (code, signal) => resolve({ code, signal }));
+    child.on('error', () => resolve({ code: null, signal: null }));
+  });
   pipe(name, child.stdout, out);
   pipe(name, child.stderr, out);
   child.on('exit', (code, signal) => {
@@ -197,53 +248,78 @@ function spawnWsl(name, command) {
   return spawnLogged(name, 'wsl.exe', ['-e', 'bash', '-lc', command], { cwd: repoRoot, env: process.env });
 }
 
+function probePort(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port, timeout: 1000 });
+    socket.on('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on('error', () => resolve(false));
+  });
+}
+
+// One-shot pre-spawn check: a listener on the target port means a previous
+// session (or its corpse) is still holding it; starting on top of it would make
+// waitJson probe the wrong process.
+async function ensurePortFree(port, label, host = '127.0.0.1') {
+  if (await probePort(host, port)) {
+    throw new PublicStartupError('port', `port ${port} (${label}) is already in use; run "npm run stop" first`);
+  }
+}
+
 async function waitPort(port, label, timeoutMs = 240000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const ok = await new Promise((resolve) => {
-      const socket = net.createConnection({ host: '127.0.0.1', port, timeout: 1000 });
-      socket.on('connect', () => {
-        socket.destroy();
-        resolve(true);
-      });
-      socket.on('timeout', () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.on('error', () => resolve(false));
-    });
-    if (ok) return;
+    if (await probePort('127.0.0.1', port)) return;
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
-  throw new PublicStartupError('service');
+  throw new PublicStartupError('service', `${label} did not open port ${port} before timeout`);
 }
 
-async function waitJson(url, predicate, label, timeoutMs = 240000) {
-  const start = Date.now();
+async function waitJson(url, predicate, label, timeoutMs = 240000, child = null) {
   let last = '';
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-      if (response.ok) {
-        const body = await response.json();
-        if (!predicate || predicate(body)) return body;
-        last = JSON.stringify(body).slice(0, 240);
-      } else {
-        last = `${response.status} ${response.statusText}`;
+  const poll = async () => {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (response.ok) {
+          const body = await response.json();
+          if (!predicate || predicate(body)) return body;
+          last = JSON.stringify(body).slice(0, 240);
+        } else {
+          last = `${response.status} ${response.statusText}`;
+        }
+      } catch {
+        last = 'request failed';
       }
-    } catch {
-      last = 'request failed';
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  throw new PublicStartupError('service');
+    throw new PublicStartupError('service', `${label} not ready before timeout; last health response: ${last || 'none'}`);
+  };
+  if (!child || !child.exited) return poll();
+  // Fail fast when the service process dies before reporting ready.
+  const crashed = child.exited.then(({ code, signal }) => {
+    throw new PublicStartupError(
+      'service',
+      `${label} exited (code=${code ?? ''} signal=${signal ?? ''}) before becoming ready; inspect logs/${label}.log`,
+    );
+  });
+  crashed.catch(() => {}); // surfaced via race during startup; ignore later exits
+  return Promise.race([poll(), crashed]);
 }
 
 async function startVllmServices() {
   const wslRoot = winToWsl(repoRoot);
   const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
   if (ocrVlEnabled) {
-    spawnWsl(
+    await ensurePortFree(8118, 'paddle-vllm', wslHost);
+    const paddleVllm = spawnWsl(
       'paddle-vllm',
       [
         `cd ${shellQuote(wslRoot)} &&`,
@@ -257,12 +333,13 @@ async function startVllmServices() {
         ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
       ].join(' '),
     );
-    await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000);
+    await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000, paddleVllm);
   } else {
     console.log('[dev] PaddleOCR-VL (8118) skipped: text path uses PP-StructureV3 (set OCR_VL_ENABLED=1 to enable VL)');
   }
 
-  spawnWsl(
+  await ensurePortFree(8080, 'has-text-vllm', wslHost);
+  const hasTextVllm = spawnWsl(
     'has-text-vllm',
     [
       `cd ${shellQuote(wslRoot)} &&`,
@@ -277,14 +354,15 @@ async function startVllmServices() {
       ...splitArgs(env.HAS_TEXT_VLLM_EXTRA_ARGS).map(shellQuote),
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 720000);
+  await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 720000, hasTextVllm);
 
   // LocateAnything Qwen2 text backbone served by vLLM (prompt-embeds). The
   // LocateAnything service (8090) runs the MoonViT vision tower locally and
   // posts stitched image+text embeds here. Only started in vLLM mode.
   if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0' && (env.LOCATE_ANYTHING_VLLM_URL || '').trim()) {
     const locateLmModel = env.LOCATE_ANYTHING_LM_MODEL_DIR || '/mnt/d/has_models/locate_qwen2_model';
-    spawnWsl(
+    await ensurePortFree(8091, 'locate-lm-vllm', wslHost);
+    const locateLmVllm = spawnWsl(
       'locate-lm-vllm',
       [
         `cd ${shellQuote(wslRoot)} &&`,
@@ -301,14 +379,15 @@ async function startVllmServices() {
         ...splitArgs(env.LOCATE_ANYTHING_LM_VLLM_EXTRA_ARGS).map(shellQuote),
       ].join(' '),
     );
-    await waitJson(`http://${wslHost}:8091/v1/models`, (body) => Array.isArray(body.data), 'locate-lm-vllm', 720000);
+    await waitJson(`http://${wslHost}:8091/v1/models`, (body) => Array.isArray(body.data), 'locate-lm-vllm', 720000, locateLmVllm);
   }
 }
 
 async function startOcrWrapper() {
   const wslBackend = winToWsl(backendDir);
   const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
-  spawnWsl(
+  await ensurePortFree(8082, 'ocr-wrapper', wslHost);
+  const ocrWrapper = spawnWsl(
     'ocr-wrapper',
     [
       `cd ${shellQuote(wslBackend)} &&`,
@@ -330,7 +409,7 @@ async function startOcrWrapper() {
       'scripts/ocr_server.py',
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:8082/health`, (body) => body.ready === true, 'ocr-wrapper', 720000);
+  await waitJson(`http://${wslHost}:8082/health`, (body) => body.ready === true, 'ocr-wrapper', 720000, ocrWrapper);
 }
 
 async function startLocateAnything() {
@@ -339,7 +418,8 @@ async function startLocateAnything() {
   const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
   const locateDeps = env.LOCATE_ANYTHING_DEPS || '/home/tracy/.cache/datainfra-redaction/locateanything-hf-deps';
   const locatePythonPath = [locateDeps, path.posix.join(wslBackend, 'scripts'), wslBackend].join(':');
-  spawnWsl(
+  await ensurePortFree(Number(locatePort), 'locateanything', wslHost);
+  const locateAnything = spawnWsl(
     'locateanything',
     [
       `cd ${shellQuote(wslRoot)} &&`,
@@ -373,7 +453,7 @@ async function startLocateAnything() {
       shellQuote(env.LOCATE_ANYTHING_DTYPE || 'bfloat16'),
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:${locatePort}/health`, (body) => body.ready === true, 'locateanything', 720000);
+  await waitJson(`http://${wslHost}:${locatePort}/health`, (body) => body.ready === true, 'locateanything', 720000, locateAnything);
 }
 
 async function runWarmup() {
@@ -404,6 +484,7 @@ async function main() {
   if (process.platform !== 'win32') {
     throw new PublicStartupError('platform');
   }
+  initRuntimeConfig();
   ensureWindowsVenv();
 
   await startVllmServices();
@@ -414,16 +495,20 @@ async function main() {
 
   await startOcrWrapper();
 
-  await waitJson(`${env.VISUAL_FEATURES_BASE_URL || `http://127.0.0.1:${locatePort}`}/health`, (body) => body.ready === true, 'visual-features', 180000);
+  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0') {
+    await waitJson(`${env.VISUAL_FEATURES_BASE_URL || `http://127.0.0.1:${locatePort}`}/health`, (body) => body.ready === true, 'visual-features', 180000);
+  }
 
-  spawnLogged('backend', windowsPython, ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'], {
+  await ensurePortFree(8000, 'backend');
+  const backendChild = spawnLogged('backend', windowsPython, ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'], {
     cwd: backendDir,
     env: winEnv,
   });
-  await waitJson('http://127.0.0.1:8000/health/services', (body) => body.all_online === true, 'backend', 180000);
+  await waitJson('http://127.0.0.1:8000/health/services', (body) => body.all_online === true, 'backend', 180000, backendChild);
 
   await runWarmup();
 
+  await ensurePortFree(3000, 'frontend');
   const frontendCommand = process.platform === 'win32' ? 'cmd.exe' : 'npm';
   const frontendArgs =
     process.platform === 'win32'
@@ -440,16 +525,38 @@ async function main() {
 }
 
 function shutdown(code = 0) {
-  for (const child of children.reverse()) {
-    if (!child.killed) child.kill('SIGTERM');
+  if (children.length > 0 && process.platform === 'win32') {
+    // SIGTERM on the wsl.exe relay never reaches the Linux-side vllm/ocr
+    // processes; they would keep the GPU allocated and OOM the next start.
+    // Run the same cleanup as scripts/stop-dev.mjs first. Skipped when nothing
+    // was spawned (e.g. a port-in-use abort) so a healthy session started from
+    // another terminal is not torn down.
+    console.log('[dev] stopping WSL model services...');
+    spawnSync('wsl.exe', ['-e', 'bash', '-lc', WSL_KILL_SEQUENCE], { stdio: 'ignore' });
   }
-  setTimeout(() => process.exit(code), children.length ? 1500 : 0);
+  for (const child of children.reverse()) {
+    if (!child.pid || child.killed) continue;
+    if (process.platform === 'win32') {
+      // taskkill /T kills the whole process tree (e.g. cmd.exe -> npm -> vite),
+      // which child.kill('SIGTERM') cannot do on Windows.
+      spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore' });
+    } else {
+      child.kill('SIGTERM');
+    }
+  }
+  process.exit(code);
 }
 
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
-main().catch(() => {
-  console.error(`[dev] ${PUBLIC_STARTUP_MESSAGES.generic}`);
+main().catch((err) => {
+  const code = err instanceof PublicStartupError ? err.code : 'generic';
+  console.error(`[dev] ${PUBLIC_STARTUP_MESSAGES[code] || PUBLIC_STARTUP_MESSAGES.generic}`);
+  if (err instanceof PublicStartupError) {
+    if (err.detail) console.error(`[dev] detail: ${err.detail}`);
+  } else {
+    console.error(err);
+  }
   shutdown(1);
 });

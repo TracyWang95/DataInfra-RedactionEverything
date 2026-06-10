@@ -13,6 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Keep model-serving stacks out of the default backend image. GPU/OCR/vision
 # dependencies are installed by their profile-gated service images instead.
+# Note: requirements-ci.txt (floating versions) is used intentionally.
+# requirements.lock is NOT suitable here: it pins the full local dev stack
+# (paddlepaddle-gpu, paddleocr) that this slim image must exclude, while
+# missing runtime deps this image needs (SQLAlchemy, PyMySQL, psycopg,
+# numpy, opencv-python-headless, openpyxl).
 COPY requirements-ci.txt .
 RUN pip install -r requirements-ci.txt
 

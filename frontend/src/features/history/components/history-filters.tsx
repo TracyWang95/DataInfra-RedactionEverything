@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Download, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';

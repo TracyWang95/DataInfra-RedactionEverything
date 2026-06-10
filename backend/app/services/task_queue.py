@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import logging
 import os
@@ -246,11 +247,16 @@ class SimpleTaskQueue:
         queue = get_task_queue()
         queue.enqueue(TaskItem(job_id=..., item_id=..., file_id=...))
 
-    内部维护一个 asyncio.Queue，一个后台 worker coroutine 逐个消费。
+    内部维护一个按优先级排序的待处理列表（_pending_tasks），并用一个
+    asyncio.Queue 作为唤醒信号（每个待处理任务对应一个 token），后台 worker
+    coroutine 逐个消费。
     """
 
     def __init__(self, concurrency: int = 1) -> None:
-        self._queue: asyncio.Queue[TaskItem] = asyncio.Queue()
+        # Signal queue: one None token per pending task. Workers block on it;
+        # the actual TaskItem comes from the sorted _pending_tasks list.
+        self._queue: asyncio.Queue[None] = asyncio.Queue()
+        self._pending_tasks: list[TaskItem] = []
         self._worker_tasks: list[asyncio.Task] = []
         self._running = False
         self._current: dict[int, TaskItem | None] = {}  # worker_id -> current task
@@ -270,6 +276,7 @@ class SimpleTaskQueue:
         loop = asyncio.get_event_loop()
         if self._loop is not loop:
             self._queue = asyncio.Queue()
+            self._pending_tasks.clear()
             self._worker_tasks.clear()
             self._current.clear()
             self._pending_items.clear()
@@ -324,6 +331,7 @@ class SimpleTaskQueue:
         self._current.clear()
         self._pending_items.clear()
         self._queue = asyncio.Queue()
+        self._pending_tasks.clear()
         self._loop = None
         logger.info("SimpleTaskQueue stopped")
         return tasks
@@ -347,8 +355,8 @@ class SimpleTaskQueue:
         self._ensure_task_priority_metadata(task)
         self._record_task_enqueued(task)
         self._pending_items.add(task_key)
-        self._queue.put_nowait(task)
-        self._sort_pending_queue()
+        self._insert_pending(task)
+        self._queue.put_nowait(None)  # wake one waiting worker
         logger.info(
             "enqueued %s  job=%s item=%s file=%s  priority=%s work=%s (queue_size=%d)",
             task.task_type, task.job_id[:8], task.item_id[:8], task.file_id[:8],
@@ -427,13 +435,15 @@ class SimpleTaskQueue:
             _safe_int(task.meta.get("enqueue_sequence"), default=0),
         )
 
-    def _sort_pending_queue(self) -> None:
+    def _insert_pending(self, task: TaskItem) -> None:
+        """Insert into the sorted pending list (stable: equal keys keep enqueue order)."""
         try:
-            pending = sorted(list(self._queue._queue), key=self._task_sort_key)  # noqa: SLF001
-            self._queue._queue.clear()  # noqa: SLF001
-            self._queue._queue.extend(pending)  # noqa: SLF001
+            bisect.insort(self._pending_tasks, task, key=self._task_sort_key)
         except Exception:
-            logger.debug("unable to reorder pending queue", exc_info=True)
+            # Fallback mirrors the legacy behaviour: on sort failure the new
+            # task simply goes to the back of the queue (FIFO position).
+            logger.debug("unable to insert task into sorted pending queue", exc_info=True)
+            self._pending_tasks.append(task)
 
     def _record_task_started(self, task: TaskItem, store: Any) -> None:
         started_at = _utc_iso()
@@ -504,7 +514,7 @@ class SimpleTaskQueue:
         logger.info("worker-%d loop started", worker_id)
         while self._running:
             try:
-                task = await asyncio.wait_for(self._queue.get(), timeout=2.0)
+                await asyncio.wait_for(self._queue.get(), timeout=2.0)
             except TimeoutError:
                 if worker_id >= self._concurrency:
                     break
@@ -512,6 +522,10 @@ class SimpleTaskQueue:
             except asyncio.CancelledError:
                 break
 
+            # One token was consumed, so exactly one pending task is ours.
+            # Both structures are only mutated together on the event loop,
+            # with no await between the paired mutations.
+            task = self._pending_tasks.pop(0)
             self._current[worker_id] = task
             logger.info(
                 "worker-%d processing %s  job=%s item=%s file=%s  (remaining=%d)",

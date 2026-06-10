@@ -27,7 +27,7 @@ httpx==0.28.1
 nvidia-ml-py==12.535.133
 aiofiles==24.1.0
 
-# Local app/model environment. vLLM is installed in .venv-vllm by npm run setup.
+# Local app/model environment. vLLM is installed separately in VLLM_VENV_DIR (see README "WSL model service environment").
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
 paddlepaddle-gpu==3.3.0
 paddleocr[doc-parser]==3.6.0

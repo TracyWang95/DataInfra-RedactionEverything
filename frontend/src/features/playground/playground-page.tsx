@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { type FC, type ReactNode, useMemo } from 'react';
 import { useT } from '@/i18n';
@@ -274,12 +273,6 @@ const PlaygroundInner: FC = () => {
                           setBoundingBoxes(mergeVisibleBoxes(nextBoxes, previousBoxes));
                         }}
                         getTypeConfig={recognition.getVisionTypeConfig}
-                        availableTypes={recognition.visionTypes.map((visionType) => ({
-                          id: visionType.id,
-                          name: visionType.name,
-                          color: '#6366F1',
-                        }))}
-                        defaultType={recognition.visionTypes[0]?.id || 'CUSTOM'}
                         viewportTopSlot={
                           totalPages > 1 ? (
                             <div className="w-full min-w-[320px]">

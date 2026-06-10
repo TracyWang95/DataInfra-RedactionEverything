@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
 import type { RecognitionPreset } from '@/services/presetsApi';

@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { authFetch } from '@/services/api-client';
@@ -222,8 +221,14 @@ export function useEntityTypes() {
       ),
     [entityTypes],
   );
-  const llmTypes = useMemo(
-    () => entityTypes.filter((t) => t.enabled !== false && t.use_llm),
+  // Text rules list: LLM (semantic) types plus custom regex-fallback types (use_llm=false).
+  const textRuleTypes = useMemo(
+    () =>
+      entityTypes.filter(
+        (t) =>
+          t.enabled !== false &&
+          (t.use_llm || (t.id.startsWith('custom_') && Boolean(t.regex_pattern))),
+      ),
     [entityTypes],
   );
 
@@ -247,9 +252,9 @@ export function useEntityTypes() {
           name: newType.name.trim(),
           description: newType.description?.trim() || null,
           examples: [],
-          color: getToneColor(getEntityTypeTone(true)),
-          regex_pattern: null,
-          use_llm: true,
+          color: getToneColor(getEntityTypeTone(newType.use_llm)),
+          regex_pattern: newType.regex_pattern?.trim() || null,
+          use_llm: newType.use_llm,
           tag_template: newType.tag_template || null,
           data_domain: newType.data_domain || 'custom_extension',
           generic_target: newType.generic_target || null,
@@ -293,9 +298,9 @@ export function useEntityTypes() {
         body: JSON.stringify({
           name: update.name.trim(),
           description: update.description?.trim() || null,
-          color: getToneColor(getEntityTypeTone(true)),
-          regex_pattern: null,
-          use_llm: true,
+          color: getToneColor(getEntityTypeTone(update.use_llm)),
+          regex_pattern: update.regex_pattern?.trim() || null,
+          use_llm: update.use_llm,
           tag_template: update.tag_template || null,
           data_domain: update.data_domain || 'custom_extension',
           generic_target: update.generic_target || null,
@@ -468,7 +473,7 @@ export function useEntityTypes() {
     loading,
     pipelinesLoading,
     regexTypes,
-    llmTypes,
+    textRuleTypes,
     loadError,
     importFileRef,
     createType,

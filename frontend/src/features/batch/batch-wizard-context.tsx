@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { createContext, useContext } from 'react';
 import type { useBatchWizard } from './hooks/use-batch-wizard';

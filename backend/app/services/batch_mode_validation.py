@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.models.errors import NotFoundError
 from app.models.schemas import FileType
 from app.services.job_store import JobType
 
@@ -31,7 +32,7 @@ def validate_file_allowed_for_job_type(
     file_id: str,
 ) -> None:
     if not file_info:
-        raise ValueError(f"file not found: {file_id}")
+        raise NotFoundError(f"file not found: {file_id}")
     file_type = file_info.get("file_type")
     if is_file_type_allowed_for_job_type(job_type, file_type):
         return

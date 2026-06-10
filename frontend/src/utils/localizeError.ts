@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { t, useI18n } from '@/i18n';
 
@@ -36,6 +35,14 @@ function isChinese(text: string): boolean {
   return /[\u4e00-\u9fff]/.test(text);
 }
 
+/**
+ * Best-effort localization of free-form backend error messages.
+ *
+ * Known tradeoff (NOT a bug — the backend has no error codes): raw Chinese
+ * messages are passed through verbatim even under the `en` locale, while raw
+ * English messages are shown only under `en` and replaced by the fallback key
+ * under `zh`. Don't try to "fix" this without backend error codes.
+ */
 export function localizeErrorMessage(error: unknown, fallbackKey = 'common.error'): string {
   const candidate = (error && typeof error === 'object' ? error : null) as ErrorLike | null;
   const locale = useI18n.getState().locale;
@@ -111,6 +118,8 @@ export function localizeErrorMessage(error: unknown, fallbackKey = 'common.error
     return t(fallbackKey);
   }
 
+  // Known tradeoff (see docstring): Chinese raw passes through regardless of
+  // locale; English raw is swallowed into the fallback under zh.
   if (isChinese(raw)) {
     return raw;
   }

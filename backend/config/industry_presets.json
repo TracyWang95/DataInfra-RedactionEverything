@@ -159,8 +159,7 @@
       "INPATIENT_NO",
       "DATE",
       "TIME",
-      "MED_INSTITUTION",
-      "MED_DEPARTMENT"
+      "MED_INSTITUTION"
     ],
     "ocrHasTypes": [
       "PERSON",
@@ -176,15 +175,16 @@
       "INPATIENT_NO",
       "DATE",
       "TIME",
-      "MED_INSTITUTION",
-      "MED_DEPARTMENT"
+      "MED_INSTITUTION"
     ],
     "visualFeatureTypes": [
       "face",
       "id_card",
       "official_seal",
       "signature",
-      "medical_wristband"
+      "medical_wristband",
+      "qr_code",
+      "barcode"
     ],
     "replacementMode": "structured",
     "created_at": "2026-05-09T00:00:00+00:00",

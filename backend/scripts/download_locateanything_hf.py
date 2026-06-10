@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from huggingface_hub import hf_hub_download
+import os
 
+from huggingface_hub import hf_hub_download
 
 if __name__ == "__main__":
     repo_id = "nvidia/LocateAnything-3B"
-    local_dir = "/mnt/d/has_models/LocateAnything-3B-HF"
+    # Same env var the runtime uses (.env LOCATE_ANYTHING_MODEL); the default
+    # matches this machine's layout.
+    local_dir = os.environ.get("LOCATE_ANYTHING_MODEL", "/mnt/d/has_models/LocateAnything-3B-HF")
     files = [
         ".gitattributes",
         "LICENSE",
