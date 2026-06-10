@@ -124,7 +124,12 @@ FIXED_VISUAL_PROMPTS: dict[str, str] = {
     # over-detection (e.g. a plain page matched "national ID card"); the short
     # form is the same lesson as the official_seal / signature prompts.
     "face": "human face",
-    "fingerprint": "fingerprint",
+    # "thumbprint", not "fingerprint": A/B on the transcript page with five red
+    # inked prints showed "fingerprint" recalls 0/5 while "thumbprint" recalls
+    # 5/5; "red fingerprint" also recalled 5/5 but false-fired on the two red
+    # official seals of the GPU contract page, so the color-free wording wins
+    # (0 seal/contract/customs false positives in the same A/B).
+    "fingerprint": "thumbprint",
     "palmprint": "palmprint",
     "id_card": "ID card",
     "hk_macau_permit": "travel permit card",
@@ -439,13 +444,19 @@ class LocateService:
                     self._build_prompt_embeds_b64, inference_image, prompt, vit, num_image_tokens
                 )
             except RuntimeError as exc:
-                trim_cuda_cache("vllm-chat-encode-failed")
                 if _is_cuda_capacity_error(exc):
                     raise HTTPException(
                         status_code=503,
                         detail=f"LocateAnything CUDA capacity exhausted during vision encode: {exc}",
                     ) from exc
                 raise
+            finally:
+                # Same hygiene as worker-mode predict (trim after every pass, not
+                # only on failure): per-image activation buffers otherwise stay in
+                # the allocator cache and grow the process across requests until
+                # the shared 16GB card thrashes (observed: tower at ~12GB, encodes
+                # stalling at 100% GPU with the whole stack resident).
+                trim_cuda_cache("vllm-chat-encode")
         answer = await asyncio.to_thread(self._vllm_complete_b64, b64)
         boxes = _parse_boxes(answer, inference_image.width, inference_image.height)
         return answer, boxes, (inference_image.width, inference_image.height)
@@ -480,13 +491,17 @@ class LocateService:
                     payloads.append((cat, b64))
                 _t_build = time.perf_counter()
             except RuntimeError as exc:
-                trim_cuda_cache("vllm-detect-encode-failed")
                 if _is_cuda_capacity_error(exc):
                     raise HTTPException(
                         status_code=503,
                         detail=f"LocateAnything CUDA capacity exhausted during vision encode: {exc}",
                     ) from exc
                 raise
+            finally:
+                # Mirror worker-mode predict: trim the allocator cache after every
+                # encode pass so per-image activations cannot accumulate (see
+                # _predict_boxes_vllm for the observed thrash this prevents).
+                trim_cuda_cache("vllm-detect-encode")
 
         # Phase 2 (network, concurrent): vLLM generations batch on the LM server.
         async def _gen(cat: str, b64: str) -> tuple[str, list[dict[str, Any]], str]:

@@ -162,6 +162,26 @@
       "generic_target": "GEN_ADDRESS_LOCATION"
     },
     {
+      "id": "POSTAL_CODE",
+      "name": "邮政编码",
+      "description": "邮政编码。只表示邮编数字本身，不包含完整地址。",
+      "examples": [
+        "214000",
+        "100080"
+      ],
+      "color": "#EA580C",
+      "enabled": true,
+      "order": 82,
+      "data_domain": "address_location",
+      "coref_enabled": false,
+      "default_enabled": false,
+      "linkage_groups": [
+        "address_like"
+      ],
+      "entity_type_ids": [],
+      "generic_target": "GEN_ADDRESS_LOCATION"
+    },
+    {
       "id": "GPS_LOCATION",
       "name": "定位位置",
       "description": "经纬度、定位点、签到定位、轨迹点、行踪记录等定位类位置。只表示明确定位或轨迹位置，不表示模板占位城市/区县。",
@@ -661,6 +681,25 @@
       "generic_target": "GEN_ATTRIBUTE_STATUS"
     },
     {
+      "id": "OCCUPATION",
+      "name": "职业",
+      "description": "职业、工种、岗位类别等个人职业信息。只表示职业本身，不包含工作单位或职务级别。",
+      "examples": [
+        "工人",
+        "教师",
+        "软件工程师"
+      ],
+      "color": "#8B5CF6",
+      "enabled": true,
+      "order": 232,
+      "data_domain": "pii",
+      "coref_enabled": false,
+      "default_enabled": false,
+      "linkage_groups": [],
+      "entity_type_ids": [],
+      "generic_target": "GEN_ATTRIBUTE_STATUS"
+    },
+    {
       "id": "NATIONALITY",
       "name": "国籍",
       "description": "国籍或公民身份。只表示国籍。",
@@ -671,6 +710,24 @@
       "color": "#8B5CF6",
       "enabled": true,
       "order": 240,
+      "data_domain": "pii",
+      "coref_enabled": false,
+      "default_enabled": false,
+      "linkage_groups": [],
+      "entity_type_ids": [],
+      "generic_target": "GEN_ATTRIBUTE_STATUS"
+    },
+    {
+      "id": "NATIVE_PLACE",
+      "name": "籍贯",
+      "description": "籍贯或出生地行政区划。只表示籍贯，不包含现居住地址。",
+      "examples": [
+        "江苏省无锡市",
+        "山东济南"
+      ],
+      "color": "#8B5CF6",
+      "enabled": true,
+      "order": 242,
       "data_domain": "pii",
       "coref_enabled": false,
       "default_enabled": false,
@@ -829,6 +886,26 @@
       "order": 312,
       "data_domain": "document_record",
       "coref_enabled": true,
+      "default_enabled": false,
+      "linkage_groups": [
+        "identifier_like"
+      ],
+      "entity_type_ids": [],
+      "generic_target": "GEN_NUMBER_CODE"
+    },
+    {
+      "id": "CERT_NO",
+      "name": "证号",
+      "description": "资格证、执业证、报关员证等证件或证书编号。只表示证号本身，不包含身份证号、护照号等已有专门类型。",
+      "examples": [
+        "证号3101234567",
+        "执业证号A20260001"
+      ],
+      "color": "#A855F7",
+      "enabled": true,
+      "order": 314,
+      "data_domain": "document_record",
+      "coref_enabled": false,
       "default_enabled": false,
       "linkage_groups": [
         "identifier_like"

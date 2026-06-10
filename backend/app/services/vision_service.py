@@ -37,6 +37,11 @@ from app.services.vision.image_pipeline import (
     draw_preview_boxes,
 )
 from app.services.vision.locate_grounding import LocateAnythingGroundingService
+from app.services.vision.machine_code_detector import (
+    BARCODE_SLUG,
+    QR_CODE_SLUG,
+    detect_machine_code_regions,
+)
 from app.services.vision.ocr_artifact_filter import (
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
@@ -1069,7 +1074,12 @@ class VisionService:
         except Exception:
             logger.warning("cv2 seal fallback failed on page %d", page, exc_info=True)
             return []
-        known_seals = [b for b in existing_boxes if normalize_visual_slug(b.type) == "official_seal"]
+        # Red marks LA already identified as fingerprints are also "known": the
+        # color detector cannot tell a red inked fingerprint from a red stamp, so
+        # without this a transcript page's fingerprints get double-boxed as seals.
+        known_seals = [
+            b for b in existing_boxes if normalize_visual_slug(b.type) in {"official_seal", "fingerprint"}
+        ]
         extra: list[BoundingBox] = []
         for kind, regions in detections:
             for index, region in enumerate(regions):
@@ -1098,6 +1108,63 @@ class VisionService:
                 extra.append(candidate)
         if extra:
             logger.info("cv2 seal fallback added %d seal box(es) LA missed on page %d", len(extra), page)
+        return extra
+
+    def _supplement_machine_codes(
+        self,
+        image_data: bytes,
+        page: int,
+        existing_boxes: list[BoundingBox],
+        requested_slugs: list[str],
+    ) -> list[BoundingBox]:
+        """Add decoded QR/barcode boxes only where LocateAnything missed one.
+
+        cv2 only reports a machine code once its payload actually decodes, which
+        is a deterministic format proof — zero false positives, no thresholds.
+        Like ``_supplement_seals`` this is a pure SUPPLEMENT: it only appends
+        boxes that do NOT overlap an already-known box of the same category,
+        using the shared merge-layer overlap constants.
+        """
+        try:
+            img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data)))
+            regions = detect_machine_code_regions(img)
+        except Exception:
+            logger.warning("cv2 machine-code decoder failed on page %d", page, exc_info=True)
+            return []
+        requested = {normalize_visual_slug(slug) for slug in requested_slugs}
+        extra: list[BoundingBox] = []
+        for index, region in enumerate(regions):
+            category = normalize_visual_slug(region.code_type)
+            if category not in requested:
+                continue
+            candidate = BoundingBox(
+                id=f"machine_code_{category}_{page}_{index}_{uuid.uuid4().hex[:8]}",
+                x=region.x,
+                y=region.y,
+                width=region.width,
+                height=region.height,
+                type=category,
+                text=SLUG_TO_NAME_ZH.get(category, category),
+                page=page,
+                confidence=float(region.confidence),
+                source="visual_features",
+                source_detail=f"qr_decoder:{category}",
+                evidence_source="visual_feature_model",
+            )
+            known_same_type = [
+                b for b in (*existing_boxes, *extra) if normalize_visual_slug(b.type) == category
+            ]
+            if any(
+                self._calculate_smaller_overlap(candidate, known) >= _DEDUP_CONTAINMENT
+                or self._calculate_iou(candidate, known) > _DEDUP_IOU
+                for known in known_same_type
+            ):
+                continue
+            extra.append(candidate)
+        if extra:
+            logger.info(
+                "cv2 machine-code decoder added %d decoded box(es) LA missed on page %d", len(extra), page
+            )
         return extra
 
     async def _detect_with_visual_features(
@@ -1135,6 +1202,15 @@ class VisionService:
                 self._supplement_seals, image_data, page, boxes
             )
             boxes = [*boxes, *supplemental]
+        machine_code_slugs = [
+            slug for slug in (QR_CODE_SLUG, BARCODE_SLUG) if self._visual_slug_requested(pipeline_types, slug)
+        ]
+        if machine_code_slugs:
+            # cv2 解码是同步 CPU 工作，放 worker 线程避免阻塞事件循环。
+            supplemental_codes = await asyncio.to_thread(
+                self._supplement_machine_codes, image_data, page, boxes, machine_code_slugs
+            )
+            boxes = [*boxes, *supplemental_codes]
         self.last_visual_feature_stage_duration_ms = {
             **stage_duration_ms,
             **{f"custom_{key}": value for key, value in checklist_duration_ms.items()},

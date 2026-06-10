@@ -28,7 +28,7 @@ from PIL import Image, ImageOps
 
 from app.core.config import settings
 from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
-from app.models.type_mapping import TYPE_ID_TO_CN
+from app.models.type_mapping import TYPE_CN_TO_ID, TYPE_ID_TO_CN
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 from app.services.vision.has_text_payload import (
     DEFAULT_HAS_TEXT_TYPE_IDS,
@@ -729,6 +729,158 @@ def _merge_table_amount_entities(
         if signature:
             seen_signatures.add(signature)
         merged.append(dict(entity))
+    return merged
+
+
+# Semantic vocabulary (data, not tuning): field labels whose value IS a
+# document number. Derived from the DOCUMENT_NUMBER cn_terms in TYPE_REGISTRY,
+# the single source of truth for type vocabulary.
+DOCUMENT_NUMBER_FIELD_LABEL_TERMS: tuple[str, ...] = tuple(
+    term for term, type_id in TYPE_CN_TO_ID.items() if type_id == "DOCUMENT_NUMBER"
+)
+
+# Full- and half-width colon accepted as the label/value separator in a form field.
+_FIELD_LABEL_COLON_CHARS = "：:"
+
+
+def _is_document_number_field_label(text: str) -> bool:
+    """Identity test: the text IS a document-number field label.
+
+    A field label is a label phrase ending with a vocabulary term —
+    合同协议号, 运输工具名称及航次号 — optionally with a trailing colon
+    (form separator), which is stripped first. Only the compact label
+    phrase's own suffix is tested, mirroring _is_amount_header_label:
+    values and running text never match.
+    """
+    compact = _compact_text(text)
+    while compact and compact[-1] in _FIELD_LABEL_COLON_CHARS:
+        compact = compact[:-1]
+    if not compact:
+        return False
+    return any(compact.endswith(term) for term in DOCUMENT_NUMBER_FIELD_LABEL_TERMS)
+
+
+def _split_field_label_value(text: str) -> tuple[str, str] | None:
+    """Split a `标签：值` block at its first colon (full- or half-width)."""
+    indices = [text.find(ch) for ch in _FIELD_LABEL_COLON_CHARS]
+    indices = [index for index in indices if index >= 0]
+    if not indices:
+        return None
+    index = min(indices)
+    return text[:index], text[index + 1:]
+
+
+def _is_document_number_format_text(text: str) -> bool:
+    """Format test: a document number contains at least one digit.
+
+    The form-field counterpart of _is_amount_format_text: when the field next
+    to a document-number label is empty, the spatially nearest block is the
+    next preprinted label (货物存放地点) — pure text with no digits — and must
+    not be recalled as a value.
+    """
+    return any(ch.isdigit() for ch in _compact_text(text))
+
+
+def recall_form_field_document_numbers(ocr_blocks: list[OCRTextBlock]) -> list[dict[str, str]]:
+    """Structural DOCUMENT_NUMBER recall from form-field labels, independent of
+    HaS NER — the form-field generalization of recall_table_amount_entities.
+
+    Three label/value layouts, all identity/containment tests on existing
+    geometry (no new tolerances):
+    - one block `标签：值`: the part before the first colon is the field label.
+    - label cell above its value (form grids such as customs declarations):
+      the value's horizontal center lies inside the label cell's own span and
+      the value is the nearest block below — the same construction as
+      _amount_values_from_header_spans.
+    - label block and value block on the same visual line: the nearest block to
+      the right (existing _blocks_same_visual_line test).
+    Only runs when DOCUMENT_NUMBER is selected (the caller gates on the schema).
+    """
+    prepared: list[tuple[OCRTextBlock, str]] = []
+    for block in ocr_blocks:
+        text, _aligned = _block_search_text(block)
+        if not _compact_text(text) or text.lstrip().startswith("<table"):
+            continue
+        prepared.append((block, text))
+
+    values: list[str] = []
+
+    for _block, text in prepared:
+        split = _split_field_label_value(text)
+        if split is None:
+            continue
+        label_part, value_part = split
+        if (
+            _is_document_number_field_label(label_part)
+            and _compact_text(value_part)
+            and _is_document_number_format_text(value_part)
+        ):
+            values.append(value_part.strip())
+
+    label_blocks = [
+        (block, text) for block, text in prepared if _is_document_number_field_label(text)
+    ]
+    for label, _label_text in label_blocks:
+        candidates = [
+            (block, text)
+            for block, text in prepared
+            if block is not label and not _is_document_number_field_label(text)
+        ]
+        below = [
+            (block, text)
+            for block, text in candidates
+            if float(block.top) >= float(label.top + label.height)
+            and float(label.left)
+            <= float(block.left) + float(block.width) / 2.0
+            <= float(label.left + label.width)
+        ]
+        if below:
+            # The format test runs on the nearest block only: when the field is
+            # empty, the nearest block is the next preprinted label and the
+            # recall must yield nothing rather than leapfrog to farther text.
+            _value_block, value_text = min(below, key=lambda item: float(item[0].top))
+            if _is_document_number_format_text(value_text):
+                values.append(value_text.strip())
+            continue
+        right = [
+            (block, text)
+            for block, text in candidates
+            if block.left >= label.left + label.width and _blocks_same_visual_line(label, block)
+        ]
+        if right:
+            _value_block, value_text = min(right, key=lambda item: int(item[0].left))
+            if _is_document_number_format_text(value_text):
+                values.append(value_text.strip())
+
+    entities: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values:
+        compact = _compact_text(value)
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        entities.append({"type": "DOCUMENT_NUMBER", "text": value, "source": "form_field_ocr"})
+    return entities
+
+
+def _merge_form_field_document_entities(
+    entities: list[dict[str, str]],
+    recalled: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Append form-field document numbers HaS did not already return."""
+    if not recalled:
+        return entities
+    seen = {
+        _compact_text(str(entity.get("text", "")))
+        for entity in entities
+        if _canonical_image_text_type(str(entity.get("type", ""))) == "DOCUMENT_NUMBER"
+    }
+    merged = list(entities)
+    for entity in recalled:
+        compact = _compact_text(entity["text"])
+        if compact and compact not in seen:
+            seen.add(compact)
+            merged.append(dict(entity))
     return merged
 
 
@@ -1928,6 +2080,26 @@ async def run_has_text_analysis(
         stage_status, "has_text_table_amount_entities", len(table_amount_entities)
     )
 
+    # Structural DOCUMENT_NUMBER recall from form-field labels (标签：值 and
+    # label-cell layouts). Same contract as the table AMOUNT recall: computed
+    # before any HaS availability checks and surfaced even when NER is skipped
+    # or fails. Only active when DOCUMENT_NUMBER is selected in the schema.
+    document_number_in_schema = vision_types is not None and any(
+        _canonical_image_text_type(getattr(vt, "id", "")) == "DOCUMENT_NUMBER" for vt in vision_types
+    )
+    form_document_entities = (
+        recall_form_field_document_numbers(ocr_blocks) if document_number_in_schema else []
+    )
+    if form_document_entities:
+        logger.info(
+            "Form-field DOCUMENT_NUMBER recall: %s",
+            [entity["text"] for entity in form_document_entities],
+        )
+    _record_has_text_metric(
+        stage_status, "has_text_form_document_entities", len(form_document_entities)
+    )
+    structural_entities = [*table_amount_entities, *form_document_entities]
+
     # Lazy re-init if client was not available at startup
     if not has_client:
         try:
@@ -1941,7 +2113,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(table_amount_entities)
+            return list(structural_entities)
 
     if _has_recent_negative_health(has_client):
         logger.warning("HaS service recently reported unavailable, skipping NER")
@@ -1951,7 +2123,7 @@ async def run_has_text_analysis(
             "has_text_total_ms",
             round((time.perf_counter() - total_start) * 1000),
         )
-        return list(table_amount_entities)
+        return list(structural_entities)
 
     try:
         prepare_start = time.perf_counter()
@@ -1992,7 +2164,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(table_amount_entities)
+            return list(structural_entities)
 
         min_text_chars = int(settings.HAS_VISION_MIN_TEXT_CHARS_FOR_NER)
         compact_chars = len(_compact_text(text_content))
@@ -2010,7 +2182,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(table_amount_entities)
+            return list(structural_entities)
 
         logger.info(
             (
@@ -2042,7 +2214,7 @@ async def run_has_text_analysis(
                     "has_text_total_ms",
                     round((time.perf_counter() - total_start) * 1000),
                 )
-                return list(table_amount_entities)
+                return list(structural_entities)
             logger.info("HaS using types for NER: %s", chinese_types)
         else:
             chinese_types = _build_has_text_type_names()
@@ -2101,13 +2273,13 @@ async def run_has_text_analysis(
 
         if not ner_result or not isinstance(ner_result, dict):
             logger.info("HaS: no entities found by NER")
-            _record_has_text_metric(stage_status, "has_text_entity_count", len(table_amount_entities))
+            _record_has_text_metric(stage_status, "has_text_entity_count", len(structural_entities))
             _record_has_text_metric(
                 stage_status,
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(table_amount_entities)
+            return list(structural_entities)
 
         logger.info("HaS NER result: %s", ner_result)
 
@@ -2189,9 +2361,13 @@ async def run_has_text_analysis(
                 text = entity_text.strip() if entity_text else ""
                 if normalized_type in {"COMPANY_NAME", "BANK_NAME", "BANK_ACCOUNT", "AMOUNT"}:
                     text = _compact_text(text)
-                if len(text) < min_len:
-                    logger.debug("HaS skipped too short: '%s' (%s)", text, normalized_type)
+                if not text:
                     continue
+                if len(text) < min_len:
+                    # Below-min-length values (e.g. 性别 男) are kept: the
+                    # matcher attaches them only by block equality or isolated
+                    # token (_is_strict_match_entity), never bare containment.
+                    logger.debug("HaS kept short value for strict matching: '%s' (%s)", text, normalized_type)
 
                 entities.append({
                     "type": normalized_type,
@@ -2202,6 +2378,9 @@ async def run_has_text_analysis(
         # Structural table amounts the NER did not already return (value-level
         # dedupe via _amount_value_signature, same as the matcher uses).
         entities = _merge_table_amount_entities(entities, table_amount_entities)
+
+        # Form-field document numbers the NER did not already return.
+        entities = _merge_form_field_document_entities(entities, form_document_entities)
 
         # Date-format backstop: redact date-only OCR blocks the NER dropped (see
         # _STANDALONE_DATE_RE). Only when DATE is in the schema, and only for dates
@@ -2240,8 +2419,8 @@ async def run_has_text_analysis(
             "has_text_total_ms",
             round((time.perf_counter() - total_start) * 1000),
         )
-        # NER failed; structural table amounts are still valid detections.
-        return list(table_amount_entities)
+        # NER failed; structural table-amount / form-field recalls are still valid.
+        return list(structural_entities)
 
 
 # ---------------------------------------------------------------------------
@@ -2401,6 +2580,102 @@ _HAS_ENTITY_TYPE_MAPPING = {
 }
 
 
+def _block_search_text(block: OCRTextBlock) -> tuple[str, bool]:
+    """Authoritative text to match against, plus whether char boxes spell it.
+
+    block.chars are produced together with the box geometry, so when the OCR
+    service mis-pairs text labels with boxes (observed PP-StructureV3
+    pathology: duplicated boxes whose `text` belongs to a different box), the
+    joined char boxes still spell the box's real content. Matching against the
+    chars text in that case guarantees a value is only attached to a block
+    that actually contains it; the old whole-block fallback attached the lying
+    text label to a box holding different pixels.
+    """
+    block_text = str(block.text or "")
+    chars = getattr(block, "chars", None) or []
+    if not chars:
+        return block_text, False
+    chars_text = "".join(str(char_box.get("c", "")) for char_box in chars)
+    if chars_text == block_text:
+        return block_text, True
+    compact_chars = _compact_text(chars_text)
+    compact_block = _compact_text(block_text)
+    if compact_chars in compact_block:
+        # Whitespace-only divergence, or an incomplete char list (the service
+        # sometimes drops leading char boxes, e.g. chars 9,000.00 under text
+        # 89,000.00): the chars are partial evidence of the same content, not a
+        # contradiction. Keep the text; char indexes do not line up with it.
+        return block_text, False
+    if len(compact_chars) == len(compact_block):
+        # Equal-length divergence is the char-level recognizer reading the same
+        # glyphs differently (江苏省×X市 vs 江苏省XX市), not another box's text:
+        # the mis-pairing pathology swaps in a whole different string. Keep the
+        # text — HaS entities were extracted from it.
+        return block_text, False
+    return chars_text, True
+
+
+def _char_word_class(ch: str) -> str:
+    if "一" <= ch <= "鿿":
+        return "cjk"
+    if ch.isalnum():
+        return "alnum"
+    return ""
+
+
+def _is_isolated_token_occurrence(text: str, start: int, end: int) -> bool:
+    """The occurrence [start, end) is a whole token inside the block text.
+
+    Token boundaries are identity facts, not tuned rules: a side is a boundary
+    when it is the string edge, a non-word character (punctuation/space), or a
+    script-class change (CJK vs latin/digit). 男 in 性别：男 is a token; 男
+    inside 男科 is not.
+    """
+    if start < 0 or start >= end or end > len(text):
+        return False
+    before = text[start - 1] if start > 0 else ""
+    after = text[end] if end < len(text) else ""
+    first_class = _char_word_class(text[start])
+    last_class = _char_word_class(text[end - 1])
+    before_is_boundary = not before or not _char_word_class(before) or _char_word_class(before) != first_class
+    after_is_boundary = not after or not _char_word_class(after) or _char_word_class(after) != last_class
+    return before_is_boundary and after_is_boundary
+
+
+def _is_strict_match_entity(entity_type: str, entity_text: str) -> bool:
+    """Whether a value is below the NER min length for its type.
+
+    Such values (e.g. 男 under GENDER) are kept instead of dropped, but they
+    only attach to a block when the block text IS the value or the value is an
+    isolated token (_is_isolated_token_occurrence) — never by bare containment,
+    and never via fuzzy or whole-table fallbacks. Reuses the existing
+    _NER_MIN_LEN_BY_TYPE constants; no new thresholds.
+    """
+    min_len = _NER_MIN_LEN_BY_TYPE.get(entity_type, _NER_DEFAULT_MIN_LEN)
+    return len(entity_text.strip()) < min_len
+
+
+# RMB unit decoration accepted around a standalone amount cell (data).
+_AMOUNT_UNIT_SUFFIX_CHARS = "元"
+
+
+def _is_same_amount_value_block(entity_text: str, block_text: str) -> bool:
+    """Same amount value in a different display form (￥1431400.00元 vs 1431400，00).
+
+    Pure value-level normalization via _amount_value_signature; the block must
+    itself BE one amount value (the existing standalone-amount format test,
+    after stripping currency/unit decoration), so running text that merely
+    contains the same digits never matches.
+    """
+    entity_signature = _amount_value_signature(entity_text)
+    if not entity_signature:
+        return False
+    candidate = _compact_text(block_text).strip(_AMOUNT_UNIT_SUFFIX_CHARS)
+    if not _is_standalone_amount_ocr_block(candidate):
+        return False
+    return _amount_value_signature(_compact_amount_candidate(candidate)) == entity_signature
+
+
 def match_entities_to_ocr(
     ocr_blocks: list[OCRTextBlock],
     entities: list[dict[str, str]],
@@ -2429,17 +2704,22 @@ def match_entities_to_ocr(
     # No visual-line reconstruction and no sub-span position/size estimation:
     # match against the real OCR blocks and redact the whole matched block. mIoU
     # is the sole merge step downstream.
+    # Table-virtual cells sort after direct blocks; the order is identical for
+    # every entity, so sort once and resolve each block's authoritative text
+    # (_block_search_text: chars-verified against the box) once outside the loop.
+    ordered_blocks = sorted(expanded_blocks, key=lambda item: id(item) in table_virtual_block_ids)
+    prepared_blocks = [
+        (block, *_block_search_text(block), id(block) in table_virtual_block_ids)
+        for block in ordered_blocks
+    ]
+
     standalone_amount_signatures = {
         signature
-        for block in expanded_blocks
-        if id(block) not in table_virtual_block_ids and _is_standalone_amount_ocr_block(block.text)
-        for signature in [_amount_value_signature(block.text)]
+        for _block, search_text, _aligned, is_table_virtual in prepared_blocks
+        if not is_table_virtual and _is_standalone_amount_ocr_block(search_text)
+        for signature in [_amount_value_signature(search_text)]
         if signature
     }
-
-    # Table-virtual cells sort after direct blocks; the order is identical for
-    # every entity, so sort once outside the loop.
-    ordered_blocks = sorted(expanded_blocks, key=lambda item: id(item) in table_virtual_block_ids)
 
     for entity in entities:
         entity_text = entity.get("text", "").strip()
@@ -2456,38 +2736,39 @@ def match_entities_to_ocr(
             continue
 
         matched = False
+        strict_value = _is_strict_match_entity(normalized_type, entity_text)
 
         direct_amount_signatures: set[str] = set()
-        for block in ordered_blocks:
-            block_text = block.text
-
+        for block, block_text, block_chars_aligned, is_table_virtual in prepared_blocks:
             if block_text.startswith("<table"):
                 continue
 
-            # Exact containment match
+            # Exact containment match against the authoritative text. Blocks
+            # whose char boxes disprove their text label never reach here with
+            # the lying label (_block_search_text), so a value is only ever
+            # attached to a box that actually contains it.
             if entity_text in block_text:
                 contextual_type = _entity_type_from_block_context(normalized_type, entity_text, block_text)
                 if contextual_type is None:
                     continue
-                # Char boxes are usable only when they spell exactly this block's
-                # text (same chars, same order); otherwise fall back to the whole
-                # block. Guarantees we never mis-place using mismatched OCR output.
-                block_chars_aligned = (
-                    bool(getattr(block, "chars", None))
-                    and "".join(str(c.get("c", "")) for c in block.chars) == block_text
-                )
                 search_from = 0
                 while True:
                     occurrence_start = block_text.find(entity_text, search_from)
                     if occurrence_start < 0:
                         break
+                    if strict_value and not _is_isolated_token_occurrence(
+                        block_text,
+                        occurrence_start,
+                        occurrence_start + len(entity_text),
+                    ):
+                        search_from = occurrence_start + max(1, len(entity_text))
+                        continue
                     visual_text, visual_occurrence_start = _visual_match_span_for_entity(
                         contextual_type,
                         block_text,
                         entity_text,
                         occurrence_start,
                     )
-                    is_table_virtual = id(block) in table_virtual_block_ids
                     if contextual_type == "AMOUNT":
                         amount_signature = _amount_value_signature(visual_text)
                         if (
@@ -2553,26 +2834,66 @@ def match_entities_to_ocr(
                 matched = True
                 continue
 
-            # Fuzzy match (handles minor OCR errors)
-            elif not matched and len(entity_text) >= _FUZZY_MATCH_MIN_ENTITY_LEN and len(block_text) <= max(len(entity_text) * _FUZZY_MATCH_BLOCK_LEN_MULT, _FUZZY_MATCH_BLOCK_LEN_FLOOR) and (
-                SequenceMatcher(None, entity_text, block_text).ratio() > _FUZZY_MATCH_RATIO
-            ):
+            # Same amount value in a different display form — full/half-width
+            # currency and separator variants (￥1431400.00元 vs 1431400，00).
+            if normalized_type == "AMOUNT" and _is_same_amount_value_block(entity_text, block_text):
+                amount_signature = _amount_value_signature(entity_text)
+                if is_table_virtual and amount_signature in direct_amount_signatures:
+                    continue
+                if not is_table_virtual and amount_signature:
+                    direct_amount_signatures.add(amount_signature)
                 regions.append(SensitiveRegion(
-                    text=entity_text,
+                    text=block_text.strip() or entity_text,
                     entity_type=normalized_type,
                     left=block.left,
                     top=block.top,
                     width=block.width,
                     height=block.height,
-                    confidence=_FUZZY_MATCH_CONFIDENCE,
-                    source="fuzzy_match",
+                    confidence=1.0,
+                    source=(
+                        entity_source
+                        if entity_source in {"table_semantic", "form_field_ocr"}
+                        else
+                        "table_cell_match"
+                        if is_table_virtual
+                        else "text_match"
+                    ),
                 ))
-                logger.debug("MATCH '%s' ~ '%s...' (fuzzy)", entity_text, block_text[:20])
+                logger.debug("MATCH '%s' ~ '%s' (amount value form)", entity_text, block_text[:20])
                 matched = True
-                break
+
+        # Fuzzy match (handles minor OCR misreads). Runs only after NO block
+        # contained the value: the old in-loop fuzzy fired on an earlier
+        # near-miss block and `break`-ed past a later block holding the exact
+        # text, leaving that occurrence unredacted (e.g. the same credit code
+        # printed twice, one copy misread by OCR).
+        if (
+            not matched
+            and not strict_value
+            and len(entity_text) >= _FUZZY_MATCH_MIN_ENTITY_LEN
+        ):
+            for block, block_text, _aligned, _is_table_virtual in prepared_blocks:
+                if block_text.startswith("<table"):
+                    continue
+                if len(block_text) <= max(len(entity_text) * _FUZZY_MATCH_BLOCK_LEN_MULT, _FUZZY_MATCH_BLOCK_LEN_FLOOR) and (
+                    SequenceMatcher(None, entity_text, block_text).ratio() > _FUZZY_MATCH_RATIO
+                ):
+                    regions.append(SensitiveRegion(
+                        text=entity_text,
+                        entity_type=normalized_type,
+                        left=block.left,
+                        top=block.top,
+                        width=block.width,
+                        height=block.height,
+                        confidence=_FUZZY_MATCH_CONFIDENCE,
+                        source="fuzzy_match",
+                    ))
+                    logger.debug("MATCH '%s' ~ '%s...' (fuzzy)", entity_text, block_text[:20])
+                    matched = True
+                    break
 
         # Fallback: search in original (unexpanded) blocks
-        if not matched:
+        if not matched and not strict_value:
             for block in ocr_blocks:
                 if block.text.startswith("<table") and entity_text in block.text:
                     regions.append(SensitiveRegion(
