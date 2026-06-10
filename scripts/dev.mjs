@@ -317,26 +317,6 @@ async function waitJson(url, predicate, label, timeoutMs = 240000, child = null)
 async function startVllmServices() {
   const wslRoot = winToWsl(repoRoot);
   const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
-  if (ocrVlEnabled) {
-    await ensurePortFree(8118, 'paddle-vllm', wslHost);
-    const paddleVllm = spawnWsl(
-      'paddle-vllm',
-      [
-        `cd ${shellQuote(wslRoot)} &&`,
-        `CUDA_VISIBLE_DEVICES=${cuda}`,
-        shellQuote(vllmPython),
-        shellQuote(vllmBin),
-        'serve PaddlePaddle/PaddleOCR-VL-1.6',
-        '--host 0.0.0.0 --port 8118',
-        '--served-model-name PaddleOCR-VL-1.6-0.9B',
-        '--trust-remote-code',
-        ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
-      ].join(' '),
-    );
-    await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000, paddleVllm);
-  } else {
-    console.log('[dev] PaddleOCR-VL (8118) skipped: text path uses PP-StructureV3 (set OCR_VL_ENABLED=1 to enable VL)');
-  }
 
   await ensurePortFree(8080, 'has-text-vllm', wslHost);
   const hasTextVllm = spawnWsl(
@@ -380,6 +360,31 @@ async function startVllmServices() {
       ].join(' '),
     );
     await waitJson(`http://${wslHost}:8091/v1/models`, (body) => Array.isArray(body.data), 'locate-lm-vllm', 720000, locateLmVllm);
+  }
+
+  // PaddleOCR-VL last: vLLM's KV sizing charges concurrent residents against
+  // its own budget window, and the LocateAnything LM (the largest engine) only
+  // initializes cleanly when 8118 is not yet resident. The steady-state mix
+  // fits; the order is what makes the cold start deterministic.
+  if (ocrVlEnabled) {
+    await ensurePortFree(8118, 'paddle-vllm', wslHost);
+    const paddleVllm = spawnWsl(
+      'paddle-vllm',
+      [
+        `cd ${shellQuote(wslRoot)} &&`,
+        `CUDA_VISIBLE_DEVICES=${cuda}`,
+        shellQuote(vllmPython),
+        shellQuote(vllmBin),
+        'serve PaddlePaddle/PaddleOCR-VL-1.6',
+        '--host 0.0.0.0 --port 8118',
+        '--served-model-name PaddleOCR-VL-1.6-0.9B',
+        '--trust-remote-code',
+        ...splitArgs(env.VLLM_EXTRA_ARGS).map(shellQuote),
+      ].join(' '),
+    );
+    await waitJson(`http://${wslHost}:8118/v1/models`, (body) => Array.isArray(body.data), 'paddle-vllm', 720000, paddleVllm);
+  } else {
+    console.log('[dev] PaddleOCR-VL (8118) skipped: text path uses PP-StructureV3 (set OCR_VL_ENABLED=1 to enable VL)');
   }
 }
 
