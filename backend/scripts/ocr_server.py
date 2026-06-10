@@ -266,7 +266,7 @@ def get_structure_engine() -> Any | None:
         from paddleocr import PPStructureV3
 
         _structure = PPStructureV3(
-            use_table_recognition=True,
+            use_table_recognition=False,  # 表格识别会把单元格重新 OCR 一遍，按表格几何重投到错误列/重复出框（同源于 seal 的伪坐标病理）；普通行检测已完整覆盖表格内印刷体数字
             use_seal_recognition=False,  # 公章由 LocateAnything 负责；关掉避免印章曲文被去扭曲后堆到左上角伪坐标
             use_formula_recognition=False,
             use_chart_recognition=False,
@@ -726,7 +726,7 @@ def extract_structure(image: Image.Image, request: StructureRequest) -> list[OCR
     try:
         outputs = engine.predict(
             temp_path,
-            use_table_recognition=True,
+            use_table_recognition=False,  # 表格识别会把单元格重新 OCR 一遍，按表格几何重投到错误列/重复出框（同源于 seal 的伪坐标病理）；普通行检测已完整覆盖表格内印刷体数字
             use_seal_recognition=False,  # 公章由 LocateAnything 负责；关掉避免印章曲文被去扭曲后堆到左上角伪坐标
             use_formula_recognition=False,
             use_chart_recognition=False,
