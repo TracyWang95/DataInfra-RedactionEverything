@@ -2782,10 +2782,13 @@ def match_entities_to_ocr(
                             continue
                         if not is_table_virtual and amount_signature:
                             direct_amount_signatures.add(amount_signature)
-                    # Exact pixels from per-character OCR boxes when they spell
-                    # this block's text; otherwise mask the whole block (safe). No
-                    # proportional estimation, no thresholds — the box is the union
-                    # of the entity's real character boxes (handwriting included).
+                    # Value-level crop: narrow x to the entity's real character
+                    # boxes when they spell this block's text; otherwise mask the
+                    # whole block (safe). No proportional estimation, no
+                    # thresholds — x is the union of the entity's real character
+                    # boxes (handwriting included). y/height stay the block's full
+                    # line height (705318c contract: a single-line OCR block keeps
+                    # its full vertical extent so the mask always covers the glyphs).
                     rl, rt, rw, rh = block.left, block.top, block.width, block.height
                     if block_chars_aligned:
                         # block.chars are word/token boxes (a token may be several
@@ -2804,11 +2807,9 @@ def match_entities_to_ocr(
                             cursor += clen
                         if run:
                             cx1 = min(c["x1"] for c in run)
-                            cy1 = min(c["y1"] for c in run)
                             cx2 = max(c["x2"] for c in run)
-                            cy2 = max(c["y2"] for c in run)
-                            if cx2 > cx1 and cy2 > cy1:
-                                rl, rt, rw, rh = cx1, cy1, cx2 - cx1, cy2 - cy1
+                            if cx2 > cx1:
+                                rl, rw = cx1, cx2 - cx1
                     regions.append(SensitiveRegion(
                         text=visual_text,
                         entity_type=contextual_type,

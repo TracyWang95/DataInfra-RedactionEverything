@@ -161,6 +161,57 @@ def test_short_value_attaches_by_equality_or_isolated_token_only() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Value-level crop: a 标签：值 row keeps the value's char-box x span, full row height
+# ---------------------------------------------------------------------------
+
+def test_value_level_crop_narrows_x_keeps_full_row_height() -> None:
+    # A whole-line OCR block "甲方（采购方）：北京智算科技有限公司" with aligned
+    # per-character boxes. The ORG value occupies only the right part of the
+    # line; the box must cover the value's character span in x and keep the
+    # block's full vertical extent (705318c), not collapse to the char-y union.
+    label = "甲方（采购方）："
+    value = "北京智算科技有限公司"
+    text = label + value
+    block = _block(
+        text, 40, 168, height=20,
+        chars=_token_chars(list(text), 40, 168, height=20),
+    )
+    # The whole block spans 40 .. 40 + 10*len(text); the value starts after the
+    # label, so its left edge is the label's pixel width past the block left.
+    value_left = 40 + 10 * len(label)
+    value_right = 40 + 10 * len(text)
+
+    regions = match_entities_to_ocr(
+        [block], [{"type": "INSTITUTION_NAME", "text": value}],
+    )
+
+    assert len(regions) == 1
+    region = regions[0]
+    # x cropped to the value's character-box union (label excluded).
+    assert region.left == value_left
+    assert region.left + region.width == value_right
+    assert region.left > block.left  # strictly narrower than the whole line
+    # y/height stay the block's full row height.
+    assert region.top == block.top
+    assert region.height == block.height
+
+
+def test_value_level_crop_falls_back_to_whole_block_without_chars() -> None:
+    # No char boxes (e.g. a PaddleOCR-VL coarse multi-value line): the safety net
+    # masks the whole block rather than estimate a sub-span.
+    text = "法定代表人/授权代表（签字）：张伟"
+    block = _block(text, 40, 1360, width=380, height=24)
+
+    regions = match_entities_to_ocr([block], [{"type": "PERSON", "text": "张伟"}])
+
+    assert len(regions) == 1
+    region = regions[0]
+    assert (region.left, region.top, region.width, region.height) == (
+        block.left, block.top, block.width, block.height,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Gap 3: new atomic types
 # ---------------------------------------------------------------------------
 
