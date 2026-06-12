@@ -1,0 +1,113 @@
+# Preferred model-stack compose file. Keep backend/frontend in the root compose.
+#
+# Example:
+#   docker compose -f model-deployments/docker-compose.models.yml --profile balanced-local up -d
+
+services:
+  has-text-ner:
+    image: "${HAS_TEXT_IMAGE:-vllm/vllm-openai:v0.19.1}"
+    profiles: ["balanced-local", "mineru-document", "has-image-glm"]
+    ports:
+      - "${NER_PORT:-8080}:8080"
+    volumes:
+      - "${MODEL_ROOT:-../backend/models}:/models"
+    environment:
+      HF_HOME: /models/.cache
+    command:
+      - --model
+      - /models/has/HaS_Text_0209_0.6B
+      - --served-model-name
+      - HaS_Text_0209_0.6B
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --trust-remote-code
+      - --dtype
+      - bfloat16
+      - --max-model-len
+      - "4096"
+      - --gpu-memory-utilization
+      - "0.18"
+      - --enforce-eager
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - redaction-models
+    restart: unless-stopped
+
+  paddleocr-vl:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.ocr
+    profiles: ["balanced-local", "has-image-glm"]
+    ports:
+      - "${OCR_PORT:-8082}:8082"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - redaction-models
+    restart: unless-stopped
+
+  mineru-pipeline:
+    image: "${MINERU_IMAGE:-data-infra/mineru-pipeline:latest}"
+    profiles: ["mineru-document"]
+    ports:
+      - "${MINERU_PORT:-8083}:8083"
+    environment:
+      MINERU_PORT: "8083"
+    networks:
+      - redaction-models
+    restart: unless-stopped
+
+  locateanything:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile.locateanything
+    profiles: ["balanced-local", "mineru-document"]
+    ports:
+      - "${VISUAL_FEATURES_PORT:-8090}:8090"
+    volumes:
+      - "${MODEL_ROOT:-../backend/models}:/models"
+    environment:
+      LOCATE_ANYTHING_MODEL: /models/locateanything/LocateAnything-3B-HF
+      LOCATE_ANYTHING_BACKEND: hf
+      LOCATE_ANYTHING_DTYPE: bfloat16
+      LOCATE_ANYTHING_PORT: "8090"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - redaction-models
+    restart: unless-stopped
+
+  has-image-glm:
+    image: "${HAS_IMAGE_GLM_IMAGE:-data-infra/has-image-glm:latest}"
+    profiles: ["has-image-glm"]
+    ports:
+      - "${HAS_IMAGE_GLM_PORT:-8091}:8091"
+    environment:
+      HAS_IMAGE_GLM_PORT: "8091"
+      HAS_IMAGE_DETECTOR: yolo11
+      HAS_IMAGE_VLM: glm-4.6v-flash
+    networks:
+      - redaction-models
+    restart: unless-stopped
+
+networks:
+  redaction-models:
+    driver: bridge

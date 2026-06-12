@@ -163,6 +163,7 @@ export interface ModelConfig {
   id: string;
   name: string;
   provider: 'local' | 'openai' | 'custom';
+  task_type: ModelTaskType;
   enabled: boolean;
   base_url?: string;
   api_key?: string;
@@ -174,19 +175,40 @@ export interface ModelConfig {
   description?: string;
 }
 
+export type ModelTaskType = 'text_ner' | 'ocr' | 'visual_feature';
+
 interface ModelConfigList {
   configs: ModelConfig[];
   active_id?: string;
+  active_by_task?: Record<ModelTaskType, string>;
+  preset_id?: string;
+}
+
+export interface ModelConfigPreset {
+  id: string;
+  name: string;
+  description: string;
+  active_by_task: Record<ModelTaskType, string>;
+  recommended_chips: string[];
 }
 interface BuiltinServiceLive {
   paddle?: 'online' | 'offline';
+  text_ner?: 'online' | 'offline';
   visual_features?: 'online' | 'offline';
 }
 
-export const BUILTIN_VISION_IDS = new Set(['paddle_ocr_service', 'visual_features_service']);
+export const BUILTIN_MODEL_IDS = new Set([
+  'has_text_0209_06b',
+  'paddle_ocr_service',
+  'mineru_pipeline_service',
+  'visual_features_service',
+  'has_image_yolo11_glm46v_flash',
+]);
+export const BUILTIN_VISION_IDS = BUILTIN_MODEL_IDS;
 
 export const DEFAULT_MODEL_FORM: Partial<ModelConfig> = {
   provider: 'local',
+  task_type: 'visual_feature',
   temperature: 0.8,
   top_p: 0.6,
   max_tokens: 4096,
@@ -197,7 +219,10 @@ export function useVisionModelConfig() {
   const [modelConfigs, setModelConfigs] = useState<ModelConfigList>({
     configs: [],
     active_id: undefined,
+    active_by_task: undefined,
+    preset_id: undefined,
   });
+  const [presets, setPresets] = useState<ModelConfigPreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [builtinLive, setBuiltinLive] = useState<BuiltinServiceLive | null>(null);
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
@@ -220,6 +245,11 @@ export function useVisionModelConfig() {
       setModelConfigs({
         configs,
         active_id: typeof data?.active_id === 'string' ? data.active_id : undefined,
+        active_by_task:
+          data?.active_by_task && typeof data.active_by_task === 'object'
+            ? (data.active_by_task as Record<ModelTaskType, string>)
+            : undefined,
+        preset_id: typeof data?.preset_id === 'string' ? data.preset_id : undefined,
       });
     } catch (err) {
       if (import.meta.env.DEV) console.error('fetch model configs failed', err);
@@ -228,13 +258,26 @@ export function useVisionModelConfig() {
     }
   }, []);
 
+  const fetchPresets = useCallback(async () => {
+    try {
+      const res = await fetchWithTimeout('/api/v1/model-config/presets', { timeoutMs: 25000 });
+      if (!res.ok) throw new Error('fetch failed');
+      const data = await res.json().catch(() => ({}));
+      setPresets(Array.isArray(data?.presets) ? data.presets : []);
+    } catch (err) {
+      if (import.meta.env.DEV) console.error('fetch model presets failed', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchModelConfigs();
-  }, [fetchModelConfigs]);
+    fetchPresets();
+  }, [fetchModelConfigs, fetchPresets]);
 
   useEffect(() => {
     setBuiltinLive({
       paddle: normalizeServiceLive(health?.services?.paddle_ocr?.status),
+      text_ner: normalizeServiceLive(health?.services?.has_ner?.status),
       visual_features: normalizeServiceLive(health?.services?.visual_features?.status),
     });
   }, [health]);
@@ -251,8 +294,9 @@ export function useVisionModelConfig() {
       const payload = {
         ...sanitizedForm,
         id: configId,
+        task_type: sanitizedForm.task_type ?? 'visual_feature',
         enabled:
-          editingId && BUILTIN_VISION_IDS.has(editingId) ? true : (sanitizedForm.enabled ?? true),
+          editingId && BUILTIN_MODEL_IDS.has(editingId) ? true : (sanitizedForm.enabled ?? true),
       };
       const url = editingId ? `/api/v1/model-config/${editingId}` : '/api/v1/model-config';
       const method = editingId ? 'PUT' : 'POST';
@@ -312,11 +356,29 @@ export function useVisionModelConfig() {
     if (res.ok) await fetchModelConfigs();
   }, [fetchModelConfigs]);
 
+  const applyPreset = useCallback(
+    async (presetId: string) => {
+      const res = await authFetch(`/api/v1/model-config/presets/${presetId}/apply`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        await fetchModelConfigs();
+        return true;
+      }
+      const data = await res.json().catch(() => ({}));
+      showToast((data as { detail?: string }).detail || t('settings.saveFailed'), 'error');
+      return false;
+    },
+    [fetchModelConfigs],
+  );
+
   const setActiveModelConfig = useCallback(
-    async (configId: string) => {
+    async (configId: string, taskType: ModelTaskType = 'visual_feature') => {
       setSettingActiveModelId(configId);
       try {
-        const res = await authFetch(`/api/v1/model-config/active/${configId}`, { method: 'POST' });
+        const res = await authFetch(`/api/v1/model-config/tasks/${taskType}/active/${configId}`, {
+          method: 'POST',
+        });
         if (res.ok) {
           await fetchModelConfigs();
           return true;
@@ -340,6 +402,7 @@ export function useVisionModelConfig() {
 
   const liveForBuiltin = useCallback(
     (configId: string): 'online' | 'offline' | undefined => {
+      if (configId === 'has_text_0209_06b') return builtinLive?.text_ner;
       if (configId === 'paddle_ocr_service') return builtinLive?.paddle;
       if (configId === 'visual_features_service') return builtinLive?.visual_features;
       return undefined;
@@ -362,6 +425,7 @@ export function useVisionModelConfig() {
 
   return {
     modelConfigs,
+    presets,
     loading,
     builtinLive,
     testingModelId,
@@ -371,6 +435,7 @@ export function useVisionModelConfig() {
     deleteModelConfig,
     testModelConfig,
     resetModelConfigs,
+    applyPreset,
     setActiveModelConfig,
     liveForBuiltin,
     getProviderLabel,

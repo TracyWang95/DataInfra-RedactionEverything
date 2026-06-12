@@ -55,9 +55,6 @@ const RedactionListSettings = React.lazy(() =>
 const SystemSettings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.SystemSettings })),
 );
-const TextModelSettings = React.lazy(() =>
-  import('./features/settings').then((m) => ({ default: m.TextModelSettings })),
-);
 const VisionModelSettings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.VisionModelSettings })),
 );
@@ -361,22 +358,21 @@ export const router = createBrowserRouter([
           </LazyPage>
         ),
       },
-      { path: 'model-settings', element: <Navigate to="/model-settings/text" replace /> },
       {
-        path: 'model-settings/text',
-        element: (
-          <LazyPage>
-            <TextModelSettings />
-          </LazyPage>
-        ),
-      },
-      {
-        path: 'model-settings/vision',
+        path: 'model-settings',
         element: (
           <LazyPage>
             <VisionModelSettings />
           </LazyPage>
         ),
+      },
+      {
+        path: 'model-settings/text',
+        element: <Navigate to="/model-settings" replace />,
+      },
+      {
+        path: 'model-settings/vision',
+        element: <Navigate to="/model-settings" replace />,
       },
       { path: '*', element: <NotFound /> },
     ],

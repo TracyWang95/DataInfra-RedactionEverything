@@ -3,7 +3,10 @@
 # CPU API/frontend only:
 #   docker compose up -d
 #
-# Full GPU model stack:
+# Preferred model-only deployment module:
+#   docker compose -f model-deployments/docker-compose.models.yml --profile balanced-local up -d
+#
+# Legacy full GPU model stack kept for compatibility:
 #   docker compose --profile gpu up -d
 
 services:

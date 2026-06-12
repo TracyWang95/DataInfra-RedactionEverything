@@ -18,9 +18,9 @@ export function useVisionModelForm(
   const [form, setForm] = useState<Partial<ModelConfig>>({ ...DEFAULT_MODEL_FORM });
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
-  const openAdd = useCallback(() => {
+  const openAdd = useCallback((taskType: ModelConfig['task_type'] = 'visual_feature') => {
     setEditingId(null);
-    setForm({ ...DEFAULT_MODEL_FORM, enabled: true });
+    setForm({ ...DEFAULT_MODEL_FORM, task_type: taskType, enabled: true });
     setShowModal(true);
   }, []);
 

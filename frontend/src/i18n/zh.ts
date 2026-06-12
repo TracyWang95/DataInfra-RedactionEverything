@@ -2655,6 +2655,28 @@ Object.assign(zhOverrides, {
   'structured.delivery.checklist.notCreated': '未创建',
 });
 
+Object.assign(zhOverrides, {
+  'nav.modelConfig.sub': 'NER、OCR 与视觉定位',
+  'page.modelConfig.title': '模型配置',
+  'page.modelConfig.sub': '选择文本、OCR 与视觉定位模型',
+  'settings.modelConfig.title': '模型配置',
+  'settings.modelConfig.infoDesc':
+    '按能力槽位选择当前使用的模型。保存或切换后，后端会立即使用新的文本 NER、OCR 或视觉定位配置。',
+  'settings.modelConfig.presetsTitle': '预制套餐',
+  'settings.modelConfig.presetsDesc':
+    '运维可以先套用推荐组合，再按机器芯片、显存和本地服务地址微调单个模型。',
+  'settings.modelConfig.taskLabel': '任务类型',
+  'settings.modelConfig.task.text_ner': '文本语义 NER',
+  'settings.modelConfig.task.ocr': 'OCR 模型',
+  'settings.modelConfig.task.visual_feature': '视觉特征定位',
+  'settings.modelConfig.taskDesc.text_ner':
+    '用于文本、OCR 文本和结构化字段的语义实体识别，默认 HaS_Text_0209_0.6B，也支持自定义 OpenAI 兼容端点。',
+  'settings.modelConfig.taskDesc.ocr':
+    '用于图片与扫描 PDF 的文本、版面和表格抽取，可选择 PaddleOCR-VL、MinerU Pipeline 或自定义适配服务。',
+  'settings.modelConfig.taskDesc.visual_feature':
+    '用于定位人脸、印章、签名、证件、二维码和自定义视觉目标，可选择 HaS Image/GLM、LocateAnything 或自定义服务。',
+});
+
 export const zh: Record<string, string> = {
   ...zhBase,
   ...zhOverrides,

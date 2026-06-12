@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "stop": "node scripts/stop-dev.mjs",
-    "frontend:dev": "npm --prefix frontend run dev"
+    "frontend:dev": "npm --prefix frontend run dev",
+    "models:compose": "powershell -ExecutionPolicy Bypass -File model-deployments/scripts/render-compose.ps1"
   },
   "engines": {
     "node": ">=24 <25"

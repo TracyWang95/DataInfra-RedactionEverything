@@ -308,6 +308,8 @@ def check_has_ner() -> tuple:
 
 
 def _has_text_runtime_detail() -> dict[str, Any]:
+    from app.services import model_config_service
+
     runtime = _runtime_config_value("HAS_TEXT_RUNTIME").lower()
     if runtime == "vllm":
         return {
@@ -320,7 +322,7 @@ def _has_text_runtime_detail() -> dict[str, Any]:
             "device": "CUDA0",
             "cpu_fallback_risk": False,
             "runtime_expectation": "cuda-gpu",
-            "model": _runtime_config_value("HAS_TEXT_MODEL_NAME") or "HaS_4.0_0.6B",
+            "model": model_config_service.get_text_ner_model_name(),
         }
     gpu_layers = _runtime_config_value("HAS_TEXT_N_GPU_LAYERS") or "-1"
     device = _runtime_config_value("HAS_TEXT_DEVICE")
@@ -351,8 +353,11 @@ def _has_text_runtime_detail() -> dict[str, Any]:
 
 
 def get_visual_features_runtime_detail() -> dict[str, Any]:
+    from app.services import model_config_service
+
     device = _runtime_config_value("LOCATE_ANYTHING_DEVICE") or "cuda"
     provider = _infer_gpu_provider(device)
+    config = model_config_service.get_visual_features_config()
     return {
         "runtime": "transformers-locateanything",
         "runtime_mode": "gpu",
@@ -363,6 +368,7 @@ def get_visual_features_runtime_detail() -> dict[str, Any]:
         "gpu_only_mode": True,
         "cpu_fallback_risk": False,
         "runtime_expectation": "cuda-gpu",
+        "model": config.model_name if config else None,
         "max_new_tokens": int(_runtime_config_value("LOCATE_ANYTHING_MAX_NEW_TOKENS") or 8192),
     }
 

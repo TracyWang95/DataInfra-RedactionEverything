@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { BUILTIN_VISION_IDS, type ModelConfig } from './hooks/use-model-config';
+import { BUILTIN_MODEL_IDS, type ModelConfig } from './hooks/use-model-config';
 
 export interface VisionModelDialogProps {
   open: boolean;
@@ -41,6 +41,7 @@ export function VisionModelDialog({
   onUpdateForm,
 }: VisionModelDialogProps) {
   const t = useT();
+  const builtinLocked = Boolean(editingId && BUILTIN_MODEL_IDS.has(editingId));
 
   return (
     <Dialog
@@ -72,6 +73,30 @@ export function VisionModelDialog({
             </div>
 
             <div className="space-y-1">
+              <Label className="text-xs">{t('settings.modelConfig.taskLabel')} *</Label>
+              <Select
+                value={form.task_type ?? 'visual_feature'}
+                disabled={builtinLocked}
+                onValueChange={(value) =>
+                  onUpdateForm({ task_type: value as ModelConfig['task_type'] })
+                }
+              >
+                <SelectTrigger data-testid="vision-model-task">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text_ner">{t('settings.modelConfig.task.text_ner')}</SelectItem>
+                  <SelectItem value="ocr">{t('settings.modelConfig.task.ocr')}</SelectItem>
+                  <SelectItem value="visual_feature">
+                    {t('settings.modelConfig.task.visual_feature')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
               <Label className="text-xs">{t('settings.visionModel.providerLabel')} *</Label>
               <Select
                 value={form.provider ?? 'local'}
@@ -93,9 +118,7 @@ export function VisionModelDialog({
                 </SelectContent>
               </Select>
             </div>
-          </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs">{t('settings.visionModel.modelLabel')} *</Label>
               <Input
@@ -188,16 +211,14 @@ export function VisionModelDialog({
 
           <div className="flex items-center gap-3 rounded-xl border border-border/70 bg-muted/30 px-3 py-2">
             <Switch
-              checked={
-                editingId && BUILTIN_VISION_IDS.has(editingId) ? true : (form.enabled ?? true)
-              }
-              disabled={Boolean(editingId && BUILTIN_VISION_IDS.has(editingId))}
+              checked={builtinLocked ? true : (form.enabled ?? true)}
+              disabled={builtinLocked}
               onCheckedChange={(checked) => onUpdateForm({ enabled: checked })}
               data-testid="vision-model-enabled"
             />
             <Label className="text-sm leading-5">
               {t('settings.visionModel.enabledLabel')}
-              {editingId && BUILTIN_VISION_IDS.has(editingId) && (
+              {builtinLocked && (
                 <span className="text-muted-foreground">
                   {' '}
                   {t('settings.visionModel.enabledBuiltinHint')}

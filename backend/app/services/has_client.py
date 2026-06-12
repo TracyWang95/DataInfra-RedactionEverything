@@ -161,8 +161,11 @@ class HaSClient:
         }
         if max_tokens is not None:
             payload["max_tokens"] = max(_MIN_CALL_MAX_TOKENS, int(max_tokens))
-        if settings.HAS_TEXT_MODEL_NAME:
-            payload["model"] = settings.HAS_TEXT_MODEL_NAME
+        from app.services import model_config_service
+
+        model_name = model_config_service.get_text_ner_model_name()
+        if model_name:
+            payload["model"] = model_name
         started = time.perf_counter()
         response = retry_sync(
             self._do_chat_request, base, payload,

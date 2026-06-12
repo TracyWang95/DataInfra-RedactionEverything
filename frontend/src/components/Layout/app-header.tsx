@@ -133,11 +133,7 @@ function getPageHeader(
     '/single': { title: t('playground.title'), sub: t('page.playground.sub') },
     '/playground': { title: t('playground.title'), sub: t('page.playground.sub') },
     '/history': { title: t('page.history.title'), sub: t('page.history.sub') },
-    '/model-settings/text': { title: t('page.textModel.title'), sub: t('page.textModel.sub') },
-    '/model-settings/vision': {
-      title: t('page.visionModel.title'),
-      sub: t('page.visionModel.sub'),
-    },
+    '/model-settings': { title: t('page.modelConfig.title'), sub: t('page.modelConfig.sub') },
   };
 
   return map[pathname] || { title: t('nav.playground') };

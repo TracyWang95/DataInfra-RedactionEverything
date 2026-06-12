@@ -553,18 +553,9 @@ settings = get_settings()
 
 def get_has_chat_base_url() -> str:
     """Return the OpenAI-compatible base URL used by HaS Text."""
-    s = get_settings()
-    if s.HAS_TEXT_RUNTIME.strip().lower() == "vllm":
-        return _resolve_wsl_localhost_url(s.HAS_TEXT_VLLM_BASE_URL)
-    if s.HAS_BASE_URL:
-        return _resolve_wsl_localhost_url(s.HAS_BASE_URL)
-    if s.HAS_LLAMACPP_BASE_URL:
-        return _resolve_wsl_localhost_url(s.HAS_LLAMACPP_BASE_URL)
-    from app.core.ner_runtime import load_ner_runtime
-    rt = load_ner_runtime()
-    if rt is not None:
-        return _resolve_wsl_localhost_url(rt.llamacpp_base_url)
-    return _resolve_wsl_localhost_url("http://127.0.0.1:8080/v1")
+    from app.services import model_config_service
+
+    return _resolve_wsl_localhost_url(model_config_service.get_text_ner_base_url())
 
 
 def get_has_health_check_url() -> str:
@@ -578,7 +569,6 @@ def get_has_display_name() -> str:
     custom = (os.environ.get("HAS_NER_DISPLAY_NAME") or "").strip()
     if custom:
         return custom
-    s = get_settings()
-    if s.HAS_TEXT_MODEL_NAME:
-        return s.HAS_TEXT_MODEL_NAME
-    return "HaS-Text-0209-Q4"
+    from app.services import model_config_service
+
+    return model_config_service.get_text_ner_model_name()

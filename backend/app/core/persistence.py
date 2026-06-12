@@ -3,8 +3,6 @@ import os
 from enum import Enum
 from typing import Any
 
-import aiofiles
-
 
 def to_jsonable(value: Any) -> Any:
     if hasattr(value, "model_dump"):
@@ -29,7 +27,7 @@ def load_json(path: str, default: Any | None = None) -> Any:
 
 
 def save_json(path: str, data: Any) -> None:
-    """同步写入 JSON（用于启动阶段等非异步上下文）。"""
+    """Synchronously write JSON with atomic replace."""
     if not path:
         return
     directory = os.path.dirname(path)
@@ -44,7 +42,9 @@ def save_json(path: str, data: Any) -> None:
 
 
 async def save_json_async(path: str, data: Any) -> None:
-    """异步写入 JSON，避免阻塞事件循环（用于请求处理上下文）。"""
+    """Asynchronously write JSON with atomic replace."""
+    import aiofiles
+
     if not path:
         return
     directory = os.path.dirname(path)
@@ -55,5 +55,4 @@ async def save_json_async(path: str, data: Any) -> None:
     async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
         await f.write(content)
         await f.flush()
-        # aiofiles 不直接支持 fsync，在非关键路径可接受
     os.replace(tmp_path, path)

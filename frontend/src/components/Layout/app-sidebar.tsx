@@ -121,6 +121,16 @@ export function AppSidebar() {
     ...(isAdmin
       ? [
           {
+            path: '/model-settings',
+            label: t('nav.modelConfig'),
+            sublabel: t('nav.modelConfig.sub'),
+            icon: ModelIcon,
+          },
+        ]
+      : []),
+    ...(isAdmin
+      ? [
+          {
             path: '/settings/system',
             label: t('nav.systemSettings'),
             sublabel: t('nav.systemSettings.sub'),
@@ -259,7 +269,7 @@ function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string
 
 function isNavActive(item: NavItem, pathname: string): boolean {
   if (item.path === '/settings') {
-    return pathname === '/settings' || pathname.startsWith('/model-settings');
+    return pathname === '/settings';
   }
   if (item.end) return pathname === item.path;
   return pathname === item.path || pathname.startsWith(item.path + '/');

@@ -460,6 +460,7 @@ async def services_health():
     ocr_url = f"{model_config_service.get_paddle_ocr_base_url()}/health"
     ocr_timeout = float(settings.OCR_HEALTH_PROBE_TIMEOUT)
     visual_base = model_config_service.get_visual_features_base_url()
+    visual_config = model_config_service.get_visual_features_config()
     visual_models_url = (
         f"{visual_base}/models"
         if visual_base.rstrip("/").endswith("/v1")
@@ -468,7 +469,7 @@ async def services_health():
     ocr_result, has_result, visual_detect_result, visual_chat_result = await asyncio.gather(
         loop.run_in_executor(
             None,
-            lambda: check_ocr_health_sync(ocr_url, "PaddleOCR-VL-1.6-0.9B", ocr_timeout),
+            lambda: check_ocr_health_sync(ocr_url, model_config_service.get_ocr_model_name(), ocr_timeout),
         ),
         loop.run_in_executor(None, check_has_ner_health),
         loop.run_in_executor(
@@ -483,7 +484,7 @@ async def services_health():
             None,
             lambda: check_service_health_sync(
                 visual_models_url,
-                settings.VISUAL_FEATURES_MODEL_NAME,
+                visual_config.model_name if visual_config else settings.VISUAL_FEATURES_MODEL_NAME,
                 timeout=3.0,
                 service_kind="visual_features",
             ),

@@ -2709,6 +2709,28 @@ Object.assign(enOverrides, {
   'structured.delivery.checklist.notCreated': 'Not created',
 });
 
+Object.assign(enOverrides, {
+  'nav.modelConfig.sub': 'NER, OCR, and visual localization',
+  'page.modelConfig.title': 'Model Configuration',
+  'page.modelConfig.sub': 'Choose text, OCR, and visual localization models',
+  'settings.modelConfig.title': 'Model Configuration',
+  'settings.modelConfig.infoDesc':
+    'Choose the active model for each capability slot. Saves and switches apply immediately to text NER, OCR, and visual localization.',
+  'settings.modelConfig.presetsTitle': 'Predefined presets',
+  'settings.modelConfig.presetsDesc':
+    'Operators can apply a recommended bundle first, then tune each model by chip type, memory, and local service URL.',
+  'settings.modelConfig.taskLabel': 'Task type',
+  'settings.modelConfig.task.text_ner': 'Text semantic NER',
+  'settings.modelConfig.task.ocr': 'OCR model',
+  'settings.modelConfig.task.visual_feature': 'Visual feature localization',
+  'settings.modelConfig.taskDesc.text_ner':
+    'Semantic entity recognition for text, OCR text, and structured fields. Defaults to HaS_Text_0209_0.6B and supports custom OpenAI-compatible endpoints.',
+  'settings.modelConfig.taskDesc.ocr':
+    'Text, layout, and table extraction for images and scanned PDFs. Choose PaddleOCR-VL, MinerU Pipeline, or a custom adapter service.',
+  'settings.modelConfig.taskDesc.visual_feature':
+    'Localization for faces, seals, signatures, IDs, QR codes, and custom visual targets. Choose HaS Image/GLM, LocateAnything, or a custom service.',
+});
+
 export const en: Record<string, string> = {
   ...enBase,
   ...enOverrides,

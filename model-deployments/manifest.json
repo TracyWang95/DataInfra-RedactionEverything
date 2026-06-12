@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "text_ner",
+      "display_name": "Text semantic NER",
+      "default_model_id": "has_text_0209_06b",
+      "models": [
+        {
+          "id": "has_text_0209_06b",
+          "display_name": "HaS_Text_0209_0.6B",
+          "model_name": "HaS_Text_0209_0.6B",
+          "service_name": "has-text-ner",
+          "base_url": "http://has-text-ner:8080/v1",
+          "host_port_env": "NER_PORT",
+          "default_host_port": 8080,
+          "internal_port": 8080,
+          "health_path": "/v1/models",
+          "image_env": "HAS_TEXT_IMAGE",
+          "default_image": "vllm/vllm-openai:v0.19.1",
+          "supported_chips": ["nvidia-cuda", "custom"],
+          "volumes": ["${MODEL_ROOT:-./backend/models}:/models"],
+          "environment": {
+            "HF_HOME": "/models/.cache"
+          },
+          "command": [
+            "--model",
+            "/models/has/HaS_Text_0209_0.6B",
+            "--served-model-name",
+            "HaS_Text_0209_0.6B",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "8080",
+            "--trust-remote-code",
+            "--dtype",
+            "bfloat16",
+            "--max-model-len",
+            "4096",
+            "--gpu-memory-utilization",
+            "0.18",
+            "--enforce-eager"
+          ]
+        },
+        {
+          "id": "custom_text_ner",
+          "display_name": "Custom text NER endpoint",
+          "external": true,
+          "model_name": "custom-text-ner",
+          "base_url": "http://127.0.0.1:8080/v1",
+          "supported_chips": ["custom"]
+        }
+      ]
+    },
+    {
+      "id": "ocr",
+      "display_name": "OCR model",
+      "default_model_id": "paddle_ocr_service",
+      "models": [
+        {
+          "id": "paddle_ocr_service",
+          "display_name": "PaddleOCR-VL 1.6 + PP-StructureV3",
+          "model_name": "PaddleOCR-VL-1.6",
+          "service_name": "paddleocr-vl",
+          "base_url": "http://paddleocr-vl:8082",
+          "host_port_env": "OCR_PORT",
+          "default_host_port": 8082,
+          "internal_port": 8082,
+          "health_path": "/health",
+          "build_context": "../backend",
+          "dockerfile": "Dockerfile.ocr",
+          "supported_chips": ["nvidia-cuda", "custom"],
+          "environment": {
+            "OCR_PORT": "8082"
+          }
+        },
+        {
+          "id": "mineru_pipeline_service",
+          "display_name": "MinerU Pipeline",
+          "model_name": "mineru-pipeline",
+          "service_name": "mineru-pipeline",
+          "base_url": "http://mineru-pipeline:8083",
+          "host_port_env": "MINERU_PORT",
+          "default_host_port": 8083,
+          "internal_port": 8083,
+          "health_path": "/health",
+          "image_env": "MINERU_IMAGE",
+          "default_image": "data-infra/mineru-pipeline:latest",
+          "supported_chips": ["nvidia-cuda", "ascend-npu", "custom"],
+          "environment": {
+            "MINERU_PORT": "8083"
+          }
+        },
+        {
+          "id": "custom_ocr",
+          "display_name": "Custom OCR adapter",
+          "external": true,
+          "model_name": "custom-ocr",
+          "base_url": "http://127.0.0.1:8082",
+          "supported_chips": ["custom"]
+        }
+      ]
+    },
+    {
+      "id": "visual_feature",
+      "display_name": "Visual feature localization",
+      "default_model_id": "visual_features_service",
+      "models": [
+        {
+          "id": "visual_features_service",
+          "display_name": "LocateAnything-3B-HF",
+          "model_name": "LocateAnything-3B-HF",
+          "service_name": "locateanything",
+          "base_url": "http://locateanything:8090",
+          "host_port_env": "VISUAL_FEATURES_PORT",
+          "default_host_port": 8090,
+          "internal_port": 8090,
+          "health_path": "/health",
+          "build_context": "../backend",
+          "dockerfile": "Dockerfile.locateanything",
+          "supported_chips": ["nvidia-cuda", "custom"],
+          "volumes": ["${MODEL_ROOT:-./backend/models}:/models"],
+          "environment": {
+            "LOCATE_ANYTHING_MODEL": "/models/locateanything/LocateAnything-3B-HF",
+            "LOCATE_ANYTHING_BACKEND": "hf",
+            "LOCATE_ANYTHING_DTYPE": "bfloat16",
+            "LOCATE_ANYTHING_PORT": "8090"
+          }
+        },
+        {
+          "id": "has_image_yolo11_glm46v_flash",
+          "display_name": "HaS Image YOLO11 + GLM-4.6V-Flash",
+          "model_name": "has-image-yolo11+glm-4.6v-flash",
+          "service_name": "has-image-glm",
+          "base_url": "http://has-image-glm:8091",
+          "host_port_env": "HAS_IMAGE_GLM_PORT",
+          "default_host_port": 8091,
+          "internal_port": 8091,
+          "health_path": "/health",
+          "image_env": "HAS_IMAGE_GLM_IMAGE",
+          "default_image": "data-infra/has-image-glm:latest",
+          "supported_chips": ["nvidia-cuda", "ascend-npu", "custom"],
+          "environment": {
+            "HAS_IMAGE_GLM_PORT": "8091",
+            "HAS_IMAGE_DETECTOR": "yolo11",
+            "HAS_IMAGE_VLM": "glm-4.6v-flash"
+          }
+        },
+        {
+          "id": "custom_visual_feature",
+          "display_name": "Custom visual adapter",
+          "external": true,
+          "model_name": "custom-visual-feature",
+          "base_url": "http://127.0.0.1:8090",
+          "supported_chips": ["custom"]
+        }
+      ]
+    }
+  ],
+  "chip_profiles": [
+    {
+      "id": "nvidia-cuda",
+      "display_name": "NVIDIA CUDA GPU",
+      "compose_device": {
+        "driver": "nvidia",
+        "count": 1,
+        "capabilities": ["gpu"]
+      }
+    },
+    {
+      "id": "cpu",
+      "display_name": "CPU or externally accelerated adapter",
+      "compose_device": null
+    },
+    {
+      "id": "ascend-npu",
+      "display_name": "Ascend NPU adapter",
+      "compose_device": null,
+      "note": "Use adapter images that expose the same HTTP contracts."
+    },
+    {
+      "id": "custom",
+      "display_name": "Externally managed service",
+      "compose_device": null
+    }
+  ],
+  "presets": [
+    {
+      "id": "balanced-local",
+      "display_name": "Balanced local",
+      "description": "HaS Text 0209 0.6B + PaddleOCR-VL 1.6 + LocateAnything-3B-HF.",
+      "active_by_task": {
+        "text_ner": "has_text_0209_06b",
+        "ocr": "paddle_ocr_service",
+        "visual_feature": "visual_features_service"
+      },
+      "recommended_chips": ["nvidia-cuda"]
+    },
+    {
+      "id": "mineru-document",
+      "display_name": "Document OCR with MinerU",
+      "description": "HaS Text 0209 0.6B + MinerU Pipeline + LocateAnything-3B-HF.",
+      "active_by_task": {
+        "text_ner": "has_text_0209_06b",
+        "ocr": "mineru_pipeline_service",
+        "visual_feature": "visual_features_service"
+      },
+      "recommended_chips": ["nvidia-cuda", "ascend-npu"]
+    },
+    {
+      "id": "has-image-glm",
+      "display_name": "HaS image and GLM vision",
+      "description": "HaS Text 0209 0.6B + PaddleOCR-VL 1.6 + HaS Image YOLO11/GLM-4.6V-Flash.",
+      "active_by_task": {
+        "text_ner": "has_text_0209_06b",
+        "ocr": "paddle_ocr_service",
+        "visual_feature": "has_image_yolo11_glm46v_flash"
+      },
+      "recommended_chips": ["nvidia-cuda", "ascend-npu"]
+    }
+  ]
+}
