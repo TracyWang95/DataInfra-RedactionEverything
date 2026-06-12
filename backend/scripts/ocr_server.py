@@ -1,24 +1,170 @@
-"""PaddleOCR-VL 1.6 sidecar service on port 8082."""
+"""
+MinerU（ModelScope / OpenDataLab）OCR 独立微服务
+端口: 8082
+与 HaS NER(8080)、HaS Image YOLO(8081) 架构一致，独立进程运行
 
-from __future__ import annotations
+API:
+  GET  /health          - 健康检查
+  POST /ocr             - OCR识别（接收图片 base64，返回文本块列表）
 
-import asyncio
-import base64
-import gc
-import math
+本地模型（推荐离线环境）:
+  先执行: python scripts/download_mineru_models_modelscope.py
+  默认目录为 <backend>/models/mineru。若该目录下存在 models/ 子目录，本服务会自动设置
+  MINERU_MODEL_SOURCE=local，并在同目录写入 / 更新 mineru.json（models-dir.pipeline）。
+  也可设置环境变量 OCR_MINERU_MODELS_DIR 指向其它已下载根目录。
+"""
+
+import json
 import os
-import tempfile
+import html as html_lib
+import re
+from pathlib import Path
+
+
+def _backend_dir() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _configure_local_mineru_models() -> None:
+    """
+    MinerU 在 MINERU_MODEL_SOURCE=local 时从 mineru.json 的 models-dir.pipeline 读取根目录，
+    该根目录下须有 models/（与 ModelScope 快照 layout 一致）。
+    检测到就绪的本地目录后，写入 mineru.json 并指向该文件，避免依赖用户家目录配置。
+    """
+    override = os.environ.get("OCR_MINERU_MODELS_DIR", "").strip()
+    root = Path(override).resolve() if override else (_backend_dir() / "models" / "mineru").resolve()
+    if not (root / "models").is_dir():
+        return
+
+    cfg_path = root / "mineru.json"
+    cfg: dict = {}
+    if cfg_path.exists():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            cfg = {}
+    cfg.setdefault("config_version", "1.3.1")
+    md = cfg.get("models-dir")
+    if not isinstance(md, dict):
+        md = {}
+    md["pipeline"] = str(root)
+    cfg["models-dir"] = md
+    try:
+        cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as e:
+        print(f"[OCR] WARN: 无法写入 {cfg_path}: {e}", flush=True)
+        return
+
+    os.environ["MINERU_TOOLS_CONFIG_JSON"] = str(cfg_path)
+    os.environ["MINERU_MODEL_SOURCE"] = "local"
+    print(f"[OCR] 使用本地 MinerU pipeline 模型目录: {root}", flush=True)
+
+
+def _configure_remote_model_env() -> None:
+    """
+    在首次导入 MinerU（内部会拉 huggingface_hub / ModelScope）之前设置：
+    - 国内常用 HF 镜像，减轻访问 huggingface.co 超时；
+    - 延长 huggingface_hub 默认 10s 超时，避免弱网下 ConnectTimeout。
+
+    均可通过环境变量在启动前覆盖。
+    """
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "120")
+    os.environ.setdefault("MODELSCOPE_DOMAIN", "www.modelscope.cn")
+
+
+_configure_remote_model_env()
+_configure_local_mineru_models()
+
+# MinerU 3.x：PPDocLayoutV2Config 在 super().__init__ 之后才设置 reading_order_config；
+# 新版 transformers 会在父类初始化期间校验并调用 to_dict()，触发 AttributeError。
+_pp_doclayout_patch_applied = False
+
+
+def _patch_mineru_pp_doclayout_config_for_transformers() -> None:
+    global _pp_doclayout_patch_applied
+    if _pp_doclayout_patch_applied:
+        return
+    if os.environ.get("OCR_SKIP_MINERU_PPDOC_LAYOUT_PATCH", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+    try:
+        import mineru.model.layout.pp_doclayoutv2 as m
+        from transformers.models.rt_detr.modeling_rt_detr import RTDetrForObjectDetection
+    except ImportError:
+        return
+
+    def _fixed_init(
+        self,
+        backbone_config=None,
+        class_thresholds=None,
+        class_order=None,
+        reading_order_config=None,
+        **kwargs,
+    ):
+        if backbone_config is None:
+            backbone_config = m._build_default_backbone_config()
+        if isinstance(reading_order_config, m.PPDocLayoutV2ReadingOrderConfig):
+            reading_order = reading_order_config
+        else:
+            reading_order = m.PPDocLayoutV2ReadingOrderConfig(**(reading_order_config or {}))
+        self.reading_order_config = reading_order
+        kwargs.pop("reading_order_config", None)
+        super(m.PPDocLayoutV2Config, self).__init__(
+            backbone_config=backbone_config,
+            class_thresholds=class_thresholds or list(m.DEFAULT_CLASS_THRESHOLDS),
+            class_order=class_order or list(m.DEFAULT_CLASS_ORDER),
+            **kwargs,
+        )
+        self.class_thresholds = list(class_thresholds or m.DEFAULT_CLASS_THRESHOLDS)
+        self.class_order = list(class_order or m.DEFAULT_CLASS_ORDER)
+        self.reading_order_config = reading_order
+
+    m.PPDocLayoutV2Config.__init__ = _fixed_init
+
+    def _fixed_od_init(self, config: m.PPDocLayoutV2Config) -> None:
+        # 新版 RTDetrForObjectDetection 将 class_embed / bbox_embed 挂在 self.model.decoder 上，
+        # 不再作为 self 的属性；MinerU 仍写成 self.model.decoder.class_embed = self.class_embed。
+        RTDetrForObjectDetection.__init__(self, config)
+        dec = self.model.decoder
+        class_embed = getattr(self, "class_embed", None) or dec.class_embed
+        bbox_embed = getattr(self, "bbox_embed", None) or dec.bbox_embed
+        self.model = m.PPDocLayoutV2Model(config)
+        self.model.decoder.class_embed = class_embed
+        self.model.decoder.bbox_embed = bbox_embed
+        self.reading_order = m.PPDocLayoutV2ReadingOrder(config.reading_order_config)
+        self.num_queries = config.num_queries
+        self.config = config
+        self.post_init()
+
+    m.PPDocLayoutV2ForObjectDetection.__init__ = _fixed_od_init
+    _pp_doclayout_patch_applied = True
+    print(
+        "[OCR] 已启用 PP-DocLayout（Config + ForObjectDetection）与当前 transformers 的兼容性补丁。",
+        flush=True,
+    )
+
+
+_patch_mineru_pp_doclayout_config_for_transformers()
+
+import threading
+import traceback
+import base64
 import time
-from collections.abc import Iterable
 from io import BytesIO
-from typing import Any
+from typing import Any, List
+
+from PIL import Image, ImageOps, ImageDraw
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image, ImageDraw, ImageOps
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="PaddleOCR-VL Service", version="2.0.0")
+app = FastAPI(title="MinerU OCR Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -26,50 +172,235 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-_vl: Any | None = None
-_ocr: Any | None = None
-_structure: Any | None = None
 _ready = False
-_model_name = "PaddleOCR-VL-1.6-0.9B"
-_paddle_device = ""
-
-# Serializes all Paddle inference (predictors are not thread-safe) while the
-# event loop stays free: endpoints run inference via asyncio.to_thread inside
-# this lock, so /health keeps responding during long predictions. The lock must
-# wrap EVERY Paddle inference call site; /health must never take it.
-_infer_lock = asyncio.Lock()
-
+_warmed = False
+_warmup_passes = 0
+_warmup_best_s: float = 0.0
+_model_name = "MinerU-pipeline"
+_torch_device: str = ""
+_infer_lock = threading.Lock()
 MAX_SIDE = int(os.environ.get("OCR_MAX_IMAGE_SIDE", "1600"))
-SEAL_TEXT = "[公章]"
 
-DEFAULT_CONFIDENCE = 0.9  # fallback confidence score when a box has none
-MAX_ITER_DEPTH = 8  # max recursion depth when walking nested OCR result objects
-NORMALIZED_COORD_MAX = 1.5  # if all coords <= this, treat them as already in [0,1] space
-MIN_BOX_SIZE = 1.0  # floor (px) for a box's width/height after clamping
-DEDUP_ROUND_DIGITS = 4  # rounding precision for the box dedup key
-SEAL_PAD_MIN = 4.0  # min padding (px) added around a stitched seal bbox
-SEAL_PAD_RATIO = 0.01  # padding as a fraction of the image's shorter side
+
+def _ocr_fatal(rc: int = 1) -> None:
+    os._exit(rc)
+
+
+def _ocr_allow_cpu() -> bool:
+    return os.environ.get("OCR_ALLOW_CPU", "").strip().lower() in ("1", "true", "yes")
+
+
+def _require_gpu_or_exit() -> None:
+    """
+    默认要求 CUDA：无 GPU 时退出（与旧 Paddle 微服务策略一致）。
+    调试可设 OCR_ALLOW_CPU=1 允许 CPU（MinerU pipeline 支持 CPU，但很慢）。
+    """
+    global _torch_device
+    if _ocr_allow_cpu():
+        print(
+            "[OCR] WARN: OCR_ALLOW_CPU=1 — 已允许 CPU 推理，速度会显著变慢；生产环境请勿使用。",
+            flush=True,
+        )
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                _torch_device = "cuda:0"
+                print(f"[OCR] 仍优先使用 {_torch_device}", flush=True)
+            else:
+                _torch_device = "cpu"
+        except Exception as e:
+            print(f"[OCR] CPU 模式下 device 探测: {e}", flush=True)
+            _torch_device = "cpu"
+        return
+
+    try:
+        import torch
+    except ImportError as e:
+        print(f"[OCR] FATAL: 未安装 torch: {e}", flush=True)
+        _ocr_fatal(1)
+
+    if not torch.cuda.is_available():
+        print(
+            "[OCR] FATAL: 未检测到可用 CUDA（torch.cuda.is_available()=False）。\n"
+            "  请安装带 CUDA 的 PyTorch，或临时设置 OCR_ALLOW_CPU=1 使用 CPU。\n",
+            flush=True,
+        )
+        _ocr_fatal(1)
+
+    _torch_device = "cuda:0"
+    try:
+        torch.cuda.set_device(0)
+    except Exception as e:
+        print(f"[OCR] FATAL: 无法使用 GPU:0 — {e}", flush=True)
+        _ocr_fatal(1)
+
+    print(
+        f"[OCR] PyTorch GPU 已就绪: device={_torch_device}, "
+        f"torch={torch.__version__}（禁止 CPU 推理）",
+        flush=True,
+    )
+
+
+def _mineru_runtime_flags() -> tuple[str, bool, bool]:
+    lang = os.environ.get("OCR_LANG", "ch").strip() or "ch"
+    formula = os.environ.get("MINERU_FORMULA_ENABLE", "false").lower() in ("1", "true", "yes")
+    table = os.environ.get("MINERU_TABLE_ENABLE", "true").lower() not in ("0", "false", "no")
+    return lang, formula, table
+
+
+def _preload_mineru_models() -> None:
+    """Eager-load MinerU pipeline weights into ModelSingleton (resident for process lifetime)."""
+    from mineru.backend.pipeline.pipeline_analyze import ModelSingleton
+
+    lang, formula, table = _mineru_runtime_flags()
+    started = time.perf_counter()
+    ModelSingleton().get_model(lang=lang, formula_enable=formula, table_enable=table)
+    elapsed = time.perf_counter() - started
+    print(
+        f"[OCR] ModelSingleton preloaded in {elapsed:.2f}s "
+        f"(lang={lang}, formula={formula}, table={table})",
+        flush=True,
+    )
+
+
+def _warmup_page_size() -> tuple[int, int]:
+    """Size warmup page like production scans after OCR_MAX_IMAGE_SIDE cap."""
+    ref_w, ref_h = 2100, 3244
+    long_side = max(ref_w, ref_h)
+    if long_side > MAX_SIDE:
+        scale = MAX_SIDE / long_side
+        return max(320, int(ref_w * scale)), max(480, int(ref_h * scale))
+    return ref_w, ref_h
+
+
+def _build_warmup_document_image() -> Image.Image:
+    """Synthetic medical-record-like page: text lines + table + seal for full pipeline warmup."""
+    width, height = _warmup_page_size()
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    margin_x = max(48, width // 20)
+    margin_y = max(48, height // 30)
+    line_gap = max(28, height // 40)
+
+    draw.text((margin_x, margin_y), "Patient: Zhang San    Age: 61", fill="black")
+    draw.text((margin_x, margin_y + line_gap), "Department: General Surgery    Bed: ICU-4", fill="black")
+    draw.text((margin_x, margin_y + line_gap * 2), "Admission No: 654321", fill="black")
+    draw.line(
+        (margin_x, margin_y + line_gap * 3, width - margin_x, margin_y + line_gap * 3),
+        fill=(80, 80, 80),
+        width=2,
+    )
+
+    table_top = margin_y + line_gap * 4
+    table_bottom = min(height - margin_y * 3, table_top + max(220, height // 4))
+    table_left = margin_x
+    table_right = width - margin_x
+    draw.rectangle((table_left, table_top, table_right, table_bottom), outline="black", width=2)
+    row_y = table_top + (table_bottom - table_top) // 3
+    col_x = table_left + (table_right - table_left) // 3
+    draw.line((table_left, row_y, table_right, row_y), fill="black", width=2)
+    draw.line((col_x, table_top, col_x, table_bottom), fill="black", width=2)
+    draw.line((col_x * 2 - table_left, table_top, col_x * 2 - table_left, table_bottom), fill="black", width=2)
+    draw.text((table_left + 16, table_top + 12), "Item", fill="black")
+    draw.text((col_x + 16, table_top + 12), "Result", fill="black")
+    draw.text((col_x * 2 - table_left + 16, table_top + 12), "Date", fill="black")
+    draw.text((table_left + 16, row_y + 12), "ASAT", fill="black")
+    draw.text((col_x + 16, row_y + 12), "42 U/L", fill="black")
+    draw.text((col_x * 2 - table_left + 16, row_y + 12), "2026-05-06", fill="black")
+
+    seal_size = max(96, min(width, height) // 8)
+    seal_x0 = width - margin_x - seal_size
+    seal_y0 = height - margin_y - seal_size
+    draw.ellipse((seal_x0, seal_y0, seal_x0 + seal_size, seal_y0 + seal_size), outline=(170, 40, 40), width=5)
+    draw.text((margin_x, height - margin_y - line_gap), "Doctor signature:", fill="black")
+    sx = margin_x + max(120, width // 8)
+    sy = height - margin_y - line_gap // 2
+    draw.line((sx, sy, sx + 60, sy - 20), fill=(30, 30, 30), width=4)
+    draw.line((sx + 60, sy - 20, sx + 120, sy + 10), fill=(30, 30, 30), width=4)
+    return image
+
+
+def init_ocr():
+    global _ready, _model_name
+    _require_gpu_or_exit()
+
+    # MinerU 读取 MINERU_DEVICE_MODE / get_device()；显式同步，避免初始化顺序问题
+    if not _ocr_allow_cpu():
+        os.environ.setdefault("MINERU_DEVICE_MODE", "cuda")
+    else:
+        os.environ.setdefault("MINERU_DEVICE_MODE", "cpu")
+
+    # OCR 微服务以文字块为主，默认关闭公式以加快首包与推理
+    os.environ.setdefault("MINERU_FORMULA_ENABLE", "false")
+    os.environ.setdefault("MINERU_TABLE_ENABLE", "true")
+
+    try:
+        from mineru.backend.pipeline.pipeline_analyze import batch_image_analyze  # noqa: F401
+
+        custom = os.environ.get("OCR_MODEL_NAME", "").strip()
+        _model_name = custom or "MinerU-pipeline (ModelScope)"
+        _preload_mineru_models()
+        _ready = True
+        print(f"[OCR] {_model_name} 依赖已加载，device≈{_torch_device or 'auto'}", flush=True)
+        warmup()
+    except Exception as e:
+        print(f"[OCR] FATAL: MinerU 初始化失败: {e}", flush=True)
+        traceback.print_exc()
+        _ready = False
+        if not _ocr_allow_cpu():
+            _ocr_fatal(1)
+
+
+def warmup():
+    global _warmed, _warmup_passes, _warmup_best_s
+    if os.environ.get("OCR_WARMUP", "1").strip().lower() in ("0", "false", "no", "off"):
+        print("[OCR] Warmup skipped (OCR_WARMUP=0)", flush=True)
+        _warmed = True
+        return
+
+    min_passes = max(1, int(os.environ.get("OCR_WARMUP_MIN_PASSES", "2")))
+    max_passes = max(min_passes, int(os.environ.get("OCR_WARMUP_MAX_PASSES", "4")))
+    target_s = float(os.environ.get("OCR_WARMUP_TARGET_SECONDS", "5.0"))
+    page_w, page_h = _warmup_page_size()
+
+    print(
+        f"[OCR] Warming up at {page_w}x{page_h} (MAX_SIDE={MAX_SIDE}, "
+        f"passes={min_passes}-{max_passes}, target<{target_s:.1f}s) ...",
+        flush=True,
+    )
+    warmup_image = _build_warmup_document_image()
+    best_s = float("inf")
+
+    try:
+        for attempt in range(1, max_passes + 1):
+            started = time.perf_counter()
+            _ = extract_mineru(warmup_image)
+            elapsed = time.perf_counter() - started
+            best_s = min(best_s, elapsed)
+            _warmup_passes = attempt
+            print(f"[OCR] Warmup pass {attempt}/{max_passes} infer={elapsed:.2f}s", flush=True)
+            if attempt >= min_passes and elapsed <= target_s:
+                break
+        _warmup_best_s = best_s if best_s != float("inf") else 0.0
+        _warmed = True
+        print(
+            f"[OCR] Warmup complete. best={_warmup_best_s:.2f}s passes={_warmup_passes}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"[OCR] Warmup failed: {e}", flush=True)
+        if "Timeout" in type(e).__name__ or "timed out" in str(e).lower():
+            print(
+                "[OCR] 提示：首次运行需下载模型；请检查网络/代理，或设置 HF_ENDPOINT、"
+                "HF_HUB_DOWNLOAD_TIMEOUT，或预先缓存 ModelScope/HF 权重。",
+                flush=True,
+            )
 
 
 class OCRRequest(BaseModel):
-    image: str = Field(..., description="Base64 image data")
-    max_new_tokens: int = Field(default=512, ge=1, le=8192)
-    # PaddleOCR-VL predict() passthrough. None keeps pipeline defaults, so
-    # existing callers are unaffected.
-    prompt_label: str | None = None
-    use_layout_detection: bool | None = None
-    merge_layout_blocks: bool | None = None
-    layout_merge_bboxes_mode: str | None = None
-
-
-class StructureRequest(BaseModel):
-    image: str = Field(..., description="Base64 image data")
-    use_ocr_results_with_table_cells: bool = True
-    use_e2e_wired_table_rec_model: bool = False
-    use_e2e_wireless_table_rec_model: bool = False
-    use_wired_table_cells_trans_to_html: bool = False
-    use_wireless_table_cells_trans_to_html: bool = False
-    use_table_orientation_classify: bool = True
+    image: str = Field(..., description="Base64编码的图片数据")
+    max_new_tokens: int = Field(default=512, description="兼容旧客户端；MinerU 不使用该字段")
 
 
 class OCRBox(BaseModel):
@@ -78,393 +409,18 @@ class OCRBox(BaseModel):
     y: float
     width: float
     height: float
-    confidence: float = DEFAULT_CONFIDENCE
+    confidence: float = 0.9
     label: str = "text"
-    # Per-character boxes (normalized) for this line, left-to-right. Lets the
-    # backend redact the exact pixels of an entity instead of estimating a
-    # sub-span or masking the whole block.
-    chars: list[dict[str, Any]] = []
 
 
 class OCRResponse(BaseModel):
-    boxes: list[OCRBox]
+    boxes: List[OCRBox]
     model: str
     elapsed: float
 
 
-def _fatal(exit_code: int = 1) -> None:
-    os._exit(exit_code)
-
-
-def _allow_cpu() -> bool:
-    return os.environ.get("OCR_ALLOW_CPU", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _structure_enabled() -> bool:
-    return os.environ.get("OCR_STRUCTURE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _require_gpu_or_exit() -> None:
-    global _paddle_device
-    try:
-        import paddle
-    except ImportError as exc:
-        print(f"[OCR] FATAL: paddle is not installed: {exc}", flush=True)
-        _fatal(1)
-
-    if _allow_cpu():
-        print("[OCR] WARN: OCR_ALLOW_CPU is enabled; GPU remains preferred.", flush=True)
-        try:
-            if paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
-                paddle.set_device("gpu:0")
-                _paddle_device = str(paddle.get_device())
-            else:
-                paddle.set_device("cpu")
-                _paddle_device = "cpu"
-        except Exception as exc:
-            print(f"[OCR] WARN: failed to select Paddle device: {exc}", flush=True)
-        return
-
-    if not paddle.is_compiled_with_cuda():
-        print("[OCR] FATAL: installed Paddle build has no CUDA support.", flush=True)
-        _fatal(1)
-
-    try:
-        gpu_count = paddle.device.cuda.device_count()
-    except Exception as exc:
-        print(f"[OCR] FATAL: failed to enumerate CUDA devices: {exc}", flush=True)
-        _fatal(1)
-
-    if gpu_count < 1:
-        print("[OCR] FATAL: no CUDA device is visible to Paddle.", flush=True)
-        _fatal(1)
-
-    try:
-        paddle.set_device("gpu:0")
-        _paddle_device = str(paddle.get_device())
-        print(f"[OCR] Paddle GPU ready: device={_paddle_device}, visible_gpus={gpu_count}", flush=True)
-    except Exception as exc:
-        print(f"[OCR] FATAL: failed to select Paddle GPU: {exc}", flush=True)
-        _fatal(1)
-
-
-def trim_cuda_cache(label: str) -> None:
-    try:
-        gc.collect()
-    except Exception:
-        pass
-    try:
-        import paddle
-
-        paddle.device.cuda.empty_cache()
-        print(f"[OCR] CUDA cache trimmed after {label}", flush=True)
-    except Exception:
-        pass
-
-
-def _vl_disabled() -> bool:
-    return str(os.environ.get("OCR_VL_ENABLED", "1")).strip().lower() in {"0", "false", "no", "off"}
-
-
-def init_ocr() -> None:
-    global _vl, _ocr, _ready, _model_name
-    _require_gpu_or_exit()
-
-    if _vl_disabled():
-        # Structure-only mode: PP-StructureV3 is the primary OCR path, so the
-        # heavy PaddleOCR-VL model is not loaded at all (frees GPU memory for
-        # HaS / LocateAnything). The /ocr (VL) endpoint returns 503; /structure works.
-        _vl = None
-        _ready = True
-        _model_name = "PP-StructureV3 (PaddleOCR-VL disabled)"
-        print("[OCR] PaddleOCR-VL disabled (OCR_VL_ENABLED=0); PP-StructureV3-only mode", flush=True)
-        return
-
-    try:
-        from paddleocr import PaddleOCRVL
-
-        vl_backend = os.environ.get("OCR_VL_BACKEND", "").strip()
-        if vl_backend:
-            vl_server_url = os.environ.get("OCR_VLLM_URL", "http://127.0.0.1:8118/v1").strip()
-            vl_model_name = os.environ.get("OCR_VL_API_MODEL_NAME", "PaddleOCR-VL-1.6-0.9B").strip()
-            _vl = PaddleOCRVL(
-                pipeline_version="v1.6",
-                vl_rec_backend=vl_backend,
-                vl_rec_server_url=vl_server_url,
-                vl_rec_api_model_name=vl_model_name,
-            )
-            _model_name = f"PaddleOCR-VL via {vl_backend} ({vl_model_name})"
-        else:
-            _vl = PaddleOCRVL(pipeline_version="v1.6")
-            _model_name = "PaddleOCR-VL-1.6-0.9B"
-        _ready = True
-        print(f"[OCR] {_model_name} loaded on {_paddle_device or 'device'}", flush=True)
-        warmup()
-        return
-    except Exception as exc:
-        print(f"[OCR] FATAL: PaddleOCR-VL init failed: {exc}", flush=True)
-        if not _allow_cpu():
-            _fatal(1)
-        _vl = None
-
-    try:
-        from paddleocr import PaddleOCR
-
-        _ocr = PaddleOCR(use_angle_cls=True, lang="ch")
-        _ready = True
-        _model_name = "PaddleOCR-2.x CPU fallback"
-        print(f"[OCR] {_model_name} loaded because OCR_ALLOW_CPU is enabled", flush=True)
-    except Exception as exc:
-        print(f"[OCR] FATAL: fallback PaddleOCR init failed: {exc}", flush=True)
-        _ready = False
-
-
-def warmup() -> None:
-    if not _vl:
-        return
-    try:
-        print("[OCR] Warming up PaddleOCR-VL...", flush=True)
-        image = Image.new("RGB", (300, 200), color="white")
-        draw = ImageDraw.Draw(image)
-        draw.text((50, 80), "Warmup Test", fill="black")
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
-            temp_path = file.name
-            image.save(file, format="PNG")
-        try:
-            _vl.predict(temp_path, max_new_tokens=256)
-        finally:
-            _remove_file(temp_path)
-        print("[OCR] PaddleOCR-VL warmup complete", flush=True)
-    except Exception as exc:
-        print(f"[OCR] PaddleOCR-VL warmup failed: {exc}", flush=True)
-
-
-def warmup_structure() -> None:
-    if not _structure_enabled():
-        print("[OCR] PP-StructureV3 disabled", flush=True)
-        return
-    if os.environ.get("OCR_STRUCTURE_WARMUP", "1").strip().lower() in {"0", "false", "no", "off"}:
-        print("[OCR] PP-StructureV3 warmup skipped", flush=True)
-        return
-    try:
-        print("[OCR] Warming up PP-StructureV3...", flush=True)
-        image = Image.new("RGB", (480, 320), color="white")
-        draw = ImageDraw.Draw(image)
-        draw.rectangle((40, 60, 440, 260), outline="black", width=2)
-        draw.line((40, 140, 440, 140), fill="black", width=1)
-        draw.line((240, 60, 240, 260), fill="black", width=1)
-        draw.text((70, 92), "Name", fill="black")
-        draw.text((270, 92), "Value", fill="black")
-        extract_structure(image, StructureRequest(image=""))
-        trim_cuda_cache("structure warmup")
-        print("[OCR] PP-StructureV3 warmup complete", flush=True)
-    except Exception as exc:
-        print(f"[OCR] PP-StructureV3 warmup failed: {exc}", flush=True)
-
-
-def get_structure_engine() -> Any | None:
-    global _structure, _model_name
-    if not _structure_enabled():
-        return None
-    if _structure is not None:
-        return _structure
-    try:
-        from paddleocr import PPStructureV3
-
-        _structure = PPStructureV3(
-            use_table_recognition=False,  # 表格识别会把单元格重新 OCR 一遍，按表格几何重投到错误列/重复出框（同源于 seal 的伪坐标病理）；普通行检测已完整覆盖表格内印刷体数字
-            use_seal_recognition=False,  # 公章由 LocateAnything 负责；关掉避免印章曲文被去扭曲后堆到左上角伪坐标
-            use_formula_recognition=False,
-            use_chart_recognition=False,
-            use_region_detection=True,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            text_detection_model_name="PP-OCRv6_medium_det",
-            text_recognition_model_name="PP-OCRv6_medium_rec",
-            text_det_limit_type="min",
-            text_det_limit_side_len=736,
-            text_det_thresh=0.30,
-            text_det_box_thresh=0.60,
-            text_det_unclip_ratio=1.5,
-            text_rec_score_thresh=0.0,
-        )
-        _model_name = "PaddleOCR-VL-1.6-0.9B + PP-StructureV3" if _vl is not None else "PP-StructureV3"
-        print("[OCR] PP-StructureV3 loaded", flush=True)
-        return _structure
-    except Exception as exc:
-        print(f"[OCR] PP-StructureV3 init failed: {exc}", flush=True)
-        return None
-
-
-def release_structure_engine_if_configured() -> None:
-    if os.environ.get("OCR_STRUCTURE_RELEASE_AFTER_REQUEST", "0").strip().lower() not in {"1", "true", "yes", "on"}:
-        return
-    global _structure, _model_name
-    if _structure is None:
-        return
-    _structure = None
-    _model_name = "PaddleOCR-VL-1.6-0.9B"
-    trim_cuda_cache("structure release")
-    print("[OCR] PP-StructureV3 released after request", flush=True)
-
-
-def _remove_file(path: str) -> None:
-    try:
-        os.remove(path)
-    except Exception:
-        pass
-
-
-def _box_from_poly(poly: Any) -> list[float] | None:
-    try:
-        if poly is None:
-            return None
-        if len(poly) == 4 and all(isinstance(value, (int, float)) for value in poly):
-            x1, y1, x2, y2 = [float(value) for value in poly]
-            return [x1, y1, x2, y2]
-        xs = [float(point[0]) for point in poly]
-        ys = [float(point[1]) for point in poly]
-        return [min(xs), min(ys), max(xs), max(ys)]
-    except Exception:
-        return None
-
-
-def _first_value(mapping: dict, *keys: str) -> Any:
-    for key in keys:
-        value = mapping.get(key)
-        if value is not None:
-            return value
-    return None
-
-
-def _has_items(value: Any) -> bool:
-    try:
-        return value is not None and len(value) > 0
-    except TypeError:
-        return value is not None
-
-
-def _iter_dicts(obj: Any, depth: int = 0) -> Iterable[dict]:
-    if depth > MAX_ITER_DEPTH or obj is None:
-        return
-    if isinstance(obj, dict):
-        yield obj
-        for value in obj.values():
-            yield from _iter_dicts(value, depth + 1)
-        return
-    if isinstance(obj, (list, tuple)):
-        for value in obj:
-            yield from _iter_dicts(value, depth + 1)
-        return
-    for attr in (
-        "overall_ocr_res",
-        "layout_det_res",
-        "region_det_res",
-        "table_res_list",
-        "seal_res_list",
-        "parsing_res_list",
-        "layout_parsing_result",
-        "markdown",
-    ):
-        if hasattr(obj, attr):
-            yield from _iter_dicts(getattr(obj, attr), depth + 1)
-    if hasattr(obj, "__getitem__"):
-        for key in (
-            "overall_ocr_res",
-            "table_res_list",
-            "parsing_res_list",
-            "layout_parsing_result",
-            "layout_det_res",
-            "region_det_res",
-            "seal_res_list",
-            "rec_texts",
-            "rec_polys",
-            "rec_boxes",
-        ):
-            try:
-                yield from _iter_dicts(obj[key], depth + 1)
-            except Exception:
-                pass
-
-
-def _append_raw_box(raw: list[dict], text: str, box: Any, label: str, confidence: float = DEFAULT_CONFIDENCE) -> None:
-    content = str(text or "").strip()
-    if not content:
-        return
-    bbox = _box_from_poly(box)
-    if not bbox:
-        return
-    x1, y1, x2, y2 = bbox
-    if not all(math.isfinite(value) for value in (x1, y1, x2, y2)):
-        return
-    if x2 <= x1 or y2 <= y1:
-        return
-    raw.append({"text": content, "box": [x1, y1, x2, y2], "confidence": confidence, "label": label})
-
-
-def _normalize_boxes(raw_boxes: list[dict], width: int, height: int) -> list[OCRBox]:
-    if not raw_boxes:
-        return []
-    raw_boxes = [
-        box
-        for box in raw_boxes
-        if len(box.get("box", [])) == 4 and all(math.isfinite(float(value)) for value in box["box"])
-    ]
-    if not raw_boxes:
-        return []
-
-    max_x = max(float(box["box"][2]) for box in raw_boxes)
-    max_y = max(float(box["box"][3]) for box in raw_boxes)
-    if max(max_x, max_y) <= NORMALIZED_COORD_MAX:
-        space_w, space_h = 1.0, 1.0
-    else:
-        space_w, space_h = float(width), float(height)
-
-    seen: set[tuple] = set()
-    items: list[OCRBox] = []
-    for raw in raw_boxes:
-        x1, y1, x2, y2 = [float(value) for value in raw["box"]]
-        x1 = x1 / space_w * width
-        y1 = y1 / space_h * height
-        x2 = x2 / space_w * width
-        y2 = y2 / space_h * height
-        if x1 > x2:
-            x1, x2 = x2, x1
-        if y1 > y2:
-            y1, y2 = y2, y1
-        x1 = max(0.0, min(x1, float(width)))
-        x2 = max(0.0, min(x2, float(width)))
-        y1 = max(0.0, min(y1, float(height)))
-        y2 = max(0.0, min(y2, float(height)))
-        w = max(MIN_BOX_SIZE, x2 - x1)
-        h = max(MIN_BOX_SIZE, y2 - y1)
-        key = (
-            raw["text"],
-            round(x1 / width, DEDUP_ROUND_DIGITS),
-            round(y1 / height, DEDUP_ROUND_DIGITS),
-            round(w / width, DEDUP_ROUND_DIGITS),
-            round(h / height, DEDUP_ROUND_DIGITS),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        items.append(
-            OCRBox(
-                text=raw["text"],
-                x=x1 / width,
-                y=y1 / height,
-                width=w / width,
-                height=h / height,
-                confidence=float(raw.get("confidence", DEFAULT_CONFIDENCE) or DEFAULT_CONFIDENCE),
-                label=str(raw.get("label") or "text"),
-            )
-        )
-    return items
-
-
-def map_boxes_to_original(items: list[OCRBox]) -> list[OCRBox]:
-    mapped: list[OCRBox] = []
+def map_boxes_to_original(items: List[OCRBox]) -> List[OCRBox]:
+    mapped: List[OCRBox] = []
     for item in items:
         mapped.append(
             OCRBox(
@@ -475,465 +431,392 @@ def map_boxes_to_original(items: list[OCRBox]) -> list[OCRBox]:
                 height=max(0.0, min(float(item.height), 1.0)),
                 confidence=item.confidence,
                 label=item.label,
-                chars=item.chars,
             )
         )
     return mapped
 
 
-def _extract_vl_parsing_boxes(outputs: Any) -> list[dict]:
-    raw: list[dict] = []
-    if not outputs:
-        return raw
-    for result in outputs:
-        parsing_list = None
-        if hasattr(result, "parsing_res_list"):
-            parsing_list = result.parsing_res_list
-        elif hasattr(result, "__getitem__"):
-            try:
-                parsing_list = result["parsing_res_list"]
-            except Exception:
-                parsing_list = None
-        for block in parsing_list or []:
-            if isinstance(block, dict):
-                label = block.get("block_label") or block.get("label") or ""
-                content = block.get("block_content") or block.get("content") or ""
-                box = block.get("block_bbox") or block.get("bbox")
-            else:
-                label = getattr(block, "label", "") or getattr(block, "block_label", "")
-                content = getattr(block, "content", "") or getattr(block, "block_content", "")
-                box = getattr(block, "bbox", None) or getattr(block, "block_bbox", None)
-            label = str(label or "").strip().lower()
-            if label == "seal":
-                content = SEAL_TEXT
-            if box is None or len(box) != 4:
+_TR_RE = re.compile(r"<tr[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+_TD_RE = re.compile(r"<td([^>]*)>(.*?)</td>", re.IGNORECASE | re.DOTALL)
+_TD_ATTR_RE = re.compile(r"(rowspan|colspan)\s*=\s*(\d+)", re.IGNORECASE)
+
+
+def _parse_td_span_attrs(attr_str: str) -> tuple[int, int]:
+    rowspan, colspan = 1, 1
+    for match in _TD_ATTR_RE.finditer(attr_str or ""):
+        key = match.group(1).lower()
+        value = int(match.group(2))
+        if key == "rowspan":
+            rowspan = max(1, value)
+        else:
+            colspan = max(1, value)
+    return rowspan, colspan
+
+
+def _clean_table_cell_text(raw: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", raw or "")
+    text = html_lib.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _parse_table_html_rows(table_html: str) -> list[list[dict[str, Any]]]:
+    rows: list[list[dict[str, Any]]] = []
+    for tr_html in _TR_RE.findall(table_html or ""):
+        cells: list[dict[str, Any]] = []
+        for attr_str, cell_html in _TD_RE.findall(tr_html):
+            text = _clean_table_cell_text(cell_html)
+            if not text:
                 continue
-            if not content and label != "seal":
-                continue
-            _append_raw_box(raw, str(content or SEAL_TEXT), box, label or "text", DEFAULT_CONFIDENCE)
-    return raw
+            rowspan, colspan = _parse_td_span_attrs(attr_str)
+            cells.append({"text": text, "rowspan": rowspan, "colspan": colspan})
+        if cells:
+            rows.append(cells)
+    return rows
 
 
-def _extract_vl_spotting_boxes(outputs: Any) -> list[dict]:
-    raw: list[dict] = []
-    if not outputs:
-        return raw
-    for result in outputs:
-        spotting = None
-        if hasattr(result, "__getitem__"):
-            try:
-                spotting = result["spotting_res"]
-            except Exception:
-                spotting = None
-        if not spotting and hasattr(result, "spotting_res"):
-            spotting = getattr(result, "spotting_res", None)
-        if not spotting:
-            continue
-        for poly, text in zip(spotting.get("rec_polys", []) or [], spotting.get("rec_texts", []) or [], strict=False):
-            _append_raw_box(raw, str(text or "").strip(), poly, "spotting", DEFAULT_CONFIDENCE)
-    return raw
-
-
-def extract_vl(
-    image: Image.Image,
-    max_new_tokens: int = 512,
-    request: OCRRequest | None = None,
-) -> list[OCRBox]:
-    if not _vl:
+def _estimate_table_cell_bboxes(
+    table_bbox: list[float],
+    rows: list[list[dict[str, Any]]],
+) -> list[tuple[str, list[float]]]:
+    """Fallback when MinerU table ocr_result is unavailable: row height by text weight."""
+    if not rows:
+        return []
+    try:
+        x0, y0, x1, y1 = (float(table_bbox[0]), float(table_bbox[1]), float(table_bbox[2]), float(table_bbox[3]))
+    except (TypeError, ValueError, IndexError):
         return []
 
-    predict_kwargs: dict[str, Any] = {}
-    if request is not None:
-        for name in (
-            "prompt_label",
-            "use_layout_detection",
-            "merge_layout_blocks",
-            "layout_merge_bboxes_mode",
-        ):
-            value = getattr(request, name, None)
-            if value is not None:
-                predict_kwargs[name] = value
-    # The pipeline default (merge_layout_blocks=True) folds adjacent layout
-    # blocks into multi-line paragraphs whose text spans lines the box does
-    # not cover — a value matched in such a block gets masked at the wrong
-    # line. Unmerged blocks keep text and geometry consistent per line while
-    # preserving the seal-crushed/handwriting rescues (A/B verified: 张伟 and
-    # 海南工程… lines survive; layout_merge_bboxes_mode="small" instead drops
-    # the handwriting and over-fragments).
-    predict_kwargs.setdefault("merge_layout_blocks", False)
-    spotting_requested = predict_kwargs.get("prompt_label") == "spotting"
+    table_w = max(1.0, x1 - x0)
+    table_h = max(1.0, y1 - y0)
+    row_weights = [
+        max(1.0, sum(len(str(cell.get("text") or "")) for cell in row))
+        for row in rows
+    ]
+    weight_sum = max(1.0, sum(row_weights))
+    out: list[tuple[str, list[float]]] = []
+    y_cursor = y0
 
-    width, height = image.size
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
-        temp_path = file.name
-        image.save(file, format="PNG")
-
-    try:
-        raw_boxes: list[dict] = []
-        if not spotting_requested:
-            try:
-                outputs = _vl.predict(temp_path, max_new_tokens=max_new_tokens, **predict_kwargs)
-                raw_boxes = _extract_vl_parsing_boxes(outputs)
-                print(f"[OCR] PaddleOCR-VL parser produced {len(raw_boxes)} boxes", flush=True)
-            except Exception as exc:
-                print(f"[OCR] PaddleOCR-VL parser failed: {exc}", flush=True)
-
-        if not raw_boxes:
-            outputs = _vl.predict(
-                temp_path,
-                use_layout_detection=False,
-                prompt_label="spotting",
-                max_new_tokens=max_new_tokens,
-            )
-            raw_boxes = _extract_vl_spotting_boxes(outputs)
-            print(f"[OCR] PaddleOCR-VL spotting produced {len(raw_boxes)} boxes", flush=True)
-    except Exception as exc:
-        print(f"[OCR] PaddleOCR-VL predict failed: {exc}", flush=True)
-        return []
-    finally:
-        _remove_file(temp_path)
-
-    return _normalize_boxes(raw_boxes, width, height)
+    for row_idx, cells in enumerate(rows):
+        row_h = table_h * (row_weights[row_idx] / weight_sum)
+        row_y0 = y_cursor
+        row_y1 = y_cursor + row_h
+        y_cursor = row_y1
+        total_cols = max(1, sum(int(cell.get("colspan") or 1) for cell in cells))
+        col_width = table_w / total_cols
+        x_cursor = x0
+        for cell in cells:
+            colspan = max(1, int(cell.get("colspan") or 1))
+            cell_w = col_width * colspan
+            text = str(cell.get("text") or "").strip()
+            if text:
+                out.append((text, [x_cursor, row_y0, x_cursor + cell_w, row_y1]))
+            x_cursor += cell_w
+    return out
 
 
-def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
-    raw: list[dict] = []
-    for item in _iter_dicts(outputs):
-        layout_boxes = _first_value(item, "boxes")
-        if isinstance(layout_boxes, list) and layout_boxes and all(isinstance(entry, dict) for entry in layout_boxes):
-            for box_info in layout_boxes:
-                label = str(_first_value(box_info, "label", "block_label") or "").strip().lower()
-                if label != "seal":
-                    continue
-                coord = _first_value(box_info, "coordinate", "bbox", "box", "dt_polys", "rec_box")
-                _append_raw_box(raw, SEAL_TEXT, coord, "seal", float(_first_value(box_info, "score", "confidence") or DEFAULT_CONFIDENCE))
-
-        seal_items = _first_value(item, "seal_res_list")
-        if isinstance(seal_items, list):
-            for seal in seal_items:
-                if not isinstance(seal, dict):
-                    continue
-                outer = _first_value(seal, "coordinate", "bbox", "box", "seal_bbox", "dt_polys", "rec_box")
-                if outer:
-                    _append_raw_box(raw, SEAL_TEXT, outer, "seal", float(_first_value(seal, "score", "confidence") or DEFAULT_CONFIDENCE))
-                    continue
-                seal_polys = _first_value(seal, "rec_polys", "dt_polys", "rec_boxes", "dt_boxes", "boxes")
-                if _has_items(seal_polys):
-                    parts = [_box_from_poly(poly) for poly in seal_polys]
-                    parts = [part for part in parts if part]
-                    if parts:
-                        x1 = min(part[0] for part in parts)
-                        y1 = min(part[1] for part in parts)
-                        x2 = max(part[2] for part in parts)
-                        y2 = max(part[3] for part in parts)
-                        pad = max(SEAL_PAD_MIN, min(width, height) * SEAL_PAD_RATIO)
-                        _append_raw_box(raw, SEAL_TEXT, [x1 - pad, y1 - pad, x2 + pad, y2 + pad], "seal")
-
-        texts = _first_value(item, "rec_texts", "texts", "ocr_texts")
-        polys = _first_value(item, "rec_polys", "dt_polys", "polys")
-        boxes = _first_value(item, "rec_boxes", "dt_boxes", "boxes")
-        if _has_items(texts) and (_has_items(polys) or _has_items(boxes)):
-            coords = polys if _has_items(polys) else boxes
-            for text, box in zip(texts, coords, strict=False):
-                _append_raw_box(raw, str(text or ""), box, "structure")
-
-        cells = _first_value(item, "cell_box_list", "cell_boxes")
-        cell_texts = _first_value(item, "cell_texts", "table_cells_texts")
-        if _has_items(cells) and _has_items(cell_texts):
-            for text, box in zip(cell_texts, cells, strict=False):
-                _append_raw_box(raw, str(text or ""), box, "table_cell")
-
-        content = _first_value(item, "block_content", "content", "text")
-        bbox = _first_value(item, "block_bbox", "bbox")
-        label = str(_first_value(item, "block_label", "label") or "structure")
-        if content and _has_items(bbox):
-            _append_raw_box(raw, str(content), bbox, label)
-    return raw
-
-
-_word_engine: Any = None
-_word_engine_failed = False
-
-
-def get_word_engine() -> Any | None:
-    """Lazy PaddleOCR with per-character boxes (return_word_box). PP-OCRv6
-    medium (34.5M) reads seal-stamped print the old v5 mobile engine missed —
-    the char boxes are the value-crop evidence, so recall here decides whether
-    a matched entity masks its value or the whole line. Init is attempted
-    once: a failure sets a sentinel so later requests do not retry it."""
-    global _word_engine, _word_engine_failed
-    if _word_engine is not None:
-        return _word_engine
-    if _word_engine_failed:
-        return None
-    try:
-        from paddleocr import PaddleOCR
-
-        _word_engine = PaddleOCR(
-            return_word_box=True,
-            use_textline_orientation=False,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            text_detection_model_name="PP-OCRv6_medium_det",
-            text_recognition_model_name="PP-OCRv6_medium_rec",
-        )
-        print("[OCR] word-box engine loaded", flush=True)
-    except Exception as exc:
-        print(f"[OCR] word-box engine init failed (will not retry): {exc}", flush=True)
-        _word_engine = None
-        _word_engine_failed = True
-    return _word_engine
-
-
-def _char_box_xyxy(box: Any) -> tuple[float, float, float, float]:
+def _dt_box_to_page_bbox(
+    dt_box: Any,
+    table_page_bbox: list[float],
+    table_img_size: list[int],
+) -> list[float] | None:
     import numpy as np
 
-    arr = np.asarray(box, dtype=float)
-    if arr.ndim == 1 and arr.size == 4:
-        x1, y1, x2, y2 = arr.tolist()
+    try:
+        tx0, ty0, tx1, ty1 = (
+            float(table_page_bbox[0]),
+            float(table_page_bbox[1]),
+            float(table_page_bbox[2]),
+            float(table_page_bbox[3]),
+        )
+        tw = max(1, int(table_img_size[0]))
+        th = max(1, int(table_img_size[1]))
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    points = np.asarray(dt_box, dtype=np.float64)
+    if points.size == 0:
+        return None
+    if points.ndim == 1 and points.size >= 4:
+        xs = points[[0, 2]]
+        ys = points[[1, 3]]
+    elif points.ndim == 2 and points.shape[0] >= 1 and points.shape[1] >= 2:
+        xs = points[:, 0]
+        ys = points[:, 1]
     else:
-        pts = arr.reshape(-1, 2)
-        x1, y1 = float(pts[:, 0].min()), float(pts[:, 1].min())
-        x2, y2 = float(pts[:, 0].max()), float(pts[:, 1].max())
-    return float(x1), float(y1), float(x2), float(y2)
+        return None
+
+    scale_x = (tx1 - tx0) / float(tw)
+    scale_y = (ty1 - ty0) / float(th)
+    return [
+        tx0 + float(xs.min()) * scale_x,
+        ty0 + float(ys.min()) * scale_y,
+        tx0 + float(xs.max()) * scale_x,
+        ty0 + float(ys.max()) * scale_y,
+    ]
 
 
-def _extract_char_boxes(image: Image.Image) -> list[dict[str, Any]]:
-    engine = get_word_engine()
-    if engine is None:
-        return []
-    width, height = image.size
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
-        temp_path = file.name
-        image.save(file, format="PNG")
-    chars: list[dict[str, Any]] = []
-    try:
-        for result in engine.predict(temp_path):
-            try:
-                line_chars = result["text_word"]
-                line_boxes = result["text_word_boxes"]
-            except (KeyError, TypeError):
-                continue
-            for words, boxes in zip(line_chars, line_boxes, strict=False):
-                for ch, box in zip(words, boxes, strict=False):
-                    x1, y1, x2, y2 = _char_box_xyxy(box)
-                    if x2 <= x1 or y2 <= y1:
-                        continue
-                    chars.append({
-                        "c": str(ch),
-                        "x": x1 / width,
-                        "y": y1 / height,
-                        "w": (x2 - x1) / width,
-                        "h": (y2 - y1) / height,
-                    })
-    except Exception as exc:
-        print(f"[OCR] char-box extraction failed: {exc}", flush=True)
-    finally:
-        _remove_file(temp_path)
-    return chars
+def _table_ocr_result_to_raw_boxes(
+    ocr_result: list[Any],
+    table_page_bbox: list[float],
+    table_img_size: list[int],
+    confidence: float,
+) -> list[dict[str, Any]]:
+    raw_boxes: list[dict[str, Any]] = []
+    for entry in ocr_result or []:
+        if not entry or len(entry) < 2:
+            continue
+        dt_box, raw_text = entry[0], entry[1]
+        text = _clean_table_cell_text(html_lib.unescape(str(raw_text)))
+        if not text:
+            continue
+        page_box = _dt_box_to_page_bbox(dt_box, table_page_bbox, table_img_size)
+        if not page_box:
+            continue
+        try:
+            score = float(entry[2]) if len(entry) > 2 else confidence
+        except (TypeError, ValueError):
+            score = confidence
+        raw_boxes.append(
+            {
+                "text": text,
+                "box": page_box,
+                "confidence": max(0.0, min(score, 1.0)),
+                "label": "table_cell",
+            }
+        )
+    return raw_boxes
 
 
-def _attach_chars(boxes: list[OCRBox], chars: list[dict[str, Any]]) -> None:
-    """Attach to each line box the char boxes whose center falls inside it,
-    ordered left-to-right."""
-    if not chars:
+_mineru_table_ocr_patch_applied = False
+_batch_analyze_call_code = None
+
+
+def _attach_mineru_table_meta_to_layout(table_res_dict: dict[str, Any]) -> None:
+    table_res = table_res_dict.get("table_res")
+    if not isinstance(table_res, dict):
         return
-    for box in boxes:
-        bx1, by1 = box.x, box.y
-        bx2, by2 = box.x + box.width, box.y + box.height
-        inside = [
-            ch for ch in chars
-            if bx1 <= ch["x"] + ch["w"] / 2 <= bx2 and by1 <= ch["y"] + ch["h"] / 2 <= by2
-        ]
-        inside.sort(key=lambda c: c["x"])
-        box.chars = inside
-
-
-# Same-place gate for the red-suppressed supplement, mirroring the backend's
-# duplicate-IoU contract: above it two boxes are the same physical line.
-_SUPPRESSED_SAME_PLACE_IOU = 0.5
-
-
-def _suppress_red_ink(image: Image.Image) -> Image.Image | None:
-    """Whiten seal-red pixels so det/rec can read print crushed under stamps.
-
-    The red definition reuses the project's canonical constants from
-    seal_detector (HSV hue window + RGB dominance); black print is untouched.
-    Returns None when the page carries no red ink, so stamp-free pages skip
-    the supplemental pass at zero cost.
-    """
-    try:
-        import cv2
+    ocr_result = table_res_dict.get("ocr_result")
+    if ocr_result:
+        table_res["ocr_result"] = ocr_result
+    page_bbox = table_res_dict.get("table_page_bbox")
+    if page_bbox:
+        table_res["table_page_bbox"] = page_bbox
+    table_img = table_res_dict.get("table_img")
+    if table_img is not None:
         import numpy as np
 
-        from app.services.vision import seal_detector as sd
-    except Exception as exc:
-        print(f"[OCR] red suppression unavailable: {exc}", flush=True)
-        return None
-    arr = np.array(image.convert("RGB"))
-    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
-    red_hue = (hsv[:, :, 0] <= sd._RED_HUE_LOW_MAX) | (hsv[:, :, 0] >= sd._RED_HUE_HIGH_MIN)
-    saturated = hsv[:, :, 1] >= sd._RED_SAT_MIN
-    bright = hsv[:, :, 2] >= sd._RED_VAL_MIN
-    rgb_red = (
-        (arr[:, :, 0] >= sd._RED_RGB_R_MIN)
-        & (arr[:, :, 0] >= arr[:, :, 1] * sd._RED_RGB_R_OVER_G)
-        & (arr[:, :, 0] >= arr[:, :, 2] * sd._RED_RGB_R_OVER_B)
-    )
-    mask = red_hue & saturated & bright & rgb_red
-    if not bool(mask.any()):
-        return None
-    out = arr.copy()
-    out[mask] = (255, 255, 255)
-    return Image.fromarray(out)
+        h, w = np.asarray(table_img).shape[:2]
+        table_res["table_img_size"] = [int(w), int(h)]
 
 
-def _extract_suppressed_lines(image: Image.Image) -> tuple[list[OCRBox], list[dict[str, Any]]]:
-    """Word-engine pass over the red-suppressed image: line boxes + char boxes."""
-    engine = get_word_engine()
-    if engine is None:
-        return [], []
+def _patch_mineru_table_ocr_merge() -> None:
+    """Copy MinerU table_res_dict ocr_result onto layout table items (not exported by default)."""
+    global _mineru_table_ocr_patch_applied, _batch_analyze_call_code
+    if _mineru_table_ocr_patch_applied:
+        return
+    from mineru.backend.pipeline.batch_analyze import BatchAnalyze
+
+    _batch_analyze_call_code = BatchAnalyze.__call__.__code__
+    original_call = BatchAnalyze.__call__
+    captured: list[dict[str, Any]] = []
+
+    def _tracer(frame, event, arg):
+        if event == "return" and frame.f_code is _batch_analyze_call_code:
+            table_list = frame.f_locals.get("table_res_list_all_page")
+            if isinstance(table_list, list):
+                captured.clear()
+                captured.extend(table_list)
+        return _tracer
+
+    def patched_call(self, images_with_extra_info):
+        import sys
+
+        captured.clear()
+        sys.settrace(_tracer)
+        try:
+            result = original_call(self, images_with_extra_info)
+        finally:
+            sys.settrace(None)
+            for table_res_dict in captured:
+                _attach_mineru_table_meta_to_layout(table_res_dict)
+        return result
+
+    BatchAnalyze.__call__ = patched_call
+    _mineru_table_ocr_patch_applied = True
+
+
+def _table_html_to_raw_boxes(
+    table_html: str,
+    table_bbox: list[float],
+    confidence: float,
+) -> list[dict[str, Any]]:
+    rows = _parse_table_html_rows(table_html)
+    raw_boxes: list[dict[str, Any]] = []
+    for text, box in _estimate_table_cell_bboxes(table_bbox, rows):
+        raw_boxes.append(
+            {
+                "text": text,
+                "box": box,
+                "confidence": confidence,
+                "label": "table_cell",
+            }
+        )
+    return raw_boxes
+
+
+def _layout_item_to_text_and_label(item: dict[str, Any]) -> tuple[str, str]:
+    label = (item.get("label") or "text") or "text"
+    raw = item.get("text", "")
+    if isinstance(raw, list):
+        text = " ".join(str(x) for x in raw if x).strip()
+    else:
+        text = str(raw).strip() if raw is not None else ""
+
+    if not text and item.get("latex"):
+        text = str(item.get("latex", "")).strip()
+
+    if label == "seal":
+        if not text:
+            text = "[公章]"
+    return text, label
+
+
+def extract_mineru(image: Image.Image) -> List[OCRBox]:
+    from mineru.backend.pipeline.pipeline_analyze import batch_image_analyze
+
+    _patch_mineru_table_ocr_merge()
+
+    lang = os.environ.get("OCR_LANG", "ch").strip() or "ch"
+    formula = os.environ.get("MINERU_FORMULA_ENABLE", "false").lower() in ("1", "true", "yes")
+    table = os.environ.get("MINERU_TABLE_ENABLE", "true").lower() not in ("0", "false", "no")
+
     width, height = image.size
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
-        temp_path = file.name
-        image.save(file, format="PNG")
-    lines_raw: list[dict] = []
-    chars: list[dict[str, Any]] = []
-    try:
-        for result in engine.predict(temp_path):
-            texts = _first_value(result, "rec_texts")
-            polys = _first_value(result, "rec_polys", "dt_polys")
-            if _has_items(texts) and _has_items(polys):
-                for text, poly in zip(texts, polys, strict=False):
-                    _append_raw_box(lines_raw, str(text or ""), poly, "structure")
+    if width < 1 or height < 1:
+        return []
+
+    with _infer_lock:
+        layouts = batch_image_analyze(
+            [(image, True, lang)],
+            formula_enable=formula,
+            table_enable=table,
+        )
+
+    if not layouts:
+        return []
+
+    layout_res: list[dict[str, Any]] = layouts[0]
+    raw_boxes: list[dict[str, Any]] = []
+
+    for it in layout_res:
+        label = (it.get("label") or "text") or "text"
+        bbox = it.get("bbox")
+        if not bbox or len(bbox) < 4:
+            continue
+
+        if label == "table":
+            table_html = str(it.get("html") or "").strip()
+            score = it.get("score", 0.9)
             try:
-                line_chars = result["text_word"]
-                line_boxes = result["text_word_boxes"]
-            except (KeyError, TypeError):
-                continue
-            for words, boxes in zip(line_chars, line_boxes, strict=False):
-                for ch, box in zip(words, boxes, strict=False):
-                    x1, y1, x2, y2 = _char_box_xyxy(box)
-                    if x2 <= x1 or y2 <= y1:
-                        continue
-                    chars.append({
-                        "c": str(ch),
-                        "x": x1 / width,
-                        "y": y1 / height,
-                        "w": (x2 - x1) / width,
-                        "h": (y2 - y1) / height,
-                    })
-    except Exception as exc:
-        print(f"[OCR] red-suppressed extraction failed: {exc}", flush=True)
-    finally:
-        _remove_file(temp_path)
-    return _normalize_boxes(lines_raw, width, height), chars
+                conf = float(score) if score is not None else 0.9
+            except (TypeError, ValueError):
+                conf = 0.9
+            conf = max(0.0, min(conf, 1.0))
 
+            ocr_result = it.get("ocr_result")
+            table_page_bbox = it.get("table_page_bbox") or bbox
+            table_img_size = it.get("table_img_size")
+            table_boxes: list[dict[str, Any]] = []
+            if ocr_result and table_img_size:
+                table_boxes = _table_ocr_result_to_raw_boxes(
+                    ocr_result,
+                    table_page_bbox,
+                    table_img_size,
+                    conf,
+                )
+            if not table_boxes and table_html:
+                table_boxes = _table_html_to_raw_boxes(table_html, bbox, conf)
 
-def _box_iou(a: OCRBox, b: OCRBox) -> float:
-    ax2, ay2 = a.x + a.width, a.y + a.height
-    bx2, by2 = b.x + b.width, b.y + b.height
-    x1, y1 = max(a.x, b.x), max(a.y, b.y)
-    x2, y2 = min(ax2, bx2), min(ay2, by2)
-    if x2 <= x1 or y2 <= y1:
-        return 0.0
-    inter = (x2 - x1) * (y2 - y1)
-    union = a.width * a.height + b.width * b.height - inter
-    return inter / union if union > 0 else 0.0
+            if table_boxes:
+                raw_boxes.extend(table_boxes)
+                source = "ocr_result" if ocr_result and table_img_size else "html_estimate"
+                print(
+                    f"[OCR] table expanded to {len(table_boxes)} cell boxes ({source})",
+                    flush=True,
+                )
+            continue
 
+        try:
+            x0, y0, x1, y1 = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+        except (TypeError, ValueError):
+            continue
 
-def _merge_suppressed_supplement(
-    mapped: list[OCRBox],
-    sup_lines: list[OCRBox],
-    sup_chars: list[dict[str, Any]],
-) -> int:
-    """Fold the red-suppressed pass into the main result; only ever adds.
+        text, item_label = _layout_item_to_text_and_label(it)
+        if not text.strip():
+            continue
 
-    A suppressed-pass line sharing a place with an existing box is the same
-    physical line re-read — the original text stays authoritative. Lines with
-    no original counterpart (print the stamp hid from detection) are added
-    with their own char boxes. Existing boxes the original word pass left
-    without chars take the suppressed pass's chars instead, so value-level
-    cropping works on stamped lines too.
-    """
-    def center_inside(inner: OCRBox, outer: OCRBox) -> bool:
-        cx = inner.x + inner.width / 2
-        cy = inner.y + inner.height / 2
-        return (
-            outer.x <= cx <= outer.x + outer.width
-            and outer.y <= cy <= outer.y + outer.height
+        score = it.get("score", 0.9)
+        try:
+            conf = float(score) if score is not None else 0.9
+        except (TypeError, ValueError):
+            conf = 0.9
+
+        raw_boxes.append(
+            {
+                "text": text,
+                "box": [x0, y0, x1, y1],
+                "confidence": max(0.0, min(conf, 1.0)),
+                "label": item_label,
+            }
         )
 
-    if sup_chars:
-        empty = [box for box in mapped if not box.chars]
-        if empty:
-            _attach_chars(empty, sup_chars)
-    added = 0
-    for line in sup_lines:
-        if any(_box_iou(line, existing) > _SUPPRESSED_SAME_PLACE_IOU for existing in mapped):
-            continue
-        # A suppressed-pass line anchored inside an existing box (its center
-        # point lies within one) is a re-read of an area the original pass
-        # already covers — the stamp hid nothing there. The IoU gate alone
-        # cannot catch it (a thin sliver inside a full line has near-zero IoU
-        # against it), and edge containment breaks on float boundary hairs;
-        # the center point is a topological test immune to both.
-        if any(center_inside(line, existing) for existing in mapped):
-            continue
-        _attach_chars([line], sup_chars)
-        mapped.append(line)
-        added += 1
-        print(
-            f"[OCR] red-suppressed line kept: {line.text!r} "
-            f"x={line.x:.4f} y={line.y:.4f} w={line.width:.4f} h={line.height:.4f}",
-            flush=True,
-        )
-    return added
-
-
-def extract_structure(image: Image.Image, request: StructureRequest) -> list[OCRBox]:
-    engine = get_structure_engine()
-    if not engine:
+    if not raw_boxes:
         return []
 
-    width, height = image.size
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
-        temp_path = file.name
-        image.save(file, format="PNG")
+    max_x = max(b["box"][2] for b in raw_boxes)
+    max_y = max(b["box"][3] for b in raw_boxes)
+    if max(max_x, max_y) <= 1.5:
+        space_w, space_h = 1.0, 1.0
+    else:
+        space_w, space_h = float(width), float(height)
 
-    try:
-        outputs = engine.predict(
-            temp_path,
-            use_table_recognition=False,  # 表格识别会把单元格重新 OCR 一遍，按表格几何重投到错误列/重复出框（同源于 seal 的伪坐标病理）；普通行检测已完整覆盖表格内印刷体数字
-            use_seal_recognition=False,  # 公章由 LocateAnything 负责；关掉避免印章曲文被去扭曲后堆到左上角伪坐标
-            use_formula_recognition=False,
-            use_chart_recognition=False,
-            use_region_detection=True,
-            use_ocr_results_with_table_cells=request.use_ocr_results_with_table_cells,
-            use_e2e_wired_table_rec_model=request.use_e2e_wired_table_rec_model,
-            use_e2e_wireless_table_rec_model=request.use_e2e_wireless_table_rec_model,
-            use_wired_table_cells_trans_to_html=request.use_wired_table_cells_trans_to_html,
-            use_wireless_table_cells_trans_to_html=request.use_wireless_table_cells_trans_to_html,
-            use_table_orientation_classify=request.use_table_orientation_classify,
+    items: List[OCRBox] = []
+    for rb in raw_boxes:
+        xmin, ymin, xmax, ymax = rb["box"]
+        xmin = xmin / space_w * width
+        ymin = ymin / space_h * height
+        xmax = xmax / space_w * width
+        ymax = ymax / space_h * height
+        if xmin > xmax:
+            xmin, xmax = xmax, xmin
+        if ymin > ymax:
+            ymin, ymax = ymax, ymin
+        xmin = max(0, min(xmin, width))
+        xmax = max(0, min(xmax, width))
+        ymin = max(0, min(ymin, height))
+        ymax = max(0, min(ymax, height))
+        w = max(1.0, xmax - xmin)
+        h = max(1.0, ymax - ymin)
+        items.append(
+            OCRBox(
+                text=rb["text"],
+                x=xmin / width,
+                y=ymin / height,
+                width=w / width,
+                height=h / height,
+                confidence=rb["confidence"],
+                label=str(rb.get("label", "text")),
+            )
         )
-        raw_boxes = _collect_structure_raw(outputs, width, height)
-        print(f"[OCR] PP-StructureV3 produced {len(raw_boxes)} boxes", flush=True)
-    except Exception as exc:
-        print(f"[OCR] PP-StructureV3 predict failed: {exc}", flush=True)
-        return []
-    finally:
-        _remove_file(temp_path)
-
-    return _normalize_boxes(raw_boxes, width, height)
+    return items
 
 
-def prepare_image(image_bytes: bytes) -> tuple[Image.Image, Image.Image, float, float]:
+def prepare_image(image_bytes: bytes) -> tuple:
     original = ImageOps.exif_transpose(Image.open(BytesIO(image_bytes)).convert("RGB"))
     orig_w, orig_h = original.size
     max_side = max(orig_w, orig_h)
     if max_side > MAX_SIDE:
         scale = MAX_SIDE / max_side
-        ocr_w, ocr_h = max(1, int(orig_w * scale)), max(1, int(orig_h * scale))
+        ocr_w, ocr_h = int(orig_w * scale), int(orig_h * scale)
         ocr_image = original.resize((ocr_w, ocr_h), Image.Resampling.LANCZOS)
     else:
         ocr_image = original
@@ -944,147 +827,73 @@ def prepare_image(image_bytes: bytes) -> tuple[Image.Image, Image.Image, float, 
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
+async def health():
     gpu_ok = False
-    device = _paddle_device
+    dev = _torch_device
     try:
-        import paddle
+        import torch
 
-        gpu_ok = bool(paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0)
-        if not device:
-            device = str(paddle.get_device())
+        gpu_ok = bool(torch.cuda.is_available())
+        if gpu_ok and not dev:
+            dev = str(torch.cuda.current_device())
     except Exception:
         pass
-
-    gpu_only_mode = not _allow_cpu()
-    runtime_mode = "gpu" if gpu_ok and str(device).lower().startswith("gpu") else "cpu"
     return {
         "status": "online" if _ready else "offline",
         "model": _model_name,
         "ready": _ready,
-        "runtime": "paddleocr",
-        "runtime_mode": runtime_mode,
+        "warmed": _warmed,
+        "warmup_passes": _warmup_passes,
+        "warmup_best_seconds": round(_warmup_best_s, 3) if _warmup_best_s else None,
+        "max_image_side": MAX_SIDE,
         "gpu_available": gpu_ok,
-        "device": device or "unknown",
-        "gpu_only_mode": gpu_only_mode,
-        "cpu_fallback_risk": (not gpu_only_mode) or runtime_mode != "gpu",
-        "structure_ready": _structure is not None,
+        "device": dev or "unknown",
+        "gpu_only_mode": not _ocr_allow_cpu(),
     }
 
 
 @app.post("/ocr", response_model=OCRResponse)
-async def ocr_extract(request: OCRRequest) -> OCRResponse:
+async def ocr_extract(request: OCRRequest):
     if not _ready:
-        raise HTTPException(status_code=503, detail="OCR service is not ready")
-    if _vl is None:
-        raise HTTPException(status_code=503, detail="PaddleOCR-VL is disabled; use /structure")
+        raise HTTPException(status_code=503, detail="OCR service not ready")
 
     start = time.perf_counter()
+
     try:
+        decode_started = time.perf_counter()
         image_bytes = base64.b64decode(request.image)
-        # prepare_image decodes the pixel data; a truncated/corrupt payload that
-        # fails there is still a client error (400), not a server fault.
-        _original, ocr_image, _scale_x, _scale_y = prepare_image(image_bytes)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid base64 image") from exc
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 image")
+    decode_ms = round((time.perf_counter() - decode_started) * 1000)
 
-    # Inference runs in a worker thread under the module lock so /health stays
-    # responsive while keeping the single-request serial semantics (the Paddle
-    # predictor is not thread-safe).
-    async with _infer_lock:
-        try:
-            items = await asyncio.to_thread(extract_vl, ocr_image, request.max_new_tokens, request)
-        finally:
-            trim_cuda_cache("ocr")
+    prepare_started = time.perf_counter()
+    _orig, ocr_image, _scale_x, _scale_y = prepare_image(image_bytes)
+    prepare_ms = round((time.perf_counter() - prepare_started) * 1000)
 
+    infer_started = time.perf_counter()
+    items = extract_mineru(ocr_image)
+    infer_ms = round((time.perf_counter() - infer_started) * 1000)
+
+    map_started = time.perf_counter()
     mapped = map_boxes_to_original(items)
+    map_ms = round((time.perf_counter() - map_started) * 1000)
+
     elapsed = time.perf_counter() - start
-    print(f"[OCR] OCR {len(mapped)} boxes in {elapsed:.2f}s", flush=True)
+    total_ms = round(elapsed * 1000)
+    print(
+        f"[timing] ocr_server boxes={len(mapped)} "
+        f"decode={decode_ms}ms prepare={prepare_ms}ms infer={infer_ms}ms map={map_ms}ms total={elapsed:.2f}s",
+        flush=True,
+    )
+
     return OCRResponse(boxes=mapped, model=_model_name, elapsed=elapsed)
-
-
-def _drop_uncorroborated_overlaps(mapped: list[OCRBox]) -> int:
-    """Drop detector artifacts that re-claim pixels a corroborated line owns.
-
-    A line with no char-box corroboration whose center point lies inside a
-    line that HAS char boxes is a detection artifact over the same glyphs
-    (observed: a 5px sliver reading "201010" across the lower edge of a
-    corroborated 2016年12月20号 line). Char corroboration and center-point
-    anchoring are both identity-grade tests — no size or score thresholds.
-    Legitimate chars-less lines (print crushed under a stamp) sit where no
-    corroborated line exists, so they are never anchored inside one.
-    """
-    corroborated = [box for box in mapped if box.chars]
-    if not corroborated:
-        return 0
-    dropped = 0
-    for box in list(mapped):
-        if box.chars:
-            continue
-        cx = box.x + box.width / 2
-        cy = box.y + box.height / 2
-        for owner in corroborated:
-            if (
-                owner is not box
-                and owner.x <= cx <= owner.x + owner.width
-                and owner.y <= cy <= owner.y + owner.height
-            ):
-                mapped.remove(box)
-                dropped += 1
-                print(
-                    f"[OCR] dropped uncorroborated artifact: {box.text!r} "
-                    f"inside {owner.text!r}",
-                    flush=True,
-                )
-                break
-    return dropped
-
-
-@app.post("/structure", response_model=OCRResponse)
-async def structure_extract(request: StructureRequest) -> OCRResponse:
-    if not _ready:
-        raise HTTPException(status_code=503, detail="OCR service is not ready")
-    if not _structure_enabled():
-        raise HTTPException(status_code=404, detail="PP-StructureV3 is disabled")
-
-    start = time.perf_counter()
-    try:
-        image_bytes = base64.b64decode(request.image)
-        # prepare_image decodes the pixel data; a truncated/corrupt payload that
-        # fails there is still a client error (400), not a server fault.
-        _original, ocr_image, _scale_x, _scale_y = prepare_image(image_bytes)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid base64 image") from exc
-
-    # Both Paddle inference passes (structure + char boxes) run in worker
-    # threads under the module lock so /health stays responsive while keeping
-    # the single-request serial semantics (predictors are not thread-safe).
-    async with _infer_lock:
-        try:
-            items = await asyncio.to_thread(extract_structure, ocr_image, request)
-            mapped = map_boxes_to_original(items)
-            _attach_chars(mapped, await asyncio.to_thread(_extract_char_boxes, ocr_image))
-            suppressed = await asyncio.to_thread(_suppress_red_ink, ocr_image)
-            if suppressed is not None:
-                sup_lines, sup_chars = await asyncio.to_thread(_extract_suppressed_lines, suppressed)
-                added = _merge_suppressed_supplement(mapped, sup_lines, sup_chars)
-                if added:
-                    print(f"[OCR] red-suppressed supplement added {added} lines", flush=True)
-            _drop_uncorroborated_overlaps(mapped)
-        finally:
-            release_structure_engine_if_configured()
-            trim_cuda_cache("structure")
-
-    elapsed = time.perf_counter() - start
-    print(f"[OCR] Structure {len(mapped)} boxes in {elapsed:.2f}s", flush=True)
-    return OCRResponse(boxes=mapped, model="PP-StructureV3", elapsed=elapsed)
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    print("[OCR] Initializing PaddleOCR sidecar ...", flush=True)
+    print("[OCR] Initializing MinerU in main thread ...", flush=True)
     init_ocr()
-    warmup_structure()
-    print("[OCR] Service ready, starting HTTP server ...", flush=True)
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("OCR_PORT", "8082")), workers=1)
+    print("[OCR] Model ready, starting HTTP server ...", flush=True)
+    port = int(os.environ.get("OCR_PORT", "8082"))
+    uvicorn.run(app, host="0.0.0.0", port=port, workers=1)
