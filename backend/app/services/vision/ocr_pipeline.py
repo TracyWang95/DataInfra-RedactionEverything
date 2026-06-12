@@ -15,7 +15,6 @@ import hashlib
 import html
 import io
 import logging
-import re
 import threading
 import time
 from collections import OrderedDict
@@ -28,7 +27,7 @@ from PIL import Image, ImageOps
 
 from app.core.config import settings
 from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
-from app.models.type_mapping import TYPE_CN_TO_ID, TYPE_ID_TO_CN
+from app.models.type_mapping import TYPE_CN_TO_ID, TYPE_ID_TO_CN, has_query_labels_for
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 from app.services.vision.has_text_payload import (
     DEFAULT_HAS_TEXT_TYPE_IDS,
@@ -355,6 +354,7 @@ def _clone_text_block(block: OCRTextBlock) -> OCRTextBlock:
         text=block.text,
         polygon=[[float(point[0]), float(point[1])] for point in block.polygon],
         confidence=float(block.confidence),
+        chars=[dict(char_box) for char_box in block.chars],
     )
 
 
@@ -798,7 +798,7 @@ def recall_form_field_document_numbers(ocr_blocks: list[OCRTextBlock]) -> list[d
     """
     prepared: list[tuple[OCRTextBlock, str]] = []
     for block in ocr_blocks:
-        text, _aligned = _block_search_text(block)
+        text = _block_search_text(block)
         if not _compact_text(text) or text.lstrip().startswith("<table"):
             continue
         prepared.append((block, text))
@@ -1277,7 +1277,9 @@ def run_paddle_ocr(
                     image_bytes=image_bytes(),
                     service_available_checked=True,
                 )
-                merged_blocks = _merge_ocr_blocks(primary_structure_blocks, vl_blocks)
+                merged_blocks = _merge_ocr_blocks(
+                    primary_structure_blocks, vl_blocks, prefer_extra_text=True
+                )
                 logger.info(
                     "PP-StructureV3 primary OCR kept %d blocks; PaddleOCR-VL supplement merged %d VL blocks (%d -> %d)",
                     len(primary_structure_blocks),
@@ -1286,11 +1288,33 @@ def run_paddle_ocr(
                     len(merged_blocks),
                 )
                 return merged_blocks, [*primary_structure_visual_regions, *vl_visual_regions]
-            if needs_ocr_visual_regions and not primary_structure_visual_regions:
-                logger.info(
-                    "PP-StructureV3 primary OCR found %d blocks but no visual regions; retaining PaddleOCR-VL visual supplement",
-                    len(primary_structure_blocks),
+            if needs_ocr_visual_regions and not primary_structure_visual_regions and not vl_disabled:
+                # PP-StructureV3 produced no visual regions, so PaddleOCR-VL
+                # still runs to provide them — but the text-block set stays
+                # structure-primary, same merge direction as the supplement
+                # branch above. VL's generative whole-line blocks carry no
+                # char boxes; letting them displace per-line structure blocks
+                # masks label and value together as one full line.
+                vl_blocks, vl_visual_regions = _run_ocr_service(
+                    image,
+                    ocr_service,
+                    stage_status=stage_status,
+                    image_bytes=image_bytes(),
+                    service_available_checked=True,
                 )
+                merged_blocks = _merge_ocr_blocks(
+                    primary_structure_blocks, vl_blocks, prefer_extra_text=True
+                )
+                logger.info(
+                    "PP-StructureV3 primary OCR found %d blocks but no visual regions; "
+                    "PaddleOCR-VL supplied %d visual regions, merged %d VL blocks (%d -> %d)",
+                    len(primary_structure_blocks),
+                    len(vl_visual_regions),
+                    len(vl_blocks),
+                    len(primary_structure_blocks),
+                    len(merged_blocks),
+                )
+                return merged_blocks, [*primary_structure_visual_regions, *vl_visual_regions]
             else:
                 if needs_text_precision:
                     logger.info(
@@ -1512,7 +1536,22 @@ def _run_structure_service_with_visuals(
     return blocks, visual_regions
 
 
-def _merge_ocr_blocks(primary: list[OCRTextBlock], extra: list[OCRTextBlock]) -> list[OCRTextBlock]:
+def _merge_ocr_blocks(
+    primary: list[OCRTextBlock],
+    extra: list[OCRTextBlock],
+    *,
+    prefer_extra_text: bool = False,
+) -> list[OCRTextBlock]:
+    """Merge extra blocks into primary; primary wins on overlap.
+
+    prefer_extra_text: the extra engine reads glyphs more accurately than the
+    primary one (PaddleOCR-VL vs the PP-OCR line recognizer). When an extra
+    block re-reads an existing line — same place with equal glyph count, or a
+    fuller reading of the same pixels — its text is carried onto the existing
+    block while the existing geometry and char boxes (value-crop evidence) are
+    kept, and the box widens to the union so the mask never claims pixels it
+    does not cover.
+    """
     if extra:
         merged = [
             block for block in primary
@@ -1558,16 +1597,58 @@ def _merge_ocr_blocks(primary: list[OCRTextBlock], extra: list[OCRTextBlock]) ->
             return False
         return existing.width > candidate.width * _SUPPLEMENT_WIDER_RATIO or len(existing_text) > len(candidate_text) + _SUPPLEMENT_LONGER_TEXT_MARGIN
 
+    def content_relation(candidate_compact: str, existing_compact: str) -> str | None:
+        """How the candidate's content relates to the existing block's.
+
+        Identity facts only, no similarity thresholds: 'same' for equal glyph
+        counts (two recognizers reading the same glyphs differently, e.g.
+        戬浜/我浜); 'subset'/'superset' when the shorter text is an in-order
+        subsequence of the longer (one engine dropped or recovered glyphs);
+        None when the readings are unrelated content.
+        """
+        if not candidate_compact or not existing_compact:
+            return None
+        if len(candidate_compact) == len(existing_compact):
+            return "same"
+        shorter, longer = sorted((candidate_compact, existing_compact), key=len)
+        corresponding = sum(
+            size
+            for _shorter_pos, _longer_pos, size in SequenceMatcher(
+                None, shorter, longer, autojunk=False
+            ).get_matching_blocks()
+        )
+        if corresponding != len(shorter):
+            return None
+        return "subset" if shorter is candidate_compact else "superset"
+
+    def adopted_block(existing: OCRTextBlock, candidate: OCRTextBlock) -> OCRTextBlock:
+        left = min(existing.bbox[0], candidate.bbox[0])
+        top = min(existing.bbox[1], candidate.bbox[1])
+        right = max(existing.bbox[2], candidate.bbox[2])
+        bottom = max(existing.bbox[3], candidate.bbox[3])
+        return OCRTextBlock(
+            text=candidate.text,
+            polygon=[[left, top], [right, top], [right, bottom], [left, bottom]],
+            confidence=existing.confidence,
+            chars=existing.chars,
+        )
+
     for block in extra:
         if _is_coarse_markup_block(block):
             continue
         compact = _compact_text(block.text)
         duplicate = False
-        for existing in merged:
+        for index, existing in enumerate(merged):
             overlap = iou(block, existing)
-            if compact and compact == _compact_text(existing.text) and overlap > _MERGE_DUPLICATE_IOU:
-                duplicate = True
-                break
+            if overlap > _MERGE_DUPLICATE_IOU:
+                relation = content_relation(compact, _compact_text(existing.text))
+                if prefer_extra_text and relation in ("same", "superset"):
+                    merged[index] = adopted_block(existing, block)
+                    duplicate = True
+                    break
+                if relation in ("same", "subset"):
+                    duplicate = True
+                    break
             if overlap > _MERGE_OVERLAP_IOU:
                 if is_structure_precision_supplement(existing, block):
                     continue
@@ -2019,18 +2100,6 @@ def expand_table_blocks(ocr_blocks: list[OCRTextBlock]) -> list[OCRTextBlock]:
 # model classifies sequentially — order and recall are coupled. So a date-format
 # backstop (below) catches those dropped dates — see _STANDALONE_DATE_RE.
 
-# A whole OCR block that IS a date (optionally with a time). The 0.6B NER reliably
-# drops a bare date when the same date appears elsewhere with a time (emits
-# "2024-05-16 10:00" but skips a standalone "2024-05-16"); every tuning knob
-# (prompt, vLLM context, sampling, type-batching) was verified unable to recover
-# it. Dates have one unambiguous format, so when DATE is requested we redact any
-# date-only OCR block HaS did not already return. This only ever adds DATE values,
-# so it can never mislabel a non-date (no 汉族->性别 risk).
-_STANDALONE_DATE_RE = re.compile(
-    r"^\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?(?:[ \t]*\d{1,2}[:：]\d{2}(?:[:：]\d{2})?)?$"
-)
-
-
 async def run_has_text_analysis(
     ocr_blocks: list[OCRTextBlock],
     has_client: Any,
@@ -2284,6 +2353,9 @@ async def run_has_text_analysis(
         logger.info("HaS NER result: %s", ner_result)
 
         # ----- reverse mapping: Chinese -> type ID -----
+        # Every label the prompt asked for on an item's behalf maps back to
+        # that item (has_query_labels_for is the same source the prompt was
+        # built from, so query and answer stay symmetric — 大写金额 -> AMOUNT).
         if vision_types:
             chinese_to_id = {}
             for vt in vision_types:
@@ -2295,11 +2367,14 @@ async def run_has_text_analysis(
                 canonical_name = TYPE_ID_TO_CN.get(normalized_id)
                 if canonical_name:
                     chinese_to_id[canonical_name] = normalized_id
+                for query_label in has_query_labels_for(normalized_id):
+                    chinese_to_id[query_label] = normalized_id
         else:
-            chinese_to_id = {
-                TYPE_ID_TO_CN.get(type_id, type_id): type_id
-                for type_id in DEFAULT_HAS_TEXT_TYPE_IDS
-            }
+            chinese_to_id = {}
+            for type_id in DEFAULT_HAS_TEXT_TYPE_IDS:
+                chinese_to_id[TYPE_ID_TO_CN.get(type_id, type_id)] = type_id
+                for query_label in has_query_labels_for(type_id):
+                    chinese_to_id[query_label] = type_id
 
         bridge_ner_result: dict[str, list[str]] = {}
         bridge_blocks = reconstruct_visual_line_blocks(candidate_blocks)
@@ -2381,24 +2456,6 @@ async def run_has_text_analysis(
 
         # Form-field document numbers the NER did not already return.
         entities = _merge_form_field_document_entities(entities, form_document_entities)
-
-        # Date-format backstop: redact date-only OCR blocks the NER dropped (see
-        # _STANDALONE_DATE_RE). Only when DATE is in the schema, and only for dates
-        # HaS did not already return (under any type), so it adds nothing else.
-        date_in_schema = vision_types is None or any(
-            _canonical_image_text_type(getattr(vt, "id", "")) == "DATE" for vt in (vision_types or [])
-        )
-        if date_in_schema:
-            seen_values = {_compact_text(entity["text"]) for entity in entities}
-            for block in ocr_blocks:
-                block_text = str(block.text or "").strip()
-                if not _STANDALONE_DATE_RE.match(block_text):
-                    continue
-                if _compact_text(block_text) in seen_values:
-                    continue
-                entities.append({"type": "DATE", "text": block_text})
-                seen_values.add(_compact_text(block_text))
-                logger.info("Date backstop added: %s", block_text)
 
         # Boxes come from matching these values back to OCR blocks; mIoU is the
         # only merge step.
@@ -2580,39 +2637,125 @@ _HAS_ENTITY_TYPE_MAPPING = {
 }
 
 
-def _block_search_text(block: OCRTextBlock) -> tuple[str, bool]:
-    """Authoritative text to match against, plus whether char boxes spell it.
+def _block_search_text(block: OCRTextBlock) -> str:
+    """Authoritative text to match entities against.
 
     block.chars are produced together with the box geometry, so when the OCR
     service mis-pairs text labels with boxes (observed PP-StructureV3
     pathology: duplicated boxes whose `text` belongs to a different box), the
-    joined char boxes still spell the box's real content. Matching against the
-    chars text in that case guarantees a value is only attached to a block
-    that actually contains it; the old whole-block fallback attached the lying
+    joined char boxes still spell the box's real content. The text label is
+    kept only while the chars corroborate it as the same content:
+
+    - same glyph sequence (whitespace ignored);
+    - equal glyph counts: the char-level recognizer read the same glyphs
+      differently (帐号 vs 账号, 江苏省×X市 vs 江苏省XX市);
+    - chars form an in-order subsequence of the text: the service dropped
+      some char boxes (observed: chars 9,000.00 under text 89,000.00) —
+      partial evidence of the same content, not a contradiction.
+
+    Anything else means the chars spell different content than the label, so
+    match against the chars text: a value is only ever attached to a box that
+    actually contains it. The old whole-block fallback attached the lying
     text label to a box holding different pixels.
     """
     block_text = str(block.text or "")
     chars = getattr(block, "chars", None) or []
     if not chars:
-        return block_text, False
+        return block_text
     chars_text = "".join(str(char_box.get("c", "")) for char_box in chars)
-    if chars_text == block_text:
-        return block_text, True
     compact_chars = _compact_text(chars_text)
     compact_block = _compact_text(block_text)
-    if compact_chars in compact_block:
-        # Whitespace-only divergence, or an incomplete char list (the service
-        # sometimes drops leading char boxes, e.g. chars 9,000.00 under text
-        # 89,000.00): the chars are partial evidence of the same content, not a
-        # contradiction. Keep the text; char indexes do not line up with it.
-        return block_text, False
+    if compact_chars == compact_block:
+        return block_text
     if len(compact_chars) == len(compact_block):
-        # Equal-length divergence is the char-level recognizer reading the same
-        # glyphs differently (江苏省×X市 vs 江苏省XX市), not another box's text:
-        # the mis-pairing pathology swaps in a whole different string. Keep the
-        # text — HaS entities were extracted from it.
-        return block_text, False
-    return chars_text, True
+        return block_text
+    corresponding_glyphs = sum(
+        size
+        for _block_pos, _chars_pos, size in SequenceMatcher(
+            None, compact_block, compact_chars, autojunk=False
+        ).get_matching_blocks()
+    )
+    if corresponding_glyphs == len(compact_chars):
+        return block_text
+    return chars_text
+
+
+def _entity_char_box_x_span(
+    block: OCRTextBlock,
+    search_text: str,
+    span_start: int,
+    span_end: int,
+) -> tuple[int, int] | None:
+    """X-range of the char boxes proven to render search_text[span_start:span_end).
+
+    No proportional estimation and no thresholds: glyph correspondence comes
+    from the monotone alignment (difflib matching blocks) of the two
+    whitespace-stripped glyph sequences, which absorbs whitespace differences,
+    same-glyph misreads (帐/账) and dropped char boxes alike. A crop is
+    returned only when the span's first and last glyphs each have a
+    corresponding box — char boxes run left-to-right, so that union also
+    covers interior glyphs whose own box was dropped. Anything unprovable
+    returns None and the caller masks the whole block.
+    """
+    chars = getattr(block, "chars", None) or []
+    if not chars:
+        return None
+
+    # One entry per non-whitespace glyph; multi-char tokens ("2024-05-14")
+    # contribute their box once per glyph.
+    glyph_boxes: list[dict] = []
+    chars_glyph_list: list[str] = []
+    for char_box in chars:
+        for glyph in _compact_text(str(char_box.get("c", ""))):
+            chars_glyph_list.append(glyph)
+            glyph_boxes.append(char_box)
+    if not glyph_boxes:
+        return None
+    chars_glyphs = "".join(chars_glyph_list)
+
+    # Map the raw [span_start, span_end) onto glyph (whitespace-free) indexes.
+    search_glyph_list: list[str] = []
+    span_glyph_start = span_glyph_end = 0
+    for index, ch in enumerate(search_text):
+        if ch.isspace():
+            continue
+        if index < span_start:
+            span_glyph_start += 1
+        if index < span_end:
+            span_glyph_end += 1
+        search_glyph_list.append(ch)
+    if span_glyph_end <= span_glyph_start:
+        return None
+    search_glyphs = "".join(search_glyph_list)
+
+    box_by_glyph: list[dict | None] = [None] * len(search_glyphs)
+    if search_glyphs == chars_glyphs:
+        box_by_glyph = list(glyph_boxes)
+    else:
+        for search_pos, chars_pos, size in SequenceMatcher(
+            None, search_glyphs, chars_glyphs, autojunk=False
+        ).get_matching_blocks():
+            for offset in range(size):
+                box_by_glyph[search_pos + offset] = glyph_boxes[chars_pos + offset]
+
+    span_boxes = box_by_glyph[span_glyph_start:span_glyph_end]
+    if not span_boxes or span_boxes[0] is None or span_boxes[-1] is None:
+        return None
+    left = int(min(box["x1"] for box in span_boxes if box is not None))
+    right = int(max(box["x2"] for box in span_boxes if box is not None))
+    if right <= left:
+        return None
+    return left, right
+
+
+def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
+    """The two regions share any pixels (topological, no thresholds)."""
+    return (
+        a.left < b.left + b.width
+        and b.left < a.left + a.width
+        and a.top < b.top + b.height
+        and b.top < a.top + a.height
+    )
 
 
 def _char_word_class(ch: str) -> str:
@@ -2709,13 +2852,13 @@ def match_entities_to_ocr(
     # (_block_search_text: chars-verified against the box) once outside the loop.
     ordered_blocks = sorted(expanded_blocks, key=lambda item: id(item) in table_virtual_block_ids)
     prepared_blocks = [
-        (block, *_block_search_text(block), id(block) in table_virtual_block_ids)
+        (block, _block_search_text(block), id(block) in table_virtual_block_ids)
         for block in ordered_blocks
     ]
 
     standalone_amount_signatures = {
         signature
-        for _block, search_text, _aligned, is_table_virtual in prepared_blocks
+        for _block, search_text, is_table_virtual in prepared_blocks
         if not is_table_virtual and _is_standalone_amount_ocr_block(search_text)
         for signature in [_amount_value_signature(search_text)]
         if signature
@@ -2739,7 +2882,12 @@ def match_entities_to_ocr(
         strict_value = _is_strict_match_entity(normalized_type, entity_text)
 
         direct_amount_signatures: set[str] = set()
-        for block, block_text, block_chars_aligned, is_table_virtual in prepared_blocks:
+        # This entity's matches, with the evidence they carry: whether the
+        # region pins the value's position (the block IS the value, or the
+        # char-aligned crop located its glyphs) versus an uncropped
+        # whole-block containment claim (no position evidence at all).
+        entity_regions: list[tuple[SensitiveRegion, bool, bool]] = []
+        for block, block_text, is_table_virtual in prepared_blocks:
             if block_text.startswith("<table"):
                 continue
 
@@ -2782,50 +2930,45 @@ def match_entities_to_ocr(
                             continue
                         if not is_table_virtual and amount_signature:
                             direct_amount_signatures.add(amount_signature)
-                    # Value-level crop: narrow x to the entity's real character
-                    # boxes when they spell this block's text; otherwise mask the
-                    # whole block (safe). No proportional estimation, no
-                    # thresholds — x is the union of the entity's real character
-                    # boxes (handwriting included). y/height stay the block's full
-                    # line height (705318c contract: a single-line OCR block keeps
-                    # its full vertical extent so the mask always covers the glyphs).
+                    # Value-level crop: narrow x to the union of the char boxes
+                    # proven by glyph alignment to render this occurrence;
+                    # otherwise mask the whole block (safe). y/height stay the
+                    # block's full line height (705318c contract: a single-line
+                    # OCR block keeps its full vertical extent so the mask
+                    # always covers the glyphs).
                     rl, rt, rw, rh = block.left, block.top, block.width, block.height
-                    if block_chars_aligned:
-                        # block.chars are word/token boxes (a token may be several
-                        # characters, e.g. "2024-05-14"). Collect the tokens whose
-                        # character span overlaps [start, end) of this match — not a
-                        # naive index slice, which would over-cover when tokens are
-                        # multi-char.
-                        span_start = visual_occurrence_start
-                        span_end = span_start + len(visual_text)
-                        cursor = 0
-                        run = []
-                        for cbox in block.chars:
-                            clen = len(str(cbox.get("c", "")))
-                            if cursor < span_end and cursor + clen > span_start:
-                                run.append(cbox)
-                            cursor += clen
-                        if run:
-                            cx1 = min(c["x1"] for c in run)
-                            cx2 = max(c["x2"] for c in run)
-                            if cx2 > cx1:
-                                rl, rw = cx1, cx2 - cx1
-                    regions.append(SensitiveRegion(
-                        text=visual_text,
-                        entity_type=contextual_type,
-                        left=rl,
-                        top=rt,
-                        width=rw,
-                        height=rh,
-                        confidence=1.0,
-                        source=(
-                            entity_source
-                            if entity_source in {"table_semantic", "form_field_ocr"}
-                            else
-                            "table_cell_match"
-                            if is_table_virtual
-                            else "text_match"
+                    crop_span = _entity_char_box_x_span(
+                        block,
+                        block_text,
+                        visual_occurrence_start,
+                        visual_occurrence_start + len(visual_text),
+                    )
+                    if crop_span is not None:
+                        rl, rw = crop_span[0], crop_span[1] - crop_span[0]
+                    has_position_evidence = (
+                        crop_span is not None
+                        or _compact_text(block_text) == _compact_text(visual_text)
+                    )
+                    entity_regions.append((
+                        SensitiveRegion(
+                            text=visual_text,
+                            entity_type=contextual_type,
+                            left=rl,
+                            top=rt,
+                            width=rw,
+                            height=rh,
+                            confidence=1.0,
+                            source=(
+                                entity_source
+                                if entity_source in {"table_semantic", "form_field_ocr"}
+                                else
+                                "table_cell_match"
+                                if is_table_virtual
+                                else "text_match"
+                            ),
                         ),
+                        has_position_evidence,
+                        not has_position_evidence,
                     ))
                     logger.debug(
                         "MATCH '%s' in '%s...' @ (%d, %d, %d, %d)",
@@ -2843,25 +2986,51 @@ def match_entities_to_ocr(
                     continue
                 if not is_table_virtual and amount_signature:
                     direct_amount_signatures.add(amount_signature)
-                regions.append(SensitiveRegion(
-                    text=block_text.strip() or entity_text,
-                    entity_type=normalized_type,
-                    left=block.left,
-                    top=block.top,
-                    width=block.width,
-                    height=block.height,
-                    confidence=1.0,
-                    source=(
-                        entity_source
-                        if entity_source in {"table_semantic", "form_field_ocr"}
-                        else
-                        "table_cell_match"
-                        if is_table_virtual
-                        else "text_match"
+                entity_regions.append((
+                    SensitiveRegion(
+                        text=block_text.strip() or entity_text,
+                        entity_type=normalized_type,
+                        left=block.left,
+                        top=block.top,
+                        width=block.width,
+                        height=block.height,
+                        confidence=1.0,
+                        source=(
+                            entity_source
+                            if entity_source in {"table_semantic", "form_field_ocr"}
+                            else
+                            "table_cell_match"
+                            if is_table_virtual
+                            else "text_match"
+                        ),
                     ),
+                    True,  # the block is the value in another display form
+                    False,
                 ))
                 logger.debug("MATCH '%s' ~ '%s' (amount value form)", entity_text, block_text[:20])
                 matched = True
+
+        # An uncropped whole-block region claimed only through text
+        # containment (a chars-less PaddleOCR-VL paragraph) carries no
+        # position evidence for the value. When the same entity also has a
+        # position-evidenced region — its own dedicated box (the handwriting
+        # block of a signature) or a char-aligned crop on another block — and
+        # the two overlap, that region is the occurrence; the whole-block
+        # claim is redundant cover over label/context. Overlap is topological
+        # (intersection exists), immune to detector box wobble.
+        evidenced_regions = [
+            region for region, evidenced, _positionless in entity_regions if evidenced
+        ]
+        for region, _evidenced, positionless in entity_regions:
+            if positionless and any(
+                _regions_overlap(region, evidenced) for evidenced in evidenced_regions
+            ):
+                logger.debug(
+                    "Dropped positionless whole-block claim for '%s' (evidenced region exists)",
+                    region.text,
+                )
+                continue
+            regions.append(region)
 
         # Fuzzy match (handles minor OCR misreads). Runs only after NO block
         # contained the value: the old in-loop fuzzy fired on an earlier
@@ -2873,7 +3042,7 @@ def match_entities_to_ocr(
             and not strict_value
             and len(entity_text) >= _FUZZY_MATCH_MIN_ENTITY_LEN
         ):
-            for block, block_text, _aligned, _is_table_virtual in prepared_blocks:
+            for block, block_text, _is_table_virtual in prepared_blocks:
                 if block_text.startswith("<table"):
                     continue
                 if len(block_text) <= max(len(entity_text) * _FUZZY_MATCH_BLOCK_LEN_MULT, _FUZZY_MATCH_BLOCK_LEN_FLOOR) and (

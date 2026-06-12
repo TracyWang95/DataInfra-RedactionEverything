@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 from app.services.ocr_service import OCRItem
 from app.services.vision.ocr_pipeline import (
+    _clone_text_block,
     _dedupe_ocr_regions,
     _is_amount_format_text,
     _is_amount_header_label,
@@ -307,6 +308,76 @@ def test_amount_header_label_is_identity_not_containment() -> None:
     assert not _is_amount_header_label("设备名称")
 
 
+def test_positionless_whole_block_claim_yields_to_dedicated_box() -> None:
+    # A signature name matched inside a chars-less VL paragraph produces an
+    # uncropped whole-block region (label + handwriting + the next line); the
+    # same name also matched its own handwriting block. The dedicated box is
+    # the occurrence — the positionless containment claim is dropped, even
+    # though the handwriting box pokes a few pixels outside the paragraph
+    # (strict containment never fires on real detector output).
+    paragraph = OCRTextBlock(
+        text="法定代表人/授权代表（签字）：张伟\n日期：2024年05月28日",
+        polygon=[[38, 1361], [429, 1361], [429, 1400], [38, 1400]],
+    )
+    handwriting = OCRTextBlock(
+        text="张伟",
+        polygon=[[311, 1350], [430, 1350], [430, 1418], [311, 1418]],
+    )
+
+    regions = match_entities_to_ocr(
+        [paragraph, handwriting], [{"type": "PERSON", "text": "张伟"}]
+    )
+
+    assert [(r.left, r.width) for r in regions] == [(311, 119)]
+
+
+def test_positionless_claim_yields_to_cropped_region_too() -> None:
+    # The date inside the chars-less VL paragraph (签字 line + 日期 line merged)
+    # produces a two-line whole-block region; the same date matched its own
+    # structure line and was value-cropped there. A cropped hit is position
+    # evidence just like a dedicated block — the paragraph claim is redundant.
+    paragraph = OCRTextBlock(
+        text="法定代表人/授权代表（签字）：张伟\n日期：2024年05月28日",
+        polygon=[[38, 1361], [429, 1361], [429, 1400], [38, 1400]],
+    )
+    date_line = OCRTextBlock(
+        text="日期：2024年05月28日",
+        polygon=[[90, 1395], [290, 1395], [290, 1418], [90, 1418]],
+        chars=[
+            {"c": g, "x1": 90 + i * 14, "y1": 1395, "x2": 104 + i * 14, "y2": 1418}
+            for i, g in enumerate("日期：2024年05月28日")
+        ],
+    )
+
+    regions = match_entities_to_ocr(
+        [paragraph, date_line], [{"type": "DATE", "text": "2024年05月28日"}]
+    )
+
+    assert len(regions) == 1
+    assert regions[0].left == 132  # cropped to the value inside the date line
+
+
+def test_whole_block_claim_stays_without_dedicated_box() -> None:
+    # When the containment claim is the only coverage (no dedicated box, or a
+    # dedicated box elsewhere on the page), it must stay — dropping it would
+    # be a missed redaction.
+    paragraph = OCRTextBlock(
+        text="法定代表人/授权代表（签字）：张伟",
+        polygon=[[38, 1361], [429, 1361], [429, 1400], [38, 1400]],
+    )
+    far_away_dedicated = OCRTextBlock(
+        text="张伟",
+        polygon=[[100, 200], [220, 200], [220, 240], [100, 240]],
+    )
+
+    regions = match_entities_to_ocr(
+        [paragraph, far_away_dedicated], [{"type": "PERSON", "text": "张伟"}]
+    )
+
+    lefts = sorted(r.left for r in regions)
+    assert lefts == [38, 100]  # both occurrences stay covered
+
+
 def test_nested_same_entity_regions_keep_tightest_box() -> None:
     # Mixed-granularity OCR (PP-Structure line + coarse VL layout paragraph)
     # matches the same value at both granularities; whole-block coverage then
@@ -486,6 +557,253 @@ def test_vl_supplement_drops_duplicate_vl_blocks(monkeypatch) -> None:
     )
 
     assert [block.text for block in blocks].count("公司") == 1
+
+
+def test_clone_text_block_preserves_char_boxes() -> None:
+    # The OCR output cache round-trips blocks through _clone_text_block.
+    # Dropping chars there silently disables value-level cropping on every
+    # cache hit: the first detection masks the value only, the next one masks
+    # the whole line (label included) because the cloned block lost the char
+    # boxes that prove where the value sits.
+    block = OCRTextBlock(
+        text="户名：上海淞江",
+        polygon=[[0.0, 0.0], [100.0, 0.0], [100.0, 20.0], [0.0, 20.0]],
+        confidence=0.97,
+        chars=[
+            {"c": "户", "x1": 0, "y1": 0, "x2": 12, "y2": 20},
+            {"c": "名", "x1": 12, "y1": 0, "x2": 24, "y2": 20},
+        ],
+    )
+    clone = _clone_text_block(block)
+    assert clone.chars == block.chars
+    assert clone.chars is not block.chars  # cached copy must not share state
+
+
+def test_merge_drops_vl_reread_of_same_line() -> None:
+    # The VL pass re-reads an existing structure line with one divergent glyph
+    # (戬/我) or a dropped glyph, plus a slightly wobbled box. Same place with
+    # equal glyph count, or reading a subset of the glyphs, is the same
+    # physical line — not new content. Keeping both feeds HaS two variants of
+    # one value, and the whole-line VL box (no char boxes) later displaces the
+    # value-cropped structure box.
+    structure_block = OCRTextBlock(
+        text="开户行：农行上海我浜支行",
+        polygon=[[82, 228], [288, 228], [288, 250], [82, 250]],
+    )
+    equal_count_reread = OCRTextBlock(
+        text="开户行：农行上海戬浜支行",
+        polygon=[[82, 231], [290, 231], [290, 251], [82, 251]],
+    )
+    dropped_glyph_reread = OCRTextBlock(
+        text="开户行：农行上海浜支行",
+        polygon=[[82, 231], [290, 231], [290, 251], [82, 251]],
+    )
+
+    merged = _merge_ocr_blocks(
+        [structure_block], [equal_count_reread, dropped_glyph_reread]
+    )
+
+    assert [block.text for block in merged] == ["开户行：农行上海我浜支行"]
+
+
+def test_merge_keeps_vl_block_reading_more_content() -> None:
+    # A VL block whose text is a superset of the overlapping structure block
+    # (the seal-crushed full company name) is new evidence, not a re-read.
+    structure_block = OCRTextBlock(
+        text="甲方（盖章）：苏州市",
+        polygon=[[50, 200], [250, 200], [250, 220], [50, 220]],
+    )
+    vl_block = OCRTextBlock(
+        text="甲方（盖章）：苏州市纳达信息服务有限公司",
+        polygon=[[50, 200], [420, 200], [420, 220], [50, 220]],
+    )
+
+    merged = _merge_ocr_blocks([structure_block], [vl_block])
+
+    assert "甲方（盖章）：苏州市纳达信息服务有限公司" in [b.text for b in merged]
+
+
+def test_merge_adopts_more_accurate_extra_reading_on_same_line() -> None:
+    # VL recognises glyphs more accurately than the PP-OCR line recognizer
+    # (戬浜 vs 我浜). With prefer_extra_text, an equal-glyph-count re-read of
+    # the same line carries its text onto the structure block while the
+    # structure geometry and char boxes (value-crop evidence) are kept.
+    structure_block = OCRTextBlock(
+        text="开户行：农行上海我浜支行",
+        polygon=[[82, 228], [288, 228], [288, 250], [82, 250]],
+        chars=[
+            {"c": g, "x1": 82 + i * 19, "y1": 228, "x2": 101 + i * 19, "y2": 250}
+            for i, g in enumerate("开户行：农行上海浜支行")
+        ],
+    )
+    vl_block = OCRTextBlock(
+        text="开户行：农行上海戬浜支行",
+        polygon=[[82, 231], [290, 231], [290, 251], [82, 251]],
+    )
+
+    merged = _merge_ocr_blocks([structure_block], [vl_block], prefer_extra_text=True)
+
+    assert len(merged) == 1
+    assert merged[0].text == "开户行：农行上海戬浜支行"  # VL reading wins
+    assert len(merged[0].chars) == 11  # structure char boxes kept
+    assert merged[0].bbox == (82, 228, 290, 251)  # union, never under-covers
+
+
+def test_merge_adopts_fuller_extra_reading_of_same_pixels() -> None:
+    # VL recovers a glyph the line recognizer dropped inside the same box
+    # (减震器 vs 减器 under the seal). The fuller reading is carried on the
+    # structure block with the union box; it is not a second block that would
+    # later displace the value-cropped one.
+    structure_block = OCRTextBlock(
+        text="户名：上海淞江减器集团有限公司",
+        polygon=[[82, 195], [354, 195], [354, 218], [82, 218]],
+    )
+    vl_block = OCRTextBlock(
+        text="户名：上海淞江减震器集团有限公司",
+        polygon=[[80, 196], [360, 196], [360, 219], [80, 219]],
+    )
+
+    merged = _merge_ocr_blocks([structure_block], [vl_block], prefer_extra_text=True)
+
+    assert len(merged) == 1
+    assert merged[0].text == "户名：上海淞江减震器集团有限公司"
+    assert merged[0].bbox == (80, 195, 360, 219)  # union of both boxes
+
+
+def test_value_crop_survives_equal_length_char_divergence() -> None:
+    # 帐号 line: the line recognizer reads 帐, the char recognizer reads 账 for
+    # the same glyph. Glyph counts are equal, so positions correspond 1:1 and
+    # the digits' own token box is trustworthy — the account number crops to
+    # its digits instead of masking the 帐号： label as a full line.
+    block = OCRTextBlock(
+        text="帐号： 03832700040031040",
+        polygon=[[100, 0], [400, 0], [400, 20], [100, 20]],
+        chars=[
+            {"c": "账", "x1": 100, "y1": 0, "x2": 120, "y2": 20},
+            {"c": "号", "x1": 120, "y1": 0, "x2": 140, "y2": 20},
+            {"c": "：", "x1": 140, "y1": 0, "x2": 150, "y2": 20},
+            {"c": "03832700040031040", "x1": 150, "y1": 0, "x2": 400, "y2": 20},
+        ],
+    )
+
+    regions = match_entities_to_ocr(
+        [block], [{"type": "BANK_CARD", "text": "03832700040031040"}]
+    )
+
+    assert len(regions) == 1
+    assert (regions[0].left, regions[0].width) == (150, 250)
+    assert (regions[0].top, regions[0].height) == (0, 20)  # full line height kept
+
+
+def test_value_crop_covers_span_with_interior_char_gap() -> None:
+    # 开户行 line: the char list drops one interior glyph (我). The span's
+    # first and last glyphs still have corresponding boxes and char boxes run
+    # left-to-right, so their union covers the gap — the bank name crops while
+    # the 开户行： label stays out.
+    glyphs = ["开", "户", "行", "：", "农", "行", "上", "海", "我", "浜", "支", "行"]
+    chars = [
+        {"c": g, "x1": 100 + i * 20, "y1": 0, "x2": 120 + i * 20, "y2": 20}
+        for i, g in enumerate(glyphs)
+        if g != "我"
+    ]
+    block = OCRTextBlock(
+        text="开户行：农行上海我浜支行",
+        polygon=[[100, 0], [340, 0], [340, 20], [100, 20]],
+        chars=chars,
+    )
+
+    regions = match_entities_to_ocr(
+        [block], [{"type": "BANK_NAME", "text": "农行上海我浜支行"}]
+    )
+
+    assert len(regions) == 1
+    assert (regions[0].left, regions[0].width) == (180, 160)  # 农(180) .. 行(340)
+
+
+def test_value_crop_falls_back_when_span_edge_has_no_char_box() -> None:
+    # The service sometimes drops leading char boxes (chars 9000... under text
+    # 89000...). The span's first glyph has no corresponding box, so a union of
+    # the remaining boxes would leave it readable — mask the whole block.
+    block = OCRTextBlock(
+        text="帐号：89000123456",
+        polygon=[[100, 0], [400, 0], [400, 20], [100, 20]],
+        chars=[
+            {"c": "帐", "x1": 100, "y1": 0, "x2": 120, "y2": 20},
+            {"c": "号", "x1": 120, "y1": 0, "x2": 140, "y2": 20},
+            {"c": "：", "x1": 140, "y1": 0, "x2": 150, "y2": 20},
+            {"c": "9000123456", "x1": 175, "y1": 0, "x2": 400, "y2": 20},
+        ],
+    )
+
+    regions = match_entities_to_ocr(
+        [block], [{"type": "BANK_CARD", "text": "89000123456"}]
+    )
+
+    assert len(regions) == 1
+    assert (regions[0].left, regions[0].width) == (100, 300)  # whole block
+
+
+def test_visual_region_fallback_keeps_structure_blocks_primary(monkeypatch) -> None:
+    # Selection includes a visual-only type but structure returned no visual
+    # regions, so VL must still run for them. The text-block set stays
+    # structure-primary even with the supplement flag off: handing VL the
+    # primary slot let its generative whole-line blocks (no char boxes)
+    # displace the per-line structure blocks, masking label and value as one
+    # full line (户名/开户行/帐号 regression).
+    monkeypatch.setattr(settings, "OCR_VL_ENABLED", True)
+    monkeypatch.setattr(settings, "OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL", False)
+    monkeypatch.setattr(settings, "OCR_STRUCTURE_PRIMARY_MIN_BOXES", 1)
+    structure_items, vl_items = _seal_fragment_fixture()
+    service = _StubOcrService(structure_items, vl_items)
+
+    blocks, _ = run_paddle_ocr(
+        Image.new("RGB", (500, 403), "white"),
+        service,
+        selected_entity_types=["PERSON", "SEAL"],
+    )
+
+    assert service.vl_calls == 1
+    texts = [block.text for block in blocks]
+    assert texts[:2] == ["甲方（盖章）：苏州市", "公司"]  # structure blocks first
+    assert "甲方（盖章）：苏州市纳达信息服务有限公司" in texts
+
+
+def test_amount_queries_both_numeral_systems() -> None:
+    # The 0.6B NER deduplicates same-value mentions inside one bucket, so on a
+    # full page it returns ¥1,294,000.00 and silently drops 壹佰贰拾玖万肆仟元整.
+    # Separate buckets have no shared value to deduplicate: when AMOUNT is in
+    # the schema, the prompt also asks for 大写金额 (open-vocabulary type), and
+    # the answer key maps back to AMOUNT.
+    from app.models.type_mapping import cn_to_id, has_query_labels_for
+
+    assert has_query_labels_for("AMOUNT") == ["金额", "大写金额"]
+    assert cn_to_id("大写金额") == "AMOUNT"
+    # Other types keep their single own label.
+    assert has_query_labels_for("PERSON") == ["姓名"]
+
+
+def test_uppercase_amount_entity_crops_to_its_glyphs() -> None:
+    # An AMOUNT value matched inside the 合计 line must crop to the uppercase
+    # run itself, not mask the whole line.
+    text = "合计（人民币）：壹佰贰拾玖万肆仟元整（¥1,294,000.00）"
+    chars = [
+        {"c": g, "x1": 100 + i * 20, "y1": 0, "x2": 120 + i * 20, "y2": 20}
+        for i, g in enumerate(text)
+    ]
+    block = OCRTextBlock(
+        text=text,
+        polygon=[[100, 0], [100 + len(text) * 20, 0], [100 + len(text) * 20, 20], [100, 20]],
+        chars=chars,
+    )
+
+    regions = match_entities_to_ocr(
+        [block], [{"type": "AMOUNT", "text": "壹佰贰拾玖万肆仟元整"}]
+    )
+
+    amount_regions = [r for r in regions if r.text == "壹佰贰拾玖万肆仟元整"]
+    assert len(amount_regions) == 1
+    # 壹 is the 9th glyph (index 8): crop starts at 100 + 8*20 = 260.
+    assert (amount_regions[0].left, amount_regions[0].width) == (260, 200)
 
 
 def test_ocr_ink_refinement_ignores_long_form_line() -> None:
