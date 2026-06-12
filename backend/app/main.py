@@ -449,7 +449,7 @@ async def services_health():
     import time
     from datetime import datetime
 
-    from app.core.health_checks import get_visual_features_runtime_detail
+    from app.core.health_checks import build_ocr_slot_statuses, get_visual_features_runtime_detail
     from app.services import model_config_service
 
     services = {}
@@ -459,6 +459,14 @@ async def services_health():
     t0 = time.perf_counter()
     ocr_url = f"{model_config_service.get_paddle_ocr_base_url()}/health"
     ocr_timeout = float(settings.OCR_HEALTH_PROBE_TIMEOUT)
+    paddle_cfg = model_config_service.get_config(model_config_service.PADDLE_OCR_SERVICE_ID)
+    mineru_cfg = model_config_service.get_config(model_config_service.MINERU_PIPELINE_SERVICE_ID)
+    paddle_ocr_url = (paddle_cfg.base_url if paddle_cfg and paddle_cfg.base_url else settings.OCR_BASE_URL)
+    mineru_ocr_url = (
+        mineru_cfg.base_url
+        if mineru_cfg and mineru_cfg.base_url
+        else "http://127.0.0.1:8083"
+    )
     visual_base = model_config_service.get_visual_features_base_url()
     visual_config = model_config_service.get_visual_features_config()
     visual_models_url = (
@@ -466,7 +474,7 @@ async def services_health():
         if visual_base.rstrip("/").endswith("/v1")
         else f"{visual_base}/v1/models"
     )
-    ocr_result, has_result, visual_detect_result, visual_chat_result = await asyncio.gather(
+    ocr_result, has_result, visual_detect_result, visual_chat_result, ocr_slots = await asyncio.gather(
         loop.run_in_executor(
             None,
             lambda: check_ocr_health_sync(ocr_url, model_config_service.get_ocr_model_name(), ocr_timeout),
@@ -487,6 +495,14 @@ async def services_health():
                 visual_config.model_name if visual_config else settings.VISUAL_FEATURES_MODEL_NAME,
                 timeout=3.0,
                 service_kind="visual_features",
+            ),
+        ),
+        loop.run_in_executor(
+            None,
+            lambda: build_ocr_slot_statuses(
+                paddle_url=paddle_ocr_url,
+                mineru_url=mineru_ocr_url,
+                timeout=ocr_timeout,
             ),
         ),
     )
@@ -548,6 +564,12 @@ async def services_health():
     return {
         "all_online": all_online,
         "services": services,
+        "ocr_slots": ocr_slots,
+        "active_ocr_config_id": (
+            model_config_service.get_active_for_task(model_config_service.TASK_OCR).id
+            if model_config_service.get_active_for_task(model_config_service.TASK_OCR)
+            else None
+        ),
         "probe_ms": probe_ms,
         "checked_at": datetime.now(UTC).isoformat(),
         "gpu_memory": gpu_mem,

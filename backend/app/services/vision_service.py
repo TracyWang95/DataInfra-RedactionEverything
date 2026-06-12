@@ -125,6 +125,10 @@ _OCR_REGION_HORIZONTAL_PAD_RATIO = {
     "DATE": 0.008,
 }
 _OCR_REGION_DEFAULT_PAD_RATIO = 0.006
+_OCR_REGION_HORIZONTAL_PAD_RATIO_MINERU = {
+    "PERSON": 0.008,
+    "NICKNAME": 0.008,
+}
 _OCR_REGION_PAD_X_MIN = 3
 _OCR_REGION_PAD_Y_MIN = 2
 # Apply tighter geometry-based padding only to short (non-wide) regions.
@@ -133,6 +137,17 @@ _OCR_REGION_NARROW_PAGE_WIDTH_RATIO = 0.12
 _OCR_REGION_GEOMETRY_PAD_WIDTH_RATIO = 0.10
 _OCR_REGION_GEOMETRY_PAD_HEIGHT_RATIO = 0.35
 _OCR_REGION_PAD_Y_RATIO = 0.25
+
+
+def _ocr_region_horizontal_pad_ratio(entity_type: str) -> float:
+    from app.services import model_config_service
+
+    if model_config_service.is_mineru_ocr_active():
+        return _OCR_REGION_HORIZONTAL_PAD_RATIO_MINERU.get(
+            entity_type,
+            _OCR_REGION_HORIZONTAL_PAD_RATIO.get(entity_type, _OCR_REGION_DEFAULT_PAD_RATIO),
+        )
+    return _OCR_REGION_HORIZONTAL_PAD_RATIO.get(entity_type, _OCR_REGION_DEFAULT_PAD_RATIO)
 
 # --- Redaction effects --------------------------------------------------------
 # Redaction strength is a 1-100 slider.
@@ -1027,9 +1042,7 @@ class VisionService:
         page_height: int,
         entity_type: str,
     ) -> tuple[int, int, int, int]:
-        horizontal_ratio = _OCR_REGION_HORIZONTAL_PAD_RATIO.get(
-            entity_type, _OCR_REGION_DEFAULT_PAD_RATIO
-        )
+        horizontal_ratio = _ocr_region_horizontal_pad_ratio(entity_type)
         pad_x = max(_OCR_REGION_PAD_X_MIN, int(page_width * horizontal_ratio))
         if region_width <= max(
             region_height * _OCR_REGION_NARROW_HEIGHT_FACTOR,

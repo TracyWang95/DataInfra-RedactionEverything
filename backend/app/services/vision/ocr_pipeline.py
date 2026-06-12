@@ -2637,6 +2637,61 @@ _HAS_ENTITY_TYPE_MAPPING = {
 }
 
 
+def _should_synthesize_char_boxes(text: str) -> bool:
+    """Coarse OCR (e.g. MinerU) often omits per-glyph boxes for a whole line."""
+    compact = str(text or "")
+    if not compact.strip():
+        return False
+    return "\n" not in compact and "\r" not in compact
+
+
+def _synthesize_uniform_char_boxes(
+    text: str,
+    left: int,
+    top: int,
+    right: int,
+    bottom: int,
+) -> list[dict]:
+    """Evenly distribute glyph boxes across a single-line OCR block."""
+    if not text:
+        return []
+    width = max(1, right - left)
+    height = max(1, bottom - top)
+    glyph_count = len(text)
+    char_width = width / glyph_count
+    boxes: list[dict] = []
+    for index, glyph in enumerate(text):
+        x1 = left + int(index * char_width)
+        x2 = left + int((index + 1) * char_width) if index < glyph_count - 1 else right
+        boxes.append(
+            {
+                "c": glyph,
+                "x1": x1,
+                "y1": top,
+                "x2": max(x1 + 1, x2),
+                "y2": bottom,
+            }
+        )
+    return boxes
+
+
+def _ensure_block_char_boxes(block: OCRTextBlock, *, synthesize: bool) -> OCRTextBlock:
+    """Fill missing glyph geometry for MinerU coarse line boxes."""
+    if not synthesize or getattr(block, "chars", None):
+        return block
+    text = str(block.text or "")
+    if not _should_synthesize_char_boxes(text):
+        return block
+    left, top = block.left, block.top
+    right, bottom = block.left + block.width, block.top + block.height
+    return OCRTextBlock(
+        text=block.text,
+        polygon=block.polygon,
+        confidence=block.confidence,
+        chars=_synthesize_uniform_char_boxes(text, left, top, right, bottom),
+    )
+
+
 def _block_search_text(block: OCRTextBlock) -> str:
     """Authoritative text to match entities against.
 
@@ -2822,12 +2877,19 @@ def _is_same_amount_value_block(entity_text: str, block_text: str) -> bool:
 def match_entities_to_ocr(
     ocr_blocks: list[OCRTextBlock],
     entities: list[dict[str, str]],
+    *,
+    synthesize_coarse_char_boxes: bool | None = None,
 ) -> list[SensitiveRegion]:
     """
     Match HaS-detected entities to OCR text blocks using text matching to get
     precise bounding boxes.  Supports sub-word positioning, HTML table expansion,
     and fuzzy matching.
     """
+    if synthesize_coarse_char_boxes is None:
+        from app.services import model_config_service
+
+        synthesize_coarse_char_boxes = model_config_service.is_mineru_ocr_active()
+
     regions: list[SensitiveRegion] = []
 
     # Expand HTML tables into virtual cell blocks
@@ -2844,17 +2906,17 @@ def match_entities_to_ocr(
                 expanded_blocks.append(block)
         else:
             expanded_blocks.append(block)
-    # No visual-line reconstruction and no sub-span position/size estimation:
-    # match against the real OCR blocks and redact the whole matched block. mIoU
-    # is the sole merge step downstream.
-    # Table-virtual cells sort after direct blocks; the order is identical for
-    # every entity, so sort once and resolve each block's authoritative text
-    # (_block_search_text: chars-verified against the box) once outside the loop.
+    # Match against real OCR blocks. MinerU coarse line boxes lack per-glyph
+    # geometry; synthesize uniform single-line char boxes so value-level x crops
+    # can exclude label prefixes such as "助手：". Other OCR adapters keep the
+    # original whole-block fallback when char boxes are missing.
     ordered_blocks = sorted(expanded_blocks, key=lambda item: id(item) in table_virtual_block_ids)
-    prepared_blocks = [
-        (block, _block_search_text(block), id(block) in table_virtual_block_ids)
-        for block in ordered_blocks
-    ]
+    prepared_blocks: list[tuple[OCRTextBlock, str, bool]] = []
+    for block in ordered_blocks:
+        ensured = _ensure_block_char_boxes(block, synthesize=synthesize_coarse_char_boxes)
+        prepared_blocks.append(
+            (ensured, _block_search_text(ensured), id(block) in table_virtual_block_ids)
+        )
 
     standalone_amount_signatures = {
         signature

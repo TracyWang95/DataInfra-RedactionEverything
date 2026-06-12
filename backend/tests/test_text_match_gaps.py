@@ -197,18 +197,53 @@ def test_value_level_crop_narrows_x_keeps_full_row_height() -> None:
 
 
 def test_value_level_crop_falls_back_to_whole_block_without_chars() -> None:
-    # No char boxes (e.g. a PaddleOCR-VL coarse multi-value line): the safety net
-    # masks the whole block rather than estimate a sub-span.
     text = "法定代表人/授权代表（签字）：张伟"
     block = _block(text, 40, 1360, width=380, height=24)
 
-    regions = match_entities_to_ocr([block], [{"type": "PERSON", "text": "张伟"}])
+    regions = match_entities_to_ocr(
+        [block],
+        [{"type": "PERSON", "text": "张伟"}],
+        synthesize_coarse_char_boxes=False,
+    )
 
     assert len(regions) == 1
     region = regions[0]
     assert (region.left, region.top, region.width, region.height) == (
         block.left, block.top, block.width, block.height,
     )
+
+
+def test_value_level_crop_narrows_x_without_real_char_boxes_mineru() -> None:
+    text = "\u6cd5\u5b9a\u4ee3\u8868\u4eba/\u6388\u6743\u4ee3\u8868\uff08\u7b7e\u5b57\uff09\uff1a\u5f20\u4e09"
+    block = _block(text, 40, 1360, width=380, height=24)
+
+    regions = match_entities_to_ocr(
+        [block],
+        [{"type": "PERSON", "text": "\u5f20\u4e09"}],
+        synthesize_coarse_char_boxes=True,
+    )
+
+    assert len(regions) == 1
+    region = regions[0]
+    assert region.left > block.left
+    assert region.left + region.width == block.left + block.width
+    assert (region.top, region.height) == (block.top, block.height)
+
+
+def test_dialogue_role_prefix_is_not_masked_with_name_mineru() -> None:
+    block = _block("\u52a9\u624b\uff1a\u5f20\u4e09", 120, 480, width=180, height=24)
+
+    regions = match_entities_to_ocr(
+        [block],
+        [{"type": "PERSON", "text": "\u5f20\u4e09"}],
+        synthesize_coarse_char_boxes=True,
+    )
+
+    assert len(regions) == 1
+    region = regions[0]
+    assert region.left > block.left
+    assert region.left + region.width == block.left + block.width
+    assert (region.top, region.height) == (block.top, block.height)
 
 
 # ---------------------------------------------------------------------------

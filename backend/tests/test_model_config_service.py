@@ -65,6 +65,18 @@ def test_set_active_ocr_model_changes_ocr_base_url(monkeypatch, tmp_path):
 
     assert success, message
     assert model_config_service.get_paddle_ocr_base_url() == "http://127.0.0.1:8083"
+    assert model_config_service.is_mineru_ocr_active() is True
+
+
+def test_is_mineru_ocr_active_false_for_paddle(monkeypatch, tmp_path):
+    _use_temp_model_config(monkeypatch, tmp_path)
+
+    success, message = model_config_service.set_active_for_task(
+        model_config_service.TASK_OCR,
+        model_config_service.PADDLE_OCR_SERVICE_ID,
+    )
+    assert success, message
+    assert model_config_service.is_mineru_ocr_active() is False
 
 
 def test_apply_preset_enables_optional_models(monkeypatch, tmp_path):

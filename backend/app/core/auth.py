@@ -578,6 +578,9 @@ async def require_super_admin(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str:
+    if not settings.AUTH_ENABLED:
+        return "anonymous"
+
     subject = await require_auth(request, credentials)
     user = get_user(subject)
     role = (user or {}).get("role")

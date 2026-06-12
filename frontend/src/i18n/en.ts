@@ -1684,7 +1684,7 @@ const enOverrides: Record<string, string> = {
   'settings.visionModel.listTitle': 'Inference backends',
   'settings.visionModel.listDesc':
     'Keep built-in services and any external providers in one place, with testing and status checks included.',
-  'settings.visionModel.add': '+ New backend',
+  'settings.visionModel.add': 'New backend',
   'settings.visionModel.active': 'Active',
   'settings.visionModel.setActive': 'Set active',
   'settings.visionModel.settingActive': 'Setting...',

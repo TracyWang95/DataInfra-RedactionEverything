@@ -600,6 +600,16 @@ def get_ocr_model_name() -> str:
     return "PaddleOCR-VL-1.6"
 
 
+def is_mineru_ocr_active() -> bool:
+    """True when the active OCR slot is the MinerU pipeline adapter."""
+    config = get_active_for_task(TASK_OCR)
+    if config is None:
+        return False
+    if config.id == MINERU_PIPELINE_SERVICE_ID:
+        return True
+    return "mineru" in str(config.model_name or "").lower()
+
+
 def get_active_visual_feature_config() -> ModelConfig | None:
     return get_active_for_task(TASK_VISUAL_FEATURE)
 

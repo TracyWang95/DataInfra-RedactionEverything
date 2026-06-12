@@ -456,3 +456,59 @@ def check_has_ner_health() -> ServiceHealth:
         status="offline",
         detail={**detail, "reachable": False, "model_state": "unreachable"},
     )
+
+
+PADDLE_OCR_CONFIG_ID = "paddle_ocr_service"
+MINERU_PIPELINE_CONFIG_ID = "mineru_pipeline_service"
+
+
+def classify_ocr_adapter(model_name: str) -> str | None:
+    """Map a live OCR /health model name to a built-in adapter config id."""
+    lower = (model_name or "").strip().lower()
+    if not lower:
+        return None
+    if "mineru" in lower:
+        return MINERU_PIPELINE_CONFIG_ID
+    if any(token in lower for token in ("paddle", "pp-structure", "structurev3", "pp-ocr")):
+        return PADDLE_OCR_CONFIG_ID
+    return None
+
+
+def build_ocr_slot_statuses(
+    *,
+    paddle_url: str,
+    mineru_url: str,
+    timeout: float,
+) -> dict[str, dict[str, Any]]:
+    """Return per-adapter online/offline status for the model settings UI."""
+    slots: dict[str, dict[str, Any]] = {}
+    probed: dict[str, ServiceHealth] = {}
+
+    for url in {paddle_url.rstrip("/"), mineru_url.rstrip("/")}:
+        if not url:
+            continue
+        probed[url] = check_ocr_health_sync(f"{url}/health", "", timeout=timeout)
+
+    for config_id, url in (
+        (PADDLE_OCR_CONFIG_ID, paddle_url),
+        (MINERU_PIPELINE_CONFIG_ID, mineru_url),
+    ):
+        key = url.rstrip("/")
+        result = probed.get(key)
+        if result is None or result.status != "online":
+            slots[config_id] = {"status": "offline", "model": None}
+            continue
+        adapter = classify_ocr_adapter(result.name)
+        if adapter == config_id:
+            slots[config_id] = {
+                "status": "online",
+                "model": result.name,
+                "detail": result.detail,
+            }
+        else:
+            slots[config_id] = {
+                "status": "offline",
+                "model": result.name,
+                "detail": {"reachable": True, "adapter_mismatch": True},
+            }
+    return slots

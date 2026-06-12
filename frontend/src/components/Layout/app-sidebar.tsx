@@ -52,6 +52,7 @@ export function AppSidebar() {
   const { status } = useAuth();
   const { health, checking, roundTripMs, refresh } = useServiceHealth();
   const isAdmin = Boolean(status?.is_super_admin);
+  const canManageModels = isAdmin || status?.auth_enabled === false;
 
   const workflowNavItems: NavItem[] = [
     { path: '/', label: t('nav.start'), sublabel: t('nav.start.sub'), icon: HomeIcon, end: true },
@@ -118,7 +119,7 @@ export function AppSidebar() {
       sublabel: t('nav.redactionList.sub'),
       icon: RulesIcon,
     },
-    ...(isAdmin
+    ...(canManageModels
       ? [
           {
             path: '/model-settings',
@@ -156,14 +157,14 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="gap-0 px-2 py-1.5">
+      <SidebarContent className="gap-1 px-2 py-2">
         <nav aria-label={t('layout.navLabel')}>
           <SidebarGroup className="px-2 py-0">
-            <SidebarGroupLabel className="h-6 px-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/50">
+            <SidebarGroupLabel className="mb-1 h-6 px-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/50">
               {t('nav.group.workflow')}
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
+              <SidebarMenu className="gap-1.5">
                 {workflowNavItems.map((item) => (
                   <SidebarNavItem key={item.path} item={item} pathname={location.pathname} />
                 ))}
@@ -171,14 +172,14 @@ export function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
 
-          <SidebarSeparator className="my-1 bg-sidebar-border opacity-100" />
+          <SidebarSeparator className="my-2 bg-sidebar-border opacity-100" />
 
           <SidebarGroup className="px-2 py-0">
-            <SidebarGroupLabel className="h-6 px-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/50">
+            <SidebarGroupLabel className="mb-1 h-6 px-2 text-xs font-semibold uppercase tracking-wide text-sidebar-foreground/50">
               {t('nav.group.config')}
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
+              <SidebarMenu className="gap-1.5">
                 {configNavItems.map((item) => (
                   <SidebarNavItem key={item.path} item={item} pathname={location.pathname} />
                 ))}
@@ -203,6 +204,7 @@ export function AppSidebar() {
 function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string }) {
   const active = isNavActive(item, pathname);
   const showChildren = active && item.children && item.children.length > 0;
+  const hasSublabel = Boolean(item.sublabel);
 
   return (
     <SidebarMenuItem>
@@ -210,8 +212,10 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
         asChild
         isActive={active}
         tooltip={item.label}
+        size={hasSublabel ? 'lg' : 'default'}
         className={cn(
-          'min-h-8 rounded-xl border border-transparent px-2 py-1 transition-all duration-150',
+          'rounded-xl border border-transparent px-2.5 transition-all duration-150',
+          hasSublabel && 'h-auto min-h-12 items-start py-2.5',
           active &&
             'border-sidebar-border bg-sidebar-accent font-medium text-sidebar-foreground shadow-[var(--shadow-control)]',
         )}
@@ -222,11 +226,13 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
           aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
           data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '') || 'start'}`}
         >
-          <item.icon className="size-4 opacity-70" />
-          {item.sublabel ? (
-            <span className="flex min-w-0 flex-col gap-0.5 leading-snug">
+          <item.icon className={cn('size-4 shrink-0 opacity-70', hasSublabel && 'mt-0.5')} />
+          {hasSublabel ? (
+            <span className="flex min-w-0 flex-1 flex-col gap-1 leading-snug">
               <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
-              <span className="truncate text-[11px] font-normal leading-tight opacity-45">{item.sublabel}</span>
+              <span className="truncate text-[11px] font-normal leading-tight text-sidebar-foreground/55">
+                {item.sublabel}
+              </span>
             </span>
           ) : (
             <span className="truncate text-xs font-medium">{item.label}</span>

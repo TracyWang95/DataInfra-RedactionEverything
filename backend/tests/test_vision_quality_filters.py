@@ -64,8 +64,7 @@ def test_visual_line_match_maps_split_entity_to_union_box() -> None:
 
 
 def test_compact_form_row_match_covers_whole_block() -> None:
-    # Without aligned per-character boxes there is no sub-span estimation any
-    # more: a matched entity masks the whole OCR block (safe over precise).
+    # PaddleOCR-style blocks without char boxes keep the original whole-block mask.
     block = OCRTextBlock(
         text=(
             "\u79d1\u522b\uff1a\u5916\u79d1\u5e8a\u53f7\uff1a9"
@@ -76,16 +75,42 @@ def test_compact_form_row_match_covers_whole_block() -> None:
         confidence=0.98,
     )
 
-    regions = match_entities_to_ocr([block], [{"type": "PERSON", "text": "\u5f20\u4e09"}])
+    regions = match_entities_to_ocr(
+        [block],
+        [{"type": "PERSON", "text": "\u5f20\u4e09"}],
+        synthesize_coarse_char_boxes=False,
+    )
 
     assert len(regions) == 1
     assert regions[0].source == "text_match"
     assert (regions[0].left, regions[0].top, regions[0].width, regions[0].height) == (100, 100, 900, 60)
 
 
+def test_compact_form_row_match_narrows_to_name_span_mineru() -> None:
+    block = OCRTextBlock(
+        text=(
+            "\u79d1\u522b\uff1a\u5916\u79d1\u5e8a\u53f7\uff1a9"
+            "\u59d3\u540d\uff1a\u5f20\u4e09"
+            "\u6027\u522b\uff1a\u7537\u5e74\u9f84\uff1a61"
+        ),
+        polygon=[[100, 100], [1000, 100], [1000, 160], [100, 160]],
+        confidence=0.98,
+    )
+
+    regions = match_entities_to_ocr(
+        [block],
+        [{"type": "PERSON", "text": "\u5f20\u4e09"}],
+        synthesize_coarse_char_boxes=True,
+    )
+
+    assert len(regions) == 1
+    assert regions[0].source == "text_match"
+    assert regions[0].left > block.left
+    assert regions[0].left + regions[0].width < block.left + block.width
+    assert (regions[0].top, regions[0].height) == (block.top, block.height)
+
+
 def test_overlapping_whole_block_regions_dedupe_to_one() -> None:
-    # Two PERSON values matched in the same block produce identical whole-block
-    # boxes; the pure-IoU dedupe keeps exactly one region (coverage unchanged).
     block = OCRTextBlock(
         text=(
             "\u79d1\u522b\uff1a\u666e\u5916 \u75c5\u533a\uff1a\u6b63 "
@@ -102,10 +127,37 @@ def test_overlapping_whole_block_regions_dedupe_to_one() -> None:
             {"type": "PERSON", "text": "\u5173\u6c38"},
             {"type": "PERSON", "text": "\u5173\u6c38\u5a1f"},
         ],
+        synthesize_coarse_char_boxes=False,
     )
 
     assert len(regions) == 1
     assert (regions[0].left, regions[0].top, regions[0].width, regions[0].height) == (590, 340, 782, 60)
+    assert _dedupe_ocr_regions(regions) == regions
+
+
+def test_overlapping_name_prefix_regions_keep_tightest_match_mineru() -> None:
+    block = OCRTextBlock(
+        text=(
+            "\u79d1\u522b\uff1a\u666e\u5916 \u75c5\u533a\uff1a\u6b63 "
+            "\u5e8a\u53f7\uff1a8.2 \u59d3\u540d\uff1a\u5173\u6c38\u5a1f "
+            "\u6027\u522b\uff1a\u7537 \u5e74\u9f84\uff1a68"
+        ),
+        polygon=[[590, 340], [1372, 340], [1372, 400], [590, 400]],
+        confidence=0.98,
+    )
+
+    regions = match_entities_to_ocr(
+        [block],
+        [
+            {"type": "PERSON", "text": "\u5173\u6c38"},
+            {"type": "PERSON", "text": "\u5173\u6c38\u5a1f"},
+        ],
+        synthesize_coarse_char_boxes=True,
+    )
+
+    assert len(regions) == 1
+    assert regions[0].left > block.left
+    assert regions[0].left + regions[0].width < block.left + block.width
     assert _dedupe_ocr_regions(regions) == regions
 
 
@@ -134,10 +186,13 @@ def test_merged_supplement_block_keeps_full_name_coverage() -> None:
             {"type": "PERSON", "text": "\u5173\u6c38"},
             {"type": "PERSON", "text": "\u5173\u6c38\u5a1f"},
         ],
+        synthesize_coarse_char_boxes=True,
     )
 
     assert any(
-        region.left <= 590 and region.left + region.width >= 1372 for region in regions
+        region.left > vl_block.left
+        and region.left + region.width <= vl_block.left + vl_block.width
+        for region in regions
     )
 
 
@@ -371,11 +426,13 @@ def test_whole_block_claim_stays_without_dedicated_box() -> None:
     )
 
     regions = match_entities_to_ocr(
-        [paragraph, far_away_dedicated], [{"type": "PERSON", "text": "张伟"}]
+        [paragraph, far_away_dedicated],
+        [{"type": "PERSON", "text": "张伟"}],
+        synthesize_coarse_char_boxes=False,
     )
 
     lefts = sorted(r.left for r in regions)
-    assert lefts == [38, 100]  # both occurrences stay covered
+    assert lefts == [38, 100]
 
 
 def test_nested_same_entity_regions_keep_tightest_box() -> None:
@@ -390,6 +447,7 @@ def test_nested_same_entity_regions_keep_tightest_box() -> None:
     regions = match_entities_to_ocr(
         [line, paragraph],
         [{"type": "PERSON", "text": "沈样涛"}],
+        synthesize_coarse_char_boxes=False,
     )
 
     assert len(regions) == 1

@@ -193,6 +193,7 @@ export interface ModelConfigPreset {
 }
 interface BuiltinServiceLive {
   paddle?: 'online' | 'offline';
+  mineru?: 'online' | 'offline';
   text_ner?: 'online' | 'offline';
   visual_features?: 'online' | 'offline';
 }
@@ -275,8 +276,13 @@ export function useVisionModelConfig() {
   }, [fetchModelConfigs, fetchPresets]);
 
   useEffect(() => {
+    const ocrSlotStatus = (id: string): 'online' | 'offline' | undefined => {
+      const status = health?.ocr_slots?.[id]?.status;
+      return status === 'online' || status === 'offline' ? status : undefined;
+    };
     setBuiltinLive({
-      paddle: normalizeServiceLive(health?.services?.paddle_ocr?.status),
+      paddle: ocrSlotStatus('paddle_ocr_service'),
+      mineru: ocrSlotStatus('mineru_pipeline_service'),
       text_ner: normalizeServiceLive(health?.services?.has_ner?.status),
       visual_features: normalizeServiceLive(health?.services?.visual_features?.status),
     });
@@ -404,6 +410,7 @@ export function useVisionModelConfig() {
     (configId: string): 'online' | 'offline' | undefined => {
       if (configId === 'has_text_0209_06b') return builtinLive?.text_ner;
       if (configId === 'paddle_ocr_service') return builtinLive?.paddle;
+      if (configId === 'mineru_pipeline_service') return builtinLive?.mineru;
       if (configId === 'visual_features_service') return builtinLive?.visual_features;
       return undefined;
     },

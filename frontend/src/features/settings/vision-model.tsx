@@ -275,7 +275,6 @@ export function VisionModel() {
           operationLoading ||
           Boolean(testingModelId) ||
           Boolean(settingActiveModelId) ||
-          Boolean(showModal) ||
           Boolean(applyingPresetId)
         }
       />

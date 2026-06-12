@@ -1483,7 +1483,7 @@ const zhOverrides: Record<string, string> = {
   'settings.visionModel.tag.custom': '自定义 HTTP',
   'settings.visionModel.listTitle': '推理后端',
   'settings.visionModel.listDesc': '把内置服务和外部服务放在一起管理，支持状态查看、测试和编辑。',
-  'settings.visionModel.add': '+ 新增后端',
+  'settings.visionModel.add': '新增后端',
   'settings.visionModel.active': '当前',
   'settings.visionModel.setActive': '设为当前',
   'settings.visionModel.settingActive': '设置中...',

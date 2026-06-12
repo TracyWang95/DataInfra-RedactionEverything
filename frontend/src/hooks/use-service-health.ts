@@ -27,12 +27,19 @@ export interface GpuProcessInfo {
   used_mb?: number | null;
 }
 
+export interface OcrSlotStatus {
+  status: 'online' | 'offline' | string;
+  model?: string | null;
+}
+
 export interface ServicesHealth {
   all_online: boolean;
   probe_ms?: number;
   checked_at?: string;
   gpu_memory?: { used_mb: number; total_mb: number } | null;
   gpu_processes?: GpuProcessInfo[];
+  ocr_slots?: Record<string, OcrSlotStatus>;
+  active_ocr_config_id?: string | null;
   services: {
     paddle_ocr: ServiceInfo;
     has_ner: ServiceInfo;
@@ -150,6 +157,21 @@ function normalizeGpuProcesses(value: unknown): GpuProcessInfo[] {
   });
 }
 
+function normalizeOcrSlots(value: unknown): Record<string, OcrSlotStatus> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const slots: Record<string, OcrSlotStatus> = {};
+  for (const [key, entry] of Object.entries(raw)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const slot = entry as Partial<OcrSlotStatus>;
+    slots[key] = {
+      status: slot.status === 'online' || slot.status === 'offline' ? slot.status : 'offline',
+      model: typeof slot.model === 'string' ? slot.model : slot.model ?? null,
+    };
+  }
+  return Object.keys(slots).length ? slots : undefined;
+}
+
 export function normalizeHealthPayload(value: unknown): ServicesHealth {
   const data = value && typeof value === 'object' ? (value as Partial<ServicesHealth>) : {};
   const services = data.services && typeof data.services === 'object' ? data.services : {};
@@ -179,6 +201,11 @@ export function normalizeHealthPayload(value: unknown): ServicesHealth {
     checked_at: typeof data.checked_at === 'string' ? data.checked_at : undefined,
     gpu_memory: data.gpu_memory ?? null,
     gpu_processes: normalizeGpuProcesses((data as { gpu_processes?: unknown }).gpu_processes),
+    ocr_slots: normalizeOcrSlots((data as { ocr_slots?: unknown }).ocr_slots),
+    active_ocr_config_id:
+      typeof (data as { active_ocr_config_id?: unknown }).active_ocr_config_id === 'string'
+        ? (data as { active_ocr_config_id: string }).active_ocr_config_id
+        : null,
     services: normalizedServices,
   };
 }
