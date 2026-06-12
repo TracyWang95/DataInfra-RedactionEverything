@@ -452,7 +452,7 @@ A commercial license for this project does **not** cover third-party components.
 
 | Component | License | What it means commercially |
 |---|---|---|
-| LocateAnything-3B weights | **NVIDIA non-commercial license** | Commercial use is not permitted by the upstream license. Commercial deployments must replace the visual grounding model or obtain separate rights from the model owner. |
+| LocateAnything-3B weights | **NVIDIA non-commercial license** | Commercial use is not permitted by the upstream license. Commercial deployments must replace the visual grounding model with a commercially licensed VLM (e.g. GLM-4.6V — verify its upstream license terms) or obtain separate rights from the model owner. |
 | PyMuPDF | **AGPL-3.0** | Either comply with AGPL obligations for your deployment, or purchase a commercial license from Artifex. |
 | HaS Text (0209) | MIT | Commercial use permitted with attribution. |
 | PaddleOCR / PP-OCRv6 / PP-StructureV3 / PaddleOCR-VL | Apache-2.0 | Commercial use permitted under Apache terms. |

@@ -452,7 +452,7 @@ npm run build
 
 | 组件 | 许可证 | 商用含义 |
 |---|---|---|
-| LocateAnything-3B 权重 | **NVIDIA 非商用许可** | 上游许可禁止商用。商业部署须更换视觉定位模型，或自行向模型方取得授权。 |
+| LocateAnything-3B 权重 | **NVIDIA 非商用许可** | 上游许可禁止商用。商业部署须更换为可商用许可的视觉定位模型（如 GLM-4.6V，以其上游许可条款为准），或自行向模型方取得授权。 |
 | PyMuPDF | **AGPL-3.0** | 要么按 AGPL 履行开源义务，要么向 Artifex 购买商业许可。 |
 | HaS Text（0209） | MIT | 保留版权声明即可商用。 |
 | PaddleOCR / PP-OCRv6 / PP-StructureV3 / PaddleOCR-VL | Apache-2.0 | 按 Apache 条款可商用。 |
