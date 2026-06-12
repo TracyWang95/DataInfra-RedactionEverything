@@ -31,7 +31,9 @@ services:
       - VISUAL_FEATURES_CONCURRENCY=${VISUAL_FEATURES_CONCURRENCY:-1}
       - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-false}
       - OCR_BASE_URL=http://ocr:8082
-      - HAS_LLAMACPP_BASE_URL=http://ner:8080/v1
+      - HAS_TEXT_RUNTIME=${HAS_TEXT_RUNTIME:-vllm}
+      - HAS_TEXT_VLLM_BASE_URL=http://ner:8080/v1
+      - HAS_TEXT_MODEL_NAME=${HAS_TEXT_MODEL_NAME:-HaS_Text_0209_0.6B}
       - VISUAL_FEATURES_BASE_URL=http://visual-features:8090
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
     volumes:
@@ -93,16 +95,38 @@ services:
     restart: unless-stopped
 
   ner:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    # Same runtime and weights as local development (vLLM + HF bf16), so the
+    # NER behavior validated locally carries over to Docker unchanged.
+    image: vllm/vllm-openai:v0.19.1
+    ipc: host
     ports:
       - "${NER_PORT:-8080}:8080"
     volumes:
       - ./backend/models:/models
-    command: >
-      --host 0.0.0.0
-      --port 8080
-      -m /models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf
-      -ngl 99
+    command:
+      - --model
+      - /models/has/HaS_Text_0209_0.6B
+      - --served-model-name
+      - HaS_Text_0209_0.6B
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --trust-remote-code
+      - --dtype
+      - bfloat16
+      - --max-model-len
+      - "4096"
+      - --max-num-batched-tokens
+      - "4096"
+      - --gpu-memory-utilization
+      - "0.18"
+      - --kv-cache-memory-bytes
+      - "671088640"
+      - --no-enable-prefix-caching
+      - --enforce-eager
+      - --default-chat-template-kwargs
+      - '{"enable_thinking":false}'
     deploy:
       resources:
         reservations:
@@ -113,11 +137,11 @@ services:
     networks:
       - redaction-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 120s
     profiles:
       - gpu
     restart: unless-stopped

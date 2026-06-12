@@ -202,10 +202,10 @@ GPU 服务从 `./backend/models` 加载权重（容器内挂载为 `/models`）�
 
 | 服务 | 宿主机预期路径 | 来源 |
 |---|---|---|
-| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | [xuanwulab/HaS_Text_0209_0.6B_Q4](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B_Q4) 的 Q4 GGUF 量化版 |
+| `ner` | `backend/models/has/HaS_Text_0209_0.6B/` | [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B) 的 HF bf16 权重 |
 | `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | LocateAnything-3B HF 权重（从官方上游获取） |
 
-> **运行时差异说明：** Docker 的 `ner` 服务用 **llama.cpp + Q4 GGUF 量化**跑 HaS Text，而本地 `npm run dev` 用 **vLLM + HF bf16 权重**。两套 runtime 的 NER 输出不完全一致，量化的 Docker 链路识别效果通常略弱于本地开发链路。
+> **运行时一致性：** Docker 的 `ner` 服务与本地开发完全同栈——**vLLM + HF bf16 权重**、相同的生成参数——本地验证过的 NER 行为可原样迁移到 Docker。
 
 生产部署前，请配置 `.env`、模型挂载、GPU 运行时、认证、反向代理与访问控制策略。
 

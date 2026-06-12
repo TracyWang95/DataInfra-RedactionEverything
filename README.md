@@ -202,10 +202,10 @@ The GPU services load weights from `./backend/models`, mounted into the containe
 
 | Service | Expected host path | Source |
 |---|---|---|
-| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | Q4 GGUF build from [xuanwulab/HaS_Text_0209_0.6B_Q4](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B_Q4) |
+| `ner` | `backend/models/has/HaS_Text_0209_0.6B/` | HF bf16 weights from [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B) |
 | `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | LocateAnything-3B HF weights from the official upstream source |
 
-> **Runtime difference:** the Docker `ner` service runs HaS Text on **llama.cpp with a Q4 GGUF quantization**, while local `npm run dev` serves the **HF bf16 weights through vLLM**. The two runtimes do not produce identical NER output; expect somewhat weaker recognition from the quantized Docker path than from local development.
+> **Runtime parity:** the Docker `ner` service runs the same stack as local development — **vLLM serving the HF bf16 weights** with identical generation settings — so NER behavior validated locally carries over to Docker unchanged.
 
 Before production deployment, configure `.env`, model mounts, GPU runtime, authentication, reverse proxy, and access-control policies.
 
