@@ -1,0 +1,4 @@
+interface:
+  display_name: "PDF Mask Render"
+  short_description: "Apply page masks and text replacements to PDFs."
+  default_prompt: "Use $redaction-mask-pdf-render to redact this PDF."

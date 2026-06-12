@@ -1,0 +1,4 @@
+interface:
+  display_name: "OCR Block Normalize"
+  short_description: "Convert OCR output into normalized text blocks."
+  default_prompt: "Use $redaction-ocr-block-normalize to return OCR blocks with boxes."

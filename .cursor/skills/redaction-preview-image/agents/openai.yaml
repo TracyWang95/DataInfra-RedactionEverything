@@ -1,0 +1,4 @@
+interface:
+  display_name: "Preview Image"
+  short_description: "Generate preview images for selected redaction regions."
+  default_prompt: "Use $redaction-preview-image to preview the mask result."

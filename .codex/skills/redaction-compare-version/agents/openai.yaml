@@ -1,0 +1,4 @@
+interface:
+  display_name: "Compare Version"
+  short_description: "Compare original and redacted outputs with version metadata."
+  default_prompt: "Use $redaction-compare-version to compare redaction versions."

@@ -42,7 +42,11 @@ desktop.ini
 # IDE
 .idea/
 .vscode/
-.cursor/
+.cursor/*
+!.cursor/skills/
+!.cursor/skills/**
+!.cursor/rules/
+!.cursor/rules/**
 *.swp
 *.swo
 

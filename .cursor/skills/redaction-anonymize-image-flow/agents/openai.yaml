@@ -1,0 +1,4 @@
+interface:
+  display_name: "Image Anonymize Flow"
+  short_description: "Run the image anonymization pipeline from OCR to masks."
+  default_prompt: "Use $redaction-anonymize-image-flow to anonymize one image end to end."

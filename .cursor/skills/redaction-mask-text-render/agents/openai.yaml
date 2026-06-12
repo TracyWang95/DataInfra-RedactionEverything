@@ -1,0 +1,4 @@
+interface:
+  display_name: "Text Mask Render"
+  short_description: "Redact plain text using replacement strategies."
+  default_prompt: "Use $redaction-mask-text-render to redact this text."

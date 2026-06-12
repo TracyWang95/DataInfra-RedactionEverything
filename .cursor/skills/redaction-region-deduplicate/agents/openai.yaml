@@ -1,0 +1,4 @@
+interface:
+  display_name: "Region Deduplicate"
+  short_description: "Merge and deduplicate OCR, visual, seal, and code boxes."
+  default_prompt: "Use $redaction-region-deduplicate to merge candidate boxes."

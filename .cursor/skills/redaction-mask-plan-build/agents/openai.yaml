@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mask Plan Build"
+  short_description: "Build a selected mask plan from entities and boxes."
+  default_prompt: "Use $redaction-mask-plan-build to turn entities and boxes into masks."

@@ -1,0 +1,31 @@
+---
+description: Use the RedactionEverything function-point skills for OCR, OCR blocks, NER, visual detection, mask planning, rendering, batch, structured data, and API call examples.
+alwaysApply: false
+---
+
+# Redaction Function Skills
+
+This repository contains function-point Agent Skills in `.cursor/skills/`.
+
+Use these skills when the user asks for a specific anonymization capability:
+
+- Full image flow: `$redaction-anonymize-image-flow`
+- OCR text result: `$redaction-image-ocr-result`
+- OCR block normalization: `$redaction-ocr-block-normalize`
+- Table/form recall: `$redaction-ocr-table-form-recall`
+- Text entity recognition: `$redaction-text-ner-result`
+- Entity-to-box mapping: `$redaction-ocr-entity-box-map`
+- Visual region localization: `$redaction-visual-region-locate`
+- Seal detection: `$redaction-seal-region-detect`
+- QR/barcode detection: `$redaction-code-region-detect`
+- Region deduplication: `$redaction-region-deduplicate`
+- Mask plan generation: `$redaction-mask-plan-build`
+- Image/PDF/DOCX/text rendering: `$redaction-mask-image-render`, `$redaction-mask-pdf-render`, `$redaction-mask-docx-render`, `$redaction-mask-text-render`
+- Preview, compare, report: `$redaction-preview-image`, `$redaction-compare-version`, `$redaction-report-json`
+- Batch flow: `$redaction-batch-job-create`, `$redaction-batch-recognize-run`, `$redaction-batch-review-draft`, `$redaction-batch-export-package`
+- Structured data flow: `$redaction-structured-dataset-load`, `$redaction-structured-profile-columns`, `$redaction-structured-policy-build`, `$redaction-structured-export-run`
+- Presets, model health, UI boxes, API examples: `$redaction-preset-scenario-build`, `$redaction-model-service-check`, `$redaction-ui-bbox-editor`, `$redaction-api-demo-call`
+
+For end-to-end image anonymization, chain:
+
+`$redaction-image-ocr-result` -> `$redaction-ocr-block-normalize` -> `$redaction-text-ner-result` -> `$redaction-ocr-entity-box-map` -> `$redaction-visual-region-locate` -> `$redaction-region-deduplicate` -> `$redaction-mask-plan-build` -> `$redaction-preview-image` or `$redaction-mask-image-render`.

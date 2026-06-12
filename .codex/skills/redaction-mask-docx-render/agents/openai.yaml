@@ -1,0 +1,4 @@
+interface:
+  display_name: "DOCX Mask Render"
+  short_description: "Redact DOCX text while preserving document structure."
+  default_prompt: "Use $redaction-mask-docx-render to redact this Word file."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Model Service Check"
+  short_description: "Check OCR, HaS, and visual model service health."
+  default_prompt: "Use $redaction-model-service-check to diagnose model health."

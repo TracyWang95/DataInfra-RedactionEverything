@@ -1,0 +1,4 @@
+interface:
+  display_name: "Preset Scenario Build"
+  short_description: "Build scenario presets from text and visual recognition types."
+  default_prompt: "Use $redaction-preset-scenario-build to make an industry preset."

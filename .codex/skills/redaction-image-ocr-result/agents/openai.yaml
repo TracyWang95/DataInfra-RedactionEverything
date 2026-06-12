@@ -1,0 +1,4 @@
+interface:
+  display_name: "Image OCR Result"
+  short_description: "Get OCR text and raw OCR results from an image."
+  default_prompt: "Use $redaction-image-ocr-result to OCR this image and return text."

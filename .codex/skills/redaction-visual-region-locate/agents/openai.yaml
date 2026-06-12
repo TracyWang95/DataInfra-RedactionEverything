@@ -1,0 +1,4 @@
+interface:
+  display_name: "Visual Region Locate"
+  short_description: "Locate visual privacy boxes in images."
+  default_prompt: "Use $redaction-visual-region-locate to locate visual privacy regions."

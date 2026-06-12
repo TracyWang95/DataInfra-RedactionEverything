@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI BBox Editor"
+  short_description: "Edit frontend bounding-box review behavior."
+  default_prompt: "Use $redaction-ui-bbox-editor to change the box review UI."

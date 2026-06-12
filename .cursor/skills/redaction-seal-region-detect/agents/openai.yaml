@@ -1,0 +1,4 @@
+interface:
+  display_name: "Seal Region Detect"
+  short_description: "Detect and supplement red seal privacy regions."
+  default_prompt: "Use $redaction-seal-region-detect to find red seals in this page."

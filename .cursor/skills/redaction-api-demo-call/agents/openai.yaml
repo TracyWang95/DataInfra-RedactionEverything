@@ -1,0 +1,4 @@
+interface:
+  display_name: "API Demo Call"
+  short_description: "Show concrete API call sequences for one function point."
+  default_prompt: "Use $redaction-api-demo-call to show the API calls for this function."

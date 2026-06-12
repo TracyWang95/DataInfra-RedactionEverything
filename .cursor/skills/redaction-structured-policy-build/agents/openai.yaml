@@ -1,0 +1,4 @@
+interface:
+  display_name: "Structured Policy Build"
+  short_description: "Build and validate structured redaction policies."
+  default_prompt: "Use $redaction-structured-policy-build to create a column policy."

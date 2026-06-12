@@ -1,0 +1,4 @@
+interface:
+  display_name: "OCR Entity Box Map"
+  short_description: "Map text entities back to OCR glyph or block boxes."
+  default_prompt: "Use $redaction-ocr-entity-box-map to map entities to image boxes."

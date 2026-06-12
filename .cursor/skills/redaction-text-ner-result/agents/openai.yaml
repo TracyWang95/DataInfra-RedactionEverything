@@ -1,0 +1,4 @@
+interface:
+  display_name: "Text NER Result"
+  short_description: "Detect text entities from plain text or OCR text."
+  default_prompt: "Use $redaction-text-ner-result to detect sensitive entities in this text."

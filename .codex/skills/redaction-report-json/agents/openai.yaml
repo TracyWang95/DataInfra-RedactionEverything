@@ -1,0 +1,4 @@
+interface:
+  display_name: "Report JSON"
+  short_description: "Generate redaction reports and statistics."
+  default_prompt: "Use $redaction-report-json to produce a redaction report."

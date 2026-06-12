@@ -1,0 +1,4 @@
+interface:
+  display_name: "Image Mask Render"
+  short_description: "Apply blur, mosaic, or fill masks to image regions."
+  default_prompt: "Use $redaction-mask-image-render to render masks onto this image."

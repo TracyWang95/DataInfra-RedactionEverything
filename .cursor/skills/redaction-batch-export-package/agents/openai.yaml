@@ -1,0 +1,4 @@
+interface:
+  display_name: "Batch Export Package"
+  short_description: "Package selected batch outputs and export reports."
+  default_prompt: "Use $redaction-batch-export-package to package batch results."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Region Detect"
+  short_description: "Detect QR code and barcode regions."
+  default_prompt: "Use $redaction-code-region-detect to find QR/barcode regions."

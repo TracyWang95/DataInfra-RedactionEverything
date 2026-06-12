@@ -1,0 +1,4 @@
+interface:
+  display_name: "Batch Recognize Run"
+  short_description: "Run queued recognition or redaction tasks for batch jobs."
+  default_prompt: "Use $redaction-batch-recognize-run to process queued batch items."

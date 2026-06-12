@@ -1,0 +1,4 @@
+interface:
+  display_name: "OCR Table Form Recall"
+  short_description: "Recover table cells and form-field values from OCR blocks."
+  default_prompt: "Use $redaction-ocr-table-form-recall to extract table/form sensitive values."

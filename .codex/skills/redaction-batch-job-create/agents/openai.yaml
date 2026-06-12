@@ -1,0 +1,4 @@
+interface:
+  display_name: "Batch Job Create"
+  short_description: "Create batch jobs and attach uploaded file items."
+  default_prompt: "Use $redaction-batch-job-create to create a batch redaction job."

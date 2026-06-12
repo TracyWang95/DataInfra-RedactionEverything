@@ -1,0 +1,4 @@
+interface:
+  display_name: "Batch Review Draft"
+  short_description: "Load, save, approve, reject, and commit review drafts."
+  default_prompt: "Use $redaction-batch-review-draft to update a batch review draft."

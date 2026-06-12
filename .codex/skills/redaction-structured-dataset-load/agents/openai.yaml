@@ -1,0 +1,4 @@
+interface:
+  display_name: "Structured Dataset Load"
+  short_description: "Load CSV, XLSX, JSONL, SQLite, MySQL, or Postgres datasets."
+  default_prompt: "Use $redaction-structured-dataset-load to load this structured dataset."

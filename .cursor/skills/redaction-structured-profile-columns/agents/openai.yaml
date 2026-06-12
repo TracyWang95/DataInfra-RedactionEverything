@@ -1,0 +1,4 @@
+interface:
+  display_name: "Structured Profile Columns"
+  short_description: "Profile structured columns and infer sensitive semantics."
+  default_prompt: "Use $redaction-structured-profile-columns to profile dataset columns."

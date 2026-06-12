@@ -1,0 +1,4 @@
+interface:
+  display_name: "Structured Export Run"
+  short_description: "Apply structured policies and export redacted datasets."
+  default_prompt: "Use $redaction-structured-export-run to export a redacted dataset."
