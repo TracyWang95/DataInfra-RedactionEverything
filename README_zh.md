@@ -15,6 +15,8 @@ RedactionEverything 是一个面向真实文件中敏感信息的本地优先脱
 
 > 本项目采用自定义的 [个人使用许可证](./LICENSE)。个人可免费用于个人、非商业目的。付费交付、咨询交付、公司、机构、政府部门、团队、托管服务、生产部署、OEM 再分发以及商业集成需要单独的商业许可证。
 >
+> 商业部署还须自行清理第三方组件授权：LocateAnything-3B 权重采用 **NVIDIA 非商用许可**，PyMuPDF 为 **AGPL-3.0**（Artifex 另售商业许可）。完整组件授权表见 [许可证](#许可证) 章节。
+>
 > 商业授权、支持、采购条款与定制交付：**wwang11@alumni.nd.edu**
 
 <p>
@@ -58,7 +60,7 @@ RedactionEverything 被设计为一个完整的脱敏工作台，而不是纯文
 
 - **语言与 Schema 深度：** 中文合同、法律文件、金融文档、医疗材料与中英混排内容，往往需要领域 Schema，而非一个很小的固定标签集。
 - **文档现实：** 生产文件很少是干净文本，包含 PDF 版式、OCR 噪声、表格、印章、签字、截图、照片与扫描页。
-- **视觉覆盖：** “OCR + HaS”处理图片中的文字，LocateAnything-3B 定位人脸、证件、银行卡、印章、屏幕与手写签字等视觉特征；本地 OpenCV 检测器补全红色与暗色的骑缝章/边缘章。
+- **视觉覆盖：** “OCR + HaS”处理图片中的文字，LocateAnything-3B 定位人脸、证件、银行卡、印章、屏幕与手写签字等视觉特征；本地 OpenCV 检测器补全红色骑缝章/边缘章。
 - **运营工作流：** 识别只是第一步。系统包含复核、修正、勾选、批量处理、任务状态、结果历史与导出打包。
 - **隐私边界：** 默认架构把原始文件与模型推理保留在本地或内网，而不是依赖托管的外部 API。
 
@@ -73,9 +75,10 @@ RedactionEverything 被设计为一个完整的脱敏工作台，而不是纯文
 | 任务中心 | 跟踪任务状态、进度、复核续作、详情与删除。运行中的任务需先取消再删除。 |
 | 处理结果 | 查看已处理文件、单文件输出、批量树状结果、分页勾选与打包下载。 |
 | 文本语义 NER | HaS Text 直接根据配置的 NER 标签识别实体，不依赖内置的穷举规则映射。 |
-| OCR + HaS | 图片与扫描件先由 PaddleOCR-VL / PP-StructureV3 转为文本块，再由 HaS Text 做语义识别并映射回坐标。 |
+| OCR + HaS | 图片与扫描件先由 PP-StructureV3（PP-OCRv6 引擎，可选 PaddleOCR-VL 补充）转为文本块，再由 HaS Text 做语义识别并把值映射回字形级精确坐标——"户名："这类标签留在框外。 |
+| 章压文字找回 | 红墨抑制补充识别：将印章墨水涂白后补检一遍，找回被公章压住、检测器漏掉的印刷体（如盖章处的公司名）。 |
 | 视觉特征 | 单一的 LocateAnything-3B 服务定位固定视觉预设（人脸、指纹、证件、银行卡、印章、屏幕、二维码/条码、签字等）以及任意用户自定义视觉标签。 |
-| 印章补全 | 本地 OpenCV 检测器补全 LocateAnything 遗漏的红色与暗色/灰色骑缝章与边缘章，并与已有印章框去重。 |
+| 印章补全 | 本地 OpenCV 检测器补全 LocateAnything 遗漏的红色骑缝章与边缘章，并与已有印章框去重。 |
 | 可配置 Schema | 内置通用、法律、金融、医疗预设；支持自定义文本与视觉识别项，标签精确（不做家族合并）。 |
 | 本地部署 | 前端、后端与模型服务可运行在本地或内网 GPU 工作站。 |
 
@@ -147,10 +150,10 @@ python3 -m venv ~/.cache/datainfra-redaction/.venv-vllm
 VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv
 VLLM_VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv-vllm
 LOCATE_ANYTHING_DEPS=/home/<user>/.cache/datainfra-redaction/locateanything-hf-deps
-HAS_TEXT_HF_MODEL_PATH=/mnt/d/has_models/HaS_4.0_0.6B
+HAS_TEXT_HF_MODEL_PATH=/mnt/d/has_models/HaS_Text_0209_0.6B
 ```
 
-`HAS_TEXT_HF_MODEL_PATH` 指向 [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B) 的 HF（bf16）模型目录。此外还需要仓库根目录下的 Windows 项目 venv（`.venv`，用 `backend/requirements.txt` 安装），它负责运行 FastAPI 后端与预热。
+`HAS_TEXT_HF_MODEL_PATH` 指向 [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B)（MIT 许可）的 HF（bf16）模型目录。此外还需要仓库根目录下的 Windows 项目 venv（`.venv`，用 `backend/requirements.txt` 安装），它负责运行 FastAPI 后端与预热。
 
 ### 手动启动后端
 
@@ -199,7 +202,7 @@ GPU 服务从 `./backend/models` 加载权重（容器内挂载为 `/models`）�
 
 | 服务 | 宿主机预期路径 | 来源 |
 |---|---|---|
-| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B) 的 Q4_K_M GGUF 量化版；若文件名为 `has_4.0_0.6B.gguf`，请重命名或复制为预期文件名 |
+| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | [xuanwulab/HaS_Text_0209_0.6B_Q4](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B_Q4) 的 Q4 GGUF 量化版 |
 | `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | LocateAnything-3B HF 权重（从官方上游获取） |
 
 > **运行时差异说明：** Docker 的 `ner` 服务用 **llama.cpp + Q4 GGUF 量化**跑 HaS Text，而本地 `npm run dev` 用 **vLLM + HF bf16 权重**。两套 runtime 的 NER 输出不完全一致，量化的 Docker 链路识别效果通常略弱于本地开发链路。
@@ -218,12 +221,12 @@ GPU 服务从 `./backend/models` 加载权重（容器内挂载为 `/models`）�
         +-------------------+--------------------+
         |                                        |
    文本 + OCR 链路                          视觉特征链路
-   PaddleOCR-VL 1.6（可选）                LocateAnything-3B
-   + PP-StructureV3                       （MoonViT 视觉塔 +
-        |                                  Qwen2 LM 主干）
-   HaS Text 语义 NER                              |
-        |                                + OpenCV 印章补全
-        |                                  （红色 / 暗色印章）
+   PP-StructureV3（PP-OCRv6）             LocateAnything-3B
+   + 红墨抑制补充识别                     （MoonViT 视觉塔 +
+   + PaddleOCR-VL 1.6（可选）              Qwen2 LM 主干）
+        |                                        |
+   HaS Text 语义 NER                     + OpenCV 印章补全
+        |                                  （红色骑缝章/边缘章）
         +-------------------+--------------------+
                             |
                     坐标合并 / 去重
@@ -280,14 +283,17 @@ OCR_VLLM_URL=http://127.0.0.1:8118/v1
 
 RedactionEverything 是编排与产品层。它不主张拥有第三方模型权重，本仓库也不再分发这些权重。请从各自的官方仓库下载模型、阅读模型卡，并在部署前遵守相应许可证与条款。
 
-| 组件 | 上游模型或项目 | 用途 |
-|---|---|---|
-| PaddleOCR-VL / PP-StructureV3 | [PaddlePaddle/PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)、[PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | 文档 OCR、版式理解、表格、文本框与页面结构抽取 |
-| HaS Text | [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B) | 文本与 OCR 文本块的语义 NER |
-| LocateAnything-3B | LocateAnything 视觉定位模型（请从官方上游获取权重） | 视觉特征定位：预设、自定义标签与签字 |
-| vLLM 运行时 | [vLLM](https://github.com/vllm-project/vllm) | 为 HaS Text、PaddleOCR-VL 与 LocateAnything LM 主干提供本地 OpenAI 兼容服务 |
-| Transformers 运行时 | [Hugging Face Transformers](https://github.com/huggingface/transformers) | LocateAnything MoonViT 视觉塔的本地运行时 |
-| OpenCV | [OpenCV](https://github.com/opencv/opencv) | 本地红色/暗色印章检测，补全骑缝章与边缘章 |
+| 组件 | 上游模型或项目 | 许可证 | 用途 |
+|---|---|---|---|
+| PP-StructureV3 / PP-OCRv6 / PaddleOCR-VL | [PaddlePaddle/PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)、[PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | Apache-2.0 | 文档 OCR、版式理解、表格、文本框与页面结构抽取 |
+| HaS Text | [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B) | MIT | 文本与 OCR 文本块的语义 NER |
+| LocateAnything-3B | LocateAnything 视觉定位模型（请从官方上游获取权重） | **NVIDIA 非商用许可** | 视觉特征定位：预设、自定义标签与签字 |
+| vLLM 运行时 | [vLLM](https://github.com/vllm-project/vllm) | Apache-2.0 | 为 HaS Text、PaddleOCR-VL 与 LocateAnything LM 主干提供本地 OpenAI 兼容服务 |
+| Transformers 运行时 | [Hugging Face Transformers](https://github.com/huggingface/transformers) | Apache-2.0 | LocateAnything MoonViT 视觉塔的本地运行时 |
+| OpenCV | [OpenCV](https://github.com/opencv/opencv) | Apache-2.0 | 本地红色印章检测，补全骑缝章与边缘章 |
+| PyMuPDF | [PyMuPDF](https://github.com/pymupdf/PyMuPDF) | **AGPL-3.0**（Artifex 另售商业许可） | PDF 解析与页面渲染 |
+
+上表许可证为撰写时上游声明；任何部署前请再次核对各模型卡与软件包的许可条款。
 
 感谢 PaddlePaddle、腾讯玄武实验室、LocateAnything 作者、vLLM、Hugging Face、OpenCV 以及更广泛的开源社区。他们的工作让在消费级 GPU 上实现本地优先的文档脱敏成为可能。
 
@@ -297,7 +303,7 @@ RedactionEverything 是编排与产品层。它不主张拥有第三方模型权
 
 RedactionEverything 有意把识别保留在本地或内网的推理回路内。系统处理的是原始敏感文件；把这些文件发往在线 API 也许能用上更大的视觉语言模型，但同时削弱了脱敏基础设施本应提供的隐私边界。因此默认的工程方向是单 GPU 工作站部署，通过量化、上下文控制、并发控制与链路调度，把完整工作流压进本地 GPU 运行时。
 
-视觉特征阶段使用单一的 LocateAnything-3B 定位模型，而非一堆专用检测器。它覆盖人脸、指纹、证件、银行卡、印章、二维码/条码、屏幕与手写签字等常见视觉隐私区域，并通过同一提示路径接受用户自定义视觉标签。本地 OpenCV 检测器补全单靠定位易遗漏的红色与暗色骑缝章/边缘章。
+视觉特征阶段使用单一的 LocateAnything-3B 定位模型，而非一堆专用检测器。它覆盖人脸、指纹、证件、银行卡、印章、二维码/条码、屏幕与手写签字等常见视觉隐私区域，并通过同一提示路径接受用户自定义视觉标签。本地 OpenCV 检测器补全单靠定位易遗漏的红色骑缝章/边缘章。
 
 这一设计有清晰的资源权衡。完整本地链路可能同时包含 PP-StructureV3、可选的 PaddleOCR-VL、HaS Text 与 LocateAnything-3B。即使有预热、GPU 健康检查、上下文压缩与串行调度，低于 16 GB 显存的设备在显存压力、KV 缓存分配、多页图像或并发请求下仍可能变慢。完整视觉链路推荐 16 GB 及以上 NVIDIA 显存。
 
@@ -326,8 +332,8 @@ RedactionEverything 有意把识别保留在本地或内网的推理回路内。
 |---|---|
 | 前端 | React、TypeScript、Vite、Tailwind CSS、Radix UI |
 | 后端 | FastAPI、Pydantic、SQLite、本地文件存储 |
-| 文本识别 | 通过 vLLM OpenAI 兼容服务的 HaS Text |
-| OCR | PaddleOCR-VL / PP-StructureV3 能力 |
+| 文本识别 | 通过 vLLM OpenAI 兼容服务的 HaS Text（HaS_Text_0209_0.6B） |
+| OCR | PP-StructureV3（PP-OCRv6 引擎）；可选 PaddleOCR-VL 补充；红墨抑制找回 |
 | 视觉检测 | LocateAnything-3B 视觉定位 + OpenCV 印章补全 |
 | 导出 | 文本、图片、PDF、Word 与批量打包工作流 |
 
@@ -439,6 +445,18 @@ npm run build
 - 个人可免费用于个人、非商业目的，包括个人项目、学习、研究、私人实验与演示。
 - 付费交付、咨询交付、公司、机构、政府部门、团队及其他组织，在生产使用、产品集成、SaaS、托管服务、OEM 使用、再分发与采购场景下，需要单独的商业许可证。
 - 模型权重、第三方依赖与数据集受各自许可证约束。
+
+### 商业部署的第三方授权
+
+本项目的商业许可证**不覆盖**第三方组件。任何商业或生产部署前，请自行清理以下授权：
+
+| 组件 | 许可证 | 商用含义 |
+|---|---|---|
+| LocateAnything-3B 权重 | **NVIDIA 非商用许可** | 上游许可禁止商用。商业部署须更换为可商用许可的视觉定位模型（如 GLM-4.6V，以其上游许可条款为准），或自行向模型方取得授权。 |
+| PyMuPDF | **AGPL-3.0** | 要么按 AGPL 履行开源义务，要么向 Artifex 购买商业许可。 |
+| HaS Text（0209） | MIT | 保留版权声明即可商用。 |
+| PaddleOCR / PP-OCRv6 / PP-StructureV3 / PaddleOCR-VL | Apache-2.0 | 按 Apache 条款可商用。 |
+| vLLM、Transformers、OpenCV | Apache-2.0 | 按 Apache 条款可商用。 |
 
 商业授权：**wwang11@alumni.nd.edu**
 

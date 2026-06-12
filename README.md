@@ -15,6 +15,8 @@ RedactionEverything is a local-first redaction workbench for sensitive informati
 
 > This project uses a custom [Personal Use License](./LICENSE). Individuals may use it for free personal, non-commercial purposes. Paid work, consulting delivery, companies, institutions, government agencies, teams, hosted services, production deployments, OEM redistribution, and commercial integrations require a separate commercial license.
 >
+> Commercial deployments must also clear third-party component licenses on their own: the LocateAnything-3B weights are released under an **NVIDIA non-commercial license**, and PyMuPDF is **AGPL-3.0** (dual-licensed commercially by Artifex). See [License](#license) for the full component table.
+>
 > Commercial licensing, support, procurement terms, and custom delivery: **wwang11@alumni.nd.edu**
 
 <p>
@@ -58,7 +60,7 @@ The distinction is scope, not rhetoric:
 
 - **Language and schema depth:** Chinese contracts, legal files, finance documents, healthcare materials, and mixed Chinese-English content often require domain schemas rather than a small fixed label set.
 - **Document reality:** Production files are rarely clean text. They include PDF layout, OCR noise, tables, stamps, signatures, screenshots, photos, and scanned pages.
-- **Vision coverage:** OCR + HaS handles text inside images, and LocateAnything-3B grounds visual features such as faces, IDs, bank cards, seals, screens, and handwritten signatures; a local OpenCV detector supplements red and dark binding/edge seals.
+- **Vision coverage:** OCR + HaS handles text inside images, and LocateAnything-3B grounds visual features such as faces, IDs, bank cards, seals, screens, and handwritten signatures; a local OpenCV detector supplements red binding/edge seals.
 - **Operational workflow:** Recognition is only the first step. The system includes review, correction, selection, batch processing, task state, result history, and export packaging.
 - **Privacy boundary:** The default architecture keeps raw files and model inference local or inside an intranet instead of depending on hosted external APIs.
 
@@ -73,9 +75,10 @@ The distinction is scope, not rhetoric:
 | Task center | Track task status, progress, review continuation, details, and deletion. Running tasks must be cancelled before deletion. |
 | Processing results | View processed files, single-file outputs, batch tree results, paginated selection, and packaged downloads. |
 | Text semantic NER | HaS Text recognizes entities directly from configured NER tags, without relying on built-in exhaustive rule mappings. |
-| OCR + HaS | Images and scanned documents are converted into text blocks by PaddleOCR-VL / PP-StructureV3, then HaS Text performs semantic recognition and maps results back to coordinates. |
+| OCR + HaS | Images and scanned documents are converted into text blocks by PP-StructureV3 on PP-OCRv6 engines (optional PaddleOCR-VL supplement), then HaS Text performs semantic recognition and maps values back to glyph-exact coordinates, so labels such as 户名： stay outside the mask. |
+| Stamp-crushed text recovery | A red-ink suppression pass whitens seal ink and re-detects, recovering print the stamp hid from the detector (e.g. party names under a company seal). |
 | Visual features | A single LocateAnything-3B service grounds the fixed visual presets (faces, fingerprints, IDs, bank cards, seals, screens, QR/barcodes, signatures, and more) and any user-defined visual label. |
-| Seal recovery | A local OpenCV detector supplements LocateAnything by recovering red and dark/gray binding and edge seals, deduplicated against existing seal boxes. |
+| Seal recovery | A local OpenCV detector supplements LocateAnything by recovering red binding and edge seals, deduplicated against existing seal boxes. |
 | Configurable schemas | Built-in general, legal, finance, and healthcare presets; custom text and visual items are supported, with exact tags (no family collapse). |
 | Local deployment | Frontend, backend, and model services can run on a local or intranet GPU workstation. |
 
@@ -147,10 +150,10 @@ Then point `.env` at them (WSL/Linux paths):
 VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv
 VLLM_VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv-vllm
 LOCATE_ANYTHING_DEPS=/home/<user>/.cache/datainfra-redaction/locateanything-hf-deps
-HAS_TEXT_HF_MODEL_PATH=/mnt/d/has_models/HaS_4.0_0.6B
+HAS_TEXT_HF_MODEL_PATH=/mnt/d/has_models/HaS_Text_0209_0.6B
 ```
 
-`HAS_TEXT_HF_MODEL_PATH` is the HaS Text HF (bf16) model directory from [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B). A Windows project venv at the repo root (`.venv`, installed from `backend/requirements.txt`) is also required — it runs the FastAPI backend and warmup.
+`HAS_TEXT_HF_MODEL_PATH` is the HaS Text HF (bf16) model directory from [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B) (MIT-licensed). A Windows project venv at the repo root (`.venv`, installed from `backend/requirements.txt`) is also required — it runs the FastAPI backend and warmup.
 
 ### Manual Backend Startup
 
@@ -199,7 +202,7 @@ The GPU services load weights from `./backend/models`, mounted into the containe
 
 | Service | Expected host path | Source |
 |---|---|---|
-| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | Q4_K_M GGUF build of [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B); if your file is named `has_4.0_0.6B.gguf`, rename or copy it to the expected filename |
+| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | Q4 GGUF build from [xuanwulab/HaS_Text_0209_0.6B_Q4](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B_Q4) |
 | `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | LocateAnything-3B HF weights from the official upstream source |
 
 > **Runtime difference:** the Docker `ner` service runs HaS Text on **llama.cpp with a Q4 GGUF quantization**, while local `npm run dev` serves the **HF bf16 weights through vLLM**. The two runtimes do not produce identical NER output; expect somewhat weaker recognition from the quantized Docker path than from local development.
@@ -218,12 +221,12 @@ Before production deployment, configure `.env`, model mounts, GPU runtime, authe
         +-------------------+--------------------+
         |                                        |
   Text + OCR path                        Visual feature path
-  PaddleOCR-VL 1.6 (optional)            LocateAnything-3B
-  + PP-StructureV3                       (MoonViT vision tower +
-        |                                 Qwen2 LM backbone)
-  HaS Text semantic NER                          |
-        |                                + OpenCV seal supplement
-        |                                  (red / dark seals)
+  PP-StructureV3 (PP-OCRv6)              LocateAnything-3B
+  + red-ink suppression pass             (MoonViT vision tower +
+  + PaddleOCR-VL 1.6 (optional)           Qwen2 LM backbone)
+        |                                        |
+  HaS Text semantic NER                  + OpenCV seal supplement
+        |                                  (red binding/edge seals)
         +-------------------+--------------------+
                             |
                   Coordinate merge / dedupe
@@ -280,14 +283,17 @@ Users can add custom visual feature labels from the recognition settings UI. Cus
 
 RedactionEverything is an orchestration and product layer. It does not claim ownership of third-party model weights, and this repository does not redistribute those weights. Please download models from their official repositories, review each model card, and comply with the corresponding license and terms before deployment.
 
-| Component | Upstream model or project | Used for |
-|---|---|---|
-| PaddleOCR-VL / PP-StructureV3 | [PaddlePaddle/PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | Document OCR, layout understanding, tables, text boxes, and page structure extraction |
-| HaS Text | [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B) | Semantic NER for text and OCR text blocks |
-| LocateAnything-3B | LocateAnything visual grounding model (download weights from the official upstream source) | Visual feature grounding: presets, custom labels, and signatures |
-| vLLM runtime | [vLLM](https://github.com/vllm-project/vllm) | Local OpenAI-compatible serving for HaS Text, PaddleOCR-VL, and the LocateAnything LM backbone |
-| Transformers runtime | [Hugging Face Transformers](https://github.com/huggingface/transformers) | Local runtime for the LocateAnything MoonViT vision tower |
-| OpenCV | [OpenCV](https://github.com/opencv/opencv) | Local red/dark seal detection that supplements binding and edge seals |
+| Component | Upstream model or project | License | Used for |
+|---|---|---|---|
+| PP-StructureV3 / PP-OCRv6 / PaddleOCR-VL | [PaddlePaddle/PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR), [PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL) | Apache-2.0 | Document OCR, layout understanding, tables, text boxes, and page structure extraction |
+| HaS Text | [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B) | MIT | Semantic NER for text and OCR text blocks |
+| LocateAnything-3B | LocateAnything visual grounding model (download weights from the official upstream source) | **NVIDIA non-commercial license** | Visual feature grounding: presets, custom labels, and signatures |
+| vLLM runtime | [vLLM](https://github.com/vllm-project/vllm) | Apache-2.0 | Local OpenAI-compatible serving for HaS Text, PaddleOCR-VL, and the LocateAnything LM backbone |
+| Transformers runtime | [Hugging Face Transformers](https://github.com/huggingface/transformers) | Apache-2.0 | Local runtime for the LocateAnything MoonViT vision tower |
+| OpenCV | [OpenCV](https://github.com/opencv/opencv) | Apache-2.0 | Local red seal detection that supplements binding and edge seals |
+| PyMuPDF | [PyMuPDF](https://github.com/pymupdf/PyMuPDF) | **AGPL-3.0** (commercial licenses sold by Artifex) | PDF parsing and page rendering |
+
+License fields above reflect the upstream declarations at the time of writing; re-verify each model card and package license before any deployment.
 
 Thanks to PaddlePaddle, Tencent Xuanwu Lab, the LocateAnything authors, vLLM, Hugging Face, OpenCV, and the broader open-source community. Their work makes local-first document redaction possible on commodity GPUs.
 
@@ -297,7 +303,7 @@ Thanks to PaddlePaddle, Tencent Xuanwu Lab, the LocateAnything authors, vLLM, Hu
 
 RedactionEverything intentionally keeps recognition inside a local or intranet inference loop. The system processes raw sensitive files; sending those files to an online API may enable larger vision-language models, but it also weakens the privacy boundary that a redaction infrastructure is meant to provide. The default engineering direction is therefore single-GPU workstation deployment, with quantization, context control, concurrency control, and pipeline scheduling used to compress the full workflow into a local GPU runtime.
 
-The visual feature stage uses a single LocateAnything-3B grounding model rather than a stack of specialized detectors. It covers common visual privacy regions such as faces, fingerprints, identity documents, bank cards, seals, QR/barcodes, screens, and handwritten signatures, and accepts user-defined visual labels through the same prompt path. A local OpenCV detector supplements red and dark binding/edge seals that grounding alone tends to miss.
+The visual feature stage uses a single LocateAnything-3B grounding model rather than a stack of specialized detectors. It covers common visual privacy regions such as faces, fingerprints, identity documents, bank cards, seals, QR/barcodes, screens, and handwritten signatures, and accepts user-defined visual labels through the same prompt path. A local OpenCV detector supplements red binding/edge seals that grounding alone tends to miss.
 
 This design has a clear resource tradeoff. The complete local pipeline can include PP-StructureV3, optional PaddleOCR-VL, HaS Text, and LocateAnything-3B at the same time. Even with warmup, GPU health checks, context compression, and serialized scheduling, devices below 16 GB VRAM may still slow down under VRAM pressure, KV cache allocation, multi-page images, or concurrent requests. For the full vision pipeline, 16 GB or more NVIDIA VRAM is recommended.
 
@@ -326,8 +332,8 @@ Recognition items are atomic and exact-tagged, so a tag maps to exactly one reco
 |---|---|
 | Frontend | React, TypeScript, Vite, Tailwind CSS, Radix UI |
 | Backend | FastAPI, Pydantic, SQLite, local file storage |
-| Text recognition | HaS Text through a vLLM OpenAI-compatible service |
-| OCR | PaddleOCR-VL / PP-StructureV3 capabilities |
+| Text recognition | HaS Text (HaS_Text_0209_0.6B) through a vLLM OpenAI-compatible service |
+| OCR | PP-StructureV3 with PP-OCRv6 engines; optional PaddleOCR-VL supplement; red-ink suppression recovery |
 | Visual detection | LocateAnything-3B visual grounding + OpenCV seal supplement |
 | Export | Text, image, PDF, Word, and batch packaging workflows |
 
@@ -439,6 +445,18 @@ This project uses a custom [Personal Use License](./LICENSE):
 - Individuals may use it for free personal, non-commercial purposes, including personal projects, learning, research, private experiments, and demos.
 - Paid work, consulting delivery, companies, institutions, government agencies, teams, and other organizations need a separate commercial license for production use, product integration, SaaS, managed services, OEM use, redistribution, and procurement scenarios.
 - Model weights, third-party dependencies, and datasets are governed by their own licenses.
+
+### Third-Party Licensing for Commercial Deployments
+
+A commercial license for this project does **not** cover third-party components. Before any commercial or production deployment, clear these yourself:
+
+| Component | License | What it means commercially |
+|---|---|---|
+| LocateAnything-3B weights | **NVIDIA non-commercial license** | Commercial use is not permitted by the upstream license. Commercial deployments must replace the visual grounding model with a commercially licensed VLM (e.g. GLM-4.6V — verify its upstream license terms) or obtain separate rights from the model owner. |
+| PyMuPDF | **AGPL-3.0** | Either comply with AGPL obligations for your deployment, or purchase a commercial license from Artifex. |
+| HaS Text (0209) | MIT | Commercial use permitted with attribution. |
+| PaddleOCR / PP-OCRv6 / PP-StructureV3 / PaddleOCR-VL | Apache-2.0 | Commercial use permitted under Apache terms. |
+| vLLM, Transformers, OpenCV | Apache-2.0 | Commercial use permitted under Apache terms. |
 
 Commercial licensing: **wwang11@alumni.nd.edu**
 
