@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useState, useCallback } from 'react';
 import { DEFAULT_MODEL_FORM, type ModelConfig } from './hooks/use-model-config';

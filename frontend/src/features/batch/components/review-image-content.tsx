@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { memo, useCallback, useId, useMemo, useState } from 'react';
 import { useT } from '@/i18n';
@@ -391,10 +390,6 @@ function ReviewImageContentInner({
     });
     return metaById;
   }, [pipelines]);
-  const availableVisionTypes = useMemo(
-    () => pipelines.flatMap((pipeline) => pipeline.types.filter((type) => type.enabled)),
-    [pipelines],
-  );
   const getVisionTypeMeta = useCallback(
     (id: string) => visionTypeMetaById.get(id) ?? { name: id, color: DEFAULT_VISION_TYPE_COLOR },
     [visionTypeMetaById],
@@ -584,8 +579,6 @@ function ReviewImageContentInner({
                   onBoxesChange={setVisibleReviewBoxes}
                   onBoxesCommit={handleReviewBoxesCommit}
                   getTypeConfig={getVisionTypeMeta}
-                  availableTypes={availableVisionTypes}
-                  defaultType="CUSTOM"
                 />
               </div>
             ) : (

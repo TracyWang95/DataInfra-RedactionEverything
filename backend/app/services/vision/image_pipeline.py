@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from difflib import SequenceMatcher
+from enum import Enum
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -101,80 +103,138 @@ def match_ocr_to_visual_regions(
 
 
 # ---------------------------------------------------------------------------
-# Drawing / visualization
+# Drawing / visualization (shared preview rendering core)
 # ---------------------------------------------------------------------------
 
 # Preview/debug rendering constants (names for pre-existing literals; unchanged).
 _PREVIEW_FONT_SIZE = 14
 _PREVIEW_BOX_WIDTH = 2
-_PREVIEW_LABEL_Y_OFFSET = 18
-_PREVIEW_LABEL_TEXT_MAX = 15
 _PREVIEW_LABEL_BG_PAD = 2
-_DEFAULT_REGION_COLOR = (255, 0, 0)
 _PREVIEW_LABEL_TEXT_COLOR = (255, 255, 255)
 _PREVIEW_FONT_PATHS = [
     "C:/Windows/Fonts/msyh.ttc",
     "C:/Windows/Fonts/simsun.ttc",
     "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
 ]
-# Per-entity-type box colour palette (RGB). Data table, not magic numbers.
-_ENTITY_TYPE_COLORS = {
-    "PERSON": (59, 130, 246),
-    "ORG": (16, 185, 129),
-    "COMPANY": (20, 184, 166),
-    "PHONE": (249, 115, 22),
-    "EMAIL": (234, 179, 8),
-    "ID_CARD": (239, 68, 68),
-    "BANK_CARD": (236, 72, 153),
-    "ACCOUNT_NAME": (168, 85, 247),
-    "BANK_NAME": (124, 58, 237),
-    "ACCOUNT_NUMBER": (139, 92, 246),
-    "ADDRESS": (99, 102, 241),
-    "DATE": (161, 98, 7),
-    "SEAL": (220, 20, 60),
+
+
+class SourcePipeline(Enum):
+    """Which recall channel produced a detection box."""
+
+    TEXT = "text"        # OCR+HaS text chain (incl. regex_fallback, PDF text layer)
+    VISUAL = "visual"    # LocateAnything / visual_features chain
+
+
+# Preview colours encode the SOURCE PIPELINE, not the entity type (type info is
+# carried by the label text). The frontend has no source-colour convention for
+# badges, so: visual aligns with the frontend's default vision-type colour
+# #6366F1 (indigo); text uses #059669 (green) for clear contrast at 2px lines.
+TEXT_PIPELINE_COLOR = (5, 150, 105)     # #059669
+VISUAL_PIPELINE_COLOR = (99, 102, 241)  # #6366F1
+
+_SOURCE_PIPELINE_COLORS = {
+    SourcePipeline.TEXT: TEXT_PIPELINE_COLOR,
+    SourcePipeline.VISUAL: VISUAL_PIPELINE_COLOR,
 }
+
+
+@dataclass(frozen=True)
+class PreviewBox:
+    """One detection box for preview rendering, in pixel coordinates."""
+
+    left: int
+    top: int
+    right: int
+    bottom: int
+    label: str
+    pipeline: SourcePipeline
+
+
+def _load_preview_font() -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load a CJK-capable font from the platform table, else PIL default."""
+    for fp in _PREVIEW_FONT_PATHS:
+        if os.path.exists(fp):
+            try:
+                return ImageFont.truetype(fp, _PREVIEW_FONT_SIZE)
+            except OSError:
+                pass
+    return ImageFont.load_default()
+
+
+def draw_preview_boxes(
+    image: Image.Image,
+    boxes: list[PreviewBox],
+) -> Image.Image:
+    """Shared rendering core: boxes + full-text labels (coloured block, white text).
+
+    Labels are never truncated. Placement prefers above the box; near canvas
+    edges it falls back to below the box, then inside the box, and is clamped
+    horizontally so the label block stays on the canvas.
+    """
+    draw_image = image.copy()
+    draw = ImageDraw.Draw(draw_image)
+    font = _load_preview_font()
+    img_w, img_h = draw_image.size
+    pad = _PREVIEW_LABEL_BG_PAD
+
+    for box in boxes:
+        color = _SOURCE_PIPELINE_COLORS[box.pipeline]
+        draw.rectangle([box.left, box.top, box.right, box.bottom], outline=color, width=_PREVIEW_BOX_WIDTH)
+
+        if not box.label:
+            continue
+
+        # Measure the label once at origin; the rendered bbox just shifts.
+        text_bbox = draw.textbbox((0, 0), box.label, font=font)
+        block_w = (text_bbox[2] - text_bbox[0]) + 2 * pad
+        block_h = (text_bbox[3] - text_bbox[1]) + 2 * pad
+
+        # Vertical: above the box -> below the box -> inside at the top edge.
+        if box.top - block_h >= 0:
+            block_top = box.top - block_h
+        elif box.bottom + block_h <= img_h:
+            block_top = box.bottom
+        else:
+            block_top = max(0, min(box.top, img_h - block_h))
+        # Horizontal: align with the box's left edge, clamped onto the canvas.
+        block_left = max(0, min(box.left, img_w - block_w))
+
+        draw.rectangle(
+            [block_left, block_top, block_left + block_w, block_top + block_h],
+            fill=color,
+        )
+        text_origin = (
+            block_left + pad - text_bbox[0],
+            block_top + pad - text_bbox[1],
+        )
+        draw.text(text_origin, box.label, fill=_PREVIEW_LABEL_TEXT_COLOR, font=font)
+
+    return draw_image
 
 
 def draw_regions_on_image(
     image: Image.Image,
     regions: list[SensitiveRegion],
 ) -> Image.Image:
-    """Draw bounding boxes and labels on an image for debugging / preview."""
-    draw_image = image.copy()
-    draw = ImageDraw.Draw(draw_image)
+    """Draw OCR+HaS text-chain regions for debugging / preview.
 
-    # Try to load a CJK font
-    font = None
-    for fp in _PREVIEW_FONT_PATHS:
-        if os.path.exists(fp):
-            try:
-                font = ImageFont.truetype(fp, _PREVIEW_FONT_SIZE)
-                break
-            except OSError:
-                pass
-    if not font:
-        font = ImageFont.load_default()
-
+    Everything in this chain (incl. regex_fallback and OCR-supplied visual
+    regions) was recalled by the text pipeline, so it all gets the text colour.
+    """
+    boxes = []
     for region in regions:
-        color = _ENTITY_TYPE_COLORS.get(region.entity_type, _DEFAULT_REGION_COLOR)
-
-        x1, y1 = region.left, region.top
-        x2, y2 = region.left + region.width, region.top + region.height
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=_PREVIEW_BOX_WIDTH)
-
         label = f"{region.entity_type}"
         if region.text:
-            label += f": {region.text[:_PREVIEW_LABEL_TEXT_MAX]}"
-
-        bbox = draw.textbbox((x1, y1 - _PREVIEW_LABEL_Y_OFFSET), label, font=font)
-        draw.rectangle(
-            [bbox[0] - _PREVIEW_LABEL_BG_PAD, bbox[1] - _PREVIEW_LABEL_BG_PAD,
-             bbox[2] + _PREVIEW_LABEL_BG_PAD, bbox[3] + _PREVIEW_LABEL_BG_PAD],
-            fill=color,
-        )
-        draw.text((x1, y1 - _PREVIEW_LABEL_Y_OFFSET), label, fill=_PREVIEW_LABEL_TEXT_COLOR, font=font)
-
-    return draw_image
+            label += f": {region.text}"
+        boxes.append(PreviewBox(
+            left=region.left,
+            top=region.top,
+            right=region.left + region.width,
+            bottom=region.top + region.height,
+            label=label,
+            pipeline=SourcePipeline.TEXT,
+        ))
+    return draw_preview_boxes(image, boxes)
 
 
 # ---------------------------------------------------------------------------

@@ -1,37 +1,43 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 
-const ports = [3000, 8000, 8080, 8082, 8090, 8118];
+const ports = [3000, 8000, 8080, 8082, 8090, 8091, 8118];
+
+// WSL-side process cleanup. KEEP IN SYNC with the identical WSL_KILL_SEQUENCE
+// in scripts/dev.mjs (shutdown() runs the same sequence on Ctrl+C; update both
+// together). Patterns match process features instead of absolute venv paths so
+// they work on any machine. The [x] first-character bracket prevents pkill -f
+// from matching this very `bash -lc` command line (a self-kill would abort the
+// sequence midway). "[v]llm serve" covers all three vLLM servers
+// (8118 paddle / 8080 has-text / 8091 locate-lm).
+const WSL_KILL_SEQUENCE = [
+  'set +e',
+  'pkill -TERM -f "[v]llm serve" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[P]addlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[H]aS_4.0_0.6B" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_qwen2_model" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[s]cripts/ocr_server.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_anything_server.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_anything_eval.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[l]ocate_anything_tile_eval.py" >/dev/null 2>&1 || true',
+  'sleep 2',
+  'pkill -KILL -f "[v]llm serve" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[P]addlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[H]aS_4.0_0.6B" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_qwen2_model" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[s]cripts/ocr_server.py" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_anything_server.py" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_anything_eval.py" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[l]ocate_anything_tile_eval.py" >/dev/null 2>&1 || true',
+  'for port in 8080 8082 8090 8091 8118; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
+].join('; ');
 
 function run(command, args) {
   spawnSync(command, args, { stdio: 'inherit' });
 }
 
 if (process.platform === 'win32') {
-  run('wsl.exe', [
-    '-e',
-    'bash',
-    '-lc',
-    [
-      'set +e',
-      'pkill -TERM -f "/home/tracy/.cache/datainfra-redaction/.venv-vllm/bin/vllm" >/dev/null 2>&1 || true',
-      'pkill -TERM -f "PaddlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
-      'pkill -TERM -f "HaS_4.0_0.6B" >/dev/null 2>&1 || true',
-      'pkill -TERM -f "scripts/ocr_server.py" >/dev/null 2>&1 || true',
-      'pkill -TERM -f "locate_anything_server.py" >/dev/null 2>&1 || true',
-      'pkill -TERM -f "locate_anything_eval.py" >/dev/null 2>&1 || true',
-      'pkill -TERM -f "locate_anything_tile_eval.py" >/dev/null 2>&1 || true',
-      'sleep 2',
-      'pkill -KILL -f "/home/tracy/.cache/datainfra-redaction/.venv-vllm/bin/vllm" >/dev/null 2>&1 || true',
-      'pkill -KILL -f "PaddlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
-      'pkill -KILL -f "HaS_4.0_0.6B" >/dev/null 2>&1 || true',
-      'pkill -KILL -f "scripts/ocr_server.py" >/dev/null 2>&1 || true',
-      'pkill -KILL -f "locate_anything_server.py" >/dev/null 2>&1 || true',
-      'pkill -KILL -f "locate_anything_eval.py" >/dev/null 2>&1 || true',
-      'pkill -KILL -f "locate_anything_tile_eval.py" >/dev/null 2>&1 || true',
-      'for port in 8080 8082 8090 8118; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
-    ].join('; '),
-  ]);
+  run('wsl.exe', ['-e', 'bash', '-lc', WSL_KILL_SEQUENCE]);
 
   run('powershell.exe', [
     '-NoProfile',
@@ -58,7 +64,7 @@ if (process.platform === 'win32') {
     '-lc',
     [
       'pkill -f "vllm serve|scripts/ocr_server.py|uvicorn app.main:app|vite --host|llama-server" >/dev/null 2>&1 || true',
-      'for port in 3000 8000 8080 8082 8090 8118; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
+      'for port in 3000 8000 8080 8082 8090 8091 8118; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
     ].join('; '),
   ]);
 }

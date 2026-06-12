@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useRef } from 'react';
 
@@ -9,6 +8,15 @@ interface Snapshot<T> {
   data: T;
 }
 
+/**
+ * Contract:
+ * - `save` / `undo` / `redo` / `reset` must be called in the same transaction
+ *   as exactly one corresponding state update (call them alongside setState,
+ *   never inside a setState updater — updaters must stay pure and StrictMode
+ *   double-invokes them, which would corrupt the stacks).
+ * - `canUndo` / `canRedo` are ref-backed getters: reading them does NOT
+ *   subscribe to changes and will not trigger a re-render by itself.
+ */
 export function useUndoRedo<T>() {
   const undoStack = useRef<Snapshot<T>[]>([]);
   const redoStack = useRef<Snapshot<T>[]>([]);

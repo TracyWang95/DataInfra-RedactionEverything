@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { startTransition, useState, useCallback, useEffect, useRef } from 'react';
 import { useUndoRedo } from '@/hooks/useUndoRedo';
@@ -27,6 +26,20 @@ function asPngDataUrl(imageBase64: string | undefined): string {
 
 function isTiffFilename(filename: string | undefined): boolean {
   return /\.(?:tif|tiff)$/i.test(filename || '');
+}
+
+// Cap for the base64 page-image caches below. Without a cap the redacted
+// cache (key includes version + box signature) grows unbounded.
+const PAGE_IMAGE_CACHE_LIMIT = 24;
+
+function setCacheWithLimit(cache: Map<string, string>, key: string, value: string): void {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > PAGE_IMAGE_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
 }
 
 export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
@@ -100,7 +113,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
         const data = await safeJson<PreviewImageResponse>(res);
         const resolved = asPngDataUrl(data.image_base64);
         if (!resolved) throw new Error('Missing image_base64');
-        pageImageCacheRef.current.set(key, resolved);
+        setCacheWithLimit(pageImageCacheRef.current, key, resolved);
         return resolved;
       })
       .finally(() => {
@@ -155,7 +168,7 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
           const data = await safeJson<PreviewImageResponse>(res);
           const resolved = asPngDataUrl(data.image_base64);
           if (!resolved) throw new Error('Missing image_base64');
-          redactedPageImageCacheRef.current.set(key, resolved);
+          setCacheWithLimit(redactedPageImageCacheRef.current, key, resolved);
           return resolved;
         })
         .finally(() => {
@@ -501,7 +514,6 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
           totalPages,
           boxes: visibleBoxes,
           visionTypes: visionTypes.map((vt) => ({ id: vt.id, name: vt.name, color: '#6366F1' })),
-          defaultType: visionTypes[0]?.id || 'CUSTOM',
         });
       };
 
@@ -517,22 +529,24 @@ export function usePlaygroundImage(options: UsePlaygroundImageOptions) {
         }
         if (data?.type === 'boxes-commit') {
           const activePage = currentPageRef.current;
-          setBoundingBoxes((prev) => {
-            const prevAll = mergeBoxesForPage(
-              prev,
-              data.prevBoxes ?? [],
-              data.nextBoxes ?? [],
-              activePage,
-            );
-            const nextAll = mergeBoxesForPage(
-              prev,
-              data.nextBoxes ?? [],
-              data.prevBoxes ?? [],
-              activePage,
-            );
-            imageHistory.save(prevAll);
-            return nextAll;
-          });
+          // Compute prev/next outside the setState updater so the updater stays
+          // pure (StrictMode double-invokes updaters, which would double-push
+          // onto the undo stack).
+          const sourceBoxes = boundingBoxesRef.current;
+          const prevAll = mergeBoxesForPage(
+            sourceBoxes,
+            data.prevBoxes ?? [],
+            data.nextBoxes ?? [],
+            activePage,
+          );
+          const nextAll = mergeBoxesForPage(
+            sourceBoxes,
+            data.nextBoxes ?? [],
+            data.prevBoxes ?? [],
+            activePage,
+          );
+          imageHistory.save(prevAll);
+          setBoundingBoxes(nextAll);
         }
         if (data?.type === 'page-change') {
           const nextPage = Number(data.page || 1);

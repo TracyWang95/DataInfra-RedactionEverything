@@ -147,7 +147,9 @@ def _service_ready_health(url: str) -> bool:
     if payload is None:
         return False
     status = str(payload.get("status", "")).lower()
-    if status in {"busy", "running", "processing", "inferencing", "loading", "starting", "warming_up"}:
+    # Only "loaded but currently busy" statuses count as ready; "loading"/
+    # "starting" mean the model is NOT loaded yet and must keep us waiting.
+    if status in {"busy", "running", "processing", "inferencing", "warming_up"}:
         return True
     return bool(payload.get("ready", True))
 

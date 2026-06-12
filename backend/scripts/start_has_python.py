@@ -6,7 +6,6 @@ import os
 import sys
 from pathlib import Path
 
-
 CANONICAL_MODEL_NAME = "HaS_Text_0209_0.6B_Q4_K_M.gguf"
 UPSTREAM_MODEL_NAME = "has_4.0_0.6B.gguf"
 
@@ -65,8 +64,8 @@ def main() -> None:
     print("\nLoading model...")
 
     try:
-        import uvicorn
         import llama_cpp
+        import uvicorn
         from llama_cpp.server.app import create_app
         from llama_cpp.server.settings import ModelSettings, ServerSettings
 

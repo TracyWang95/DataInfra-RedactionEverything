@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import type React from 'react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
@@ -7,7 +6,8 @@ import { getSelectionOffsets, clampPopoverInCanvas } from '@/utils/domSelection'
 import type { ReviewEntity, TextEntityType } from '../types';
 
 interface UseTextSelectionOptions {
-  reviewTextContent: string;
+  /** Page text in the same coordinate system as the rendered/marked content. */
+  reviewPageContent: string;
   reviewTextContentRef: React.RefObject<HTMLDivElement | null>;
   reviewTextScrollRef: React.RefObject<HTMLDivElement | null>;
   cardRef: React.RefObject<HTMLDivElement | null>;
@@ -19,7 +19,7 @@ interface UseTextSelectionOptions {
 }
 
 export function useTextSelection({
-  reviewTextContent,
+  reviewPageContent,
   reviewTextContentRef,
   reviewTextScrollRef,
   cardRef,
@@ -56,7 +56,8 @@ export function useTextSelection({
       return;
     }
 
-    const text = selection.toString().trim();
+    const rawText = selection.toString();
+    const text = rawText.trim();
     if (!text || text.length < 2) {
       clearTextSelection();
       return;
@@ -68,10 +69,14 @@ export function useTextSelection({
       return;
     }
 
+    // Shrink the raw Range offsets by the leading/trailing whitespace that was
+    // trimmed from the text so start/end match the stored (trimmed) text.
+    const leadingWhitespace = rawText.length - rawText.trimStart().length;
+    const trailingWhitespace = rawText.length - rawText.trimEnd().length;
     const offsets = getSelectionOffsets(range, reviewTextContentRef.current);
-    const start = offsets?.start ?? reviewTextContent.indexOf(text);
-    const end = offsets?.end ?? start + text.length;
-    if (start < 0 || end < 0) {
+    const start = offsets ? offsets.start + leadingWhitespace : reviewPageContent.indexOf(text);
+    const end = offsets ? offsets.end - trailingWhitespace : start + text.length;
+    if (start < 0 || end < 0 || end <= start) {
       clearTextSelection();
       return;
     }
@@ -93,7 +98,7 @@ export function useTextSelection({
   }, [
     clearTextSelection,
     reviewFileReadOnly,
-    reviewTextContent,
+    reviewPageContent,
     reviewTextContentRef,
     selectedText,
     selectedTypeId,

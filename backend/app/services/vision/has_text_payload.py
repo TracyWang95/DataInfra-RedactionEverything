@@ -6,21 +6,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
 from app.models.type_mapping import canonical_type_id, has_query_labels_for
 from app.services.ocr_has_vision_service import OCRTextBlock
 
-logger = logging.getLogger("app.services.vision.ocr_pipeline")
-
-
-VISUAL_ONLY_TYPES = {
-    "SEAL",
-    "SIGNATURE",
-    "FINGERPRINT",
-    "PHOTO",
-    "QR_CODE",
-    "HANDWRITING",
-    "WATERMARK",
-}
+logger = logging.getLogger(__name__)
 
 DEFAULT_HAS_TEXT_TYPE_IDS = [
     "PERSON",
@@ -98,7 +88,7 @@ def _build_has_text_type_names(vision_types: list | None = None) -> list[str]:
         seen_type_ids: set[str] = set()
         for vt in vision_types:
             type_id = _canonical_image_text_type(getattr(vt, "id", ""))
-            if not type_id or type_id in VISUAL_ONLY_TYPES or type_id in seen_type_ids:
+            if not type_id or type_id in VISUAL_ONLY_ENTITY_TYPES or type_id in seen_type_ids:
                 continue
             seen_type_ids.add(type_id)
             type_ids.append(type_id)
@@ -122,20 +112,6 @@ def _iter_payload_texts(text: str | None) -> list[str]:
     return [raw]
 
 
-def _build_has_text_content(
-    ocr_blocks: list[OCRTextBlock],
-    *,
-    max_chars: int,
-    max_block_chars: int | None = None,
-) -> tuple[list[str], str]:
-    """Build HaS prompt text while dropping duplicate OCR block text."""
-    payload = _build_has_text_payload(
-        ocr_blocks,
-        max_chars=max_chars,
-        max_block_chars=max_block_chars,
-    )
-    return payload.texts, payload.content
-
 
 def _build_has_text_payload(
     ocr_blocks: list[OCRTextBlock],
@@ -145,7 +121,6 @@ def _build_has_text_payload(
 ) -> HaSTextPayload:
     """Build HaS prompt text and stats while dropping duplicate OCR block text."""
     candidate_texts: list[str] = []
-    candidate_compacts: list[str] = []
     seen: set[str] = set()
     input_chars = 0
     eligible_block_count = 0
@@ -166,26 +141,19 @@ def _build_has_text_payload(
             if not compact:
                 continue
             eligible_block_count += 1
+            # Drop only EXACTLY-equal block text (truly repeated OCR blocks). The
+            # old substring-containment dedup also dropped a block whose text was a
+            # substring of another block elsewhere on the page — so the 姓名 cell
+            # "张三" was removed because 联系人 "张三（儿子）" contains it, and a
+            # table date "2024-05-12" because 入院日期 "2024-05-1209:23" contains
+            # it. Those fields then never reached HaS and were never redacted.
+            # match_entities_to_ocr re-expands a kept value to every occurrence, so
+            # collapsing exact duplicates loses nothing.
             if compact in seen:
                 duplicate_block_count += 1
                 continue
-            if any(compact in existing for existing in candidate_compacts):
-                duplicate_block_count += 1
-                continue
-
-            contained_indices = [
-                idx
-                for idx, existing in enumerate(candidate_compacts)
-                if existing and existing in compact
-            ]
-            for idx in reversed(contained_indices):
-                seen.discard(candidate_compacts[idx])
-                candidate_compacts.pop(idx)
-                candidate_texts.pop(idx)
-                duplicate_block_count += 1
 
             seen.add(compact)
-            candidate_compacts.append(compact)
             candidate_texts.append(text)
 
     texts: list[str] = []
@@ -227,7 +195,7 @@ def _filter_blocks_for_has_text(
 ) -> list[OCRTextBlock]:
     """Keep OCR text eligible for HaS Text without local semantic rules."""
     selected = {_canonical_image_text_type(type_id) for type_id in (selected_type_ids or [])}
-    if selected and selected.issubset(VISUAL_ONLY_TYPES):
+    if selected and selected.issubset(VISUAL_ONLY_ENTITY_TYPES):
         return []
 
     return [

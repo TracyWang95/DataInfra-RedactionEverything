@@ -118,7 +118,7 @@ class InvalidStatusTransition(Exception):
         self.current = current
         self.target = target
         super().__init__(
-            f"Invalid {entity} status transition: {current} 鈫?{target} (id={entity_id})"
+            f"Invalid {entity} status transition: {current} -> {target} (id={entity_id})"
         )
 
 
@@ -1068,7 +1068,7 @@ class JobStore:
                     "task": "process_item",
                 })
                 logger.info(
-                    "repair_stuck: item %s (status=%s) 鈫?queued, job=%s",
+                    "repair_stuck: item %s (status=%s) -> queued, job=%s",
                     row["id"], row["status"], row["job_id"],
                 )
 
@@ -1085,7 +1085,7 @@ class JobStore:
                 affected_jobs.add(row["job_id"])
                 reset_file_ids.add(str(row["file_id"]))
                 logger.info(
-                    "repair_stuck: item %s (REDACTING) 鈫?awaiting_review, job=%s",
+                    "repair_stuck: item %s (REDACTING) -> awaiting_review, job=%s",
                     row["id"], row["job_id"],
                 )
 
@@ -1245,7 +1245,7 @@ class JobStore:
         return True
 
 
-# 鈹€鈹€鈹€ Singleton accessor 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# --- Singleton accessor ------------------------------------------------------
 @lru_cache
 def _singleton_store() -> JobStore:
     from app.core.config import settings

@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
@@ -34,9 +33,11 @@ export function BatchStepProgress({ currentStep, canGoStep, goStep }: BatchStepP
     >
       {stepOrder.map((stepNumber, i) => {
         const canVisit = canGoStep(stepNumber);
-        const isCompleted = canVisit && stepNumber < currentStep;
+        // Steps behind the current one are display-only: the wizard flow must
+        // not be re-entered backwards from the header (e.g. step 4 -> step 3).
+        const isCompleted = stepNumber < currentStep;
         const isCurrent = currentStep === stepNumber;
-        const isLocked = !canVisit;
+        const isLocked = !canVisit && !isCompleted;
         const isIdle = canVisit && !isCurrent && !isCompleted;
         const title = isLocked ? t('batchWizard.stepLocked') : labels[stepNumber];
         return (
@@ -47,15 +48,14 @@ export function BatchStepProgress({ currentStep, canGoStep, goStep }: BatchStepP
                 'inline-flex h-7 items-center rounded-md px-2.5 text-xs font-medium whitespace-nowrap select-none',
                 'transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                 isCurrent && 'bg-primary text-primary-foreground shadow-sm',
-                isCompleted &&
-                  'border border-border/70 bg-background text-foreground hover:border-primary/50 hover:text-primary',
+                isCompleted && 'cursor-default border border-border/70 bg-background text-foreground',
                 isIdle &&
                   'border border-border/70 bg-background text-foreground hover:border-primary/50 hover:text-primary',
                 isLocked && 'cursor-not-allowed bg-muted/40 text-muted-foreground opacity-40',
               )}
               aria-label={`${labels[stepNumber]} (${stepNumber}/${stepOrder.length})${isLocked ? ` - ${t('batchWizard.stepLocked')}` : ''}`}
               aria-current={isCurrent ? 'step' : undefined}
-              disabled={isCurrent || isLocked}
+              disabled={isCurrent || isLocked || isCompleted}
               title={title}
               onClick={() => goStep(stepNumber)}
               data-testid={`batch-step-${stepNumber}`}

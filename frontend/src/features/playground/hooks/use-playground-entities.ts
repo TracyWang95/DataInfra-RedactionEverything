@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { t } from '@/i18n';
@@ -25,13 +24,13 @@ export function usePlaygroundEntities() {
 
   const removeEntity = useCallback(
     (id: string) => {
-      setEntities((prev) => {
-        entityHistory.save(prev);
-        return prev.filter((e) => e.id !== id);
-      });
-      showToast('已删除', 'info');
+      // Keep the updater pure: snapshot history outside setState (StrictMode
+      // double-invokes updaters, which would double-push onto the undo stack).
+      entityHistory.save(entities);
+      setEntities(entities.filter((e) => e.id !== id));
+      showToast(t('playground.toast.entityDeleted'), 'info');
     },
-    [entityHistory],
+    [entities, entityHistory],
   );
 
   const selectAllEntities = useCallback(() => {
@@ -67,7 +66,7 @@ export function usePlaygroundEntities() {
       nerAbortRef.current = controller;
 
       setIsLoading(true);
-      setLoadingMessage('重新识别中（正则+AI语义识别）...');
+      setLoadingMessage(t('playground.loading.rerunHybridText'));
       try {
         const nerRes = await authFetch(`/api/v1/files/${fileId}/ner/hybrid`, {
           method: 'POST',
@@ -90,7 +89,13 @@ export function usePlaygroundEntities() {
         );
         setEntities(entitiesWithSource);
         entityHistory.reset();
-        showToast(`重新识别完成：${entitiesWithSource.length} 处`, 'success');
+        showToast(
+          t('playground.toast.rerunTextDone').replace(
+            '{count}',
+            String(entitiesWithSource.length),
+          ),
+          'success',
+        );
       } catch (err) {
         if (controller.signal.aborted) return;
         showToast(localizeErrorMessage(err, 'playground.recognizeFailed'), 'error');

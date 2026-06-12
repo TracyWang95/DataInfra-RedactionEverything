@@ -29,6 +29,9 @@ class TokenBlacklist:
         self._db_path = db_path
         self._lock = threading.Lock()
         self._last_cleanup = 0.0
+        # Persistent connection reused across requests (guarded by self._lock).
+        # Created lazily so startup integrity checks can still swap the file.
+        self._conn: sqlite3.Connection | None = None
         # Initialise schema
         with self._connect() as conn:
             conn.execute(_CREATE_TABLE_SQL)
@@ -50,6 +53,12 @@ class TokenBlacklist:
             wal=True,
         )
 
+    def _get_conn(self) -> sqlite3.Connection:
+        """Return the shared connection. Caller must hold ``self._lock``."""
+        if self._conn is None:
+            self._conn = self._connect()
+        return self._conn
+
     def _maybe_cleanup(self) -> None:
         now = time.time()
         if now - self._last_cleanup < _CLEANUP_INTERVAL_SEC:
@@ -67,31 +76,33 @@ class TokenBlacklist:
     def revoke(self, jti: str, exp: int) -> None:
         """Add a token (by its JTI) to the blacklist."""
         with self._lock:
-            with self._connect() as conn:
+            conn = self._get_conn()
+            with conn:
                 conn.execute(
                     "INSERT OR IGNORE INTO blacklisted_tokens (jti, exp, created_at) VALUES (?, ?, ?)",
                     (jti, exp, int(time.time())),
                 )
-            self._maybe_cleanup()
+        self._maybe_cleanup()
 
     def is_revoked(self, jti: str) -> bool:
         """Return True if the token JTI has been revoked."""
         with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    "SELECT 1 FROM blacklisted_tokens WHERE jti = ?", (jti,)
-                ).fetchone()
-            self._maybe_cleanup()
-            return row is not None
+            row = self._get_conn().execute(
+                "SELECT 1 FROM blacklisted_tokens WHERE jti = ?", (jti,)
+            ).fetchone()
+        self._maybe_cleanup()
+        return row is not None
 
     def cleanup_expired(self) -> int:
         """Remove entries whose ``exp`` is in the past. Returns count removed."""
         now = int(time.time())
-        with self._connect() as conn:
-            cursor = conn.execute(
-                "DELETE FROM blacklisted_tokens WHERE exp < ?", (now,)
-            )
-            removed = cursor.rowcount
+        with self._lock:
+            conn = self._get_conn()
+            with conn:
+                cursor = conn.execute(
+                    "DELETE FROM blacklisted_tokens WHERE exp < ?", (now,)
+                )
+                removed = cursor.rowcount
         if removed:
             logger.debug("token blacklist: cleaned up %d expired entries", removed)
         return removed

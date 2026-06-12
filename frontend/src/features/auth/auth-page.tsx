@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';

@@ -1,7 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { t } from '@/i18n';
 import type { BoundingBox } from '../ImageBBoxEditor';
 import {
   toPixel,
@@ -187,7 +187,7 @@ export function useBBoxInteraction(opts: UseBBoxInteractionOptions): UseBBoxInte
           width: w,
           height: h,
           type: 'CUSTOM',
-          text: '自定义',
+          text: t('entityTag.CUSTOM'),
           selected: true,
           confidence: 1.0,
           source: 'manual',

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,7 @@ from starlette.responses import StreamingResponse
 import app.services.job_management_service as _jms
 from app.core.audit import audit_log
 from app.core.auth import require_auth
+from app.models.errors import ConflictError, NotFoundError, ValidationError
 from app.models.schemas import (
     BatchDetailsBody,
     BatchDetailsResponse,
@@ -202,13 +204,12 @@ async def update_job_draft(
     try:
         _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.update_draft(store, job_id, patch)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        if "config is locked" in detail:
-            raise HTTPException(status_code=409, detail=detail)
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/{job_id}", response_model=JobDetailResponse)
@@ -271,11 +272,10 @@ async def add_job_item(
         from app.services.file_management_service import assert_file_owner
         assert_file_owner(body.file_id, owner_id)
         return _jms.add_item(store, job_id, body.file_id, sort_order=body.sort_order)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/{job_id}/submit", response_model=JobResponse)
@@ -287,11 +287,10 @@ async def submit_job(
     try:
         _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.submit_job(store, job_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/{job_id}/cancel", response_model=JobResponse)
@@ -317,13 +316,12 @@ async def requeue_failed_items(
     try:
         _jms.assert_job_owner(store.get_job(job_id), owner_id)
         result = _jms.requeue_failed(store, job_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        if "没有失败" in detail or "状态转换" in detail:
-            raise HTTPException(status_code=409, detail=detail)
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(exc))
     audit_log("requeue_failed", "job", job_id)
     return result
 
@@ -337,13 +335,12 @@ async def delete_job(
     try:
         _jms.assert_job_owner(store.get_job(job_id), owner_id)
         result = await _jms.delete_job(store, job_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        if "must be cancelled" in detail:
-            raise HTTPException(status_code=409, detail=detail)
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(exc))
     audit_log("delete", "job", job_id)
     return result
 
@@ -419,11 +416,10 @@ async def approve_item_review(
     try:
         _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.approve_review(store, job_id, item_id, reviewer=owner_id or reviewer)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/{job_id}/items/{item_id}/review/reject", response_model=JobItemResponse)
@@ -437,11 +433,10 @@ async def reject_item_review(
     try:
         _jms.assert_job_owner(store.get_job(job_id), owner_id)
         return _jms.reject_review(store, job_id, item_id, reviewer=owner_id or reviewer)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        raise HTTPException(status_code=400, detail=detail)
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/{job_id}/items/{item_id}/review/commit", response_model=JobItemResponse)
@@ -465,13 +460,12 @@ async def commit_item_review(
             payload=payload,
             reviewer=owner_id or reviewer,
         )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
-        detail = str(exc)
-        if "not found" in detail:
-            raise HTTPException(status_code=404, detail=detail)
-        if "not committable" in detail:
-            raise HTTPException(status_code=400, detail=detail)
-        raise HTTPException(status_code=500, detail=detail)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.get("/{job_id}/stream")
@@ -488,6 +482,7 @@ async def stream_job_progress(
 
     async def event_generator():
         last_data = None
+        last_sent = time.monotonic()
         while True:
             job = store.get_job(job_id)
             if not job:
@@ -502,6 +497,12 @@ async def stream_job_progress(
             if current_data != last_data:
                 yield f"data: {current_data}\n\n"
                 last_data = current_data
+                last_sent = time.monotonic()
+            elif time.monotonic() - last_sent >= 15.0:
+                # Periodic SSE comment so a dropped client surfaces as
+                # CancelledError instead of leaking this coroutine forever.
+                yield ": keep-alive\n\n"
+                last_sent = time.monotonic()
 
             # Terminal states - send final and close
             if job["status"] in ("completed", "failed", "cancelled"):

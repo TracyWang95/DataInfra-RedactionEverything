@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.config import settings
 from app.core.persistence import load_json, save_json
 from app.core.safe_regex import RegexTimeoutError, safe_compile, safe_finditer
-from app.core.tenant_config import tenant_store_path
+from app.core.tenant_config import store_lock, tenant_store_path
 from app.models.type_mapping import TYPE_ID_ALIASES, canonical_type_id
 
 # ── 数据模型 ──────────────────────────────────────────────
@@ -377,7 +377,16 @@ def _persist_entity_types(
 
 # 内存存储（启动时从磁盘恢复）
 entity_types_db: dict[str, EntityTypeConfig] = _load_entity_types()
-_persist_entity_types()
+
+
+def persist_entity_types_at_startup() -> None:
+    """Seed the global entity-type store on disk.
+
+    Called from the FastAPI lifespan handler so that importing this module
+    stays free of disk-write side effects.
+    """
+    with store_lock(_entity_types_store_path(None)):
+        _persist_entity_types()
 
 
 # ── 公共查询 ──────────────────────────────────────────────
@@ -473,38 +482,39 @@ def create_type(
     owner_id: str | None = None,
 ) -> EntityTypeConfig:
     global entity_types_db
-    db = _db_for_owner(owner_id)
-    type_id = f"custom_{uuid.uuid4().hex[:8]}"
-    coref_enabled = bool(request.coref_enabled)
-    data_domain, generic_target = normalize_text_taxonomy(
-        request.data_domain,
-        request.generic_target,
-    )
-    new_type = EntityTypeConfig(
-        id=type_id,
-        name=request.name,
-        data_domain=data_domain,
-        generic_target=generic_target,
-        entity_type_ids=request.entity_type_ids or [],
-        linkage_groups=(
-            infer_linkage_groups(data_domain, generic_target)
-            if coref_enabled else []
-        ),
-        coref_enabled=coref_enabled,
-        default_enabled=bool(request.default_enabled),
-        description=request.description,
-        examples=request.examples,
-        color=request.color,
-        regex_pattern=(str(request.regex_pattern).strip() or None) if request.regex_pattern else None,
-        use_llm=bool(request.use_llm),
-        tag_template=build_tag_template(request.name),
-        enabled=True,
-        order=200,
-    )
-    db[type_id] = new_type
-    if owner_id is None:
-        entity_types_db = db
-    _persist_entity_types(db, owner_id)
+    with store_lock(_entity_types_store_path(owner_id)):
+        db = _db_for_owner(owner_id)
+        type_id = f"custom_{uuid.uuid4().hex[:8]}"
+        coref_enabled = bool(request.coref_enabled)
+        data_domain, generic_target = normalize_text_taxonomy(
+            request.data_domain,
+            request.generic_target,
+        )
+        new_type = EntityTypeConfig(
+            id=type_id,
+            name=request.name,
+            data_domain=data_domain,
+            generic_target=generic_target,
+            entity_type_ids=request.entity_type_ids or [],
+            linkage_groups=(
+                infer_linkage_groups(data_domain, generic_target)
+                if coref_enabled else []
+            ),
+            coref_enabled=coref_enabled,
+            default_enabled=bool(request.default_enabled),
+            description=request.description,
+            examples=request.examples,
+            color=request.color,
+            regex_pattern=(str(request.regex_pattern).strip() or None) if request.regex_pattern else None,
+            use_llm=bool(request.use_llm),
+            tag_template=build_tag_template(request.name),
+            enabled=True,
+            order=200,
+        )
+        db[type_id] = new_type
+        if owner_id is None:
+            entity_types_db = db
+        _persist_entity_types(db, owner_id)
     return new_type
 
 
@@ -514,43 +524,44 @@ def update_type(
     owner_id: str | None = None,
 ) -> EntityTypeConfig | None:
     global entity_types_db
-    db = _db_for_owner(owner_id)
-    if type_id not in db:
-        return None
-    if type_id in PRESET_ENTITY_TYPES:
-        raise ValueError("系统默认配置项由预设清单维护，不能在界面中修改")
-    if request.data_domain is not None and not str(request.data_domain or "").strip():
-        raise ValueError("L1 数据域必填")
-    if request.generic_target is not None and not str(request.generic_target or "").strip():
-        raise ValueError("L2 通用识别项必填")
-    existing = db[type_id]
-    update_data = request.model_dump(exclude_unset=True)
-    next_data_domain = update_data.get("data_domain", existing.data_domain)
-    next_generic_target = update_data.get("generic_target", existing.generic_target)
-    if not str(next_data_domain or "").strip():
-        raise ValueError("L1 数据域必填")
-    if not str(next_generic_target or "").strip():
-        raise ValueError("L2 通用识别项必填")
-    next_data_domain, next_generic_target = normalize_text_taxonomy(
-        next_data_domain,
-        next_generic_target,
-    )
-    update_data["data_domain"] = next_data_domain
-    update_data["generic_target"] = next_generic_target
-    next_coref_enabled = update_data.get("coref_enabled", existing.coref_enabled)
-    update_data["linkage_groups"] = (
-        infer_linkage_groups(next_data_domain, next_generic_target)
-        if next_coref_enabled else []
-    )
-    if "name" in update_data or "tag_template" in update_data:
-        next_name = update_data.get("name", existing.name)
-        update_data["tag_template"] = build_tag_template(next_name)
-    for key, value in update_data.items():
-        setattr(existing, key, value)
-    db[type_id] = existing
-    if owner_id is None:
-        entity_types_db = db
-    _persist_entity_types(db, owner_id)
+    with store_lock(_entity_types_store_path(owner_id)):
+        db = _db_for_owner(owner_id)
+        if type_id not in db:
+            return None
+        if type_id in PRESET_ENTITY_TYPES:
+            raise ValueError("系统默认配置项由预设清单维护，不能在界面中修改")
+        if request.data_domain is not None and not str(request.data_domain or "").strip():
+            raise ValueError("L1 数据域必填")
+        if request.generic_target is not None and not str(request.generic_target or "").strip():
+            raise ValueError("L2 通用识别项必填")
+        existing = db[type_id]
+        update_data = request.model_dump(exclude_unset=True)
+        next_data_domain = update_data.get("data_domain", existing.data_domain)
+        next_generic_target = update_data.get("generic_target", existing.generic_target)
+        if not str(next_data_domain or "").strip():
+            raise ValueError("L1 数据域必填")
+        if not str(next_generic_target or "").strip():
+            raise ValueError("L2 通用识别项必填")
+        next_data_domain, next_generic_target = normalize_text_taxonomy(
+            next_data_domain,
+            next_generic_target,
+        )
+        update_data["data_domain"] = next_data_domain
+        update_data["generic_target"] = next_generic_target
+        next_coref_enabled = update_data.get("coref_enabled", existing.coref_enabled)
+        update_data["linkage_groups"] = (
+            infer_linkage_groups(next_data_domain, next_generic_target)
+            if next_coref_enabled else []
+        )
+        if "name" in update_data or "tag_template" in update_data:
+            next_name = update_data.get("name", existing.name)
+            update_data["tag_template"] = build_tag_template(next_name)
+        for key, value in update_data.items():
+            setattr(existing, key, value)
+        db[type_id] = existing
+        if owner_id is None:
+            entity_types_db = db
+        _persist_entity_types(db, owner_id)
     return existing
 
 
@@ -561,37 +572,40 @@ def delete_type(type_id: str, owner_id: str | None = None) -> tuple[bool, str]:
     success=False -> error_message explains why
     """
     global entity_types_db
-    db = _db_for_owner(owner_id)
-    if type_id not in db:
-        return False, "实体类型不存在"
-    if type_id in PRESET_ENTITY_TYPES:
-        return False, "预置类型不能删除，只能禁用"
-    del db[type_id]
-    if owner_id is None:
-        entity_types_db = db
-    _persist_entity_types(db, owner_id)
+    with store_lock(_entity_types_store_path(owner_id)):
+        db = _db_for_owner(owner_id)
+        if type_id not in db:
+            return False, "实体类型不存在"
+        if type_id in PRESET_ENTITY_TYPES:
+            return False, "预置类型不能删除，只能禁用"
+        del db[type_id]
+        if owner_id is None:
+            entity_types_db = db
+        _persist_entity_types(db, owner_id)
     return True, ""
 
 
 def toggle_type(type_id: str, owner_id: str | None = None) -> bool | None:
     """Returns new enabled state, or None if not found."""
     global entity_types_db
-    db = _db_for_owner(owner_id)
-    if type_id not in db:
-        return None
-    db[type_id].enabled = not db[type_id].enabled
-    if owner_id is None:
-        entity_types_db = db
-    _persist_entity_types(db, owner_id)
-    return db[type_id].enabled
+    with store_lock(_entity_types_store_path(owner_id)):
+        db = _db_for_owner(owner_id)
+        if type_id not in db:
+            return None
+        db[type_id].enabled = not db[type_id].enabled
+        if owner_id is None:
+            entity_types_db = db
+        _persist_entity_types(db, owner_id)
+        return db[type_id].enabled
 
 
 def reset_types(owner_id: str | None = None) -> None:
     global entity_types_db
-    db = _default_entity_types()
-    if owner_id is None:
-        entity_types_db = db
-    _persist_entity_types(db, owner_id)
+    with store_lock(_entity_types_store_path(owner_id)):
+        db = _default_entity_types()
+        if owner_id is None:
+            entity_types_db = db
+        _persist_entity_types(db, owner_id)
 
 
 def test_regex(pattern: str, test_text: str) -> RegexTestResult:

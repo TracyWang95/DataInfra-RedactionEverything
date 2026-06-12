@@ -315,14 +315,14 @@ class Settings(BaseSettings):
     # OCR pages before sending them to HaS Text.
     HAS_VISION_MIN_TEXT_CHARS_FOR_NER: int = 1
 
-    # 鍏煎鏃х幆澧冨彉閲?HAS_BASE_URL
+    # 兼容旧环境变量 HAS_BASE_URL
     HAS_BASE_URL: str | None = None
 
     # 认证配置（JWT_SECRET_KEY 若未通过环境变量指定，则自动持久化到 data 目录）
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
-    LOCAL_PASSWORD_HASH: str = ""  # bcrypt hash, set via setup endpoint
+    LOCAL_PASSWORD_HASH: str = ""  # PBKDF2 hash, set via setup endpoint
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
     # 批量任务并发配置
@@ -462,14 +462,21 @@ class Settings(BaseSettings):
     # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
     VIRUS_SCAN_ENABLED: bool = False
 
-    # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）
+    # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）。
+    # 默认只信 loopback 与 172.16.0.0/12（docker compose 网桥网段，保证容器内
+    # nginx 反代链路可用）；不再默认信任 10.0.0.0/8 与 192.168.0.0/16，防止同
+    # 内网直连客户端伪造 X-Forwarded-For 绕过按 IP 的登录限速。反向代理部署在
+    # 10.x / 192.168.x 网段时需通过环境变量显式配置 TRUSTED_PROXIES。
     TRUSTED_PROXIES: list[str] = [
         "127.0.0.1",
         "::1",
-        "10.0.0.0/8",
         "172.16.0.0/12",
-        "192.168.0.0/16",
     ]
+
+    # 结构化数据库连接主机白名单（SSRF 防护）。None = 不限制（默认，保持
+    # 本地工具连接用户自有数据库的正当功能）；设置后，非 sqlite 连接的 host
+    # 必须命中列表中的精确主机名或 IP / CIDR 网段，否则拒绝建立连接。
+    STRUCTURED_DB_HOST_ALLOWLIST: list[str] | None = None
 
     # 结构化日志（默认生产 JSON，DEBUG 文本）
     LOG_JSON: bool = True

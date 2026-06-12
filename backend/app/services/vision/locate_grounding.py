@@ -89,7 +89,10 @@ def _extract_json_payload(text: str) -> dict[str, Any]:
         match = re.search(r"(\{.*\}|\[.*\])", raw, re.S)
         if not match:
             return {"objects": [], "raw_response": text}
-        data = json.loads(match.group(1))
+        try:
+            data = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return {"objects": [], "raw_response": text}
     if isinstance(data, list):
         return {"objects": data}
     if isinstance(data, dict) and isinstance(data.get("objects"), list):
@@ -348,9 +351,19 @@ class LocateAnythingGroundingService:
         }
         url = _json_endpoint(config.base_url or settings.VISUAL_FEATURES_BASE_URL, "chat/completions")
         request_timeout = float(timeout if timeout is not None else settings.VISUAL_FEATURES_TIMEOUT)
-        async with httpx.AsyncClient(timeout=request_timeout, trust_env=False) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
+
+        async def request() -> httpx.Response:
+            async with httpx.AsyncClient(timeout=request_timeout, trust_env=False) as client:
+                response = await client.post(url, headers=headers, json=payload)
+                response.raise_for_status()
+                return response
+
+        response = await retry_async(
+            request,
+            max_retries=_DETECT_MAX_RETRIES,
+            base_delay=_DETECT_BASE_DELAY,
+            retryable_exceptions=RETRYABLE_HTTPX,
+        )
         data = response.json()
         return str(data.get("choices", [{}])[0].get("message", {}).get("content", ""))
 

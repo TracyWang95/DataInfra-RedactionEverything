@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import type React from 'react';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
@@ -122,7 +121,6 @@ const ReviewEntityMark = memo(ReviewEntityMarkInner, (prev, next) => {
 function ReviewTextContentInner({
   reviewEntities,
   visibleReviewEntities,
-  reviewTextContent,
   reviewPageContent,
   reviewTextContentRef,
   reviewTextScrollRef,
@@ -154,7 +152,7 @@ function ReviewTextContentInner({
     handleTextSelect,
     addManualAnnotation,
   } = useTextSelection({
-    reviewTextContent,
+    reviewPageContent,
     reviewTextContentRef,
     reviewTextScrollRef,
     cardRef,

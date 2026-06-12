@@ -1,6 +1,6 @@
+from app.core.visual_feature_categories import VISUAL_FEATURE_CLASS_COUNT
 from app.models.type_mapping import canonical_type_id, id_to_cn
 from app.services.entity_type_service import get_default_generic_types, resolve_requested_entity_types
-from app.core.visual_feature_categories import VISUAL_FEATURE_CLASS_COUNT
 from app.services.pipeline_service import get_pipeline_types_for_mode, merge_pipeline_disk_snapshot
 from app.services.preset_service import _load_builtin_presets
 
@@ -11,12 +11,14 @@ def test_bank_name_is_first_class_type():
     assert [item.id for item in resolve_requested_entity_types(["BANK_NAME"])] == ["BANK_NAME"]
 
 
-def test_bank_name_is_in_default_text_and_ocr_configs():
+def test_bank_name_is_available_but_not_in_narrowed_text_defaults():
     default_ids = {item.id for item in get_default_generic_types()}
     assert "GEN_NUMBER_CODE" not in default_ids
     assert "GEN_ACCOUNT_TRANSACTION" not in default_ids
     assert "PERSON" in default_ids
-    assert "BANK_NAME" in default_ids
+    # The default generic schema was narrowed to the core 9 types; BANK_NAME
+    # stays opt-in for text but remains enabled in the OCR+HaS pipeline.
+    assert "BANK_NAME" not in default_ids
     assert "BANK_NAME" in {item.id for item in get_pipeline_types_for_mode("ocr_has", enabled_only=True)}
 
 

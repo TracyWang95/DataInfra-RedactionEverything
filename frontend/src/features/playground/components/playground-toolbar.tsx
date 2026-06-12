@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { type FC, memo } from 'react';
 import { ArrowUpRight, FileText, Redo2, RotateCcw, Undo2 } from 'lucide-react';

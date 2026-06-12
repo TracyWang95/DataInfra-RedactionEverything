@@ -1,7 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
@@ -83,6 +82,19 @@ export interface ReviewDataState {
 }
 
 const IMAGE_BLOB_REVOKE_DELAY_MS = 30_000;
+
+// Cap for the per-page base64 preview cache below so it cannot grow unbounded.
+const PAGE_IMAGE_CACHE_LIMIT = 24;
+
+function setCacheWithLimit(cache: Map<string, string>, key: string, value: string): void {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > PAGE_IMAGE_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
 
 function revokeImageBlobUrlLater(url: string) {
   if (!url.startsWith('blob:')) return;
@@ -328,7 +340,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
             if (!res.ok) return;
             const data = (await res.json()) as PreviewImageResponse;
             const url = toDataImageUrl(data.image_base64);
-            if (url) pageImageCacheRef.current.set(key, url);
+            if (url) setCacheWithLimit(pageImageCacheRef.current, key, url);
           })
           .catch(() => {
             /* silent */
@@ -367,7 +379,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
             const imageUrl = toDataImageUrl(data.image_base64);
             if (!imageUrl) throw new Error('Missing image_base64');
             if (!cancelled) {
-              pageImageCacheRef.current.set(cacheKey, imageUrl);
+              setCacheWithLimit(pageImageCacheRef.current, cacheKey, imageUrl);
               setReviewOrigImageBlobUrl(imageUrl);
               scheduleNeighbors();
             }
@@ -699,9 +711,7 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     selected_ocr_has_types: cfg.ocrHasTypes,
-                    selected_visual_feature_types: Array.from(
-                      new Set([...cfg.visualFeatureTypes, ...(cfg.visualFeatureTypes ?? [])]),
-                    ),
+                    selected_visual_feature_types: Array.from(new Set(cfg.visualFeatureTypes)),
                   }),
                   signal: controller.signal,
                 },
@@ -804,7 +814,6 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
     cfg.selectedEntityTypeIds,
     cfg.ocrHasTypes,
     cfg.visualFeatureTypes,
-    cfg.visualFeatureTypes,
     cfg.replacementMode,
     reviewDraftDirtyRef,
     setMsg,
@@ -891,49 +900,68 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
     setPreviewEntityMap,
   ]);
 
+  // Content signature for the preview request. Step 4 polls row data every
+  // 1.5s while files are unsettled, which rebuilds reviewFile/visibleReviewBoxes
+  // with fresh identities; depending on objects would abort the in-flight
+  // preview on every poll tick and starve it forever. Depending on this JSON
+  // only re-fires (and cancels) when the actual request inputs change.
+  const reviewImagePreviewFileId = reviewFile?.isImageMode ? reviewFile.file_id : null;
+  const reviewImagePreviewBoxesJson = useMemo(
+    () =>
+      JSON.stringify(
+        visibleReviewBoxes
+          .filter((box) => box.selected !== false)
+          .map((box) => ({
+            id: box.id,
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            page: normalizePage(box.page, reviewCurrentPage),
+            type: box.type,
+            text: box.text,
+            selected: box.selected,
+            source: box.source,
+            confidence: box.confidence,
+            evidence_source: box.evidence_source,
+            source_detail: box.source_detail,
+            warnings: box.warnings,
+          })),
+      ),
+    [visibleReviewBoxes, reviewCurrentPage],
+  );
+
   useEffect(() => {
     if (isPreviewMode) return;
-    if (step !== 4 || !reviewFile || reviewLoading || !reviewFile.isImageMode) return;
+    if (step !== 4 || !reviewImagePreviewFileId || reviewLoading) return;
 
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
         setReviewImagePreviewLoading(true);
-        const imageBase64 = await batchPreviewImage({
-          file_id: reviewFile.file_id,
-          page: reviewCurrentPage,
-          bounding_boxes: visibleReviewBoxes
-            .filter((box) => box.selected !== false)
-            .map((box) => ({
-              id: box.id,
-              x: box.x,
-              y: box.y,
-              width: box.width,
-              height: box.height,
-              page: normalizePage(box.page, reviewCurrentPage),
-              type: box.type,
-              text: box.text,
-              selected: box.selected,
-              source: box.source,
-              confidence: box.confidence,
-              evidence_source: box.evidence_source,
-              source_detail: box.source_detail,
-              warnings: box.warnings,
-            })),
-          config: {
-            replacement_mode: ReplacementMode.STRUCTURED,
-            entity_types: [],
-            custom_replacements: {},
-            image_redaction_method: cfg.imageRedactionMethod ?? 'mosaic',
-            image_redaction_strength: cfg.imageRedactionStrength ?? 75,
-            image_fill_color: cfg.imageFillColor ?? '#000000',
+        const imageBase64 = await batchPreviewImage(
+          {
+            file_id: reviewImagePreviewFileId,
+            page: reviewCurrentPage,
+            bounding_boxes: JSON.parse(reviewImagePreviewBoxesJson),
+            config: {
+              replacement_mode: ReplacementMode.STRUCTURED,
+              entity_types: [],
+              custom_replacements: {},
+              image_redaction_method: cfg.imageRedactionMethod ?? 'mosaic',
+              image_redaction_strength: cfg.imageRedactionStrength ?? 75,
+              image_fill_color: cfg.imageFillColor ?? '#000000',
+            },
           },
-        });
+          controller.signal,
+        );
         if (!controller.signal.aborted) setReviewImagePreview(imageBase64);
       } catch {
         if (!controller.signal.aborted) setReviewImagePreview('');
       } finally {
-        if (!controller.signal.aborted) setReviewImagePreviewLoading(false);
+        // Always release the loading flag — a gated reset can leave the
+        // spinner stuck when the request is aborted mid-flight.
+        setReviewImagePreviewLoading(false);
       }
     }, 250);
 
@@ -943,8 +971,8 @@ export function useBatchReviewData(deps: ReviewDataDeps): ReviewDataState {
     };
   }, [
     step,
-    reviewFile,
-    visibleReviewBoxes,
+    reviewImagePreviewFileId,
+    reviewImagePreviewBoxesJson,
     reviewCurrentPage,
     reviewLoading,
     cfg.imageRedactionMethod,

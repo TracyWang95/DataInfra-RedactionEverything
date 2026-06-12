@@ -1,16 +1,7 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { ArrowLeftRight, ArrowRight, ChevronDown, ChevronRight, Download, Trash2 } from 'lucide-react';
-import {
-  memo,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type RefObject,
-} from 'react';
+import { memo, useMemo, useRef, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -19,6 +10,11 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/EmptyState';
+import {
+  clampPageSize,
+  interpolateDensity,
+  useProportionalRowHeight,
+} from '@/components/hooks/useProportionalRowHeight';
 import type { FileListItem } from '@/types';
 import {
   BADGE_BASE,
@@ -64,7 +60,6 @@ type HistoryTableDensity = {
 
 const HISTORY_MIN_PAGE_SIZE = 10;
 const HISTORY_MAX_PAGE_SIZE = 20;
-const FALLBACK_TABLE_BODY_HEIGHT = 600;
 const HISTORY_TABLE_MIN_PADDING_Y = 3;
 const HISTORY_TABLE_MAX_PADDING_Y = 8;
 const HISTORY_TABLE_MIN_PADDING_X = 10;
@@ -77,19 +72,11 @@ const HISTORY_SKELETON_BUTTON_SIZE = 24;
 const HISTORY_SKELETON_BUTTON_RADIUS = 8;
 
 function normalizeHistoryPageSize(pageSize: number): number {
-  const safePageSize = Math.min(
-    Math.max(Math.round(pageSize), HISTORY_MIN_PAGE_SIZE),
-    HISTORY_MAX_PAGE_SIZE,
-  );
-  return safePageSize;
+  return clampPageSize(pageSize, HISTORY_MIN_PAGE_SIZE, HISTORY_MAX_PAGE_SIZE);
 }
 
 function getHistoryTableDensity(pageSize: number, rowHeight: number): HistoryTableDensity {
-  const safePageSize = normalizeHistoryPageSize(pageSize);
-  const densityRatio =
-    Math.log(safePageSize / HISTORY_MIN_PAGE_SIZE) /
-    Math.log(HISTORY_MAX_PAGE_SIZE / HISTORY_MIN_PAGE_SIZE);
-  const interpolate = (max: number, min: number): number => max - (max - min) * densityRatio;
+  const interpolate = interpolateDensity(pageSize, HISTORY_MIN_PAGE_SIZE, HISTORY_MAX_PAGE_SIZE);
 
   return {
     table: 'min-w-[1080px]',
@@ -129,46 +116,6 @@ const HISTORY_ACTIVE_STATUSES = new Set([
   'processing',
   'redacting',
 ]);
-
-function getStableHistoryBodyMinHeight(): string {
-  return '0px';
-}
-
-function useProportionalHistoryRowHeight(
-  pageSize: number,
-  bodyRef: RefObject<HTMLDivElement | null>,
-  headRef: RefObject<HTMLDivElement | null>,
-): number {
-  const [bodyHeight, setBodyHeight] = useState(FALLBACK_TABLE_BODY_HEIGHT);
-  const [headHeight, setHeadHeight] = useState(0);
-
-  useEffect(() => {
-    const element = bodyRef.current;
-    if (!element) return;
-
-    const update = () => {
-      const nextHeight = element.clientHeight || FALLBACK_TABLE_BODY_HEIGHT;
-      setBodyHeight((prev) => (Math.abs(prev - nextHeight) < 0.5 ? prev : nextHeight));
-      const nextHeadHeight = headRef.current?.getBoundingClientRect().height ?? 0;
-      setHeadHeight((prev) => (Math.abs(prev - nextHeadHeight) < 0.5 ? prev : nextHeadHeight));
-    };
-
-    update();
-    const ResizeObserverCtor = window.ResizeObserver;
-    if (!ResizeObserverCtor) {
-      window.addEventListener('resize', update);
-      return () => window.removeEventListener('resize', update);
-    }
-
-    const observer = new ResizeObserverCtor(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [bodyRef, headRef]);
-
-  const safePageSize = normalizeHistoryPageSize(pageSize);
-  const dividerAllowance = Math.max(0, safePageSize - 1);
-  return Math.max(1, (bodyHeight - headHeight - dividerAllowance) / safePageSize);
-}
 
 type HistoryDeliveryState = {
   label: string;
@@ -806,7 +753,14 @@ export function HistoryTable({
   const t = useT();
   const bodyRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
-  const rowHeight = useProportionalHistoryRowHeight(pageSize, bodyRef, headRef);
+  const rowHeight = useProportionalRowHeight({
+    pageSize,
+    minPageSize: HISTORY_MIN_PAGE_SIZE,
+    maxPageSize: HISTORY_MAX_PAGE_SIZE,
+    bodyRef,
+    headRef,
+    subtractRowDividers: true,
+  });
   const density = useMemo(() => getHistoryTableDensity(pageSize, rowHeight), [pageSize, rowHeight]);
   const safePageSize = normalizeHistoryPageSize(pageSize);
   const tableGroups = useMemo(() => buildHistoryTableGroups(rows), [rows]);
@@ -817,7 +771,7 @@ export function HistoryTable({
   const fillerRowCount = Math.max(0, safePageSize - visibleRowCount);
   const bodyStyle: CSSProperties = {
     height: 0,
-    minHeight: getStableHistoryBodyMinHeight(),
+    minHeight: 0,
     overscrollBehavior: 'contain',
     scrollbarGutter: 'stable',
   };

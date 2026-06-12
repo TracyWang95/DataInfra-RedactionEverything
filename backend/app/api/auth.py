@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app.core.auth import (
-    bump_auth_version,
+    bump_user_auth_version,
     check_password,
     clear_login_attempts,
     create_token,
@@ -218,9 +218,9 @@ async def logout(request: Request, _: str = Depends(require_auth)):
 
 
 @router.post("/auth/revoke-all")
-async def revoke_all_tokens(_: str = Depends(require_auth)):
-    """Invalidate all existing tokens and clear the current auth cookie."""
-    bump_auth_version()
+async def revoke_all_tokens(subject: str = Depends(require_auth)):
+    """Invalidate all of the caller's existing tokens and clear the auth cookie."""
+    bump_user_auth_version(subject)
     response = JSONResponse(content={"message": "All existing tokens have been invalidated."})
     response.delete_cookie(key="access_token", path="/")
     return response

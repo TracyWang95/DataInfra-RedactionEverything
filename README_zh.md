@@ -118,6 +118,40 @@ npm run stop
 
 若 WSL localhost 端口转发不可用，启动脚本会自动改用 WSL IP 访问 vLLM/OCR 服务，避免前端把它们误报为离线。模型服务应保持在 GPU/CUDA 上；如果 `/health/services` 对任一关键模型报告 CPU 回退风险，请先修复运行时再处理文件。
 
+### WSL 模型服务环境准备（一次性）
+
+`npm run dev` 在 WSL 内运行模型服务，需要 `.env` 中的三个必填项（见 [`.env.example`](./.env.example)）：`VENV_DIR`、`VLLM_VENV_DIR`、`HAS_TEXT_HF_MODEL_PATH`。先在 WSL 内创建两个虚拟环境（vLLM 的 Torch/CUDA 栈与 Paddle/PaddleX 冲突，必须分开装）：
+
+```bash
+# 在 WSL 内执行（Python 3.11），假设仓库位于 /mnt/d/DataInfra-RedactionEverything
+# 1) 应用/OCR venv（VENV_DIR）：运行 PP-StructureV3 / PaddleOCR 包装服务
+python3 -m venv ~/.cache/datainfra-redaction/.venv
+~/.cache/datainfra-redaction/.venv/bin/pip install \
+  -r /mnt/d/DataInfra-RedactionEverything/backend/requirements.txt
+
+# 2) vLLM venv（VLLM_VENV_DIR）：服务 HaS Text（以及可选的 PaddleOCR-VL /
+#    LocateAnything LM backbone），并运行 LocateAnything 服务
+python3 -m venv ~/.cache/datainfra-redaction/.venv-vllm
+~/.cache/datainfra-redaction/.venv-vllm/bin/pip install vllm
+
+# 3) LocateAnything 附加依赖（transformers、peft、accelerate 等）装到独立目录，
+#    避免其版本锁与 vLLM 自身依赖冲突
+~/.cache/datainfra-redaction/.venv-vllm/bin/pip install \
+  --target ~/.cache/datainfra-redaction/locateanything-hf-deps \
+  -r /mnt/d/DataInfra-RedactionEverything/backend/requirements-locateanything.txt
+```
+
+然后在 `.env` 中填入对应的 WSL/Linux 路径：
+
+```env
+VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv
+VLLM_VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv-vllm
+LOCATE_ANYTHING_DEPS=/home/<user>/.cache/datainfra-redaction/locateanything-hf-deps
+HAS_TEXT_HF_MODEL_PATH=/mnt/d/has_models/HaS_4.0_0.6B
+```
+
+`HAS_TEXT_HF_MODEL_PATH` 指向 [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B) 的 HF（bf16）模型目录。此外还需要仓库根目录下的 Windows 项目 venv（`.venv`，用 `backend/requirements.txt` 安装），它负责运行 FastAPI 后端与预热。
+
 ### 手动启动后端
 
 ```bash
@@ -158,6 +192,17 @@ docker compose up -d
 ```bash
 docker compose --profile gpu up -d
 ```
+
+#### GPU 模型文件（`--profile gpu`）
+
+GPU 服务从 `./backend/models` 加载权重（容器内挂载为 `/models`）。启动前请先下载并放置：
+
+| 服务 | 宿主机预期路径 | 来源 |
+|---|---|---|
+| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B) 的 Q4_K_M GGUF 量化版；若文件名为 `has_4.0_0.6B.gguf`，请重命名或复制为预期文件名 |
+| `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | LocateAnything-3B HF 权重（从官方上游获取） |
+
+> **运行时差异说明：** Docker 的 `ner` 服务用 **llama.cpp + Q4 GGUF 量化**跑 HaS Text，而本地 `npm run dev` 用 **vLLM + HF bf16 权重**。两套 runtime 的 NER 输出不完全一致，量化的 Docker 链路识别效果通常略弱于本地开发链路。
 
 生产部署前，请配置 `.env`、模型挂载、GPU 运行时、认证、反向代理与访问控制策略。
 
@@ -311,6 +356,8 @@ scripts/        根目录本地启动与停止脚本
 - 默认部署模式为本地或内网使用。在对公网暴露系统之前，请配置认证、访问控制、反向代理、TLS、日志与密钥轮换策略。
 - 认证支持多个本地用户。上传文件、批量任务、复核草稿、下载、预览、导出报告与清理操作均按已认证用户名隔离。首次初始化的用户为 `super_admin`；只有超级管理员可创建用户或修改运行时并发。
 - 默认识别由模型能力与配置 Schema 驱动。正则仅作为用户自定义兜底机制存在。
+- 登录限速仅信任来自 `TRUSTED_PROXIES` 所列节点的 `X-Forwarded-For`。默认只信任 loopback 与 `172.16.0.0/12`（覆盖 Docker Compose 网桥网段），容器化部署开箱即用；若反向代理位于 `10.x` 或 `192.168.x` 网段，需在 `.env` 中显式配置 `TRUSTED_PROXIES`。
+- 结构化数据库连接默认允许用户填写任意主机（本地工具连接自有数据库的正当功能）。如需限制已认证用户可连接的主机范围，可配置 `STRUCTURED_DB_HOST_ALLOWLIST`（精确主机名或 IP/CIDR 网段）。
 - 将模型、样本、任务数据与导出目录保存在受访问控制与备份策略保护的私有运行时存储中。
 
 ---

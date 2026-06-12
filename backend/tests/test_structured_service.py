@@ -6,9 +6,9 @@ import sqlite3
 import zipfile
 from pathlib import Path
 
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 import app.services.job_management_service as job_service
 import app.services.structured_store as structured_store_module
@@ -607,10 +607,10 @@ def test_save_policy_requires_exact_dataset_schema_columns(tmp_path, monkeypatch
     saved = structured_service.save_policy(dataset_id, owner_id="tenant_a", columns=columns, store=store)
     assert saved["reviewed_at"]
 
-    with pytest.raises(ValueError, match="缺少字段"):
+    with pytest.raises(ValueError, match="missing columns"):
         structured_service.save_policy(dataset_id, owner_id="tenant_a", columns=columns[:-1], store=store)
 
-    with pytest.raises(ValueError, match="未知字段"):
+    with pytest.raises(ValueError, match="unknown columns"):
         structured_service.save_policy(
             dataset_id,
             owner_id="tenant_a",
@@ -618,7 +618,7 @@ def test_save_policy_requires_exact_dataset_schema_columns(tmp_path, monkeypatch
             store=store,
         )
 
-    with pytest.raises(ValueError, match="重复字段"):
+    with pytest.raises(ValueError, match="duplicate columns"):
         structured_service.save_policy(dataset_id, owner_id="tenant_a", columns=[*columns, columns[0]], store=store)
 
 
@@ -900,7 +900,7 @@ def test_structured_api_rejects_policy_schema_mismatch_as_bad_request(tmp_path, 
                 json={"columns": columns[:-1]},
             )
             assert invalid.status_code == 400
-            assert "缺少字段" in invalid.json()["detail"]
+            assert "missing columns" in invalid.json()["detail"]
 
             missing_dataset = client.put(
                 "/api/v1/structured/datasets/not-a-dataset/policy",

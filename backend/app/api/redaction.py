@@ -2,7 +2,7 @@
 匿名化处理 API 路由
 处理文档匿名化、对比等操作
 
-Thin routing layer 鈥?business logic lives in
+Thin routing layer — business logic lives in
 app.services.redaction_orchestrator.
 """
 import logging

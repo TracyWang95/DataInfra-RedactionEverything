@@ -1,7 +1,12 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
-import { type FC, type MouseEvent as ReactMouseEvent, useMemo, memo } from 'react';
+import {
+  type FC,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  useMemo,
+  memo,
+} from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -373,8 +378,15 @@ const BoxList: FC<{ boxes: BoundingBox[]; onToggle: (id: string) => void }> = ({
         return (
           <div
             key={box.id}
+            role="button"
+            tabIndex={0}
             className="flex cursor-pointer items-center gap-3 border-b border-border/50 px-3 py-3 transition-colors hover:bg-accent/40"
             onClick={() => onToggle(box.id)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              onToggle(box.id);
+            }}
             data-testid={`playground-box-${box.id}`}
           >
             <Checkbox
@@ -399,6 +411,75 @@ const BoxList: FC<{ boxes: BoundingBox[]; onToggle: (id: string) => void }> = ({
         );
       })}
     </>
+  );
+};
+
+const EntityRow: FC<{
+  entity: Entity;
+  typeNameById: Map<string, string>;
+  onClick: (entity: Entity, event: ReactMouseEvent) => void;
+  onRemove: (id: string) => void;
+}> = ({ entity, typeNameById, onClick, onRemove }) => {
+  const t = useT();
+  const sourceLabel =
+    entity.source === 'regex'
+      ? t('playground.sourceRegex')
+      : entity.source === 'manual'
+        ? t('playground.sourceManual')
+        : t('playground.sourceAi');
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    // The click handler only reads SyntheticEvent members (stopPropagation),
+    // so forwarding the keyboard event is safe.
+    onClick(entity, event as unknown as ReactMouseEvent);
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-3 transition-colors hover:bg-accent/40"
+      onClick={(event) => onClick(entity, event)}
+      onKeyDown={handleKeyDown}
+      data-testid={`playground-entity-${entity.id}`}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+          <Badge variant="secondary">
+            {typeNameById.get(entity.type) ?? getEntityTypeName(entity.type)}
+          </Badge>
+          <Badge variant="outline">{sourceLabel}</Badge>
+        </div>
+        <p className="truncate text-sm text-foreground">{entity.text}</p>
+      </div>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0 rounded-xl text-muted-foreground hover:text-destructive"
+        onClick={(event) => {
+          event.stopPropagation();
+          onRemove(entity.id);
+        }}
+        aria-label={t('playground.removeAnnotation')}
+      >
+        <svg
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M6 18L18 6M6 6l12 12"
+          />
+        </svg>
+      </Button>
+    </div>
   );
 };
 
@@ -436,58 +517,15 @@ const EntityList: FC<{
               </span>
             </div>
 
-            {groupedEntities.map((entity) => {
-              const sourceLabel =
-                entity.source === 'regex'
-                  ? t('playground.sourceRegex')
-                  : entity.source === 'manual'
-                    ? t('playground.sourceManual')
-                    : t('playground.sourceAi');
-
-              return (
-                <div
-                  key={entity.id}
-                  className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-3 transition-colors hover:bg-accent/40"
-                  onClick={(event) => onClick(entity, event)}
-                  data-testid={`playground-entity-${entity.id}`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                      <Badge variant="secondary">
-                        {typeNameById.get(entity.type) ?? getEntityTypeName(entity.type)}
-                      </Badge>
-                      <Badge variant="outline">{sourceLabel}</Badge>
-                    </div>
-                    <p className="truncate text-sm text-foreground">{entity.text}</p>
-                  </div>
-
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 rounded-xl text-muted-foreground hover:text-destructive"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onRemove(entity.id);
-                    }}
-                    aria-label={t('playground.removeAnnotation')}
-                  >
-                    <svg
-                      className="h-3.5 w-3.5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M6 18L18 6M6 6l12 12"
-                      />
-                    </svg>
-                  </Button>
-                </div>
-              );
-            })}
+            {groupedEntities.map((entity) => (
+              <EntityRow
+                key={entity.id}
+                entity={entity}
+                typeNameById={typeNameById}
+                onClick={onClick}
+                onRemove={onRemove}
+              />
+            ))}
           </div>
         );
       })}
@@ -502,58 +540,15 @@ const EntityList: FC<{
             </span>
           </div>
 
-          {customEntities.map((entity) => {
-            const sourceLabel =
-              entity.source === 'regex'
-                ? t('playground.sourceRegex')
-                : entity.source === 'manual'
-                  ? t('playground.sourceManual')
-                  : t('playground.sourceAi');
-
-            return (
-              <div
-                key={entity.id}
-                className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-3 transition-colors hover:bg-accent/40"
-                onClick={(event) => onClick(entity, event)}
-                data-testid={`playground-entity-${entity.id}`}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                    <Badge variant="secondary">
-                      {typeNameById.get(entity.type) ?? getEntityTypeName(entity.type)}
-                    </Badge>
-                    <Badge variant="outline">{sourceLabel}</Badge>
-                  </div>
-                  <p className="truncate text-sm text-foreground">{entity.text}</p>
-                </div>
-
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0 rounded-xl text-muted-foreground hover:text-destructive"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRemove(entity.id);
-                  }}
-                  aria-label={t('playground.removeAnnotation')}
-                >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                </Button>
-              </div>
-            );
-          })}
+          {customEntities.map((entity) => (
+            <EntityRow
+              key={entity.id}
+              entity={entity}
+              typeNameById={typeNameById}
+              onClick={onClick}
+              onRemove={onRemove}
+            />
+          ))}
         </div>
       )}
     </>

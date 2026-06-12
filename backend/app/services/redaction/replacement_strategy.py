@@ -57,7 +57,6 @@ class RedactionContext:
         self._coref_map: dict[str, str] = {}
         self.type_counters: dict[str, int] = {}
         self.custom_replacements: dict[str, str] = {}
-        self.structured_tag_map: dict[str, str] = {}
 
     def set_custom_replacements(self, replacements: dict[str, str]):
         """设置自定义替换映射"""
@@ -159,9 +158,6 @@ class RedactionContext:
     def _generate_structured_replacement(self, entity: Entity) -> str:
         """生成结构化语义标签"""
         type_key = _type_key_for_entity(entity)
-
-        if entity.text in self.structured_tag_map:
-            return self.structured_tag_map[entity.text]
 
         template = self._get_tag_template(type_key)
         if template:

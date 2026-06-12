@@ -4,7 +4,7 @@ Entity, bounding-box, custom type, and option-list schemas.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "Entity",
@@ -73,6 +73,16 @@ class Entity(BaseModel):
     custom_type_id: str | None = Field(None, description="Custom type id")
 
 
+_LEGACY_BOX_SOURCE_MAP = {
+    "has_image": "visual_features",
+    "vlm": "visual_features",
+}
+_LEGACY_BOX_EVIDENCE_SOURCE_MAP = {
+    "has_image_model": "visual_feature_model",
+    "vlm_model": "visual_feature_model",
+}
+
+
 class BoundingBox(BaseModel):
     """Recognized image or document region."""
 
@@ -98,6 +108,23 @@ class BoundingBox(BaseModel):
         "manual",
     ] | None = Field(default=None, description="Detector evidence source")
     warnings: list[str] = Field(default_factory=list, description="Region quality warnings")
+
+    # Jobs processed by retired pipelines persisted boxes with legacy source
+    # tags (YOLO "has_image", PaddleOCR-VL "vlm"). Those boxes round-trip back
+    # through preview/redaction requests, so normalize them instead of 422-ing.
+    @field_validator("source", mode="before")
+    @classmethod
+    def _normalize_legacy_source(cls, value: object) -> object:
+        if isinstance(value, str):
+            return _LEGACY_BOX_SOURCE_MAP.get(value, value)
+        return value
+
+    @field_validator("evidence_source", mode="before")
+    @classmethod
+    def _normalize_legacy_evidence_source(cls, value: object) -> object:
+        if isinstance(value, str):
+            return _LEGACY_BOX_EVIDENCE_SOURCE_MAP.get(value, value)
+        return value
 
 
 class EntityTypeItem(BaseModel):

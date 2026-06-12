@@ -15,14 +15,12 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageOps
-
 
 DEFAULT_MODEL_ID = "nv-community/LocateAnything-3B"
 DEFAULT_TASKS = ("signature", "name", "seal", "text")
@@ -223,7 +221,12 @@ class LocateAnythingWorker:
         from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
         self.torch = torch
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if not torch.cuda.is_available():
+            # Project rule: GPU-only, no silent CPU fallback (same philosophy as
+            # ocr_server's _require_gpu_or_exit). Fail loudly instead of quietly
+            # running a 3B model on CPU.
+            raise RuntimeError("LocateAnything requires CUDA, but torch.cuda.is_available() is False")
+        self.device = "cuda"
         self.dtype = getattr(torch, dtype_name)
         resolved = self._resolve_model(model_path, backend)
         print(f"[model] loading {resolved} on {self.device} dtype={dtype_name}", flush=True)

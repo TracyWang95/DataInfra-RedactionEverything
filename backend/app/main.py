@@ -30,11 +30,10 @@ from app.api import (
     vision_pipeline,
 )
 from app.api import safety as safety_api
-from app.core.auth import require_auth
+from app.core.auth import require_auth, require_super_admin
 from app.core.config import settings
 from app.core.errors import AppError, app_error_handler, http_exception_handler, validation_exception_handler
 from app.core.gpu_memory import query_gpu_memory as _query_gpu_memory
-from app.core.gpu_memory import query_gpu_processes as _query_gpu_processes
 from app.core.health_checks import check_has_ner_health, check_ocr_health_sync, check_service_health_sync
 from app.core.logging_config import setup_logging
 from app.models.schemas import HealthResponse
@@ -109,7 +108,7 @@ def cleanup_orphan_files() -> int:
     if disk_count > 5 and not known_paths:
         logger.warning(
             "Orphan cleanup SKIPPED: disk has %d files but no file_store/job references were found. "
-            "Possible migration issue 鈥?refusing to delete.",
+            "Possible migration issue - refusing to delete.",
             disk_count,
         )
         return 0
@@ -161,9 +160,13 @@ async def lifespan(app: FastAPI):
     if hasattr(_bl, 'db_path'):
         ensure_db_healthy(_bl.db_path)
 
-    # 0b. Run file-store migrations (JSON鈫扴QLite, path normalization)
+    # 0b. Run file-store migrations (JSON->SQLite, path normalization)
     from app.services.file_management_service import run_startup_migrations
     run_startup_migrations()
+
+    # 0c. Seed the entity-type store on disk (moved out of import time)
+    from app.services.entity_type_service import persist_entity_types_at_startup
+    persist_entity_types_at_startup()
 
     # 1. Clean up orphan files (once at startup)
     removed = cleanup_orphan_files()
@@ -231,7 +234,7 @@ async def lifespan(app: FastAPI):
     # 4. Start periodic orphan cleanup
     _cleanup_task = asyncio.create_task(_periodic_cleanup())
 
-    # 5. Start periodic database backup (every hour) 鈥?all SQLite databases
+    # 5. Start periodic database backup (every hour) - all SQLite databases
     async def _periodic_backup():
         while True:
             await asyncio.sleep(3600)
@@ -399,7 +402,7 @@ app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理
 app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["redaction"], dependencies=[Depends(require_auth)])
 app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
 app.include_router(vision_pipeline.router, prefix=settings.API_PREFIX, tags=["图像识别Pipeline管理"], dependencies=[Depends(require_auth)])
-app.include_router(model_config.router, prefix=settings.API_PREFIX, tags=["推理模型配置"], dependencies=[Depends(require_auth)])
+app.include_router(model_config.router, prefix=settings.API_PREFIX, tags=["推理模型配置"], dependencies=[Depends(require_super_admin)])
 app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本NER后端"], dependencies=[Depends(require_auth)])
 app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["识别配置预设"], dependencies=[Depends(require_auth)])
 app.include_router(jobs.router, prefix=settings.API_PREFIX, tags=["批量任务"], dependencies=[Depends(require_auth)])
@@ -488,10 +491,7 @@ async def services_health():
     )
     probe_ms = round((time.perf_counter() - t0) * 1000, 1)
 
-    gpu_mem, gpu_processes = await asyncio.gather(
-        loop.run_in_executor(None, _query_gpu_memory),
-        loop.run_in_executor(None, _query_gpu_processes),
-    )
+    gpu_mem = await loop.run_in_executor(None, _query_gpu_memory)
 
     services["paddle_ocr"] = ocr_result.as_service_payload()
     services["has_ner"] = has_result.as_service_payload()
@@ -550,7 +550,9 @@ async def services_health():
         "probe_ms": probe_ms,
         "checked_at": datetime.now(UTC).isoformat(),
         "gpu_memory": gpu_mem,
-        "gpu_processes": gpu_processes,
+        # Endpoint is intentionally unauthenticated (dev.mjs waitJson probes it),
+        # so process names/PIDs are not exposed. Field kept for the frontend hook.
+        "gpu_processes": [],
     }
 
 

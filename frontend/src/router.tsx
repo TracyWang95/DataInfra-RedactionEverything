@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import React from 'react';
 import { createBrowserRouter, Navigate, useLocation, useParams } from 'react-router-dom';
@@ -33,19 +32,19 @@ const JobDetailPage = React.lazy(() =>
   import('./features/jobs').then((m) => ({ default: m.JobDetailPage })),
 );
 const Structured = React.lazy(() =>
-  import('./features/structured').then((m) => ({ default: m.Structured })),
+  import('./features/structured/pages/overview').then((m) => ({ default: m.Structured })),
 );
 const StructuredFiles = React.lazy(() =>
-  import('./features/structured').then((m) => ({ default: m.StructuredFiles })),
+  import('./features/structured/pages/files').then((m) => ({ default: m.StructuredFiles })),
 );
 const StructuredDatabase = React.lazy(() =>
-  import('./features/structured').then((m) => ({ default: m.StructuredDatabase })),
+  import('./features/structured/pages/database').then((m) => ({ default: m.StructuredDatabase })),
 );
 const StructuredDatasets = React.lazy(() =>
-  import('./features/structured').then((m) => ({ default: m.StructuredDatasets })),
+  import('./features/structured/pages/datasets').then((m) => ({ default: m.StructuredDatasets })),
 );
 const StructuredDelivery = React.lazy(() =>
-  import('./features/structured').then((m) => ({ default: m.StructuredDelivery })),
+  import('./features/structured/pages/delivery').then((m) => ({ default: m.StructuredDelivery })),
 );
 const Settings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.Settings })),
@@ -193,11 +192,9 @@ function AuthRoute() {
   );
 }
 
-const COMPAT_BATCH_MODES = new Set(['text', 'image', 'smart']);
-
 function BatchRoute() {
   const { batchMode } = useParams();
-  if (!batchMode || !COMPAT_BATCH_MODES.has(batchMode) || batchMode !== 'smart') {
+  if (batchMode !== 'smart') {
     return <Navigate to="/batch" replace />;
   }
   return (

@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { type FC, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -16,20 +15,37 @@ import type { usePlayground } from '../hooks/use-playground';
 import type { PipelineConfig, VisionTypeConfig } from '../types';
 
 type RecognitionCtx = ReturnType<typeof usePlayground>['recognition'];
-const CONFIG_TILE_PAGE_SIZE = 8;
-const VISION_PIPELINE_PAGE_SIZE = 4;
+const CONFIG_TILE_PAGE_SIZE = 12;
+const VISION_PIPELINE_PAGE_SIZE = 12; // 3×4 on xl (grid is xl:grid-cols-4)
 const TEXT_SEMANTIC_PAGE_SIZE = 24;
-const TEXT_REGEX_PAGE_SIZE = 4;
+const TEXT_REGEX_PAGE_SIZE = 12;
 const CONFIG_TILE_GRID_CLASS =
-  'grid min-h-0 flex-1 auto-rows-fr grid-cols-2 gap-1.5 p-2 sm:grid-cols-3 xl:grid-cols-4';
+  'grid min-h-0 flex-1 content-start auto-rows-[2.42rem] grid-cols-2 gap-1.5 p-2 sm:grid-cols-3 xl:grid-cols-4';
 const TEXT_REGEX_TILE_GRID_CLASS =
   'grid shrink-0 auto-rows-[2.42rem] grid-cols-2 gap-1.5 p-2 sm:grid-cols-3 xl:grid-cols-4';
 const TEXT_SEMANTIC_TILE_GRID_CLASS =
-  'grid shrink-0 auto-rows-[2.42rem] grid-cols-2 gap-1.5 p-2 sm:grid-cols-3 xl:grid-cols-4';
+  'grid min-h-0 flex-1 content-evenly auto-rows-[2.42rem] grid-cols-2 gap-1.5 p-2 sm:grid-cols-3 xl:grid-cols-4';
 const VISION_TILE_GRID_CLASS =
-  'grid min-h-0 flex-1 auto-rows-[minmax(1.75rem,1fr)] grid-cols-2 gap-1.5 p-2 sm:grid-cols-3 xl:grid-cols-4';
+  'grid min-h-0 flex-1 content-evenly auto-rows-[2.42rem] grid-cols-2 gap-1.5 p-2 sm:grid-cols-3 xl:grid-cols-4';
 const CONFIG_BUBBLE_CLASS =
   'flex min-h-[2.42rem] min-w-0 cursor-pointer items-center gap-1.5 self-stretch overflow-hidden rounded-xl border px-2.5 py-1.5 text-[11px] leading-4 transition-colors';
+
+// Drop repeated chips: same id, or same display name (e.g. a type surfaced twice
+// across domains). Keeps the first occurrence so the playground never shows a label twice.
+function dedupeTypesByIdName<T extends { id?: string; name?: string }>(types: readonly T[]): T[] {
+  const seenId = new Set<string>();
+  const seenName = new Set<string>();
+  const out: T[] = [];
+  for (const ty of types) {
+    const id = String(ty.id ?? '');
+    const name = String(ty.name ?? '');
+    if ((id && seenId.has(id)) || (name && seenName.has(name))) continue;
+    if (id) seenId.add(id);
+    if (name) seenName.add(name);
+    out.push(ty);
+  }
+  return out;
+}
 
 export function resolveTextTypeName(
   typeId: string,
@@ -153,8 +169,9 @@ export const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
-      {rec.playgroundTextGroups.map((group) => {
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+      {rec.playgroundTextGroups.map((rawGroup) => {
+        const group = { ...rawGroup, types: dedupeTypesByIdName(rawGroup.types) };
         const isRegexGroup = group.key === 'regex';
         const pageSize = isRegexGroup ? TEXT_REGEX_PAGE_SIZE : TEXT_SEMANTIC_PAGE_SIZE;
         const ids = group.types.map((type) => type.id);
@@ -169,7 +186,7 @@ export const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
             key={group.key}
             className={cn(
               'flex min-h-0 flex-col overflow-hidden rounded-[20px] border border-border/70 bg-[var(--surface-control)] shadow-[var(--shadow-sm)]',
-              'shrink-0 basis-auto',
+              isRegexGroup ? 'shrink-0 basis-auto' : 'flex-1 basis-0',
             )}
             data-testid={`playground-text-group-${group.key}`}
           >
@@ -252,6 +269,10 @@ export const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                     </label>
                   );
                 })}
+                {!isRegexGroup &&
+                  Array.from({ length: Math.max(0, pageSize - visibleTypes.length) }, (_, idx) => (
+                    <div key={`pad-${idx}`} aria-hidden className="invisible" />
+                  ))}
               </div>
             )}
             {group.types.length > 0 && (
@@ -285,16 +306,18 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   const displayPipelines = useMemo(() => {
     const ocrPipeline = rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has');
     const visualPipeline = rec.pipelines.find((pipeline) => pipeline.mode === 'visual_features');
-    const visualTypes: VisionTypeConfig[] = (visualPipeline?.types ?? []).map((type) => ({
-      ...type,
-      pipelineMode: 'visual_features',
-    }));
+    const visualTypes: VisionTypeConfig[] = dedupeTypesByIdName(visualPipeline?.types ?? []).map(
+      (type) => ({ ...type, pipelineMode: 'visual_features' }),
+    );
     const mergedPipelines: PipelineConfig[] = [];
 
     if (ocrPipeline) {
       mergedPipelines.push({
         ...ocrPipeline,
-        types: ocrPipeline.types.map((type) => ({ ...type, pipelineMode: 'ocr_has' })),
+        types: dedupeTypesByIdName(ocrPipeline.types).map((type) => ({
+          ...type,
+          pipelineMode: 'ocr_has',
+        })),
       });
     }
 
@@ -354,7 +377,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
       {displayPipelines.map((pipeline) => {
         const isVisualFeatures = pipeline.mode === 'visual_features';
         const pipelineTypes = pipeline.types;
@@ -476,6 +499,9 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                     </label>
                   );
                 })}
+                {Array.from({ length: Math.max(0, pageSize - visibleTypes.length) }, (_, idx) => (
+                  <div key={`pad-${idx}`} aria-hidden className="invisible" />
+                ))}
               </div>
             )}
             {pipelineTypes.length > 0 && (

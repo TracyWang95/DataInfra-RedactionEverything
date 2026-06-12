@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authFetch } from '@/services/api-client';
@@ -18,7 +17,7 @@ import {
 } from '@/services/jobsApi';
 import { showToast } from '@/components/Toast';
 import { localizeErrorMessage } from '@/utils/localizeError';
-import { getStorageItem, setStorageItem } from '@/lib/storage';
+import { getStorageItem, scopedStorageKey, setStorageItem } from '@/lib/storage';
 
 const PAGE_SIZE_OPTIONS = [10, 20] as const;
 export type JobsStatusFilter = JobStatusFilterApi | 'all';
@@ -83,7 +82,9 @@ const JOBS_LIST_CACHE_TTL_MS = 30_000;
 const MAX_JOBS_LIST_CACHE_ROWS = 120;
 
 function makeJobsListCacheKey(tab: JobsStatusFilter, page: number, pageSize: number): string {
-  return `${JOBS_LIST_CACHE_PREFIX}:${tab}:${page}:${pageSize}`;
+  // Owner-scoped (same pattern as presets): switching accounts naturally
+  // misses the previous user's cache entries.
+  return scopedStorageKey(`${JOBS_LIST_CACHE_PREFIX}:${tab}:${page}:${pageSize}`);
 }
 
 function isFreshJobsListCache(entry: CachedJobsList): boolean {
@@ -271,7 +272,8 @@ export function buildProgressSummary(
 }
 
 export function useJobs() {
-  const initialJobsCache = readJobsListCache('all', 1, 10, { allowStale: true });
+  // Lazy init: avoid a synchronous localStorage read + JSON.parse on every render.
+  const [initialJobsCache] = useState(() => readJobsListCache('all', 1, 10, { allowStale: true }));
   const [tab, setTab] = useState<JobsStatusFilter>('all');
   const [rows, setRows] = useState<JobSummary[]>(() => initialJobsCache?.jobs ?? []);
   const [total, setTotal] = useState(() => initialJobsCache?.total ?? 0);

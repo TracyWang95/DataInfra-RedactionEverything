@@ -741,6 +741,9 @@ Restore the original text based on the above mapping:
                 self._health_ready = True
                 self._health_checked_at = now
                 return True
+            self._health_ready = False
+            self._health_checked_at = now
+            return False
         except Exception:
             self._health_ready = False
             self._health_checked_at = now

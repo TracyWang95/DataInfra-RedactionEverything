@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import axios, { AxiosHeaders, type AxiosRequestConfig } from 'axios';
 
@@ -213,7 +212,9 @@ export async function downloadFile(url: string, filename: string): Promise<void>
   a.href = objectUrl;
   a.download = filename;
   a.click();
-  URL.revokeObjectURL(objectUrl);
+  // Revoke later so the browser has time to start the download (a synchronous
+  // revoke can cancel it in some browsers).
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
 }
 
 export async function authenticatedBlobUrl(url: string, mime?: string): Promise<string> {

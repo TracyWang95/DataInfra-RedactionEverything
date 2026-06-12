@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import time
 from pathlib import Path
 from typing import Any
-
-from PIL import Image, ImageDraw, ImageOps
 
 from locate_anything_eval import (
     IMAGE_EXTS,
@@ -26,6 +23,7 @@ from locate_anything_eval import (
     _task_list,
     _win_to_wsl_path,
 )
+from PIL import Image, ImageDraw, ImageOps
 
 
 def _axis_starts(length: int, tile_size: int, overlap: float) -> list[int]:

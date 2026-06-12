@@ -24,8 +24,11 @@ from transformers import AutoModel, AutoTokenizer
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--src", default="/mnt/d/has_models/LocateAnything-3B-HF")
-    parser.add_argument("--out", default="/mnt/d/has_models/locate_qwen2_model")
+    # Defaults are overridable via the same env vars the runtime uses (.env
+    # LOCATE_ANYTHING_MODEL / LOCATE_ANYTHING_LM_MODEL_DIR); fallback values
+    # match this machine's layout.
+    parser.add_argument("--src", default=os.environ.get("LOCATE_ANYTHING_MODEL", "/mnt/d/has_models/LocateAnything-3B-HF"))
+    parser.add_argument("--out", default=os.environ.get("LOCATE_ANYTHING_LM_MODEL_DIR", "/mnt/d/has_models/locate_qwen2_model"))
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)

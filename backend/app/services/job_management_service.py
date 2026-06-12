@@ -18,6 +18,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.persistence import to_jsonable
 from app.core.sqlite_base import connect_sqlite
+from app.models.errors import ConflictError, NotFoundError, ValidationError
 from app.models.schemas import (
     BoundingBox,
     RedactionConfig,
@@ -134,9 +135,9 @@ def job_config_dict(job_row: dict[str, Any]) -> dict[str, Any]:
 
 def assert_job_owner(row: dict[str, Any] | None, owner_id: str | None) -> None:
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     if owner_id and str(row.get("owner_id") or "local_user") != owner_id:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
 
 
 def _status_value(value: Any, *, fallback: str = "unknown") -> str:
@@ -351,7 +352,7 @@ def lock_job_config(store: JobStore, job_id: str, row: dict[str, Any] | None = N
     """Persist immutable config metadata before a job leaves draft state."""
     current_row = row or store.get_job(job_id)
     if not current_row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     cfg = job_config_dict(current_row)
     if cfg.get("config_locked_at"):
         return cfg
@@ -365,7 +366,7 @@ def lock_job_config(store: JobStore, job_id: str, row: dict[str, Any] | None = N
     cfg["config_version"] = next_version
     cfg["config_locked_at"] = datetime.now(UTC).isoformat()
     if not store.update_job_draft(job_id, {"config": cfg}):
-        raise ValueError("job config is locked")
+        raise ConflictError("job config is locked")
     store.touch_job_updated(job_id)
     return cfg
 
@@ -620,10 +621,10 @@ def get_job_and_item(store: JobStore, job_id: str, item_id: str) -> tuple[dict[s
     """Look up job and item, raise ValueError if not found."""
     job = store.get_job(job_id)
     if not job:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     item = store.get_item(item_id)
     if not item or item["job_id"] != job_id:
-        raise ValueError("item not found")
+        raise NotFoundError("item not found")
     return job, item
 
 
@@ -674,14 +675,14 @@ def _read_review_draft_fast(store: JobStore, job_id: str, item_id: str) -> dict[
 
         job_exists = conn.execute("SELECT 1 FROM jobs WHERE id = ? LIMIT 1", (job_id,)).fetchone()
         if not job_exists:
-            raise ValueError("job not found")
-        raise ValueError("item not found")
+            raise NotFoundError("job not found")
+        raise NotFoundError("item not found")
 
 
 def review_draft_response(store: JobStore, item_id: str) -> dict[str, Any]:
     item = store.get_item(item_id)
     if not item:
-        raise ValueError("item not found")
+        raise NotFoundError("item not found")
     draft = store.get_item_review_draft(item_id)
     if draft is None:
         return _empty_review_draft_response()
@@ -1064,7 +1065,7 @@ def build_export_report(
     """Build an authoritative batch export report from job_items and file_store."""
     row = store.get_job(job_id)
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
 
     items = store.list_items(job_id)
     all_file_ids = [str(item["file_id"]) for item in items]
@@ -1213,9 +1214,9 @@ def update_draft(store: JobStore, job_id: str, patch: dict[str, Any]) -> dict[st
     """Update a draft job. Raises ValueError on errors."""
     row = store.get_job(job_id)
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     if row["status"] != JobStatus.DRAFT.value:
-        raise ValueError("job config is locked")
+        raise ConflictError("job config is locked")
     if not patch:
         return job_to_summary(row, store)
     if not store.update_job_draft(job_id, patch):
@@ -1233,7 +1234,7 @@ def add_item(store: JobStore, job_id: str, file_id: str, sort_order: int | None)
 
     row = store.get_job(job_id)
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     if row["status"] not in (JobStatus.DRAFT.value,):
         raise ValueError("only draft jobs accept new items")
     if _is_structured_job(row):
@@ -1241,7 +1242,7 @@ def add_item(store: JobStore, job_id: str, file_id: str, sort_order: int | None)
 
         owner_id = str(row.get("owner_id") or "local_user")
         if not get_structured_store().get_dataset(file_id, owner_id=owner_id):
-            raise ValueError("dataset not found")
+            raise NotFoundError("dataset not found")
         iid = store.add_item(job_id, file_id, sort_order=sort_order)
         store.touch_job_updated(job_id)
         ir = store.get_item(iid)
@@ -1267,7 +1268,7 @@ def submit_job(store: JobStore, job_id: str) -> dict[str, Any]:
 
     row = store.get_job(job_id)
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     items = store.list_items(job_id)
     if not items:
         raise ValueError("no items to submit")
@@ -1280,7 +1281,7 @@ def submit_job(store: JobStore, job_id: str) -> dict[str, Any]:
         for it in items:
             dataset_id = str(it["file_id"])
             if not structured_store.get_dataset(dataset_id, owner_id=owner_id):
-                raise ValueError(f"dataset not found: {dataset_id}")
+                raise NotFoundError(f"dataset not found: {dataset_id}")
             if not structured_store.get_profile(dataset_id, owner_id=owner_id):
                 profile_dataset(dataset_id, owner_id=owner_id, store=structured_store)
             get_or_create_policy(dataset_id, owner_id=owner_id, store=structured_store)
@@ -1330,7 +1331,7 @@ def cancel_job(store: JobStore, job_id: str) -> dict[str, Any]:
     """Cancel a job. Raises ValueError if not found."""
     row = store.get_job(job_id)
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     store.cancel_job(job_id)
     row2 = store.get_job(job_id)
     if not row2:
@@ -1342,7 +1343,7 @@ def requeue_failed(store: JobStore, job_id: str) -> dict[str, Any]:
     """Re-queue all failed items. Raises ValueError on errors."""
     row = store.get_job(job_id)
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     items = store.list_items(job_id)
     count = 0
     errors: list[str] = []
@@ -1354,9 +1355,9 @@ def requeue_failed(store: JobStore, job_id: str) -> dict[str, Any]:
             except InvalidStatusTransition as e:
                 errors.append(str(e))
     if count == 0 and not errors:
-        raise ValueError("没有失败的项可以重新排队")
+        raise ConflictError("没有失败的项可以重新排队")
     if count == 0 and errors:
-        raise ValueError(f"状态转换失败: {'; '.join(errors)}")
+        raise ConflictError(f"状态转换失败: {'; '.join(errors)}")
     # 把 job 拉回可运行状态
     try:
         job_status = row["status"]
@@ -1399,15 +1400,15 @@ async def delete_job(store: JobStore, job_id: str) -> dict[str, Any]:
     """Delete a job and detach its files. Raises ValueError on errors."""
     row = store.get_job(job_id)
     if not row:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     if row["status"] not in DELETABLE_JOB_STATUSES:
-        raise ValueError("active jobs must be cancelled before deletion")
+        raise ConflictError("active jobs must be cancelled before deletion")
 
     items = store.list_items(job_id)
     try:
         store.delete_job(job_id)
     except KeyError:
-        raise ValueError("job not found")
+        raise NotFoundError("job not found")
     detached_file_count = await detach_job_from_files(job_id, items)
     return {
         "id": job_id,
@@ -1435,7 +1436,7 @@ def get_review_draft(store: JobStore, job_id: str, item_id: str) -> dict[str, An
         )
         return _empty_review_draft_response(degraded=True)
     except KeyError:
-        raise ValueError("item not found")
+        raise NotFoundError("item not found")
 
 
 def save_review_draft(store: JobStore, job_id: str, item_id: str, payload: dict) -> dict[str, Any]:
@@ -1496,7 +1497,7 @@ async def commit_review(
 
     job, item = get_job_and_item(store, job_id, item_id)
     if item["status"] in (JobItemStatus.CANCELLED.value, JobItemStatus.FAILED.value):
-        raise ValueError(f"item not committable: {item['status']}")
+        raise ValidationError(f"item not committable: {item['status']}")
     if item["status"] == JobItemStatus.COMPLETED.value:
         return item_to_out(item)
 
@@ -1512,7 +1513,7 @@ async def commit_review(
     if not file_info:
         store.update_item_status(item_id, JobItemStatus.AWAITING_REVIEW, error_message="file not found")
         refresh_job_status(store, job_id)
-        raise ValueError("file not found")
+        raise NotFoundError("file not found")
 
     config = build_redaction_config(job)
 

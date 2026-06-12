@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -9,7 +8,7 @@ import {
   type JobStatusTone,
 } from '@/utils/jobStatusLabels';
 import type { JobTypeApi } from '@/services/jobsApi';
-import { t } from '@/i18n';
+import { useT } from '@/i18n';
 import {
   getRedactionStateLabel,
   REDACTION_STATE_CLASS,
@@ -40,6 +39,7 @@ export function JobStatusBadge({ status }: { status: string }) {
 }
 
 export function JobTypeBadge({ jobType }: { jobType: JobTypeApi }) {
+  const t = useT();
   return (
     <Badge
       variant="secondary"

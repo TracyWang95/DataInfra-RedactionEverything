@@ -1,5 +1,4 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import type { Dispatch, FC, ReactNode, SetStateAction } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -141,7 +140,6 @@ export const ImageResultView: FC<{
   totalPages,
   onPageChange,
   visibleBoxes,
-  visionTypes,
   getVisionTypeConfig,
   entityMap,
   origToTypeId,
@@ -174,12 +172,6 @@ export const ImageResultView: FC<{
               boxes={visibleBoxes}
               onBoxesChange={() => {}}
               getTypeConfig={getVisionTypeConfig}
-              availableTypes={visionTypes.map((visionType) => ({
-                id: visionType.id,
-                name: visionType.name,
-                color: '#6366F1',
-              }))}
-              defaultType={visionTypes[0]?.id || 'CUSTOM'}
               viewportTopSlot={
                 totalPages > 1 ? (
                   <div className="w-full min-w-[320px]">

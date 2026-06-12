@@ -1,10 +1,8 @@
-# Copyright 2026 DataInfra-RedactionEverything Contributors
-# SPDX-License-Identifier: Apache-2.0
-
 """Shared filters for OCR boxes that are scanner or page-edge artifacts."""
 
 from __future__ import annotations
 
+import numpy as np
 from PIL import Image
 
 # Left-edge artifact: max normalized x-offset and min normalized width.
@@ -102,13 +100,18 @@ def region_has_visible_ink(
     x2 = max(x1 + 1, min(width, int(left + region_width)))
     y2 = max(y1 + 1, min(height, int(top + region_height)))
     crop = image.crop((x1, y1, x2, y2)).convert("RGB")
-    raw = crop.tobytes()
+    arr = np.asarray(crop)
     area = max(1, crop.width * crop.height)
-    ink = 0
-    for idx in range(0, len(raw), 3):
-        r, g, b = raw[idx], raw[idx + 1], raw[idx + 2]
-        if min(r, g, b) < _INK_DARK_MAX or (r > _INK_RED_MIN and r > g * _INK_RED_OVER_GREEN and r > b * _INK_RED_OVER_BLUE):
-            ink += 1
+    red = arr[:, :, 0]
+    green = arr[:, :, 1]
+    blue = arr[:, :, 2]
+    dark = arr.min(axis=2) < _INK_DARK_MAX
+    red_mark = (
+        (red > _INK_RED_MIN)
+        & (red > green * _INK_RED_OVER_GREEN)
+        & (red > blue * _INK_RED_OVER_BLUE)
+    )
+    ink = int(np.count_nonzero(dark | red_mark))
     density = ink / area
     page_area = max(1, width * height)
     region_area_ratio = area / page_area

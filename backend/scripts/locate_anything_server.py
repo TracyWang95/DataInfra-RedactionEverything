@@ -20,10 +20,9 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from locate_anything_eval import LocateAnythingWorker, _parse_boxes, _resize_for_inference
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
-
-from locate_anything_eval import LocateAnythingWorker, _parse_boxes, _resize_for_inference
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -79,6 +78,7 @@ def _generation_mode_sequence(mode: str, fast_first: bool) -> list[str]:
 def trim_cuda_cache(label: str) -> None:
     try:
         import gc
+
         import torch
 
         gc.collect()
@@ -124,7 +124,12 @@ FIXED_VISUAL_PROMPTS: dict[str, str] = {
     # over-detection (e.g. a plain page matched "national ID card"); the short
     # form is the same lesson as the official_seal / signature prompts.
     "face": "human face",
-    "fingerprint": "fingerprint",
+    # "thumbprint", not "fingerprint": A/B on the transcript page with five red
+    # inked prints showed "fingerprint" recalls 0/5 while "thumbprint" recalls
+    # 5/5; "red fingerprint" also recalled 5/5 but false-fired on the two red
+    # official seals of the GPU contract page, so the color-free wording wins
+    # (0 seal/contract/customs false positives in the same A/B).
+    "fingerprint": "thumbprint",
     "palmprint": "palmprint",
     "id_card": "ID card",
     "hk_macau_permit": "travel permit card",
@@ -184,12 +189,19 @@ class LocateService:
         self.backend = "hf"
         self.dtype = "bfloat16"
         self.ready = False
+        # Actual device the loaded weights ended up on ("cuda" / "cpu" / "" while
+        # loading); /health reports this instead of a hardcoded green light.
+        self.device = ""
         self.lock = asyncio.Lock()
         # vLLM-backend (prompt-embeds) state; populated by load_vision().
         self.model: Any = None
         self.processor: Any = None
         self.embed: Any = None
         self.image_token_index: int = -1
+        # Tri-state for the text-only tokenization fast path (vLLM mode):
+        # None = not yet verified, True = verified byte-identical to the full
+        # processor output, False = differs or failed -> never used.
+        self._fast_tokenize_ok: bool | None = None
 
     def configure(self, model_path: str, backend: str, dtype: str) -> None:
         self.model_path = model_path
@@ -201,6 +213,7 @@ class LocateService:
             self.load_vision()
         else:
             self.worker = LocateAnythingWorker(self.model_path, backend=self.backend, dtype_name=self.dtype)
+            self.device = str(self.worker.device)
             self.ready = True
 
     def load_vision(self) -> None:
@@ -236,7 +249,7 @@ class LocateService:
         try:
             import sys as _sys
 
-            import torch.nn.functional as _F
+            import torch.nn.functional as _F  # noqa: N812
 
             _vmod = _sys.modules.get(type(model.vision_model).__module__)
             _funcs = getattr(_vmod, "VL_VISION_ATTENTION_FUNCTIONS", None)
@@ -259,12 +272,14 @@ class LocateService:
         except Exception as exc:
             print(f"[LocateAnything] MoonViT fast-SDPA patch skipped: {exc}", flush=True)
         print(f"[LocateAnything] vLLM mode: vision tower on GPU, LM served by {VLLM_LM_URL}", flush=True)
+        self.device = "cuda"  # the .to("cuda") calls above would have raised otherwise
         self.ready = True
 
     def _encode_vit(self, image: Image.Image):
         """Run the MoonViT vision tower once and return the projected image
-        embeddings. These depend only on the image, so they can be reused across
-        many category prompts (the text part of the prompt does not change them)."""
+        embeddings plus this image's placeholder token count. Both depend only
+        on the image, so they can be reused across many category prompts (the
+        text part of the prompt does not change them)."""
         import numpy as np
         import torch
 
@@ -276,6 +291,12 @@ class LocateService:
         inputs = self.processor(text=[text], images=images, videos=videos, return_tensors="pt")
         pixel_values = inputs["pixel_values"].to("cuda", torch.bfloat16)
         ig = inputs.get("image_grid_hws", None)
+        # Mirror of replace_media_placeholder's token count for a single image:
+        # int(h * w) // (merge_kernel_size[0] * merge_kernel_size[1]).
+        num_image_tokens = 0
+        if ig is not None and len(ig) > 0:
+            mk = self.processor.image_processor.merge_kernel_size
+            num_image_tokens = int(ig[0][0] * ig[0][1]) // (mk[0] * mk[1])
         if isinstance(ig, np.ndarray):
             ig = torch.from_numpy(ig)
         if ig is not None:
@@ -287,9 +308,67 @@ class LocateService:
             elif ig is not None:
                 vit = torch.cat(vit, dim=0)
             vit = self.model.mlp1(vit)
-        return vit
+        return vit, num_image_tokens
 
-    def _build_prompt_embeds_b64(self, image: Image.Image, prompt: str, vit) -> str:
+    def _full_input_ids(self, image: Image.Image, prompt: str):
+        """input_ids exactly as the full processor produces them (re-runs the
+        image preprocessing; slow but canonical)."""
+        messages = [
+            {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}
+        ]
+        text = self.processor.py_apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        images, videos = self.processor.process_vision_info(messages)
+        inputs = self.processor(text=[text], images=images, videos=videos, return_tensors="pt")
+        return inputs["input_ids"]
+
+    def _fast_input_ids(self, prompt: str, num_image_tokens: int):
+        """Text-only reconstruction of the processor's input_ids: expand the
+        <image-1> placeholder with the cached per-image token count and tokenize
+        with the processor's text kwargs (padding=False). This skips the
+        per-prompt image re-preprocessing the full processor call would repeat.
+        Only trusted after _prompt_input_ids verified it byte-identical."""
+        proc = self.processor
+        messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+        text = proc.py_apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        # Bail out on anything but the expected single-image layout (e.g. a
+        # prompt that itself contains media placeholders); the caller then falls
+        # back to the canonical full-processor path.
+        if text.count(f"<{proc.image_placeholder}-") != 1 or f"<{proc.video_placeholder}-" in text:
+            raise ValueError("unexpected media placeholder layout")
+        expansion = (
+            f"<image 1>{proc.image_start_token}"
+            f"{proc.image_token * num_image_tokens}{proc.image_end_token}"
+        )
+        expanded = text.replace(f"<{proc.image_placeholder}-1>", expansion, 1)
+        return proc.tokenizer([expanded], padding=False, return_tensors="pt")["input_ids"]
+
+    def _prompt_input_ids(self, image: Image.Image, prompt: str, num_image_tokens: int):
+        """input_ids for (image, prompt). The fast path is only used after a
+        one-time byte-identical comparison against the full processor output;
+        any difference (or error) disables it permanently, so output can never
+        drift from the current behavior."""
+        import torch
+
+        if self._fast_tokenize_ok and num_image_tokens > 0:
+            try:
+                return self._fast_input_ids(prompt, num_image_tokens)
+            except Exception:
+                pass  # fall back to the canonical path below
+        full_ids = self._full_input_ids(image, prompt)
+        if self._fast_tokenize_ok is None and num_image_tokens > 0:
+            try:
+                fast_ids = self._fast_input_ids(prompt, num_image_tokens)
+                self._fast_tokenize_ok = bool(
+                    full_ids.shape == fast_ids.shape and torch.equal(full_ids, fast_ids)
+                )
+                state = "verified byte-identical" if self._fast_tokenize_ok else "MISMATCH; disabled"
+                print(f"[LocateAnything] fast tokenization {state}", flush=True)
+            except Exception as exc:
+                self._fast_tokenize_ok = False
+                print(f"[LocateAnything] fast tokenization unavailable: {exc}", flush=True)
+        return full_ids
+
+    def _build_prompt_embeds_b64(self, image: Image.Image, prompt: str, vit, num_image_tokens: int) -> str:
         """Stitch the precomputed image embeds (vit) into the text-embed sequence
         for `prompt` and serialize to base64 for vLLM prompt-embeds."""
         import base64
@@ -297,13 +376,7 @@ class LocateService:
 
         import torch
 
-        messages = [
-            {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": prompt}]}
-        ]
-        text = self.processor.py_apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        images, videos = self.processor.process_vision_info(messages)
-        inputs = self.processor(text=[text], images=images, videos=videos, return_tensors="pt")
-        input_ids = inputs["input_ids"].to("cuda")
+        input_ids = self._prompt_input_ids(image, prompt, num_image_tokens).to("cuda")
         with torch.no_grad():
             emb = self.embed(input_ids).to(torch.bfloat16)
             B, N, C = emb.shape
@@ -320,6 +393,7 @@ class LocateService:
     def _vllm_complete_b64(self, prompt_embeds_b64: str) -> str:
         """Greedy vLLM completion from a base64 prompt-embeds payload."""
         import json
+        import urllib.error
         import urllib.request
 
         body = {
@@ -342,12 +416,16 @@ class LocateService:
         req = urllib.request.Request(
             VLLM_LM_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
         )
-        resp = json.loads(urllib.request.urlopen(req, timeout=VLLM_REQUEST_TIMEOUT_SECONDS).read())
-        return resp["choices"][0]["text"]
-
-    def _encode_and_generate(self, image: Image.Image, prompt: str) -> str:
-        vit = self._encode_vit(image)
-        return self._vllm_complete_b64(self._build_prompt_embeds_b64(image, prompt, vit))
+        try:
+            with urllib.request.urlopen(req, timeout=VLLM_REQUEST_TIMEOUT_SECONDS) as resp:
+                payload = json.loads(resp.read())
+        except (urllib.error.URLError, TimeoutError) as exc:
+            # URLError covers HTTPError (subclass); TimeoutError covers socket
+            # read timeouts that urlopen raises unwrapped.
+            raise HTTPException(
+                status_code=503, detail=f"LocateAnything LM backend unavailable: {exc}"
+            ) from exc
+        return payload["choices"][0]["text"]
 
     async def _predict_boxes_vllm(
         self, image: Image.Image, prompt: str, max_image_side: int
@@ -355,8 +433,31 @@ class LocateService:
         if not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
         inference_image = _resize_for_inference(image, max_image_side)
+        # GPU work (vision encode + embed stitch) stays inside the lock; the
+        # vLLM network round-trip (up to VLLM_REQUEST_TIMEOUT_SECONDS) runs
+        # outside it so a slow generation cannot starve other GPU requests --
+        # same structure as predict_boxes_per_category.
         async with self.lock:
-            answer = await asyncio.to_thread(self._encode_and_generate, inference_image, prompt)
+            try:
+                vit, num_image_tokens = await asyncio.to_thread(self._encode_vit, inference_image)
+                b64 = await asyncio.to_thread(
+                    self._build_prompt_embeds_b64, inference_image, prompt, vit, num_image_tokens
+                )
+            except RuntimeError as exc:
+                if _is_cuda_capacity_error(exc):
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"LocateAnything CUDA capacity exhausted during vision encode: {exc}",
+                    ) from exc
+                raise
+            finally:
+                # Same hygiene as worker-mode predict (trim after every pass, not
+                # only on failure): per-image activation buffers otherwise stay in
+                # the allocator cache and grow the process across requests until
+                # the shared 16GB card thrashes (observed: tower at ~12GB, encodes
+                # stalling at 100% GPU with the whole stack resident).
+                trim_cuda_cache("vllm-chat-encode")
+        answer = await asyncio.to_thread(self._vllm_complete_b64, b64)
         boxes = _parse_boxes(answer, inference_image.width, inference_image.height)
         return answer, boxes, (inference_image.width, inference_image.height)
 
@@ -379,13 +480,28 @@ class LocateService:
         _t0 = time.perf_counter()
         # Phase 1 (GPU, serialized): one vision encode + per-category prompt-embeds.
         async with self.lock:
-            vit = await asyncio.to_thread(self._encode_vit, inference_image)
-            _t_enc = time.perf_counter()
-            payloads: list[tuple[str, str]] = []
-            for cat in categories:
-                b64 = await asyncio.to_thread(self._build_prompt_embeds_b64, inference_image, _detect_prompt([cat]), vit)
-                payloads.append((cat, b64))
-            _t_build = time.perf_counter()
+            try:
+                vit, num_image_tokens = await asyncio.to_thread(self._encode_vit, inference_image)
+                _t_enc = time.perf_counter()
+                payloads: list[tuple[str, str]] = []
+                for cat in categories:
+                    b64 = await asyncio.to_thread(
+                        self._build_prompt_embeds_b64, inference_image, _detect_prompt([cat]), vit, num_image_tokens
+                    )
+                    payloads.append((cat, b64))
+                _t_build = time.perf_counter()
+            except RuntimeError as exc:
+                if _is_cuda_capacity_error(exc):
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"LocateAnything CUDA capacity exhausted during vision encode: {exc}",
+                    ) from exc
+                raise
+            finally:
+                # Mirror worker-mode predict: trim the allocator cache after every
+                # encode pass so per-image activations cannot accumulate (see
+                # _predict_boxes_vllm for the observed thrash this prevents).
+                trim_cuda_cache("vllm-detect-encode")
 
         # Phase 2 (network, concurrent): vLLM generations batch on the LM server.
         async def _gen(cat: str, b64: str) -> tuple[str, list[dict[str, Any]], str]:
@@ -514,11 +630,13 @@ def _decode_b64_image(data: str) -> Image.Image:
     try:
         image_bytes = base64.b64decode(raw, validate=False)
         image = Image.open(BytesIO(image_bytes))
+        # exif_transpose/convert force-decode the pixel data, which is where a
+        # truncated/corrupt payload actually fails -- still a client error (400).
+        image = ImageOps.exif_transpose(image)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid base64 image") from exc
-    image = ImageOps.exif_transpose(image)
-    if image.mode != "RGB":
-        image = image.convert("RGB")
     return image
 
 
@@ -730,15 +848,29 @@ async def startup() -> None:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    # Honest report: real CUDA availability and the device the weights actually
+    # loaded on, instead of hardcoded green lights.
+    try:
+        import torch
+
+        gpu_available = bool(torch.cuda.is_available())
+    except Exception:
+        gpu_available = False
+    if service.ready:
+        runtime_mode = "gpu" if str(service.device).startswith("cuda") else "cpu"
+    else:
+        # Still loading: report the device the GPU-only load is targeting.
+        runtime_mode = "gpu" if gpu_available else "cpu"
     return {
         "status": "ok" if service.ready else "loading",
         "ready": service.ready,
         "model": MODEL_NAME,
         "runtime": "transformers-locateanything",
-        "runtime_mode": "gpu",
-        "gpu_available": True,
+        "runtime_mode": runtime_mode,
+        "gpu_available": gpu_available,
+        "device": service.device or "unknown",
         "gpu_only_mode": True,
-        "cpu_fallback_risk": False,
+        "cpu_fallback_risk": runtime_mode != "gpu",
         "max_image_side": DEFAULT_MAX_SIDE,
     }
 

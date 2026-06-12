@@ -118,6 +118,40 @@ npm run stop
 
 If WSL localhost forwarding is unavailable, the startup script automatically uses the WSL IP for vLLM/OCR services so frontend service detection does not incorrectly report them as offline. Model services should stay on GPU/CUDA; if `/health/services` reports CPU fallback risk for any critical model, fix the runtime before processing files.
 
+### WSL Model Service Environment (one-time setup)
+
+`npm run dev` runs the model services inside WSL and requires three values in `.env` (see [`.env.example`](./.env.example)): `VENV_DIR`, `VLLM_VENV_DIR`, and `HAS_TEXT_HF_MODEL_PATH`. Create the two WSL virtual environments once (vLLM's Torch/CUDA stack conflicts with Paddle/PaddleX, so they must stay separate):
+
+```bash
+# Inside WSL (Python 3.11), with the repo at /mnt/d/DataInfra-RedactionEverything
+# 1) App/OCR venv (VENV_DIR): runs the PP-StructureV3 / PaddleOCR wrapper
+python3 -m venv ~/.cache/datainfra-redaction/.venv
+~/.cache/datainfra-redaction/.venv/bin/pip install \
+  -r /mnt/d/DataInfra-RedactionEverything/backend/requirements.txt
+
+# 2) vLLM venv (VLLM_VENV_DIR): serves HaS Text (and optional PaddleOCR-VL /
+#    LocateAnything LM backbone) and runs the LocateAnything service
+python3 -m venv ~/.cache/datainfra-redaction/.venv-vllm
+~/.cache/datainfra-redaction/.venv-vllm/bin/pip install vllm
+
+# 3) LocateAnything extra deps (transformers, peft, accelerate, ...) go into a
+#    separate import path so their pins do not fight vLLM's own dependencies
+~/.cache/datainfra-redaction/.venv-vllm/bin/pip install \
+  --target ~/.cache/datainfra-redaction/locateanything-hf-deps \
+  -r /mnt/d/DataInfra-RedactionEverything/backend/requirements-locateanything.txt
+```
+
+Then point `.env` at them (WSL/Linux paths):
+
+```env
+VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv
+VLLM_VENV_DIR=/home/<user>/.cache/datainfra-redaction/.venv-vllm
+LOCATE_ANYTHING_DEPS=/home/<user>/.cache/datainfra-redaction/locateanything-hf-deps
+HAS_TEXT_HF_MODEL_PATH=/mnt/d/has_models/HaS_4.0_0.6B
+```
+
+`HAS_TEXT_HF_MODEL_PATH` is the HaS Text HF (bf16) model directory from [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B). A Windows project venv at the repo root (`.venv`, installed from `backend/requirements.txt`) is also required — it runs the FastAPI backend and warmup.
+
 ### Manual Backend Startup
 
 ```bash
@@ -158,6 +192,17 @@ Full GPU model stack (starts `ocr`, `ner`, and `visual-features`):
 ```bash
 docker compose --profile gpu up -d
 ```
+
+#### GPU model files (`--profile gpu`)
+
+The GPU services load weights from `./backend/models`, mounted into the containers as `/models`. Download and place them before starting:
+
+| Service | Expected host path | Source |
+|---|---|---|
+| `ner` | `backend/models/has/HaS_Text_0209_0.6B_Q4_K_M.gguf` | Q4_K_M GGUF build of [xuanwulab/HaS_4.0_0.6B](https://huggingface.co/xuanwulab/HaS_4.0_0.6B); if your file is named `has_4.0_0.6B.gguf`, rename or copy it to the expected filename |
+| `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | LocateAnything-3B HF weights from the official upstream source |
+
+> **Runtime difference:** the Docker `ner` service runs HaS Text on **llama.cpp with a Q4 GGUF quantization**, while local `npm run dev` serves the **HF bf16 weights through vLLM**. The two runtimes do not produce identical NER output; expect somewhat weaker recognition from the quantized Docker path than from local development.
 
 Before production deployment, configure `.env`, model mounts, GPU runtime, authentication, reverse proxy, and access-control policies.
 
@@ -311,6 +356,8 @@ scripts/        Root local startup and shutdown scripts
 - The default deployment model is local or intranet use. Before exposing the system to the public internet, configure authentication, access control, reverse proxy, TLS, logging, and key-rotation policies.
 - Authentication supports multiple local users. Uploaded files, batch jobs, review drafts, downloads, previews, export reports, and cleanup operations are scoped to the authenticated username. The first setup user is the `super_admin`; only super administrators can create users or change runtime concurrency.
 - Default recognition is driven by model capability and configured schemas. Regex exists only as a user-defined fallback mechanism.
+- Login rate limiting honours `X-Forwarded-For` only from peers listed in `TRUSTED_PROXIES`. The default trusts loopback plus `172.16.0.0/12` (the Docker Compose bridge network), so containerized deployments work out of the box. If your reverse proxy sits on a `10.x` or `192.168.x` network, set `TRUSTED_PROXIES` explicitly in `.env`.
+- Structured database connections accept user-supplied hosts by default (a local-tool feature for connecting to your own databases). To restrict which hosts authenticated users may connect to, set `STRUCTURED_DB_HOST_ALLOWLIST` (exact hostnames or IP/CIDR entries).
 - Keep models, samples, task data, and export directories in private runtime storage protected by access control and backup policies.
 
 ---

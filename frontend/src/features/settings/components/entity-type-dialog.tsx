@@ -1,7 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useMemo, useState, type SetStateAction } from 'react';
+import { useCallback, useId, useMemo, useState, type SetStateAction } from 'react';
 import { useT } from '@/i18n';
 import {
   Dialog,
@@ -35,7 +34,6 @@ interface EntityTypeDialogProps {
   onSave: (form: EntityTypeForm) => void;
   mode: 'create' | 'edit';
   saving?: boolean;
-  taxonomyLocked?: boolean;
 }
 
 interface TaxonomyTargetOption {
@@ -81,8 +79,8 @@ function buildDefaultForm(
   return {
     name: initial?.name ?? '',
     description: initial?.description ?? '',
-    regex_pattern: '',
-    use_llm: true,
+    regex_pattern: initial?.regex_pattern ?? '',
+    use_llm: initial?.use_llm ?? true,
     tag_template: initial?.tag_template ?? '',
     data_domain: dataDomain,
     generic_target: genericTarget,
@@ -128,25 +126,11 @@ export function EntityTypeDialog({
     key: formKey,
     value: defaultForm,
   }));
-  const rawForm = formState.key === formKey ? formState.value : defaultForm;
+  const form = formState.key === formKey ? formState.value : defaultForm;
 
-  const domainByValue = useMemo(
-    () => new Map(effectiveTaxonomy.map((domain) => [domain.value, domain])),
-    [effectiveTaxonomy],
-  );
-
-  const genericTargetOptions = useMemo(() => {
-    return domainByValue.get(rawForm.data_domain)?.targets ?? effectiveTaxonomy[0].targets;
-  }, [domainByValue, effectiveTaxonomy, rawForm.data_domain]);
-
-  const form = useMemo(() => {
-    if (genericTargetOptions.some((option) => option.value === rawForm.generic_target)) {
-      return rawForm;
-    }
-    const nextGenericTarget =
-      domainByValue.get(rawForm.data_domain)?.default_target ?? genericTargetOptions[0]?.value;
-    return nextGenericTarget ? { ...rawForm, generic_target: nextGenericTarget } : rawForm;
-  }, [domainByValue, genericTargetOptions, rawForm]);
+  const nameInputId = useId();
+  const regexInputId = useId();
+  const descriptionInputId = useId();
 
   const setForm = useCallback(
     (next: SetStateAction<EntityTypeForm>) => {
@@ -177,8 +161,9 @@ export function EntityTypeDialog({
 
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-1.5">
-            <Label>识别项名称 *</Label>
+            <Label htmlFor={nameInputId}>识别项名称 *</Label>
             <Input
+              id={nameInputId}
               value={form.name}
               onChange={(event) =>
                 setForm((current) => ({ ...current, name: event.target.value }))
@@ -214,8 +199,9 @@ export function EntityTypeDialog({
 
           {!form.use_llm && (
             <div className="flex flex-col gap-1.5">
-              <Label>正则表达式 *</Label>
+              <Label htmlFor={regexInputId}>正则表达式 *</Label>
               <Input
+                id={regexInputId}
                 value={form.regex_pattern}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, regex_pattern: event.target.value }))
@@ -227,8 +213,9 @@ export function EntityTypeDialog({
           )}
 
           <div className="flex flex-col gap-1.5">
-            <Label>描述</Label>
+            <Label htmlFor={descriptionInputId}>描述</Label>
             <Textarea
+              id={descriptionInputId}
               value={form.description}
               onChange={(event) =>
                 setForm((current) => ({ ...current, description: event.target.value }))
@@ -251,12 +238,7 @@ export function EntityTypeDialog({
           </Button>
           <Button
             disabled={!canSubmit || saving}
-            onClick={() =>
-              onSave({
-                ...form,
-                tag_template: '',
-              })
-            }
+            onClick={() => onSave(form)}
             data-testid="entity-type-save"
           >
             {saving

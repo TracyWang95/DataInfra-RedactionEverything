@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# file_store accessors 鈥?the store lives in the service layer.
+# file_store accessors — the store lives in the service layer.
 # ---------------------------------------------------------------------------
 
 def get_file_info(file_id: str) -> dict[str, Any] | None:

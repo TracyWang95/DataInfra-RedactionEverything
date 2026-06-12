@@ -43,6 +43,8 @@ router = APIRouter()
 
 def validate_file(file: UploadFile) -> None:
     """验证上传的文件"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -86,7 +88,7 @@ async def list_files(
 
     file_store = _fms.get_file_store()
     filtered_entries: list[tuple[str, dict]] = []
-    for fid, info in file_store.items():
+    for fid, info in file_store.items_for_owner(owner_id):
         if not isinstance(info, dict):
             continue
         if _fms.file_owner_id(info) != owner_id:
@@ -516,7 +518,17 @@ async def get_page_image(
         return RawResponse(content=image_bytes, media_type="image/png")
 
     if ft in ("image", "jpg", "jpeg", "png"):
-        return FileResponse(path=file_path, media_type="image/png")
+        # Re-encode to PNG so browser-unsupported formats (TIFF, BMP) preview in the
+        # history comparison instead of showing a broken image.
+        from io import BytesIO
+
+        from PIL import Image, ImageOps
+
+        with Image.open(file_path) as im:
+            im = ImageOps.exif_transpose(im).convert("RGB")
+            buf = BytesIO()
+            im.save(buf, format="PNG")
+        return RawResponse(content=buf.getvalue(), media_type="image/png")
 
     raise HTTPException(status_code=400, detail=f"不支持逐页渲染: {ft}")
 

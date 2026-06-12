@@ -1,8 +1,8 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
-// SPDX-License-Identifier: Apache-2.0
 
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { Toaster, toast } from 'sonner';
+import { t } from '@/i18n';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -33,7 +33,7 @@ function normalizeToastMessage(message: unknown): string {
     const nestedMessage = (message as { message?: unknown }).message;
     if (typeof nestedMessage === 'string' && nestedMessage.trim()) return nestedMessage.trim();
   }
-  return '操作失败，请稍后重试';
+  return t('toast.fallbackError');
 }
 
 export function showToast(message: unknown, type: ToastType = 'info') {

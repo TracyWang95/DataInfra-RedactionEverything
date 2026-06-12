@@ -8,7 +8,7 @@ from __future__ import annotations
 import base64
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -37,6 +37,7 @@ class OCRItem:
     height: float
     confidence: float
     label: str = "text"
+    chars: list = field(default_factory=list)  # per-char boxes (normalized) L→R
 
 
 class OCRService:
@@ -217,6 +218,7 @@ class OCRService:
                     height=box["height"],
                     confidence=box.get("confidence", 0.9),
                     label=box.get("label", "structure"),
+                    chars=box.get("chars", []) or [],
                 ))
             logger.info("OCR Structure client got %d boxes in %.2fs", len(items), data.get("elapsed", 0))
             return items

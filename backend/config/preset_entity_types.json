@@ -184,6 +184,29 @@
     "entity_type_ids": [],
     "generic_target": "GEN_ADDRESS_LOCATION"
   },
+  "POSTAL_CODE": {
+    "id": "POSTAL_CODE",
+    "name": "邮政编码",
+    "description": "邮政编码。只表示邮编数字本身，不包含完整地址。",
+    "examples": [
+      "214000",
+      "100080"
+    ],
+    "color": "#EA580C",
+    "regex_pattern": null,
+    "use_llm": true,
+    "enabled": true,
+    "order": 82,
+    "tag_template": "<邮政编码[{index}]>",
+    "data_domain": "address_location",
+    "coref_enabled": false,
+    "default_enabled": false,
+    "linkage_groups": [
+      "address_like"
+    ],
+    "entity_type_ids": [],
+    "generic_target": "GEN_ADDRESS_LOCATION"
+  },
   "GPS_LOCATION": {
     "id": "GPS_LOCATION",
     "name": "定位位置",
@@ -731,6 +754,28 @@
     "entity_type_ids": [],
     "generic_target": "GEN_ATTRIBUTE_STATUS"
   },
+  "OCCUPATION": {
+    "id": "OCCUPATION",
+    "name": "职业",
+    "description": "职业、工种、岗位类别等个人职业信息。只表示职业本身，不包含工作单位或职务级别。",
+    "examples": [
+      "工人",
+      "教师",
+      "软件工程师"
+    ],
+    "color": "#8B5CF6",
+    "regex_pattern": null,
+    "use_llm": true,
+    "enabled": true,
+    "order": 232,
+    "tag_template": "<职业[{index}]>",
+    "data_domain": "pii",
+    "coref_enabled": false,
+    "default_enabled": false,
+    "linkage_groups": [],
+    "entity_type_ids": [],
+    "generic_target": "GEN_ATTRIBUTE_STATUS"
+  },
   "NATIONALITY": {
     "id": "NATIONALITY",
     "name": "国籍",
@@ -745,6 +790,27 @@
     "enabled": true,
     "order": 240,
     "tag_template": "<国籍[{index}]>",
+    "data_domain": "pii",
+    "coref_enabled": false,
+    "default_enabled": false,
+    "linkage_groups": [],
+    "entity_type_ids": [],
+    "generic_target": "GEN_ATTRIBUTE_STATUS"
+  },
+  "NATIVE_PLACE": {
+    "id": "NATIVE_PLACE",
+    "name": "籍贯",
+    "description": "籍贯或出生地行政区划。只表示籍贯，不包含现居住地址。",
+    "examples": [
+      "江苏省无锡市",
+      "山东济南"
+    ],
+    "color": "#8B5CF6",
+    "regex_pattern": null,
+    "use_llm": true,
+    "enabled": true,
+    "order": 242,
+    "tag_template": "<籍贯[{index}]>",
     "data_domain": "pii",
     "coref_enabled": false,
     "default_enabled": false,
@@ -1538,6 +1604,29 @@
     "tag_template": "<文书编号[{index}]>",
     "data_domain": "document_record",
     "coref_enabled": true,
+    "default_enabled": false,
+    "linkage_groups": [
+      "identifier_like"
+    ],
+    "entity_type_ids": [],
+    "generic_target": "GEN_NUMBER_CODE"
+  },
+  "CERT_NO": {
+    "id": "CERT_NO",
+    "name": "证号",
+    "description": "资格证、执业证、报关员证等证件或证书编号。只表示证号本身，不包含身份证号、护照号等已有专门类型。",
+    "examples": [
+      "证号3101234567",
+      "执业证号A20260001"
+    ],
+    "color": "#A855F7",
+    "regex_pattern": null,
+    "use_llm": true,
+    "enabled": true,
+    "order": 314,
+    "tag_template": "<证号[{index}]>",
+    "data_domain": "document_record",
+    "coref_enabled": false,
     "default_enabled": false,
     "linkage_groups": [
       "identifier_like"
