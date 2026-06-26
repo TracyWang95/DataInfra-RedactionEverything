@@ -360,6 +360,52 @@ def query_gpu_memory() -> dict | None:
     return None
 
 
+def _query_gpu_memory_all_nvidia_smi() -> list[dict]:
+    """Per-card (index, used_mb, total_mb) for every GPU via nvidia-smi."""
+    args = ["--query-gpu=index,memory.used,memory.total", "--format=csv,noheader,nounits"]
+    for exe in _nvidia_smi_executable_candidates():
+        workdir = os.path.dirname(os.path.abspath(exe)) if os.name == "nt" else None
+        kw: dict = {
+            "capture_output": True, "timeout": 8.0, "encoding": "utf-8",
+            "errors": "replace", "stdin": subprocess.DEVNULL,
+        }
+        if workdir and os.path.isdir(workdir):
+            kw["cwd"] = workdir
+        if os.name == "nt":
+            kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            r = subprocess.run([exe, *args], **kw)
+        except (subprocess.SubprocessError, OSError, ValueError, TypeError):
+            continue
+        cards: list[dict] = []
+        for raw in (r.stdout or "").strip().splitlines():
+            parts = [x.strip() for x in raw.lstrip("\ufeff").split(",")]
+            if len(parts) < 3:
+                continue
+            try:
+                cards.append({
+                    "index": int(parts[0]),
+                    "used_mb": int(float(parts[1])),
+                    "total_mb": max(1, int(float(parts[2]))),
+                })
+            except (ValueError, TypeError):
+                continue
+        if cards:
+            return cards
+    return []
+
+
+def query_gpu_memory_all() -> list[dict]:
+    """Per-card GPU memory (MiB); [] if unavailable. Falls back to single card."""
+    cards = _query_gpu_memory_all_nvidia_smi()
+    if cards:
+        return cards
+    one = query_gpu_memory()
+    if one:
+        return [{"index": 0, "used_mb": int(one.get("used_mb", 0)), "total_mb": int(one.get("total_mb", 1))}]
+    return []
+
+
 def query_gpu_processes() -> list[dict]:
     """查询正在占用 GPU 的进程。失败时返回空列表，不影响健康检查。"""
     return _query_gpu_processes_nvidia_smi()

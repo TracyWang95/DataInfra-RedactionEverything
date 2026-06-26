@@ -11,10 +11,12 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import FileResponse, JSONResponse
 from starlette.types import Message
 
 from app.api import auth as auth_api
@@ -34,6 +36,7 @@ from app.core.auth import require_auth, require_super_admin
 from app.core.config import settings
 from app.core.errors import AppError, app_error_handler, http_exception_handler, validation_exception_handler
 from app.core.gpu_memory import query_gpu_memory as _query_gpu_memory
+from app.core.gpu_memory import query_gpu_memory_all as _query_gpu_memory_all
 from app.core.health_checks import check_has_ner_health, check_ocr_health_sync, check_service_health_sync
 from app.core.logging_config import setup_logging
 from app.models.schemas import HealthResponse
@@ -387,6 +390,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 from app.core.request_id import RequestIdMiddleware  # noqa: E402
 
 app.add_middleware(RequestIdMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # 确保上传和输出目录存在
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -411,6 +415,19 @@ app.include_router(safety_api.router, prefix=settings.API_PREFIX, tags=["数据�
 
 logger.info("presets API: GET/POST %s/presets (若前端仍 404，请重启本进程以加载最新路由", settings.API_PREFIX)
 
+# ---- Serve the built frontend from this process (single origin: browser -> uvicorn for UI + API) ----
+_FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
+_FRONTEND_INDEX = (
+    os.path.join(_FRONTEND_DIST, "index.html")
+    if os.path.isfile(os.path.join(_FRONTEND_DIST, "index.html"))
+    else None
+)
+if _FRONTEND_INDEX is not None and os.path.isdir(os.path.join(_FRONTEND_DIST, "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join(_FRONTEND_DIST, "assets")), name="assets")
+    logger.info("Serving built frontend from %s", _FRONTEND_DIST)
+else:
+    logger.warning("Frontend dist not found at %s; API-only mode", _FRONTEND_DIST)
+
 # Prometheus metrics endpoint
 from datetime import UTC  # noqa: E402, I001
 from app.core.metrics import metrics_endpoint  # noqa: E402
@@ -420,9 +437,11 @@ async def metrics_view(request: Request):
     return await metrics_endpoint(request)
 
 
-@app.get("/", tags=["root"])
+@app.get("/", tags=["root"], include_in_schema=False)
 async def root():
-    """API root."""
+    """Serve the built SPA when present, else API info."""
+    if _FRONTEND_INDEX is not None:
+        return FileResponse(_FRONTEND_INDEX)
     return {
         "name": settings.APP_NAME,
         "version": settings.APP_VERSION,
@@ -509,6 +528,7 @@ async def services_health():
     probe_ms = round((time.perf_counter() - t0) * 1000, 1)
 
     gpu_mem = await loop.run_in_executor(None, _query_gpu_memory)
+    gpu_mem_all = await loop.run_in_executor(None, _query_gpu_memory_all)
 
     services["paddle_ocr"] = ocr_result.as_service_payload()
     services["has_ner"] = has_result.as_service_payload()
@@ -573,10 +593,27 @@ async def services_health():
         "probe_ms": probe_ms,
         "checked_at": datetime.now(UTC).isoformat(),
         "gpu_memory": gpu_mem,
+        "gpu_memory_all": gpu_mem_all,
         # Endpoint is intentionally unauthenticated (dev.mjs waitJson probes it),
         # so process names/PIDs are not exposed. Field kept for the frontend hook.
         "gpu_processes": [],
     }
+
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def _spa_fallback(full_path: str):
+    """SPA deep-link fallback: real static file if present, else index.html.
+    Reserved prefixes 404 so API/docs/health are never masked (they also match
+    their own routes first, registered before this catch-all)."""
+    if _FRONTEND_INDEX is None:
+        raise StarletteHTTPException(status_code=404)
+    if full_path.startswith(("api/", "api", "health", "metrics", "docs", "openapi", "redoc")):
+        raise StarletteHTTPException(status_code=404)
+    candidate = os.path.normpath(os.path.join(_FRONTEND_DIST, full_path))
+    if full_path and candidate.startswith(_FRONTEND_DIST) and os.path.isfile(candidate):
+        return FileResponse(candidate)
+    return FileResponse(_FRONTEND_INDEX)
 
 
 if __name__ == "__main__":

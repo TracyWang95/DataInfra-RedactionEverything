@@ -972,90 +972,6 @@
       "generic_target": "GEN_ATTRIBUTE_STATUS"
     },
     {
-      "id": "LEGAL_PLAINTIFF",
-      "name": "原告",
-      "description": "法律案件中的原告、申请人、上诉人等提出请求的一方。只表示该诉讼/程序角色对应的姓名或组织名称。",
-      "examples": [
-        "原告张三",
-        "申请人某某公司",
-        "上诉人李某"
-      ],
-      "color": "#7C3AED",
-      "enabled": true,
-      "order": 410,
-      "data_domain": "pii",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "person_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_PERSON_SUBJECT"
-    },
-    {
-      "id": "LEGAL_DEFENDANT",
-      "name": "被告",
-      "description": "法律案件中的被告、被申请人、被上诉人、被执行人等相对方。只表示该诉讼/程序角色对应的姓名或组织名称。",
-      "examples": [
-        "被告王某",
-        "被申请人某某公司",
-        "被执行人赵某"
-      ],
-      "color": "#8B5CF6",
-      "enabled": true,
-      "order": 420,
-      "data_domain": "pii",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "person_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_PERSON_SUBJECT"
-    },
-    {
-      "id": "LEGAL_THIRD_PARTY",
-      "name": "第三人",
-      "description": "法律案件中的第三人、利害关系人、案外人等非原被告但参与程序的主体。",
-      "examples": [
-        "第三人刘某",
-        "利害关系人某公司",
-        "案外人陈某"
-      ],
-      "color": "#A78BFA",
-      "enabled": true,
-      "order": 430,
-      "data_domain": "pii",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "person_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_PERSON_SUBJECT"
-    },
-    {
-      "id": "LEGAL_COURT",
-      "name": "法院",
-      "description": "法院、仲裁机构、调解组织等法律程序机构名称。只表示机构名称。不包含文书标题、表单标题、章节标题或文件类型名称。",
-      "examples": [
-        "上海市浦东新区人民法院",
-        "北京市第一中级人民法院",
-        "中国国际经济贸易仲裁委员会"
-      ],
-      "color": "#6D28D9",
-      "enabled": true,
-      "order": 440,
-      "data_domain": "organization_subject",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "organization_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_ORGANIZATION_SUBJECT"
-    },
-    {
       "id": "LEGAL_CASE_ID",
       "name": "案号",
       "description": "法院、仲裁、执行、侦查等法律程序中的案件编号或文书编号。",
@@ -1075,48 +991,6 @@
       ],
       "entity_type_ids": [],
       "generic_target": "GEN_NUMBER_CODE"
-    },
-    {
-      "id": "LEGAL_ATTORNEY",
-      "name": "代理律师",
-      "description": "律师、辩护人、诉讼代理人、委托代理人等法律服务人员姓名或称谓。",
-      "examples": [
-        "代理律师李律师",
-        "辩护人王某",
-        "委托诉讼代理人赵某"
-      ],
-      "color": "#5B21B6",
-      "enabled": true,
-      "order": 460,
-      "data_domain": "pii",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "person_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_PERSON_SUBJECT"
-    },
-    {
-      "id": "LEGAL_LAW_FIRM",
-      "name": "律所",
-      "description": "律师事务所、法律服务所、公证处等法律服务机构名称。不包含文书标题、表单标题、章节标题或文件类型名称。",
-      "examples": [
-        "北京市某某律师事务所",
-        "上海某法律服务所",
-        "某某公证处"
-      ],
-      "color": "#7E22CE",
-      "enabled": true,
-      "order": 470,
-      "data_domain": "organization_subject",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "organization_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_ORGANIZATION_SUBJECT"
     },
     {
       "id": "LEGAL_CLAIM",
@@ -1157,49 +1031,6 @@
       ],
       "entity_type_ids": [],
       "generic_target": "GEN_ACCOUNT_TRANSACTION"
-    },
-    {
-      "id": "FIN_ACCOUNT_NAME",
-      "name": "账户户名",
-      "description": "银行账户、证券账户、支付账户等账户对应的户名或开户名称。",
-      "examples": [
-        "户名：张三",
-        "开户名称：某某有限公司",
-        "账户名称：李某"
-      ],
-      "color": "#0891B2",
-      "enabled": true,
-      "order": 520,
-      "data_domain": "account_transaction",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "account_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_ACCOUNT_TRANSACTION"
-    },
-    {
-      "id": "FIN_INSTITUTION",
-      "name": "金融机构",
-      "description": "银行、证券公司、保险公司、基金公司、支付机构等金融机构名称。不包含文书标题、表单标题、章节标题或文件类型名称。",
-      "examples": [
-        "中国某银行",
-        "某某证券股份有限公司",
-        "某支付有限公司"
-      ],
-      "color": "#0284C7",
-      "enabled": true,
-      "order": 530,
-      "data_domain": "account_transaction",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "account_like",
-        "organization_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_ORGANIZATION_SUBJECT"
     },
     {
       "id": "FIN_TRANSACTION_ID",
@@ -1261,69 +1092,6 @@
       "linkage_groups": [],
       "entity_type_ids": [],
       "generic_target": "GEN_ATTRIBUTE_STATUS"
-    },
-    {
-      "id": "MED_PATIENT",
-      "name": "患者",
-      "description": "病历、处方、检查报告中的患者、受检者、就诊人、住院人姓名或称谓。",
-      "examples": [
-        "患者张三",
-        "受检者李某",
-        "就诊人王某"
-      ],
-      "color": "#DB2777",
-      "enabled": true,
-      "order": 610,
-      "data_domain": "pii",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "person_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_PERSON_SUBJECT"
-    },
-    {
-      "id": "MED_CLINICIAN",
-      "name": "医务人员",
-      "description": "医生、护士、检验师、审核医师、开单医师等医务人员姓名或工号。",
-      "examples": [
-        "主治医师李某",
-        "护士王某",
-        "检验师编号T001"
-      ],
-      "color": "#C026D3",
-      "enabled": true,
-      "order": 620,
-      "data_domain": "pii",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "person_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_PERSON_SUBJECT"
-    },
-    {
-      "id": "MED_INSTITUTION",
-      "name": "医疗机构",
-      "description": "医院、诊所、检验中心、体检机构、药房等医疗健康机构名称。不包含文书标题、表单标题、章节标题或文件类型名称。",
-      "examples": [
-        "某某人民医院",
-        "某医学检验所",
-        "某社区卫生服务中心"
-      ],
-      "color": "#BE185D",
-      "enabled": true,
-      "order": 630,
-      "data_domain": "organization_subject",
-      "coref_enabled": true,
-      "default_enabled": false,
-      "linkage_groups": [
-        "organization_like"
-      ],
-      "entity_type_ids": [],
-      "generic_target": "GEN_ORGANIZATION_SUBJECT"
     },
     {
       "id": "MED_DEPARTMENT",

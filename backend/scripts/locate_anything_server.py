@@ -406,7 +406,7 @@ class LocateService:
             # slightly between runs; that is intentional. NOTE: repetition_penalty
             # is omitted — with vLLM prompt-embeds there are no prompt token-ids, so
             # the penalty kernel indexes out of bounds and triggers a CUDA assert.
-            "temperature": 0.7,
+            "temperature": DEFAULT_TEMPERATURE,
             "top_p": 0.9,
             "seed": VLLM_LM_SEED,
             "prompt_embeds": prompt_embeds_b64,
@@ -964,16 +964,18 @@ async def detect(req: DetectRequest) -> dict[str, Any]:
                     if normalized is not None:
                         out.append(normalized)
         else:
-            prompt = _detect_prompt(general_requested)
-            answer, boxes, (width, height) = await service.predict_boxes(image, prompt)
-            raw_answers.append(answer)
-            for box in boxes:
-                category = _category_from_label(str(box.get("label") or ""), general_requested)
-                if category is None:
-                    continue
-                normalized = _box_to_normalized(box, width, height, category)
-                if normalized is not None:
-                    out.append(normalized)
+            # Per-category prompts: LocateAnything multi-instance recall collapses
+            # when several categories share one prompt (observed: {official_seal,
+            # signature} together -> 1 signature, signature alone -> 3). One
+            # single-category hybrid pass each restores recall. Mirrors the vLLM
+            # predict_boxes_per_category path. Quality over a few extra seconds.
+            for cat in general_requested:
+                answer, boxes, (width, height) = await service.predict_boxes(image, _detect_prompt([cat]))
+                raw_answers.append(f"[{cat}] {answer}")
+                for box in boxes:
+                    normalized = _box_to_normalized(box, width, height, cat)
+                    if normalized is not None:
+                        out.append(normalized)
 
     out = _dedupe_boxes(out)
     elapsed = time.perf_counter() - start

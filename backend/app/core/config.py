@@ -254,6 +254,7 @@ class Settings(BaseSettings):
     # running both heavy VLMs at once causes ~5-10x slowdown from contention
     # (measured: 54s parallel vs ~10s serial on one file).
     SERIALIZE_SHARED_GPU_MODELS: bool = True
+    VISION_DUAL_PIPELINE_PARALLEL: bool = False
     # PaddleOCR-VL toggle. Dropped from the default deployment: when false the
     # backend never calls the VL /ocr endpoint and routes all OCR through
     # PP-StructureV3 (the current, faster, more precise path).
@@ -341,7 +342,7 @@ class Settings(BaseSettings):
     @field_validator("OCR_MAX_NEW_TOKENS")
     @classmethod
     def _validate_ocr_max_new_tokens(cls, v: int) -> int:
-        return max(128, min(4096, v))
+        return max(128, min(8192, v))
 
     @field_validator("OCR_MAX_IMAGE_SIDE")
     @classmethod
@@ -411,7 +412,7 @@ class Settings(BaseSettings):
     @field_validator("HAS_NER_TYPE_BATCH_TARGET_TOKENS")
     @classmethod
     def _validate_has_ner_type_batch_target_tokens(cls, v: int) -> int:
-        return max(128, min(4096, v))
+        return max(128, min(8192, v))
 
     @field_validator("HAS_NER_CACHE_MAX_ITEMS")
     @classmethod

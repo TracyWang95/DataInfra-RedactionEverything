@@ -655,10 +655,28 @@ class VisionService:
             logger.info("%s found %d regions", label, len(boxes))
 
         # OCR+HaS (text PII) and LocateAnything (visual features) are two
-        # independent recall channels. They run sequentially — on a single 16 GB
-        # GPU parallel inference thrashes VRAM and is slower — then merge once.
+        # independent recall channels, but they run SEQUENTIALLY on purpose:
+        # OCR (PP-Structure) and LA (MoonViT) contend hard for one card's VRAM
+        # if run concurrently. Measured on the dual 5090s: parallel inflated
+        # ocr_has 0.5s -> 5-10s AND the combined memory pressure OOM'd LA's
+        # 2048 forward, silently dropping the visual (signature/seal) boxes.
+        # Serial keeps each model alone on the GPU; the cross-GPU win is in
+        # LocateAnything itself (per-category fan-out across both cards).
+        run_parallel = (
+            len(jobs) > 1
+            and bool(getattr(settings, "VISION_DUAL_PIPELINE_PARALLEL", False))
+        )
         if not jobs:
             logger.info("No vision pipeline jobs enabled; returning empty results")
+        elif run_parallel:
+            # OCR+HaS and LA run concurrently. Safe now that PaddleOCR-VL
+            # recognition is REMOTE (off the OCR card) and LA runs at 1280, so
+            # same-card OCR+LA no longer OOMs. Toggle off via the flag to revert.
+            outcomes = await asyncio.gather(
+                *(factory() for _label, factory in jobs), return_exceptions=True
+            )
+            for (label, _factory), result in zip(jobs, outcomes):
+                await record_pipeline_result(label, result)
         else:
             for label, factory in jobs:
                 try:
@@ -667,8 +685,11 @@ class VisionService:
                     result = exc
                 await record_pipeline_result(label, result)
 
+        all_boxes = self._suppress_text_in_signature(all_boxes)
+        all_boxes = self._prefer_vl_seals(all_boxes)
         all_boxes = self._deduplicate_boxes(all_boxes)
         all_boxes = self._expand_signature_boxes(all_boxes)
+        all_boxes = self._present_seals_as_visual(all_boxes)
 
         result_image_base64 = None
         if include_result_image:
@@ -753,6 +774,82 @@ class VisionService:
         if smaller <= 0:
             return 0.0
         return intersection / smaller
+
+    @staticmethod
+    def _center_inside(inner: BoundingBox, outer: BoundingBox) -> bool:
+        """True if the center point of ``inner`` lies within ``outer``."""
+        cx = inner.x + inner.width / 2.0
+        cy = inner.y + inner.height / 2.0
+        return outer.x <= cx <= outer.x + outer.width and outer.y <= cy <= outer.y + outer.height
+
+    def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """Drop OCR text boxes that coincide with a LocateAnything signature box.
+
+        OCR reading the signature scribble as text is a false positive. An
+        ocr_has text box whose center sits inside a visual signature box (or that
+        contains the signature's center) is suppressed in favour of the signature
+        box. Center-point anchoring is an identity-grade geometric test.
+        """
+        sig_types = {"signature", "handwriting", "approval_mark"}
+        sigs = [b for b in boxes if b.source == "visual_features" and b.type in sig_types]
+        if not sigs:
+            return boxes
+        kept: list[BoundingBox] = []
+        dropped = 0
+        for b in boxes:
+            if b.source == "ocr_has" and any(
+                self._center_inside(b, s) or self._center_inside(s, b) for s in sigs
+            ):
+                dropped += 1
+                continue
+            kept.append(b)
+        if dropped:
+            logger.info("Suppressed %d OCR text box(es) inside a signature region", dropped)
+        return kept
+
+    def _prefer_vl_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """For official_seal, prefer OCR/VL boxes over LocateAnything boxes.
+
+        VL (ocr_has) segments stacked stamps into one box per seal; LocateAnything
+        often over-merges them into a single tall strip. Where a VL seal coincides
+        with an LA seal (centers mutually contain), drop the LA box so the VL split
+        wins. LA seals with no VL counterpart are kept (gap-fill for stamps VL
+        missed). If VL produced no seals, keep every LA seal unchanged.
+        """
+        vl_seals = [b for b in boxes if b.type == "official_seal" and b.source == "ocr_has"]
+        if not vl_seals:
+            return boxes
+        kept: list[BoundingBox] = []
+        dropped = 0
+        for b in boxes:
+            if b.type == "official_seal" and b.source == "visual_features" and any(
+                self._center_inside(v, b) or self._center_inside(b, v) for v in vl_seals
+            ):
+                dropped += 1
+                continue
+            kept.append(b)
+        if dropped:
+            logger.info("Dropped %d LA seal box(es) superseded by VL seals", dropped)
+        return kept
+
+    @staticmethod
+    def _present_seals_as_visual(boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """A seal is a visual feature whatever engine found it. PaddleOCR-VL finds
+        seals through the OCR channel (source=ocr_has); relabel every official_seal
+        to the visual-features source so the UI shows a uniform 'visual feature'
+        and never reveals which engine detected the stamp.
+        """
+        out: list[BoundingBox] = []
+        for b in boxes:
+            if b.type == "official_seal" and b.source != "visual_features":
+                out.append(b.model_copy(update={
+                    "source": "visual_features",
+                    "source_detail": "visual_feature_model",
+                    "evidence_source": "visual_feature_model",
+                }))
+            else:
+                out.append(b)
+        return out
 
     def _deduplicate_boxes(
         self,
