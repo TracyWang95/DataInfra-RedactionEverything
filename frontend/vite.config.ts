@@ -19,6 +19,18 @@ const backendProxy = {
     target: backendTarget,
     changeOrigin: true,
   },
+  '/docs': {
+    target: backendTarget,
+    changeOrigin: true,
+  },
+  '/redoc': {
+    target: backendTarget,
+    changeOrigin: true,
+  },
+  '/openapi.json': {
+    target: backendTarget,
+    changeOrigin: true,
+  },
   '/uploads': {
     target: backendTarget,
     changeOrigin: true,

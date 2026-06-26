@@ -58,6 +58,9 @@ const SystemSettings = React.lazy(() =>
 const VisionModelSettings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.VisionModelSettings })),
 );
+const ApiDocsPage = React.lazy(() =>
+  import('./features/api-docs').then((m) => ({ default: m.ApiDocsPage })),
+);
 const PlaygroundImagePopout = React.lazy(() =>
   import('./features/playground/components/playground-image-popout').then((m) => ({
     default: m.PlaygroundImagePopout,
@@ -355,6 +358,14 @@ export const router = createBrowserRouter([
         element: (
           <LazyPage>
             <Settings />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'docs/api',
+        element: (
+          <LazyPage>
+            <ApiDocsPage />
           </LazyPage>
         ),
       },

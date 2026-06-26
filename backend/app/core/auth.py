@@ -558,7 +558,7 @@ async def require_auth(
 ) -> str | None:
     """Require a valid JWT when auth is enabled."""
     if not settings.AUTH_ENABLED:
-        return "anonymous"
+        return _LEGACY_SUBJECT
 
     token: str | None = None
     if credentials is not None:
@@ -579,7 +579,7 @@ async def require_super_admin(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str:
     if not settings.AUTH_ENABLED:
-        return "anonymous"
+        return _LEGACY_SUBJECT
 
     subject = await require_auth(request, credentials)
     user = get_user(subject)
@@ -595,7 +595,7 @@ async def get_optional_subject(
 ) -> str | None:
     """Return the authenticated subject when present, otherwise ``None``."""
     if not settings.AUTH_ENABLED:
-        return "anonymous"
+        return _LEGACY_SUBJECT
 
     token: str | None = None
     if credentials is not None:

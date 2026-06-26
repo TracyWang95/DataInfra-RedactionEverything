@@ -7,6 +7,7 @@ import {
   PackageCheck,
   RefreshCw,
   Server,
+  BookOpen,
   ShieldCheck,
   TableProperties,
 } from 'lucide-react';
@@ -139,6 +140,13 @@ export function AppSidebar() {
           },
         ]
       : []),
+    {
+      path: '/docs/api',
+      label: t('nav.apiDocs'),
+      sublabel: t('nav.apiDocs.sub'),
+      icon: BookOpen,
+      end: true,
+    },
   ];
 
   return (
