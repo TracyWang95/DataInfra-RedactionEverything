@@ -1,0 +1,4 @@
+interface:
+  display_name: "Visual Detect Module"
+  short_description: "Visual privacy boxes in one detection stage."
+  default_prompt: "Use $redaction-visual-detect-module to detect visual regions on this image."

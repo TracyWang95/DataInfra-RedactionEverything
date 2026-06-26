@@ -1,3 +1,5 @@
+> **Flow note:** Prefer the stage module listed in workflows.md. This fine-grained skill is for code navigation only.
+
 ---
 name: redaction-code-region-detect
 description: Functional skill for detecting QR code and barcode privacy regions as deterministic local supplements, respecting requested visual categories and deduplicating with model boxes. Use when the user asks to locate QR or barcode regions on an image.

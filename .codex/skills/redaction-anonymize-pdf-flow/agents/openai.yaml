@@ -1,0 +1,4 @@
+interface:
+  display_name: "PDF Anonymize Flow"
+  short_description: "End-to-end PDF anonymization workflow."
+  default_prompt: "Use $redaction-anonymize-pdf-flow for text and scanned PDF redaction."

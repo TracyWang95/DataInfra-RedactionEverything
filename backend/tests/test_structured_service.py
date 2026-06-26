@@ -119,6 +119,38 @@ def _write_demo_customer_sqlite(path: Path) -> None:
         )
 
 
+def test_save_structured_upload_keeps_xlsx_extension_for_chinese_filename(tmp_path, monkeypatch):
+    monkeypatch.setattr(structured_service.settings, "DATA_DIR", str(tmp_path / "data"))
+
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "data/structured_uploads/anonymous/0664a80d4ab145c9b0ce5e3862707e76_xlsx"
+    )
+    if not fixture.is_file():
+        pytest.skip("local structured upload fixture missing")
+    content = fixture.read_bytes()
+
+    assert structured_service.safe_filename("客户表.xlsx").endswith(".xlsx")
+
+    path, kind = structured_service.save_structured_upload(
+        owner_id="tenant_a",
+        filename="客户表.xlsx",
+        content=content,
+    )
+    assert kind == "xlsx"
+    assert path.endswith(".xlsx")
+
+    store = StructuredStore(str(tmp_path / "structured.sqlite3"))
+    result = structured_service.register_file_source(
+        owner_id="tenant_a",
+        filename="客户表.xlsx",
+        file_path=path,
+        kind=kind,
+        store=store,
+    )
+    assert result["datasets"]
+
+
 def test_demo_customer_table_runs_full_structured_redaction_flow(tmp_path, monkeypatch):
     monkeypatch.setattr(structured_service.settings, "OUTPUT_DIR", str(tmp_path / "output"))
     monkeypatch.setattr(structured_service.settings, "DATA_DIR", str(tmp_path / "data"))

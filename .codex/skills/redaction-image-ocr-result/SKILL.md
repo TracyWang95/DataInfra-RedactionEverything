@@ -1,3 +1,5 @@
+> **Flow note:** Prefer the stage module listed in workflows.md. This fine-grained skill is for code navigation only.
+
 ---
 name: redaction-image-ocr-result
 description: Functional skill for taking an image or scanned page and returning OCR recognition results such as raw text, OCR service payloads, text blocks, line text, page size, timings, cache status, and OCR warnings. Use when the user asks to OCR an image or inspect OCR output before anonymization.

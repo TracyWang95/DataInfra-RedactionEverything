@@ -33,6 +33,12 @@ from app.services.structured_store import StructuredStore, get_structured_store
 logger = logging.getLogger(__name__)
 
 SUPPORTED_FILE_EXTENSIONS = {".csv": "csv", ".xlsx": "xlsx", ".jsonl": "jsonl", ".db": "sqlite", ".sqlite": "sqlite"}
+DEFAULT_EXTENSION_BY_KIND = {
+    "csv": ".csv",
+    "xlsx": ".xlsx",
+    "jsonl": ".jsonl",
+    "sqlite": ".sqlite",
+}
 MAX_PROFILE_ROWS = 500
 MAX_PREVIEW_ROWS = 100
 MAX_EXPORT_ROWS = 250_000
@@ -190,8 +196,14 @@ def get_upload_dir(owner_id: str) -> str:
 
 
 def safe_filename(name: str) -> str:
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name or "data")).strip("._")
-    return stem[:120] or "data"
+    base = os.path.basename(str(name or "data"))
+    stem, ext = os.path.splitext(base)
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("._")
+    safe_ext = re.sub(r"[^A-Za-z0-9.]+", "", ext.lower())
+    if not safe_stem:
+        safe_stem = "data"
+    result = f"{safe_stem}{safe_ext}" if safe_ext else safe_stem
+    return result[:120] or "data"
 
 
 def export_base_filename(name: str) -> str:
@@ -277,7 +289,12 @@ def decrypt_credential(payload: dict[str, Any]) -> dict[str, Any]:
 
 def save_structured_upload(*, owner_id: str, filename: str, content: bytes) -> tuple[str, str]:
     kind = extension_kind(filename)
-    stored = f"{uuid.uuid4().hex}_{safe_filename(filename)}"
+    ext = os.path.splitext(str(filename or "").lower())[1]
+    if ext not in SUPPORTED_FILE_EXTENSIONS or SUPPORTED_FILE_EXTENSIONS[ext] != kind:
+        ext = DEFAULT_EXTENSION_BY_KIND[kind]
+    # Keep a real extension on disk: openpyxl rejects valid xlsx bytes when the path
+    # ends with "_xlsx" instead of ".xlsx" (common after sanitizing Chinese filenames).
+    stored = f"{uuid.uuid4().hex}{ext}"
     path = os.path.join(get_upload_dir(owner_id), stored)
     with open(path, "wb") as fh:
         fh.write(content)
@@ -450,8 +467,15 @@ def read_jsonl(path: str, *, limit: int | None = None) -> LoadedTable:
 
 def discover_xlsx_datasets(path: str, *, source_id: str, source_name: str) -> list[dict[str, Any]]:
     from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
 
-    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        wb = load_workbook(path, read_only=True, data_only=True)
+    except InvalidFileException as exc:
+        raise ValueError(
+            "无法读取 Excel 文件。请确认文件为有效的 .xlsx/.xlsm 格式，"
+            "旧版 .xls 需先在 Excel 中另存为 .xlsx。"
+        ) from exc
     datasets: list[dict[str, Any]] = []
     try:
         for sheet_name in wb.sheetnames:

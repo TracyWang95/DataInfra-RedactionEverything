@@ -1,3 +1,5 @@
+> **Flow note:** Prefer the stage module listed in workflows.md. This fine-grained skill is for code navigation only.
+
 ---
 name: redaction-text-ner-result
 description: Functional skill for taking plain text or OCR text and returning sensitive text entities through HaS Text semantic NER plus optional user regex fallback. Use when the user asks for entity recognition results such as names, IDs, accounts, dates, amounts, addresses, legal, finance, or medical tags.

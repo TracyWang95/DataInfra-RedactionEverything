@@ -1,3 +1,5 @@
+> **Flow note:** Prefer the stage module listed in workflows.md. This fine-grained skill is for code navigation only.
+
 ---
 name: redaction-visual-region-locate
 description: Functional skill for locating non-text visual privacy regions with LocateAnything or compatible visual services, including faces, signatures, seals, cards, screens, license plates, documents, and user custom labels. Use when the user asks for visual detection boxes from an image.

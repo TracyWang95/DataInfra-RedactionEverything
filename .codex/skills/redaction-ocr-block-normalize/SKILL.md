@@ -1,3 +1,5 @@
+> **Flow note:** Prefer the stage module listed in workflows.md. This fine-grained skill is for code navigation only.
+
 ---
 name: redaction-ocr-block-normalize
 description: Functional skill for converting raw OCR items into normalized OCR text blocks with bounding boxes, char boxes, page dimensions, visual line reconstruction, table block expansion, merged OCR blocks, and cache-safe output. Use when the user asks for OCR block results or page text segmentation.

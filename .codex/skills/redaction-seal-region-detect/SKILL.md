@@ -1,3 +1,5 @@
+> **Flow note:** Prefer the stage module listed in workflows.md. This fine-grained skill is for code navigation only.
+
 ---
 name: redaction-seal-region-detect
 description: Functional skill for detecting red seal regions that supplement model-based visual detection, including binding seals, edge seals, merged seal splitting, red-ink masks, and deduplication against existing official_seal boxes. Use when the user asks to find or improve seal masks.

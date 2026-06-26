@@ -1,0 +1,4 @@
+interface:
+  display_name: "Text Entity Module"
+  short_description: "NER entities from text with per-request types."
+  default_prompt: "Use $redaction-text-entity-module to extract entities with types I specify."

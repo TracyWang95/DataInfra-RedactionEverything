@@ -1,0 +1,4 @@
+interface:
+  display_name: "Batch Anonymize Flow"
+  short_description: "End-to-end unstructured batch job workflow."
+  default_prompt: "Use $redaction-anonymize-batch-flow for batch create through export."

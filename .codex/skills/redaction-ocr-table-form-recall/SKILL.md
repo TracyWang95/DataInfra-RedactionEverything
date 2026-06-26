@@ -1,3 +1,5 @@
+> **Flow note:** Prefer the stage module listed in workflows.md. This fine-grained skill is for code navigation only.
+
 ---
 name: redaction-ocr-table-form-recall
 description: Functional skill for recovering sensitive values from OCR tables and form fields, including amount column recall, document number recall, label-value splitting, table cell placement, and matching recalled values back to OCR blocks. Use when the user asks for table/form extraction before masking.

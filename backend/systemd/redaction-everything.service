@@ -1,0 +1,19 @@
+[Unit]
+Description=DataInfra Redaction Everything (MinerU local stack)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/evalops/Desktop/work/DataInfra-RedactionEverything/backend
+Environment=HOME=/home/evalops
+Environment=CONDA_BASE=/home/evalops/anaconda3
+Environment=CONDA_ENV=DataInfra_minerU
+ExecStart=/home/evalops/Desktop/work/DataInfra-RedactionEverything/backend/scripts/autostart_local.sh
+ExecStop=/home/evalops/Desktop/work/DataInfra-RedactionEverything/backend/scripts/stop_all_local.sh
+TimeoutStartSec=1200
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

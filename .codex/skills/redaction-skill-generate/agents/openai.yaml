@@ -1,0 +1,4 @@
+interface:
+  display_name: "Redaction Skill Generate"
+  short_description: "Scaffold function-point skills by pipeline phase."
+  default_prompt: "Use $redaction-skill-generate to create a new redaction function-point skill for one pipeline phase."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OCR Module"
+  short_description: "OCR with normalized text blocks in one step."
+  default_prompt: "Use $redaction-ocr-module to OCR this image and return normalized blocks."

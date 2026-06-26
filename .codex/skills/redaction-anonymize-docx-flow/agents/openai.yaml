@@ -1,0 +1,4 @@
+interface:
+  display_name: "DOCX Anonymize Flow"
+  short_description: "End-to-end Word DOCX anonymization workflow."
+  default_prompt: "Use $redaction-anonymize-docx-flow for complete DOCX redaction steps."

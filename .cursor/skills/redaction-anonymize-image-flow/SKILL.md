@@ -1,32 +1,38 @@
 ---
 name: redaction-anonymize-image-flow
-description: Functional skill for running or modifying one-image anonymization from input image through OCR, OCR blocks, text entities, visual regions, merged boxes, mask plan, preview, and final masked output. Use when the user asks for the complete image anonymization pipeline or wants to connect several smaller redaction function skills.
+description: Orchestration for single-image anonymization via API and services only — OCR module, text entities, box mapping, visual detect, region merge, mask plan, preview or render. No UI or industry preset steps. Use for complete image redaction pipeline wiring.
 ---
 
 # Image Anonymize Flow
 
 ## Capability
 
-Run the full image anonymization flow: OCR, OCR block normalization, text NER, entity-to-box mapping, visual region detection, region deduplication, mask planning, preview, and final rendering.
+End-to-end image anonymization through backend modules. Recognition types are **per-request** based on document content, not industry preset bundles. No Playground or bbox-editor UI steps.
 
 ## Input And Output
 
-- Input: image file or file_id/page, optional recognition type config, optional mask style.
-- Output: OCR text, OCR blocks, entities, candidate boxes, final mask plan, preview or masked image.
+- Input: image file or file_id, optional entity_types and visual_categories for this image, mask style.
+- Output: normalized OCR, entities, merged boxes, mask plan, preview or masked image, optional report.
 
 ## Project Entry Points
 
-- API: `backend/app/api/files.py` and `backend/app/api/redaction.py`.
-- Services: `backend/app/services/vision_service.py`, `backend/app/services/vision/ocr_pipeline.py`, `backend/app/services/redaction_orchestrator.py`.
-- Frontend: `frontend/src/features/playground/`, `frontend/src/components/ImageBBoxEditor.tsx`.
+- API: `backend/app/api/files.py`, `backend/app/api/redaction.py`.
+- Services: `backend/app/services/redaction_orchestrator.py`, `backend/app/services/vision_service.py`.
 
-## Use Smaller Skills In Order
+## Module chain (independent stages)
 
-1. `$redaction-image-ocr-result`
-2. `$redaction-ocr-block-normalize`
-3. `$redaction-text-ner-result`
-4. `$redaction-ocr-entity-box-map`
-5. `$redaction-visual-region-locate`
+1. `$redaction-model-service-check` (optional)
+2. `$redaction-ocr-module`
+3. `$redaction-text-entity-module` — pass `entity_types` for this image
+4. `$redaction-entity-box-map`
+5. `$redaction-visual-detect-module` — pass visual categories needed for this image
 6. `$redaction-region-deduplicate`
 7. `$redaction-mask-plan-build`
 8. `$redaction-preview-image` or `$redaction-mask-image-render`
+9. `$redaction-report-json`, `$redaction-compare-version` (optional)
+
+## Rules
+
+- Do not include `$redaction-preset-scenario-build` or `$redaction-ui-bbox-editor`.
+- Each numbered module is independently callable for debugging.
+- API upload: see `$redaction-api-demo-call` if endpoint sequence is needed.

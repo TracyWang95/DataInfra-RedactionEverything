@@ -1,0 +1,33 @@
+---
+name: {{SKILL_NAME}}
+description: Functional skill for {{CAPABILITY_ONE_LINE}}. Use when the user asks {{TRIGGER_PHRASE}}.
+---
+
+# {{TITLE}}
+
+## Pipeline phase
+
+- Phase: {{PHASE_ID}} — {{PHASE_LABEL}}
+- Upstream: {{UPSTREAM_SKILLS}}
+- Downstream: {{DOWNSTREAM_SKILLS}}
+
+## Capability
+
+{{CAPABILITY_DETAIL}}
+
+## Input And Output
+
+- Input: {{INPUTS}}
+- Output: {{OUTPUTS}}
+
+## Project Entry Points
+
+- {{ENTRY_POINTS}}
+
+## Rules
+
+- {{RULES}}
+
+## Related skills
+
+- {{RELATED_SKILLS}}

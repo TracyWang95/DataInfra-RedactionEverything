@@ -1,31 +1,60 @@
 ---
-description: Use the RedactionEverything function-point skills for OCR, OCR blocks, NER, visual detection, mask planning, rendering, batch, structured data, and API call examples.
+description: Stage-module Agent Skills for RedactionEverything anonymization — OCR, entities, visual detect, mask, render, batch, structured. No UI or industry preset steps in flows.
 alwaysApply: false
 ---
 
-# Redaction Function Skills
+# Redaction Function Skills（阶段模块）
 
-This repository contains function-point Agent Skills in `.cursor/skills/`.
+**Excel 阶段表：** [docs/redaction-skill-workflows.xlsx](docs/redaction-skill-workflows.xlsx)
 
-Use these skills when the user asks for a specific anonymization capability:
+**原则：** 阶段模块可独立调用；不含 UI；不含金融/法律/医疗等行业预设流程；识别类型按当前内容自选。
 
-- Full image flow: `$redaction-anonymize-image-flow`
-- OCR text result: `$redaction-image-ocr-result`
-- OCR block normalization: `$redaction-ocr-block-normalize`
-- Table/form recall: `$redaction-ocr-table-form-recall`
-- Text entity recognition: `$redaction-text-ner-result`
-- Entity-to-box mapping: `$redaction-ocr-entity-box-map`
-- Visual region localization: `$redaction-visual-region-locate`
-- Seal detection: `$redaction-seal-region-detect`
-- QR/barcode detection: `$redaction-code-region-detect`
-- Region deduplication: `$redaction-region-deduplicate`
-- Mask plan generation: `$redaction-mask-plan-build`
-- Image/PDF/DOCX/text rendering: `$redaction-mask-image-render`, `$redaction-mask-pdf-render`, `$redaction-mask-docx-render`, `$redaction-mask-text-render`
-- Preview, compare, report: `$redaction-preview-image`, `$redaction-compare-version`, `$redaction-report-json`
-- Batch flow: `$redaction-batch-job-create`, `$redaction-batch-recognize-run`, `$redaction-batch-review-draft`, `$redaction-batch-export-package`
-- Structured data flow: `$redaction-structured-dataset-load`, `$redaction-structured-profile-columns`, `$redaction-structured-policy-build`, `$redaction-structured-export-run`
-- Presets, model health, UI boxes, API examples: `$redaction-preset-scenario-build`, `$redaction-model-service-check`, `$redaction-ui-bbox-editor`, `$redaction-api-demo-call`
+---
 
-For end-to-end image anonymization, chain:
+## 业务流程总调
 
-`$redaction-image-ocr-result` -> `$redaction-ocr-block-normalize` -> `$redaction-text-ner-result` -> `$redaction-ocr-entity-box-map` -> `$redaction-visual-region-locate` -> `$redaction-region-deduplicate` -> `$redaction-mask-plan-build` -> `$redaction-preview-image` or `$redaction-mask-image-render`.
+| 业务 | 总调 |
+|------|------|
+| 图片/扫描页 | `$redaction-anonymize-image-flow` |
+| 纯文本 TXT | `$redaction-anonymize-text-flow` |
+| Word DOCX | `$redaction-anonymize-docx-flow` |
+| PDF | `$redaction-anonymize-pdf-flow` |
+| 非结构化批量 | `$redaction-anonymize-batch-flow` |
+| 结构化数据 | `$redaction-anonymize-structured-flow` |
+
+---
+
+## 阶段模块（按顺序）
+
+| 阶段 | 模块 Skill |
+|------|------------|
+| 0 服务 | `$redaction-model-service-check` |
+| 1 OCR | `$redaction-ocr-module` |
+| 2 文本实体 | `$redaction-text-entity-module` |
+| 3 实体落框 | `$redaction-entity-box-map` |
+| 4 视觉检测 | `$redaction-visual-detect-module` |
+| 5 区域融合 | `$redaction-region-deduplicate` |
+| 6 脱敏计划 | `$redaction-mask-plan-build` |
+| 7 预览/渲染 | `$redaction-preview-image`, `$redaction-mask-image-render`, `$redaction-mask-pdf-render`, `$redaction-mask-docx-render`, `$redaction-mask-text-render` |
+| 8 审计 | `$redaction-report-json`, `$redaction-compare-version` |
+
+**图片链路：** OCR → 文本实体 → 落框 → 视觉 → 融合 → 计划 → 预览/渲染。
+
+---
+
+## 批量（API）
+
+`$redaction-batch-job-create` → `$redaction-batch-recognize-run` → `$redaction-batch-review-draft` → `$redaction-batch-export-package`
+
+## 结构化
+
+`$redaction-structured-dataset-load` → `$redaction-structured-profile-columns` → `$redaction-structured-policy-build` → `$redaction-structured-export-run`
+
+## 辅助
+
+- API 调用序列：`$redaction-api-demo-call`
+- 新建 Skill：`$redaction-skill-generate`
+
+## 已合并（勿在流程中拆步）
+
+旧 Skill 仅作代码索引；流程请用模块：`redaction-ocr-module`、`redaction-text-entity-module`、`redaction-visual-detect-module`。

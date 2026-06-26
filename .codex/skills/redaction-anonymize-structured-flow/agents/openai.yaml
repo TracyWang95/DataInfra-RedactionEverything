@@ -1,0 +1,4 @@
+interface:
+  display_name: "Structured Anonymize Flow"
+  short_description: "End-to-end structured data anonymization workflow."
+  default_prompt: "Use $redaction-anonymize-structured-flow for dataset load through export."

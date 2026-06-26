@@ -1,0 +1,4 @@
+interface:
+  display_name: "Text Anonymize Flow"
+  short_description: "End-to-end TXT anonymization workflow."
+  default_prompt: "Use $redaction-anonymize-text-flow for complete TXT redaction steps."
