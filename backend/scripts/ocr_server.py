@@ -38,6 +38,7 @@ _paddle_device = ""
 # this lock, so /health keeps responding during long predictions. The lock must
 # wrap EVERY Paddle inference call site; /health must never take it.
 _infer_lock = asyncio.Lock()
+_char_lock = asyncio.Lock()  # separate from _infer_lock: a peer-delegated /char must not wait on the peer's /structure lock (deadlock-free cross-delegation)
 
 MAX_SIDE = int(os.environ.get("OCR_MAX_IMAGE_SIDE", "1600"))
 SEAL_TEXT = "[公章]"
@@ -257,7 +258,12 @@ def warmup_structure() -> None:
         draw.text((270, 92), "Value", fill="black")
         extract_structure(image, StructureRequest(image=""))
         trim_cuda_cache("structure warmup")
-        print("[OCR] PP-StructureV3 warmup complete", flush=True)
+        # Warm the char-box (word) engine too: with OCR_PEER_URL set, /structure
+        # delegates char boxes to the peer's /char, so each instance's word
+        # engine must be hot or the first /char eats a ~5s cold load.
+        _extract_char_boxes(image)
+        trim_cuda_cache("word warmup")
+        print("[OCR] PP-StructureV3 + word-box engine warmup complete", flush=True)
     except Exception as exc:
         print(f"[OCR] PP-StructureV3 warmup failed: {exc}", flush=True)
 
@@ -1040,6 +1046,34 @@ def _drop_uncorroborated_overlaps(mapped: list[OCRBox]) -> int:
     return dropped
 
 
+def _peer_char_boxes(peer_url: str, image_b64: str) -> list[dict[str, Any]]:
+    """Char boxes from the peer OCR instance (other GPU), so the char pass
+    overlaps the local structure pass. Char coords are normalized [0,1], so the
+    peer result aligns with local line boxes regardless of which instance ran."""
+    import json as _json
+    import urllib.request as _u
+
+    body = _json.dumps({"image": image_b64}).encode()
+    req = _u.Request(peer_url.rstrip("/") + "/char", data=body, headers={"Content-Type": "application/json"})
+    with _u.urlopen(req, timeout=120) as resp:
+        return _json.loads(resp.read()).get("chars") or []
+
+
+@app.post("/char")
+async def char_extract(request: StructureRequest) -> dict[str, Any]:
+    """Char-box-only pass (used by a peer instance's /structure to parallelize
+    the two OCR passes across both GPUs). Uses _char_lock, not _infer_lock."""
+    if not _ready:
+        raise HTTPException(status_code=503, detail="OCR service is not ready")
+    try:
+        _o, ocr_image, _sx, _sy = prepare_image(base64.b64decode(request.image))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid base64 image") from exc
+    async with _char_lock:
+        chars = await asyncio.to_thread(_extract_char_boxes, ocr_image)
+    return {"chars": chars}
+
+
 @app.post("/structure", response_model=OCRResponse)
 async def structure_extract(request: StructureRequest) -> OCRResponse:
     if not _ready:
@@ -1056,14 +1090,35 @@ async def structure_extract(request: StructureRequest) -> OCRResponse:
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Invalid base64 image") from exc
 
+    # Char-box pass on the peer GPU, concurrent with the local structure pass
+    # (OCR_PEER_URL -> other LB instance). Unset => local serial char pass.
+    peer_url = os.environ.get("OCR_PEER_URL", "").strip()
+    char_future = (
+        asyncio.create_task(asyncio.to_thread(_peer_char_boxes, peer_url, request.image))
+        if peer_url
+        else None
+    )
+
     # Both Paddle inference passes (structure + char boxes) run in worker
     # threads under the module lock so /health stays responsive while keeping
     # the single-request serial semantics (predictors are not thread-safe).
     async with _infer_lock:
         try:
+            _ta = time.perf_counter()
             items = await asyncio.to_thread(extract_structure, ocr_image, request)
+            _tb = time.perf_counter()
             mapped = map_boxes_to_original(items)
-            _attach_chars(mapped, await asyncio.to_thread(_extract_char_boxes, ocr_image))
+            if char_future is not None:
+                try:
+                    chars = await char_future
+                except Exception as exc:
+                    print(f"[OCR] peer char failed ({exc}); local fallback", flush=True)
+                    chars = await asyncio.to_thread(_extract_char_boxes, ocr_image)
+            else:
+                chars = await asyncio.to_thread(_extract_char_boxes, ocr_image)
+            _attach_chars(mapped, chars)
+            _tc = time.perf_counter()
+            print(f"[OCR-prof] structure={_tb-_ta:.2f}s char={_tc-_tb:.2f}s peer={'y' if char_future else 'n'}", flush=True)
             suppressed = await asyncio.to_thread(_suppress_red_ink, ocr_image)
             if suppressed is not None:
                 sup_lines, sup_chars = await asyncio.to_thread(_extract_suppressed_lines, suppressed)

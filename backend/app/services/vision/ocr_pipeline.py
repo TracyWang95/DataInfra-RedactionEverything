@@ -2819,6 +2819,74 @@ def _is_same_amount_value_block(entity_text: str, block_text: str) -> bool:
     return _amount_value_signature(_compact_amount_candidate(candidate)) == entity_signature
 
 
+def _narrow_charsless_block_to_lines(
+    block: OCRTextBlock,
+    block_text: str,
+    occurrence_start: int,
+    occurrence_text: str,
+    prepared_blocks: list,
+) -> tuple[int, int, int, int] | None:
+    """Narrow a value matched on a chars-less PaddleOCR-VL paragraph block to the
+    one PP-Structure line (with char boxes) it actually sits on.
+
+    The VL supplement adds whole-paragraph blocks with no char boxes, so a value
+    matched there is masked over the entire paragraph. The value sits on ONE of
+    the char-boxed line blocks geometrically inside the paragraph: pick the line
+    whose glyphs best match the value (argmax matched glyphs) and return the
+    tight box of the matched char boxes (tight X) at that line's height (Y).
+    Returns None when no line is located, so the caller keeps the safe
+    whole-block mask and the value is never left unredacted.
+    """
+    if getattr(block, "chars", None):
+        return None
+    bl, bt, bw, bh = block.left, block.top, block.width, block.height
+    lines = []
+    for cand, cand_text, _is_tv in prepared_blocks:
+        if cand is block or not getattr(cand, "chars", None):
+            continue
+        ccx = cand.left + cand.width / 2.0
+        ccy = cand.top + cand.height / 2.0
+        if bt <= ccy <= bt + bh and bl <= ccx <= bl + bw:
+            lines.append((cand, cand_text))
+    if len(lines) < 2:
+        return None
+    lines.sort(key=lambda lt: (round(lt[0].top), lt[0].left))
+
+    occurrence_end = occurrence_start + len(occurrence_text)
+    entity_glyphs = _compact_text(block_text[occurrence_start:occurrence_end])
+    if not entity_glyphs:
+        return None
+    best_count = 0
+    best_line = None
+    best_boxes = []
+    for cand, _cand_text in lines:
+        line_glyphs = []
+        line_boxes = []
+        for char_box in (getattr(cand, "chars", None) or []):
+            for glyph in _compact_text(str(char_box.get("c", ""))):
+                line_glyphs.append(glyph)
+                line_boxes.append(char_box)
+        if not line_glyphs:
+            continue
+        matched_boxes = []
+        for _epos, lpos, size in SequenceMatcher(
+            None, entity_glyphs, "".join(line_glyphs), autojunk=False
+        ).get_matching_blocks():
+            for offset in range(size):
+                matched_boxes.append(line_boxes[lpos + offset])
+        if len(matched_boxes) > best_count:
+            best_count = len(matched_boxes)
+            best_line = cand
+            best_boxes = matched_boxes
+    if best_line is None or not best_boxes:
+        return None
+    left = min(int(box["x1"]) for box in best_boxes)
+    right = max(int(box["x2"]) for box in best_boxes)
+    if right <= left:
+        return None
+    return int(left), int(best_line.top), int(right - left), int(best_line.height)
+
+
 def match_entities_to_ocr(
     ocr_blocks: list[OCRTextBlock],
     entities: list[dict[str, str]],
@@ -2945,6 +3013,13 @@ def match_entities_to_ocr(
                     )
                     if crop_span is not None:
                         rl, rw = crop_span[0], crop_span[1] - crop_span[0]
+                    else:
+                        narrowed_box = _narrow_charsless_block_to_lines(
+                            block, block_text, visual_occurrence_start, visual_text, prepared_blocks
+                        )
+                        if narrowed_box is not None:
+                            rl, rt, rw, rh = narrowed_box
+                            crop_span = (rl, rl + rw)
                     has_position_evidence = (
                         crop_span is not None
                         or _compact_text(block_text) == _compact_text(visual_text)
