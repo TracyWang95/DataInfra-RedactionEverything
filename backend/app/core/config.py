@@ -572,4 +572,4 @@ def get_has_display_name() -> str:
         return custom
     from app.services import model_config_service
 
-    return model_config_service.get_text_ner_model_name()
+    return model_config_service.get_text_ner_display_name()

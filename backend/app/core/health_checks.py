@@ -425,13 +425,14 @@ def _read_dotenv_value(path: Path, name: str) -> str:
 def check_has_ner_health() -> ServiceHealth:
     """HaS Text status without exposing transient OpenAI-compatible server busy/loading copy."""
     from app.core.llamacpp_probe import probe_llamacpp
+    from app.services.model_config_service import _display_model_name
 
     default_name = get_has_display_name()
     ok, name_or_detail, hit_url, strict = probe_llamacpp(get_has_chat_base_url(), timeout=3.0)
     detail = _has_text_runtime_detail()
     detail.update({"strict_probe": strict, "probe_url": hit_url})
     if ok:
-        display_name = name_or_detail if strict else default_name
+        display_name = _display_model_name(name_or_detail) if strict and name_or_detail else default_name
         model_state = "ready" if strict else "responding_slowly"
         if not strict and name_or_detail:
             detail["probe_message"] = name_or_detail

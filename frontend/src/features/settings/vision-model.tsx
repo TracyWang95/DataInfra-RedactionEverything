@@ -42,6 +42,17 @@ const TASKS: Array<{
   },
 ];
 
+function displayModelName(raw: string): string {
+  const value = String(raw ?? '').trim();
+  if (!value) return value;
+  const normalized = value.replace(/\\/g, '/');
+  if (normalized.includes('/')) {
+    const leaf = normalized.slice(normalized.lastIndexOf('/') + 1);
+    if (leaf) return leaf;
+  }
+  return value;
+}
+
 export function VisionModel() {
   const t = useT();
   const {
@@ -380,7 +391,7 @@ function ModelTaskPanel({
                         {getProviderLabel(config.provider)}
                       </Badge>
                       <span className="text-border">/</span>
-                      <span className="truncate font-mono">{config.model_name}</span>
+                      <span className="truncate font-mono">{displayModelName(config.model_name)}</span>
                     </div>
                     {config.base_url && (
                       <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">

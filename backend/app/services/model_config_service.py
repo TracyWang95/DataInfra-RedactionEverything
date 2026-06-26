@@ -82,16 +82,40 @@ def _text_ner_base_url() -> str:
     return settings.HAS_LLAMACPP_BASE_URL or "http://127.0.0.1:8080/v1"
 
 
-def _text_ner_model_name() -> str:
+def _display_model_name(raw: str) -> str:
+    """Show a short model id in UI/health; strip local filesystem paths."""
+    value = str(raw or "").strip()
+    if not value:
+        return value
+    if "/" in value or "\\" in value:
+        leaf = os.path.basename(value.replace("\\", "/"))
+        if leaf:
+            return leaf
+    return value
+
+
+def _text_ner_runtime_model_name() -> str:
     return settings.HAS_TEXT_MODEL_NAME or "HaS_Text_0209_0.6B"
+
+
+def _text_ner_model_name() -> str:
+    return _display_model_name(_text_ner_runtime_model_name())
 
 
 def _visual_features_base_url() -> str:
     return str(getattr(settings, "VISUAL_FEATURES_BASE_URL", None) or "http://127.0.0.1:8090")
 
 
+def _visual_features_runtime_model_name() -> str:
+    return str(
+        getattr(settings, "VISUAL_FEATURES_MODEL_NAME", None)
+        or getattr(settings, "LOCATE_ANYTHING_MODEL", None)
+        or "LocateAnything-3B-HF"
+    )
+
+
 def _visual_features_model_name() -> str:
-    return str(getattr(settings, "VISUAL_FEATURES_MODEL_NAME", None) or "LocateAnything-3B-HF")
+    return _display_model_name(_visual_features_runtime_model_name())
 
 
 def _default_configs() -> ModelConfigList:
@@ -403,7 +427,7 @@ def _builtin_override(config: ModelConfig) -> ModelConfig:
             {
                 "enabled": True,
                 "base_url": config.base_url or _text_ner_base_url(),
-                "model_name": config.model_name or _text_ner_model_name(),
+                "model_name": _display_model_name(config.model_name or _text_ner_runtime_model_name()),
                 "temperature": min(float(config.temperature or 0.0), 0.2),
             }
         )
@@ -427,7 +451,9 @@ def _builtin_override(config: ModelConfig) -> ModelConfig:
             {
                 "enabled": True,
                 "base_url": config.base_url or _visual_features_base_url(),
-                "model_name": config.model_name or _visual_features_model_name(),
+                "model_name": _display_model_name(
+                    config.model_name or _visual_features_runtime_model_name()
+                ),
                 "max_tokens": max(
                     8192,
                     int(config.max_tokens or 0),
@@ -579,11 +605,21 @@ def get_text_ner_base_url() -> str:
     return resolve_localhost_service_base_url(_text_ner_base_url())
 
 
-def get_text_ner_model_name() -> str:
+def get_text_ner_runtime_model_name() -> str:
+    """OpenAI/vLLM model id used for inference requests."""
+    return _text_ner_runtime_model_name()
+
+
+def get_text_ner_display_name() -> str:
+    """Human-readable model id for UI and /health/services."""
     config = get_text_ner_config()
     if config and config.model_name:
-        return config.model_name
+        return _display_model_name(config.model_name)
     return _text_ner_model_name()
+
+
+def get_text_ner_model_name() -> str:
+    return get_text_ner_runtime_model_name()
 
 
 def get_paddle_ocr_base_url() -> str:
