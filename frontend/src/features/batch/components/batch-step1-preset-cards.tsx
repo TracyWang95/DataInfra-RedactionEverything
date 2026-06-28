@@ -70,9 +70,13 @@ function BatchStep1PresetCardsInner({
     return [...byId.values()];
   }, [textPresets, visionPresets]);
   const activeIndustryPresetId =
-    industryPresets.find(
-      (preset) => preset.id === cfg.presetTextId || preset.id === cfg.presetVisionId,
-    )?.id ?? DEFAULT_PRESET_VALUE;
+    industryPresets.find((preset) => {
+      const kind = preset.kind ?? 'full';
+      if (kind === 'text') return preset.id === cfg.presetTextId;
+      if (kind === 'vision') return preset.id === cfg.presetVisionId;
+      // full:仅当两轴都指向它才算"已选中"(分轴独立后,单轴命中不算)
+      return preset.id === cfg.presetTextId && preset.id === cfg.presetVisionId;
+    })?.id ?? DEFAULT_PRESET_VALUE;
 
   const onIndustryPresetChange = (value: string) => {
     if (value === DEFAULT_PRESET_VALUE) {
@@ -83,7 +87,9 @@ function BatchStep1PresetCardsInner({
     const preset = industryPresets.find((item) => item.id === value);
     if (!preset) return;
     if ((preset.kind ?? 'full') === 'full') {
+      // 一键设两轴:文本与视觉 handler 已解耦,这里显式各设一次
       onBatchTextPresetChange(value);
+      onBatchVisionPresetChange(value);
       return;
     }
     if (preset.kind === 'text') onBatchTextPresetChange(value);

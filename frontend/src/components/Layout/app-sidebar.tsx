@@ -371,12 +371,32 @@ function SidebarServiceStatus({
         })}
       </div>
 
-      <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
-        <span className="shrink-0 text-[11px] font-semibold">{t('health.gpuUsage')}</span>
-        <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
-          {gpuText}
-        </span>
-      </div>
+      {health?.gpu_memory_all && health.gpu_memory_all.length > 1 ? (
+        health.gpu_memory_all.map((card) => {
+          const cardText = `${(card.used_mb / 1024).toFixed(1)}/${(card.total_mb / 1024).toFixed(1)} GB`;
+          return (
+            <div
+              key={card.index}
+              className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5"
+            >
+              <span className="shrink-0 text-[11px] font-semibold">{`${t('health.gpuUsage')} ${card.index}`}</span>
+              <span
+                className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70"
+                title={cardText}
+              >
+                {cardText}
+              </span>
+            </div>
+          );
+        })
+      ) : (
+        <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
+          <span className="shrink-0 text-[11px] font-semibold">{t('health.gpuUsage')}</span>
+          <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
+            {gpuText}
+          </span>
+        </div>
+      )}
     </section>
   );
 }

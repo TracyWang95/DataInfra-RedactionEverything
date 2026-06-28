@@ -45,6 +45,13 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
   const visualTypeCount =
     rec.pipelines.find((pipeline) => pipeline.mode === 'visual_features')?.types.length ?? 0;
   const selectedVisualTypeCount = rec.selectedVisualFeatureTypes.length;
+  // 文本视觉段 = 共享语义选择(selectedTypes)在 ocr_has 目录内的计数
+  const ocrTextTypeCount =
+    rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has')?.types.length ?? 0;
+  const ocrTextCatalogIds = new Set(
+    rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has')?.types.map((type) => type.id) ?? [],
+  );
+  const selectedOcrTextCount = rec.selectedTypes.filter((id) => ocrTextCatalogIds.has(id)).length;
   const services = health
     ? (['paddle_ocr', 'has_ner', 'visual_features'] as const)
         .map((key) => health.services[key])
@@ -182,8 +189,7 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
                   {t('playground.vision')}
                 </p>
                 <p className="min-w-0 shrink truncate text-right text-xs leading-4 text-muted-foreground">
-                  {t('playground.ocrShort')} {rec.selectedOcrHasTypes.length} /{' '}
-                  {rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has')?.types.length ?? 0}
+                  {t('playground.ocrShort')} {selectedOcrTextCount} / {ocrTextTypeCount}
                   <span className="mx-2 text-border">|</span>
                   {t('playground.visualFeatureShort')} {selectedVisualTypeCount} / {visualTypeCount}
                 </p>

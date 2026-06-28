@@ -32,6 +32,7 @@ export interface ServicesHealth {
   probe_ms?: number;
   checked_at?: string;
   gpu_memory?: { used_mb: number; total_mb: number } | null;
+  gpu_memory_all?: { index: number; used_mb: number; total_mb: number }[] | null;
   gpu_processes?: GpuProcessInfo[];
   services: {
     paddle_ocr: ServiceInfo;
@@ -150,6 +151,25 @@ function normalizeGpuProcesses(value: unknown): GpuProcessInfo[] {
   });
 }
 
+function normalizeGpuMemoryAll(
+  value: unknown,
+): { index: number; used_mb: number; total_mb: number }[] | null {
+  if (!Array.isArray(value)) return null;
+  const cards = value.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.used_mb !== 'number' || typeof raw.total_mb !== 'number') return [];
+    return [
+      {
+        index: typeof raw.index === 'number' ? raw.index : 0,
+        used_mb: raw.used_mb,
+        total_mb: raw.total_mb,
+      },
+    ];
+  });
+  return cards.length ? cards : null;
+}
+
 export function normalizeHealthPayload(value: unknown): ServicesHealth {
   const data = value && typeof value === 'object' ? (value as Partial<ServicesHealth>) : {};
   const services = data.services && typeof data.services === 'object' ? data.services : {};
@@ -178,6 +198,7 @@ export function normalizeHealthPayload(value: unknown): ServicesHealth {
     probe_ms: typeof data.probe_ms === 'number' ? data.probe_ms : undefined,
     checked_at: typeof data.checked_at === 'string' ? data.checked_at : undefined,
     gpu_memory: data.gpu_memory ?? null,
+    gpu_memory_all: normalizeGpuMemoryAll((data as { gpu_memory_all?: unknown }).gpu_memory_all),
     gpu_processes: normalizeGpuProcesses((data as { gpu_processes?: unknown }).gpu_processes),
     services: normalizedServices,
   };

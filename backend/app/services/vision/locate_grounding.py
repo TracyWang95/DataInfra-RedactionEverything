@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -212,7 +213,24 @@ class LocateAnythingGroundingService:
             return [], timings.as_dict()
 
         model_start = time.perf_counter()
-        raw_boxes = await self._post_detect(image_data, model_slugs)
+        # Parallel inference across both GPUs: fan out one request per category
+        # so the load balancer round-robins them onto GPU0/GPU1 concurrently.
+        # Each LA call then does exactly one MoonViT encode + one generation, so
+        # the default {signature, official_seal} pair finishes in ~one category's
+        # time (~2s) instead of two sequential passes (~4s) on a single card.
+        if model_slugs is not None and len(model_slugs) > 1:
+            results = await asyncio.gather(
+                *[self._post_detect(image_data, [slug]) for slug in model_slugs],
+                return_exceptions=True,
+            )
+            raw_boxes = []
+            for slug, res in zip(model_slugs, results):
+                if isinstance(res, BaseException):
+                    logger.warning("LocateAnything category %s failed, skipping: %s", slug, res)
+                    continue
+                raw_boxes.extend(res)
+        else:
+            raw_boxes = await self._post_detect(image_data, model_slugs)
         timings.model = _elapsed_ms(model_start)
 
         boxes: list[BoundingBox] = []

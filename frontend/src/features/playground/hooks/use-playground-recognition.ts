@@ -361,11 +361,17 @@ export function usePlaygroundRecognition() {
 
     setPresetSaving(true);
     try {
+      // Option B:视觉预设的文本通道(ocrHasTypes)= 共享语义选择(过滤 regex),
+      // 与行业预设 ocrHasTypes=selectedEntityTypeIds 同口径,保证图像文本检出可用。
+      const sharedTextTypes = selectedTypes.filter((id) => {
+        const ty = entityTypes.find((type) => type.id === id);
+        return ty ? !ty.regex_pattern : true;
+      });
       const created = await createPreset({
         name,
         kind: 'vision',
         selectedEntityTypeIds: [],
-        ocrHasTypes: selectedOcrHasTypes,
+        ocrHasTypes: sharedTextTypes,
         visualFeatureTypes: uniqueIds(selectedVisualFeatureTypes),
         replacementMode: 'structured',
       });
@@ -383,7 +389,8 @@ export function usePlaygroundRecognition() {
     closePresetDialog,
     presetDialogName,
     selectedVisualFeatureTypes,
-    selectedOcrHasTypes,
+    selectedTypes,
+    entityTypes,
     invalidatePresets,
   ]);
 

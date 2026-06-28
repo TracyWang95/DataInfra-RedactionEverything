@@ -165,9 +165,15 @@ export function usePlayground() {
     }
     setRecognitionIssue(null);
     if (fileCtx.isImageMode) {
+      // Option B:图像 OCR+HaS 文本通道复用「文本」页的共享语义选择,
+      // 不再用独立的 ocr_has 清单;过滤 regex 类型以保持与原 ocr_has 口径一致。
+      const sharedTextTypes = recognition.selectedTypesRef.current.filter((id) => {
+        const ty = recognition.entityTypes.find((type) => type.id === id);
+        return ty ? !ty.regex_pattern : true;
+      });
       await handleRerunNerImage(
         fileCtx.fileInfo.file_id,
-        recognition.selectedOcrHasTypes,
+        sharedTextTypes,
         recognition.selectedVisualFeatureTypes,
         fileCtx.setIsLoading,
         fileCtx.setLoadingMessage,
@@ -189,7 +195,7 @@ export function usePlayground() {
     getRecognitionBlocker,
     handleRerunNerImage,
     handleRerunNerText,
-    recognition.selectedOcrHasTypes,
+    recognition.entityTypes,
     recognition.selectedTypesRef,
     recognition.selectedVisualFeatureTypes,
     setRecognitionIssue,

@@ -137,7 +137,7 @@ export function EntityTypeList({
                         </span>
                         {systemManaged && (
                           <span className="mt-1 inline-flex rounded-md border border-border/70 bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
-                            系统配置
+                            {t('settings.entityList.systemManaged')}
                           </span>
                         )}
                       </div>

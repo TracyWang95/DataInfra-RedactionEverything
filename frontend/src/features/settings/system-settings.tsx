@@ -37,13 +37,14 @@ async function parseJson<T>(res: Response): Promise<T | null> {
 
 export function SystemSettings() {
   const { status } = useAuth();
+  const t = useT();
 
   if (!status?.is_super_admin) {
     return (
       <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
           <Alert variant="destructive">
-            <AlertDescription>需要管理员权限。</AlertDescription>
+            <AlertDescription>{t('settings.system.adminRequired')}</AlertDescription>
           </Alert>
         </div>
       </div>
@@ -56,13 +57,13 @@ export function SystemSettings() {
         <Tabs defaultValue="runtime" className="page-stack gap-3 overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">系统设置</h1>
-              <p className="text-sm text-muted-foreground">运行配置、用户权限和本地服务监控。</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('settings.system.title')}</h1>
+              <p className="text-sm text-muted-foreground">{t('settings.system.subtitle')}</p>
             </div>
             <TabsList className="rounded-xl border border-border/70 bg-muted/40 p-1">
-              <TabsTrigger value="runtime">运行配置</TabsTrigger>
-              <TabsTrigger value="access">权限信息</TabsTrigger>
-              <TabsTrigger value="monitoring">服务监控</TabsTrigger>
+              <TabsTrigger value="runtime">{t('settings.system.tabRuntime')}</TabsTrigger>
+              <TabsTrigger value="access">{t('settings.system.tabAccess')}</TabsTrigger>
+              <TabsTrigger value="monitoring">{t('settings.system.tabMonitoring')}</TabsTrigger>
             </TabsList>
           </div>
 
@@ -132,7 +133,7 @@ function AdminRuntimePanel() {
 
   return (
     <section className="surface-subtle max-w-2xl space-y-4 p-4" data-testid="admin-runtime-panel">
-      <PanelHeading title="运行配置" description="控制后台批量任务并发，不需要重启模型服务。" />
+      <PanelHeading title={t('settings.system.runtimeTitle')} description={t('settings.system.runtimeDesc')} />
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -165,6 +166,7 @@ function AdminRuntimePanel() {
 
 function AdminAccessPanel() {
   const { status } = useAuth();
+  const t = useT();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -185,7 +187,7 @@ function AdminAccessPanel() {
       }
       setUsers(body);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '用户列表加载失败');
+      setError(err instanceof Error ? err.message : t('settings.system.loadUsersFailed'));
     } finally {
       setLoading(false);
     }
@@ -197,7 +199,7 @@ function AdminAccessPanel() {
 
   async function createUser() {
     if (password !== confirmPassword) {
-      setError('两次输入的密码不一致。');
+      setError(t('settings.system.passwordMismatch'));
       return;
     }
     setSaving(true);
@@ -216,7 +218,7 @@ function AdminAccessPanel() {
       setRole('user');
       await loadUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建用户失败');
+      setError(err instanceof Error ? err.message : t('settings.system.createUserFailed'));
     } finally {
       setSaving(false);
     }
@@ -225,22 +227,22 @@ function AdminAccessPanel() {
   return (
     <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]" data-testid="admin-access-panel">
       <div className="surface-subtle space-y-4 p-4">
-        <PanelHeading title="权限信息" description="每个用户只访问自己的文件、任务和结果。" />
+        <PanelHeading title={t('settings.system.accessTitle')} description={t('settings.system.accessDesc')} />
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         <div className="grid gap-3 sm:grid-cols-3">
-          <MetricCard label="当前账号" value={status?.username || '-'} />
-          <MetricCard label="当前角色" value={status?.role || 'user'} />
-          <MetricCard label="账号数量" value={loading ? '...' : String(users.length)} />
+          <MetricCard label={t('settings.system.currentAccount')} value={status?.username || '-'} />
+          <MetricCard label={t('settings.system.currentRole')} value={status?.role || 'user'} />
+          <MetricCard label={t('settings.system.accountCount')} value={loading ? '...' : String(users.length)} />
         </div>
         <div className="overflow-hidden rounded-lg border border-border bg-background">
           <div className="grid grid-cols-[minmax(0,1fr)_8rem_11rem] border-b border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
-            <span>用户</span>
-            <span>角色</span>
-            <span>创建时间</span>
+            <span>{t('settings.system.colUser')}</span>
+            <span>{t('settings.system.colRole')}</span>
+            <span>{t('settings.system.colCreatedAt')}</span>
           </div>
           <div className="max-h-[26rem] overflow-auto">
             {users.map((user) => (
@@ -261,7 +263,7 @@ function AdminAccessPanel() {
             ))}
             {!users.length && (
               <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                {loading ? '正在加载用户...' : '暂无用户'}
+                {loading ? t('settings.system.loadingUsers') : t('settings.system.noUsers')}
               </div>
             )}
           </div>
@@ -269,13 +271,13 @@ function AdminAccessPanel() {
       </div>
 
       <div className="surface-subtle space-y-4 p-4">
-        <PanelHeading title="创建用户" description="管理员可以创建普通用户或管理员。" />
+        <PanelHeading title={t('settings.system.createUserTitle')} description={t('settings.system.createUserDesc')} />
         <div className="space-y-2">
-          <Label htmlFor="admin-new-username">用户名</Label>
+          <Label htmlFor="admin-new-username">{t('settings.system.usernameLabel')}</Label>
           <Input id="admin-new-username" value={username} onChange={(event) => setUsername(event.target.value)} />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="admin-new-password">密码</Label>
+          <Label htmlFor="admin-new-password">{t('settings.system.passwordLabel')}</Label>
           <Input
             id="admin-new-password"
             type="password"
@@ -284,7 +286,7 @@ function AdminAccessPanel() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="admin-new-confirm-password">确认密码</Label>
+          <Label htmlFor="admin-new-confirm-password">{t('settings.system.confirmPasswordLabel')}</Label>
           <Input
             id="admin-new-confirm-password"
             type="password"
@@ -293,19 +295,19 @@ function AdminAccessPanel() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="admin-new-role">角色</Label>
+          <Label htmlFor="admin-new-role">{t('settings.system.roleLabel')}</Label>
           <select
             id="admin-new-role"
             className="flex h-10 w-full rounded-xl border border-input bg-[var(--surface-control)] px-3 py-2 text-sm shadow-[var(--shadow-control)]"
             value={role}
             onChange={(event) => setRole(event.target.value === 'super_admin' ? 'super_admin' : 'user')}
           >
-            <option value="user">普通用户</option>
-            <option value="super_admin">管理员</option>
+            <option value="user">{t('settings.system.roleUser')}</option>
+            <option value="super_admin">{t('settings.system.roleAdmin')}</option>
           </select>
         </div>
         <Button className="w-full" disabled={saving || !username || !password} onClick={() => void createUser()}>
-          {saving ? '创建中...' : '创建用户'}
+          {saving ? t('settings.system.creating') : t('settings.system.createUserButton')}
         </Button>
       </div>
     </section>
@@ -313,6 +315,7 @@ function AdminAccessPanel() {
 }
 
 function AdminMonitoringPanel() {
+  const t = useT();
   const { health, checking, roundTripMs, refresh } = useServiceHealth();
   const services = serviceRows(health);
   const allOnline = health?.all_online;
@@ -320,16 +323,25 @@ function AdminMonitoringPanel() {
   return (
     <section className="surface-subtle space-y-4 p-4" data-testid="admin-monitoring-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <PanelHeading title="服务监控" description="查看模型服务、GPU 显存和健康探测状态。" />
+        <PanelHeading title={t('settings.system.monitoringTitle')} description={t('settings.system.monitoringDesc')} />
         <Button variant="outline" size="sm" onClick={refresh}>
           <RefreshCw className={cn('mr-2 h-4 w-4', checking && 'animate-spin')} />
-          刷新
+          {t('settings.system.refresh')}
         </Button>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
-        <MetricCard label="整体状态" value={checking ? '检测中' : allOnline ? '全部在线' : '需处理'} />
-        <MetricCard label="后端探测" value={roundTripMs == null ? '-' : `${roundTripMs} ms`} />
-        <MetricCard label="GPU 显存" value={gpuText(health)} />
+        <MetricCard
+          label={t('settings.system.overallStatus')}
+          value={
+            checking
+              ? t('settings.system.statusChecking')
+              : allOnline
+                ? t('settings.system.statusAllOnline')
+                : t('settings.system.statusNeedsAttention')
+          }
+        />
+        <MetricCard label={t('settings.system.backendProbe')} value={roundTripMs == null ? '-' : `${roundTripMs} ms`} />
+        <MetricCard label={t('settings.system.gpuMemory')} value={gpuText(health)} />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {services.map(({ key, service }) => (
@@ -339,9 +351,9 @@ function AdminMonitoringPanel() {
               <StatusBadge status={service.status} />
             </div>
             <dl className="mt-3 space-y-1 text-xs text-muted-foreground">
-              <InfoRow label="运行时" value={service.detail?.runtime || '-'} />
-              <InfoRow label="模式" value={service.detail?.runtime_mode || '-'} />
-              <InfoRow label="设备" value={service.detail?.device || '-'} />
+              <InfoRow label={t('settings.system.runtimeLabel')} value={service.detail?.runtime || '-'} />
+              <InfoRow label={t('settings.system.modeLabel')} value={service.detail?.runtime_mode || '-'} />
+              <InfoRow label={t('settings.system.deviceLabel')} value={service.detail?.device || '-'} />
             </dl>
           </div>
         ))}

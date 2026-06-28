@@ -358,27 +358,12 @@ export function useBatchConfig(
       const p = presets.find((x) => x.id === id);
       if (p && presetAppliesText(p)) {
         setActivePresetTextId(p.id);
-        if (mode !== 'text' && presetAppliesVision(p)) {
-          setActivePresetVisionId(p.id);
-          setCfg((c) => ({
-            ...c,
-            ...applyTextPresetWithFallback(p),
-            ...applyVisionPresetWithFallback(p),
-            presetTextId: p.id,
-            presetVisionId: p.id,
-          }));
-          return;
-        }
+        // 语义(文本)轴独立:只应用文本字段,不触碰视觉选择。
+        // smart 模式下"一键设两轴"由顶部行业预设下拉负责。
         setCfg((c) => ({ ...c, ...applyTextPresetWithFallback(p), presetTextId: p.id }));
       }
     },
-    [
-      applyTextPresetWithFallback,
-      applyVisionPresetWithFallback,
-      batchDefaultTextTypeIds,
-      mode,
-      presets,
-    ],
+    [applyTextPresetWithFallback, batchDefaultTextTypeIds, presets],
   );
 
   const onBatchVisionPresetChange = useCallback(
@@ -396,17 +381,7 @@ export function useBatchConfig(
       const p = presets.find((x) => x.id === id);
       if (p && presetAppliesVision(p)) {
         setActivePresetVisionId(p.id);
-        if (mode !== 'image' && presetAppliesText(p)) {
-          setActivePresetTextId(p.id);
-          setCfg((c) => ({
-            ...c,
-            ...applyTextPresetWithFallback(p),
-            ...applyVisionPresetWithFallback(p),
-            presetTextId: p.id,
-            presetVisionId: p.id,
-          }));
-          return;
-        }
+        // 视觉轴独立:只应用视觉字段(OCR+HaS 文本类型 + 视觉特征),不触碰文本选择。
         const applied = applyVisionPresetWithFallback(p);
         setCfg((c) => ({
           ...c,
@@ -416,11 +391,9 @@ export function useBatchConfig(
       }
     },
     [
-      applyTextPresetWithFallback,
       applyVisionPresetWithFallback,
       batchDefaultOcrHasTypeIds,
       batchDefaultVisualFeatureTypeIds,
-      mode,
       presets,
     ],
   );

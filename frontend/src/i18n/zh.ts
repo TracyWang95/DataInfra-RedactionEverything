@@ -1276,10 +1276,10 @@ const zhOverrides: Record<string, string> = {
   'playground.recognitionTypes': '识别类型',
   'playground.text': '文本',
   'playground.vision': '图像',
-  'playground.ocrShort': '图片文字',
+  'playground.ocrShort': 'OCR+HaS',
   'playground.imageShort': '图像',
-  'playground.imageTextRange': '图片文字',
-  'playground.visualRegionRange': '视觉区域',
+  'playground.imageTextRange': '文本视觉',
+  'playground.visualRegionRange': '图像视觉',
   'playground.selected': '已选',
   'playground.textPresetLabel': '文本配置清单',
   'playground.saveAsTextPreset': '保存文本清单',
@@ -2178,6 +2178,12 @@ Object.assign(zhOverrides, {
   'entity.MED_INSTITUTION': '医疗机构',
   'entity.MED_DEPARTMENT': '科室',
   'entity.MED_RECORD_ID': '病历号',
+  'entity.REGISTRATION_NO': '登记号',
+  'entity.INPATIENT_NO': '住院号',
+  'entity.CERT_NO': '证号',
+  'entity.NATIVE_PLACE': '籍贯',
+  'entity.OCCUPATION': '职业',
+  'entity.signature': '签字',
   'entity.MED_DIAGNOSIS': '诊断',
   'entity.MED_MEDICATION': '用药',
   'entity.MED_CHIEF_COMPLAINT': '主诉',
@@ -2200,7 +2206,7 @@ Object.assign(zhOverrides, {
 });
 
 Object.assign(zhOverrides, {
-  'playground.visualRegionRange': '视觉特征',
+  'playground.visualRegionRange': '图像视觉',
   'playground.visualFeatureShort': '视觉特征',
   'playground.visualFeatureRange': '视觉特征',
   'playground.visualFeatureTypesHint':
@@ -2653,6 +2659,73 @@ Object.assign(zhOverrides, {
   'structured.delivery.checklist.formatDetail': '{format} · ZIP 包',
   'structured.delivery.checklist.backgroundJob': '后台任务',
   'structured.delivery.checklist.notCreated': '未创建',
+});
+
+Object.assign(zhOverrides, {
+  // system-settings.tsx
+  'settings.system.adminRequired': '需要管理员权限。',
+  'settings.system.title': '系统设置',
+  'settings.system.subtitle': '运行配置、用户权限和本地服务监控。',
+  'settings.system.tabRuntime': '运行配置',
+  'settings.system.tabAccess': '权限信息',
+  'settings.system.tabMonitoring': '服务监控',
+  'settings.system.runtimeTitle': '运行配置',
+  'settings.system.runtimeDesc': '控制后台批量任务并发，不需要重启模型服务。',
+  'settings.system.loadUsersFailed': '用户列表加载失败',
+  'settings.system.passwordMismatch': '两次输入的密码不一致。',
+  'settings.system.createUserFailed': '创建用户失败',
+  'settings.system.accessTitle': '权限信息',
+  'settings.system.accessDesc': '每个用户只访问自己的文件、任务和结果。',
+  'settings.system.currentAccount': '当前账号',
+  'settings.system.currentRole': '当前角色',
+  'settings.system.accountCount': '账号数量',
+  'settings.system.colUser': '用户',
+  'settings.system.colRole': '角色',
+  'settings.system.colCreatedAt': '创建时间',
+  'settings.system.loadingUsers': '正在加载用户...',
+  'settings.system.noUsers': '暂无用户',
+  'settings.system.createUserTitle': '创建用户',
+  'settings.system.createUserDesc': '管理员可以创建普通用户或管理员。',
+  'settings.system.usernameLabel': '用户名',
+  'settings.system.passwordLabel': '密码',
+  'settings.system.confirmPasswordLabel': '确认密码',
+  'settings.system.roleLabel': '角色',
+  'settings.system.roleUser': '普通用户',
+  'settings.system.roleAdmin': '管理员',
+  'settings.system.creating': '创建中...',
+  'settings.system.createUserButton': '创建用户',
+  'settings.system.monitoringTitle': '服务监控',
+  'settings.system.monitoringDesc': '查看模型服务、GPU 显存和健康探测状态。',
+  'settings.system.refresh': '刷新',
+  'settings.system.overallStatus': '整体状态',
+  'settings.system.statusChecking': '检测中',
+  'settings.system.statusAllOnline': '全部在线',
+  'settings.system.statusNeedsAttention': '需处理',
+  'settings.system.backendProbe': '后端探测',
+  'settings.system.gpuMemory': 'GPU 显存',
+  'settings.system.runtimeLabel': '运行时',
+  'settings.system.modeLabel': '模式',
+  'settings.system.deviceLabel': '设备',
+
+  // entity-type-dialog.tsx
+  'settings.entityDialog.createTitle': '新建自定义识别项',
+  'settings.entityDialog.desc':
+    '语义标签：名称直接作为开放词表标签交给 HaS 识别。正则兜底：在文本链路最后一步用正则补充 HaS 未覆盖的内容。',
+  'settings.entityDialog.nameLabel': '识别项名称 *',
+  'settings.entityDialog.namePlaceholder': '例如：文书编号、出生日期、供应商编号',
+  'settings.entityDialog.kindLabel': '类型',
+  'settings.entityDialog.kindSemantic': '语义标签',
+  'settings.entityDialog.kindRegex': '正则兜底',
+  'settings.entityDialog.regexLabel': '正则表达式 *',
+  'settings.entityDialog.regexPlaceholder': '例如：(?<!\\d)\\d{17}[\\dXx](?!\\d)',
+  'settings.entityDialog.descriptionLabel': '描述',
+  'settings.entityDialog.descriptionPlaceholder': '可选。用于帮助模型理解这个识别项的语义边界。',
+
+  // vision-model-dialog.tsx
+  'settings.visionDialog.apiKeySavedPlaceholder': '已保存，输入新密钥可替换',
+
+  // entity-type-list.tsx
+  'settings.entityList.systemManaged': '系统配置',
 });
 
 export const zh: Record<string, string> = {
