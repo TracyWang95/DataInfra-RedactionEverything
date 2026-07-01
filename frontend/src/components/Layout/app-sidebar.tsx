@@ -306,6 +306,9 @@ function SidebarServiceStatus({
           ? t('health.someDegraded')
           : t('health.allOnline');
   const gpuText = getGpuText(health, t);
+  // Accelerator family reported by the backend (npu on Ascend, gpu on NVIDIA),
+  // so the device rows/badges read NPU 0 / NPU 1 on the NPU box and GPU on the 5090.
+  const accelLabel = (health?.accelerator ?? 'gpu').toUpperCase();
 
   return (
     <section
@@ -344,7 +347,7 @@ function SidebarServiceStatus({
       <div className="mt-1.5 flex flex-col gap-1">
         {services.map(({ key, service }) => {
           const status = displayStatus(service);
-          const runtime = runtimeBadge(service, t);
+          const runtime = runtimeBadge(service, t, accelLabel);
           const serviceName = t(`health.service.${key}`);
 
           return (
@@ -371,12 +374,32 @@ function SidebarServiceStatus({
         })}
       </div>
 
-      <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
-        <span className="shrink-0 text-[11px] font-semibold">{t('health.gpuUsage')}</span>
-        <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
-          {gpuText}
-        </span>
-      </div>
+      {health?.gpu_memory_all && health.gpu_memory_all.length > 1 ? (
+        health.gpu_memory_all.map((card) => {
+          const cardText = `${(card.used_mb / 1024).toFixed(1)}/${(card.total_mb / 1024).toFixed(1)} GB`;
+          return (
+            <div
+              key={card.index}
+              className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5"
+            >
+              <span className="shrink-0 text-[11px] font-semibold">{`${accelLabel} ${card.index}`}</span>
+              <span
+                className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70"
+                title={cardText}
+              >
+                {cardText}
+              </span>
+            </div>
+          );
+        })
+      ) : (
+        <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
+          <span className="shrink-0 text-[11px] font-semibold">{accelLabel}</span>
+          <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
+            {gpuText}
+          </span>
+        </div>
+      )}
     </section>
   );
 }
@@ -414,8 +437,11 @@ function getGpuText(health: ServicesHealth | null, t: (key: string) => string) {
   return t('health.gpuNotDetected');
 }
 
-function runtimeBadge(service: ServiceInfo, t: (key: string) => string) {
+function runtimeBadge(service: ServiceInfo, t: (key: string) => string, accelLabel: string) {
   if (service.detail?.cpu_fallback_risk) return t('health.runtime.cpuRisk');
-  if (service.detail?.runtime_mode) return t(`health.runtime.${service.detail.runtime_mode}`);
+  const mode = service.detail?.runtime_mode;
+  // 'gpu' runtime renders as the host accelerator family (NPU on Ascend, GPU on NVIDIA).
+  if (mode === 'gpu') return accelLabel;
+  if (mode) return t(`health.runtime.${mode}`);
   return null;
 }

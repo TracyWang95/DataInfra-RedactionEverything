@@ -1,0 +1,1 @@
+const e={neutral:"tone-badge-neutral",brand:"tone-badge-brand",warning:"tone-badge-warning",review:"tone-badge-review",success:"tone-badge-success",danger:"tone-badge-danger",muted:"tone-badge-muted"},n={success:"tone-panel-success",danger:"tone-panel-danger"};export{n as a,e as t};

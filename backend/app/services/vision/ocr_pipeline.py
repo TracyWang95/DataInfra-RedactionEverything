@@ -1278,7 +1278,7 @@ def run_paddle_ocr(
                     service_available_checked=True,
                 )
                 merged_blocks = _merge_ocr_blocks(
-                    primary_structure_blocks, vl_blocks, prefer_extra_text=True
+                    primary_structure_blocks, vl_blocks, prefer_extra_text=settings.OCR_VL_PREFER_TEXT
                 )
                 logger.info(
                     "PP-StructureV3 primary OCR kept %d blocks; PaddleOCR-VL supplement merged %d VL blocks (%d -> %d)",
@@ -1303,7 +1303,7 @@ def run_paddle_ocr(
                     service_available_checked=True,
                 )
                 merged_blocks = _merge_ocr_blocks(
-                    primary_structure_blocks, vl_blocks, prefer_extra_text=True
+                    primary_structure_blocks, vl_blocks, prefer_extra_text=settings.OCR_VL_PREFER_TEXT
                 )
                 logger.info(
                     "PP-StructureV3 primary OCR found %d blocks but no visual regions; "

@@ -272,6 +272,12 @@ class Settings(BaseSettings):
     # default. Enable this only when tighter PaddleOCR-VL text fusion is worth
     # the extra GPU pass on the current hardware.
     OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL: bool = False
+    # When PaddleOCR-VL supplements the PP-Structure primary blocks, whether VL's
+    # text is allowed to overwrite a primary reading on overlap (VL reads glyphs
+    # more accurately than the PP-OCR line recognizer). True on accurate VL
+    # engines (CUDA); set False where the VL engine is the weaker reader (e.g.
+    # vllm-ascend, which can misread a value as "___"), keeping VL additive-only.
+    OCR_VL_PREFER_TEXT: bool = True
     # Use PP-StructureV3 as a short-field precision supplement for OCR/HaS
     # semantic detection. Disabled by default to keep the OCR path VL-only.
     OCR_STRUCTURE_TEXT_PRECISION_ENABLED: bool = False
