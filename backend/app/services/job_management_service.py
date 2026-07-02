@@ -1061,8 +1061,13 @@ def build_export_report(
     store: JobStore,
     job_id: str,
     selected_file_ids: list[str] | None = None,
+    include_files: bool = True,
 ) -> dict[str, Any]:
-    """Build an authoritative batch export report from job_items and file_store."""
+    """Build an authoritative batch export report from job_items and file_store.
+
+    include_files=False（summary_only）：只做聚合、不保留每文件明细——十万级
+    item 的 job 拉全量明细会同时压垮后端内存与浏览器；明细走 CSV 分卷导出。
+    """
     row = store.get_job(job_id)
     if not row:
         raise NotFoundError("job not found")
@@ -1083,6 +1088,7 @@ def build_export_report(
     zip_skipped: list[dict[str, str]] = []
     selected_visual_review_issue_count = 0
     selected_visual_review_issue_files = 0
+    selected_visual_review_issue_pages_count = 0
     selected_visual_review_by_issue: dict[str, int] = {}
     selected_visual_evidence = _empty_visual_evidence()
 
@@ -1117,6 +1123,8 @@ def build_export_report(
                 selected_visual_review_issue_count += int(visual_quality["issue_count"])
                 for issue, count in visual_quality["by_issue"].items():
                     selected_visual_review_by_issue[issue] = selected_visual_review_by_issue.get(issue, 0) + int(count)
+            if visual_quality["review_hint"]:
+                selected_visual_review_issue_pages_count += len(visual_quality["issue_pages"])
             if has_output:
                 redacted_selected_count += 1
             if review_confirmed:
@@ -1130,6 +1138,8 @@ def build_export_report(
             else:
                 zip_skipped.append({"file_id": file_id, "reason": redacted_skip_reason})
 
+        if not include_files:
+            continue
         raw_file_type = info.get("file_type") if info else None
         report_files.append(
             {
@@ -1161,11 +1171,6 @@ def build_export_report(
     selected_count = len(selected_items)
     delivery_status = _summary_delivery_status(selected_count, action_required_count)
     selected_visual_review_issue_labels = sorted(selected_visual_review_by_issue)
-    selected_visual_review_issue_pages_count = sum(
-        len(file["visual_review"]["issue_pages"])
-        for file in report_files
-        if file["selected_for_export"] and file["visual_review"]["review_hint"]
-    )
     return {
         "generated_at": datetime.now(UTC).isoformat(),
         "job": {
@@ -1208,6 +1213,120 @@ def build_export_report(
         },
         "files": report_files,
     }
+
+
+REPORT_FILE_CSV_HEADERS = [
+    "item_id", "file_id", "filename", "file_type", "file_size", "page_count",
+    "status", "has_output", "review_confirmed", "ready_for_delivery",
+    "entity_count", "blocking_reasons", "error",
+]
+
+ENTITY_CSV_HEADERS = [
+    "file_id", "filename", "record_kind", "page", "type", "text",
+    "source", "confidence", "start", "end", "x", "y", "width", "height", "selected",
+]
+
+
+def iter_report_file_rows(
+    store: JobStore,
+    job_id: str,
+    selected_file_ids: list[str] | None = None,
+):
+    """逐 item 产出文件级明细行（CSV 友好扁平结构），内存 O(1)。
+
+    与 build_export_report 的 per-file 字段同源（同一批 helper），供十万级
+    job 的明细导出使用——评测场景"每个文件一行"的可分析数据。
+    """
+    row = store.get_job(job_id)
+    if not row:
+        raise NotFoundError("job not found")
+    skip_item_review = bool(row.get("skip_item_review"))
+    selected = set(selected_file_ids) if selected_file_ids is not None else None
+
+    for item in store.list_items(job_id):
+        file_id = str(item["file_id"])
+        if selected is not None and file_id not in selected:
+            continue
+        info, metadata_warning = _safe_file_info(file_id)
+        has_output, redacted_skip_reason = _redacted_output_state(info)
+        review_confirmed = _review_confirmed(item, has_output, skip_item_review)
+        ready_for_delivery = (
+            _status_value(item.get("status")) != JobItemStatus.FAILED.value
+            and has_output
+            and review_confirmed
+            and redacted_skip_reason is None
+        )
+        blocking_reasons = _delivery_blocking_reasons(
+            item, has_output, review_confirmed, redacted_skip_reason
+        )
+        raw_file_type = info.get("file_type") if info else None
+        yield {
+            "item_id": item["id"],
+            "file_id": file_id,
+            "filename": (info or {}).get("original_filename") or item.get("filename") or "",
+            "file_type": getattr(raw_file_type, "value", raw_file_type) or "",
+            "file_size": int((info or {}).get("file_size") or 0),
+            "page_count": _safe_int((info or {}).get("page_count")) or "",
+            "status": _status_value(item.get("status")),
+            "has_output": has_output,
+            "review_confirmed": review_confirmed,
+            "ready_for_delivery": ready_for_delivery,
+            "entity_count": _safe_entity_count(info),
+            "blocking_reasons": ";".join(blocking_reasons or []),
+            "error": item.get("error_message") or metadata_warning or "",
+        }
+
+
+def iter_entity_rows(
+    store: JobStore,
+    job_id: str,
+    selected_file_ids: list[str] | None = None,
+):
+    """逐条产出识别结果明细行（文本实体 + 视觉区域），内存 O(1)。"""
+    row = store.get_job(job_id)
+    if not row:
+        raise NotFoundError("job not found")
+    selected = set(selected_file_ids) if selected_file_ids is not None else None
+
+    for item in store.list_items(job_id):
+        file_id = str(item["file_id"])
+        if selected is not None and file_id not in selected:
+            continue
+        info, _warning = _safe_file_info(file_id)
+        if not info:
+            continue
+        filename = info.get("original_filename") or ""
+        for entity in info.get("entities") or []:
+            if not isinstance(entity, dict):
+                continue
+            yield {
+                "file_id": file_id,
+                "filename": filename,
+                "record_kind": "entity",
+                "page": entity.get("page"),
+                "type": entity.get("type"),
+                "text": entity.get("text"),
+                "source": entity.get("source"),
+                "confidence": entity.get("confidence"),
+                "start": entity.get("start"),
+                "end": entity.get("end"),
+            }
+        for box in _iter_bounding_boxes(info):
+            yield {
+                "file_id": file_id,
+                "filename": filename,
+                "record_kind": "region",
+                "page": box.get("page"),
+                "type": box.get("type"),
+                "text": box.get("text"),
+                "source": box.get("source"),
+                "confidence": box.get("confidence"),
+                "x": box.get("x"),
+                "y": box.get("y"),
+                "width": box.get("width"),
+                "height": box.get("height"),
+                "selected": box.get("selected"),
+            }
 
 
 def update_draft(store: JobStore, job_id: str, patch: dict[str, Any]) -> dict[str, Any]:

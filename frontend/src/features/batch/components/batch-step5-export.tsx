@@ -10,6 +10,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { getRedactionStateLabel, resolveRedactionState } from '@/utils/redactionState';
 import { getJobExportReport } from '@/services/jobsApi';
+import {
+  batchExportApi,
+  type BatchExportEstimate,
+  type BatchExportTask,
+} from '@/services/api';
 
 import {
   BATCH_EXPORT_BLOCKING_REASONS,
@@ -24,6 +29,21 @@ import type { BatchRow, Step } from '../types';
 import { triggerDownload } from '../hooks/use-batch-wizard-utils';
 
 type DeliveryGroup = 'ready' | 'review' | 'redact' | 'retry';
+
+// 与后端 EXPORT_SYNC_MAX_FILES 对齐：超过走异步分卷导出
+const ASYNC_EXPORT_FILE_THRESHOLD = 200;
+
+function formatBytesHuman(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
 
 const DELIVERY_GROUP_ORDER: DeliveryGroup[] = ['ready', 'review', 'redact', 'retry'];
 
@@ -85,6 +105,9 @@ function BatchStep5ExportInner({
 }: BatchStep5ExportProps) {
   const t = useT();
   const [reportLoading, setReportLoading] = useState(false);
+  const [exportEstimate, setExportEstimate] = useState<BatchExportEstimate | null>(null);
+  const [exportTask, setExportTask] = useState<BatchExportTask | null>(null);
+  const [exportStarting, setExportStarting] = useState(false);
   const [serverReport, setServerReport] = useState<BatchExportReport | null>(null);
   const [serverReportLoading, setServerReportLoading] = useState(false);
   const [serverReportFailed, setServerReportFailed] = useState(false);
@@ -147,6 +170,62 @@ function BatchStep5ExportInner({
     goStep(4);
   };
 
+  // 超过阈值时同步打包必 413，改走异步分卷导出
+  const useAsyncExport = selectedIds.length > ASYNC_EXPORT_FILE_THRESHOLD;
+
+  // 导出体积预估（选择变化 500ms 防抖，st_size 求和秒回）
+  useEffect(() => {
+    if (!activeJobId || selectedIds.length === 0) {
+      setExportEstimate(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      batchExportApi
+        .estimate(selectedIds, true, activeJobId)
+        .then(setExportEstimate)
+        .catch(() => setExportEstimate(null));
+    }, 500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedKey encodes selectedIds
+  }, [activeJobId, selectedKey]);
+
+  // 异步导出任务轮询
+  useEffect(() => {
+    if (!exportTask || (exportTask.status !== 'queued' && exportTask.status !== 'running')) return;
+    const timer = window.setInterval(() => {
+      batchExportApi
+        .get(exportTask.export_id)
+        .then(setExportTask)
+        .catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [exportTask]);
+
+  const startAsyncExport = async () => {
+    setExportStarting(true);
+    try {
+      const task = await batchExportApi.create(selectedIds, true, activeJobId);
+      setExportTask(task);
+    } catch {
+      setExportTask(null);
+    } finally {
+      setExportStarting(false);
+    }
+  };
+
+  const startDataExport = async () => {
+    if (!activeJobId) return;
+    setExportStarting(true);
+    try {
+      const task = await batchExportApi.createJobData(activeJobId, selectedIds);
+      setExportTask(task);
+    } catch {
+      setExportTask(null);
+    } finally {
+      setExportStarting(false);
+    }
+  };
+
   useEffect(() => {
     if (!activeJobId || selectedIds.length === 0) {
       setServerReport(null);
@@ -158,7 +237,8 @@ function BatchStep5ExportInner({
     let cancelled = false;
     setServerReportLoading(true);
     setServerReportFailed(false);
-    void getJobExportReport(activeJobId, selectedIds)
+    // 大 job 只拉聚合头：十万级明细 JSON 会同时压垮后端与浏览器，明细走 CSV 导出
+    void getJobExportReport(activeJobId, selectedIds, selectedIds.length > 2000)
       .then((backendReport) => {
         if (cancelled) return;
         if (isExportReportLike(backendReport)) {
@@ -273,14 +353,26 @@ function BatchStep5ExportInner({
           )}
           <Button
             className="h-9 shrink-0 whitespace-nowrap"
-            onClick={() => void downloadZip(true)}
-            disabled={redactedZipDisabled}
+            onClick={() => void (useAsyncExport ? startAsyncExport() : downloadZip(true))}
+            disabled={useAsyncExport ? exportStarting || redactedZipDisabled : redactedZipDisabled}
             data-testid="download-redacted"
           >
             <ShieldCheck data-icon="inline-start" />
-            {zipLoading
-              ? t('batchWizard.step5.downloading')
-              : t('batchWizard.step5.downloadRedacted')}
+            {useAsyncExport
+              ? t('batchWizard.step5.asyncExportStart')
+              : zipLoading
+                ? t('batchWizard.step5.downloading')
+                : t('batchWizard.step5.downloadRedacted')}
+          </Button>
+          <Button
+            variant="outline"
+            className="h-9 shrink-0 whitespace-nowrap"
+            onClick={() => void startDataExport()}
+            disabled={!activeJobId || !selectedIds.length || exportStarting}
+            data-testid="export-data-csv"
+          >
+            <FileJson data-icon="inline-start" />
+            {t('batchWizard.step5.exportDataCsv')}
           </Button>
           <Button
             variant="outline"
@@ -307,6 +399,63 @@ function BatchStep5ExportInner({
               : t('batchWizard.step5.downloadOriginal')}
           </Button>
         </div>
+
+        {exportEstimate && (
+          <div className="text-xs text-muted-foreground" data-testid="export-estimate">
+            {t('batchWizard.step5.exportEstimate')
+              .replace('{size}', formatBytesHuman(exportEstimate.total_bytes))
+              .replace('{files}', String(exportEstimate.file_count))
+              .replace('{volumes}', String(exportEstimate.estimated_volume_count))}
+          </div>
+        )}
+
+        {exportTask && (
+          <div
+            className="rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-xs"
+            data-testid="export-task-panel"
+          >
+            {exportTask.status === 'queued' && t('batchWizard.step5.asyncExportQueued')}
+            {exportTask.status === 'running' && (
+              <span>
+                {t('batchWizard.step5.asyncExportRunning')
+                  .replace('{current}', String(exportTask.progress.current))
+                  .replace('{total}', String(exportTask.progress.total))}
+              </span>
+            )}
+            {exportTask.status === 'failed' && (
+              <span className="text-destructive">
+                {t('batchWizard.step5.asyncExportFailed').replace('{error}', exportTask.error ?? '')}
+              </span>
+            )}
+            {exportTask.status === 'completed' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span>
+                  {t('batchWizard.step5.asyncExportDone').replace(
+                    '{volumes}',
+                    String(exportTask.volumes.length),
+                  )}
+                </span>
+                {exportTask.volumes.map((volume) => (
+                  <a
+                    key={volume.name}
+                    href={batchExportApi.volumeUrl(exportTask.export_id, volume.name)}
+                    className="font-medium text-primary underline underline-offset-2"
+                    download
+                  >
+                    {volume.name}（{formatBytesHuman(volume.size_bytes)}）
+                  </a>
+                ))}
+                <a
+                  href={batchExportApi.volumeUrl(exportTask.export_id, 'manifest.json')}
+                  className="text-muted-foreground underline underline-offset-2"
+                  download
+                >
+                  manifest.json
+                </a>
+              </div>
+            )}
+          </div>
+        )}
 
         {hasIncompleteSelected && (
           <div

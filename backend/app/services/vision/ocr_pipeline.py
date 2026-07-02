@@ -237,8 +237,6 @@ _OCR_TEXT_BLOCK_CACHE: OrderedDict[
 ] = OrderedDict()
 _OCR_TEXT_BLOCK_INFLIGHT_LOCK = threading.Lock()
 _OCR_TEXT_BLOCK_INFLIGHT: dict[tuple[Any, ...], _OcrOutputInflight] = {}
-_HAS_TEXT_NER_LOCK: asyncio.Lock | None = None
-_HAS_TEXT_NER_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
 _HAS_TEXT_NER_INFLIGHT: dict[tuple[Any, ...], asyncio.Future] = {}
 _HAS_TEXT_NER_INFLIGHT_LOOP: asyncio.AbstractEventLoop | None = None
 
@@ -248,22 +246,6 @@ class _OcrOutputInflight:
         self.event = threading.Event()
         self.result: tuple[list[OCRTextBlock], list[SensitiveRegion]] | None = None
         self.error: BaseException | None = None
-
-
-def _get_has_text_ner_lock() -> asyncio.Lock:
-    """Serialize local HaS Text calls inside this process.
-
-    llama.cpp serves one small local model for all scanned-PDF pages. Letting
-    page workers submit concurrent NER calls tends to increase cold-start tail
-    latency without improving recall, while OCR and visual feature grounding can still run on
-    their own paths.
-    """
-    global _HAS_TEXT_NER_LOCK, _HAS_TEXT_NER_LOCK_LOOP
-    loop = asyncio.get_running_loop()
-    if _HAS_TEXT_NER_LOCK is None or _HAS_TEXT_NER_LOCK_LOOP is not loop:
-        _HAS_TEXT_NER_LOCK = asyncio.Lock()
-        _HAS_TEXT_NER_LOCK_LOOP = loop
-    return _HAS_TEXT_NER_LOCK
 
 
 def _copy_has_text_ner_result(
@@ -2307,28 +2289,27 @@ async def run_has_text_analysis(
                 logger.info("HaS NER duplicate waited %dms without local slot", wait_ms)
             else:
                 try:
-                    # HaS httpx is synchronous - offload to a worker thread. Keep local
-                    # HaS Text calls serialized so scanned-PDF page concurrency does not
-                    # amplify cold-start and queue latency inside llama.cpp.
-                    lock = _get_has_text_ner_lock()
+                    # HaS httpx is synchronous - offload to a worker thread. Concurrency
+                    # is bounded by the shared GPU inference gate (HAS_NER_GLOBAL_MAX_INFLIGHT,
+                    # 1 = fully serialized); identical page payloads were already merged by
+                    # the inflight registry above, so raising the gate never duplicates work.
+                    from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
                     queue_start = time.perf_counter()
-                    async with lock:
+                    async with shared_gpu_inference_slot("OCR HaS Text NER"):
                         queue_ms = round((time.perf_counter() - queue_start) * 1000)
                         _add_has_text_duration(stage_status, "has_text_slot_wait_ms", queue_ms)
                         if queue_ms > 0:
-                            logger.info("HaS Text waited %dms for local NER slot", queue_ms)
+                            logger.info("HaS Text waited %dms for shared NER slot", queue_ms)
                         ner_result = _get_cached_has_text_ner(has_client, text_content, chinese_types)
                         if ner_result is not None:
                             _record_has_text_metric(stage_status, "has_text_cache_status", "hit_after_slot")
-                            logger.info("HaS NER cache hit after local slot wait")
+                            logger.info("HaS NER cache hit after slot wait")
                         else:
                             model_start = time.perf_counter()
-                            from app.core.gpu_inference_gate import shared_gpu_inference_slot
-
-                            async with shared_gpu_inference_slot("OCR HaS Text NER"):
-                                ner_result = await asyncio.to_thread(
-                                    has_client.ner, text_content, chinese_types
-                                )
+                            ner_result = await asyncio.to_thread(
+                                has_client.ner, text_content, chinese_types
+                            )
                             _record_has_text_metric(stage_status, "has_text_cache_status", "model_call")
                             _add_has_text_duration(
                                 stage_status,
@@ -2391,17 +2372,15 @@ async def run_has_text_analysis(
                 if cached_bridge is not None:
                     bridge_ner_result = cached_bridge
                 else:
-                    lock = _get_has_text_ner_lock()
-                    async with lock:
+                    from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
+                    async with shared_gpu_inference_slot("OCR HaS Text bridge NER"):
                         cached_bridge = _get_cached_has_text_ner(has_client, bridge_text, chinese_types)
                         if cached_bridge is not None:
                             bridge_ner_result = cached_bridge
                         else:
                             model_start = time.perf_counter()
-                            from app.core.gpu_inference_gate import shared_gpu_inference_slot
-
-                            async with shared_gpu_inference_slot("OCR HaS Text bridge NER"):
-                                result = await asyncio.to_thread(has_client.ner, bridge_text, chinese_types)
+                            result = await asyncio.to_thread(has_client.ner, bridge_text, chinese_types)
                             _add_has_text_duration(
                                 stage_status,
                                 "has_text_model_ms",

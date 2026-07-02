@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
+import app.services.export_service as _export
 import app.services.file_management_service as _fms
 import app.services.job_management_service as _jms
 from app.api.jobs import get_job_store
@@ -142,45 +143,74 @@ async def list_files(
     )
 
 
+def _assert_batch_delivery_ready(
+    request: BatchDownloadRequest,
+    store: JobStore,
+    owner_id: str,
+) -> None:
+    """redacted + job_id 时校验所选文件属于该 job 且全部 delivery-ready。"""
+    if not (request.redacted and request.job_id):
+        return
+    unique_file_ids = list(dict.fromkeys(request.file_ids))
+    job = store.get_job(request.job_id)
+    if not job or str(job.get("owner_id") or "local_user") != owner_id:
+        raise HTTPException(status_code=404, detail="job not found")
+    job_file_ids = {str(item["file_id"]) for item in store.list_items(request.job_id)}
+    missing_from_job = [file_id for file_id in unique_file_ids if file_id not in job_file_ids]
+    if missing_from_job:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "redacted export file selection does not belong to the job",
+                "missing": missing_from_job,
+            },
+        )
+    try:
+        report = _jms.build_export_report(
+            store,
+            request.job_id,
+            selected_file_ids=unique_file_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if not report.get("summary", {}).get("ready_for_delivery"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "redacted export is not ready for delivery",
+                "summary": report.get("summary", {}),
+                "redacted_zip": report.get("redacted_zip", {}),
+            },
+        )
+
+
 @router.post("/files/batch/download")
 async def batch_download_zip(
     request: BatchDownloadRequest,
     store: JobStore = Depends(get_job_store),
     owner_id: str = Depends(require_auth),
 ):
-    """将多个文件打包为 ZIP 下载。"""
-    if request.redacted and request.job_id:
-        unique_file_ids = list(dict.fromkeys(request.file_ids))
-        job = store.get_job(request.job_id)
-        if not job or str(job.get("owner_id") or "local_user") != owner_id:
-            raise HTTPException(status_code=404, detail="job not found")
-        job_file_ids = {str(item["file_id"]) for item in store.list_items(request.job_id)}
-        missing_from_job = [file_id for file_id in unique_file_ids if file_id not in job_file_ids]
-        if missing_from_job:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "redacted export file selection does not belong to the job",
-                    "missing": missing_from_job,
-                },
-            )
-        try:
-            report = _jms.build_export_report(
-                store,
-                request.job_id,
-                selected_file_ids=unique_file_ids,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
-        if not report.get("summary", {}).get("ready_for_delivery"):
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "message": "redacted export is not ready for delivery",
-                    "summary": report.get("summary", {}),
-                    "redacted_zip": report.get("redacted_zip", {}),
-                },
-            )
+    """将多个文件打包为 ZIP 下载（小批量同步路径；大批量走异步分卷导出）。"""
+    _assert_batch_delivery_ready(request, store, owner_id)
+    if len(request.file_ids) > int(settings.EXPORT_SYNC_MAX_FILES):
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "message": "文件数超出同步打包上限，请使用异步导出",
+                "use_async_export": True,
+                "sync_max_files": int(settings.EXPORT_SYNC_MAX_FILES),
+            },
+        )
+    entries, _pre_manifest = _fms.collect_batch_zip_entries(request, owner_id=owner_id)
+    if sum(size for _p, _a, size in entries) > int(settings.EXPORT_SYNC_MAX_BYTES):
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "message": "总体积超出同步打包上限，请使用异步导出",
+                "use_async_export": True,
+                "sync_max_bytes": int(settings.EXPORT_SYNC_MAX_BYTES),
+            },
+        )
     try:
         zip_bytes, filename, manifest = _fms.build_batch_zip(request, owner_id=owner_id)
     except ValueError as exc:
@@ -204,6 +234,70 @@ async def batch_download_zip(
             ),
         },
     )
+
+
+@router.post("/files/batch/export/estimate")
+async def estimate_batch_export(
+    request: BatchDownloadRequest,
+    owner_id: str = Depends(require_auth),
+):
+    """秒回：基于 st_size 求和预估导出体积与分卷数（不打包）。"""
+    entries, manifest = _fms.collect_batch_zip_entries(request, owner_id=owner_id)
+    estimate = _export.estimate_volumes(entries)
+    return {
+        **estimate,
+        "skipped": (manifest.get("skipped") or [])[:50],
+        "skipped_count": manifest.get("skipped_count", 0),
+    }
+
+
+@router.post("/files/batch/export", status_code=202)
+async def create_batch_export(
+    request: BatchDownloadRequest,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+):
+    """发起异步分卷导出任务（万级文件）。"""
+    _assert_batch_delivery_ready(request, store, owner_id)
+    entries, manifest = _fms.collect_batch_zip_entries(request, owner_id=owner_id)
+    if not entries:
+        raise HTTPException(status_code=400, detail="没有可导出的文件（不存在或未匿名化）")
+    estimate = _export.estimate_volumes(entries)
+    task = _export.export_task_manager.submit(
+        owner_id=owner_id,
+        kind="batch_files",
+        runner=_export.make_batch_files_runner(entries, manifest),
+        title="redacted_batch" if request.redacted else "original_batch",
+        total_bytes=estimate["total_bytes"],
+        file_count=estimate["file_count"],
+    )
+    audit_log("export", "batch", task.export_id, detail={"files": len(entries)})
+    return {**task.public(), "estimated_volume_count": estimate["estimated_volume_count"]}
+
+
+@router.get("/files/batch/export/{export_id}")
+async def get_batch_export(
+    export_id: str,
+    owner_id: str = Depends(require_auth),
+):
+    task = _export.export_task_manager.get(export_id, owner_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="export not found")
+    return task.public()
+
+
+@router.get("/files/batch/export/{export_id}/volumes/{name}")
+async def download_batch_export_volume(
+    export_id: str,
+    name: str,
+    owner_id: str = Depends(require_auth),
+):
+    """卷下载：FileResponse 原生支持 Range 断点续传。"""
+    path = _export.export_task_manager.volume_path(export_id, owner_id, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail="volume not found")
+    media = "application/zip" if name.endswith(".zip") else "application/octet-stream"
+    return FileResponse(path, media_type=media, filename=name)
 
 
 @router.post("/files/upload", response_model=FileUploadResponse)

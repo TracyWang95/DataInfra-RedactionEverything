@@ -1029,6 +1029,13 @@ const enBase: Record<string, string> = {
   'batchWizard.step5.downloadOriginal': 'Download Original ZIP',
   'batchWizard.step5.downloadRedacted': 'Download Redacted ZIP',
   'batchWizard.step5.downloadRedactedPartial': 'Download Ready ZIP',
+  'batchWizard.step5.exportEstimate': 'Estimated {size} · {files} files · about {volumes} volume(s)',
+  'batchWizard.step5.asyncExportStart': 'Export redacted files (volumes)',
+  'batchWizard.step5.asyncExportQueued': 'Export task queued…',
+  'batchWizard.step5.asyncExportRunning': 'Packing {current}/{total}…',
+  'batchWizard.step5.asyncExportDone': 'Export complete, {volumes} volume(s):',
+  'batchWizard.step5.asyncExportFailed': 'Export failed: {error}',
+  'batchWizard.step5.exportDataCsv': 'Export detail data (CSV)',
   'batchWizard.step5.fixSelectedIssues': 'Fix selected issues',
   'batchWizard.step5.downloadReport': 'Download Report',
   'batchWizard.step5.preparingReport': 'Preparing report...',
@@ -2680,6 +2687,8 @@ Object.assign(enOverrides, {
   'structured.delivery.settings.format': 'File format inside package',
   'structured.delivery.settings.formatHint':
     'Downloads are always ZIP delivery packages containing files in the chosen format plus quality-report.json.',
+  'structured.delivery.settings.xlsxPartHint':
+    'Large tables: XLSX splits into 50k-row parts so Excel opens them smoothly; prefer CSV for very large tables.',
   'structured.delivery.summary.selected': 'Selected',
   'structured.delivery.summary.mode': 'Delivery mode',
   'structured.delivery.summary.handoff': 'Handed off from policies',
