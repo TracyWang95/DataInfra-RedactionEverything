@@ -43,7 +43,9 @@ import {
 } from '../lib/recognition-config';
 import type { EntityTypeConfig, VisionTypeConfig, PipelineConfig } from '../types';
 
-const RECOGNITION_FETCH_TIMEOUT_MS = 1_200;
+// 与批量向导(use-batch-config 25s)对齐：目录接口经远程隧道单程可达数百毫秒，
+// 1.2s 会间歇性 abort → 单文件页"暂时无法加载识别项"。快在缓存，不靠掐超时。
+const RECOGNITION_FETCH_TIMEOUT_MS = 25_000;
 
 function uniqueIds(ids: string[]): string[] {
   return Array.from(new Set(ids));
