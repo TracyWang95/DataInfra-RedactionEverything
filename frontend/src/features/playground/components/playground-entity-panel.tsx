@@ -28,6 +28,7 @@ export interface PlaygroundEntityPanelProps {
   recognitionIssue?: string | null;
   entities: Entity[];
   entityTypes?: Array<{ id: string; name: string }>;
+  visionTypes?: Array<{ id: string; name: string }>;
   visibleBoxes: BoundingBox[];
   selectedCount: number;
   displaySelectedCount?: number;
@@ -52,6 +53,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
     recognitionIssue,
     entities,
     entityTypes = [],
+    visionTypes = [],
     visibleBoxes,
     selectedCount,
     displaySelectedCount,
@@ -76,10 +78,16 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
     const shownSelectedCount = isImageMode ? selectedCount : (displaySelectedCount ?? selectedCount);
     const totalCount = isImageMode ? visibleBoxes.length : (displayTotalCount ?? entities.length);
     const listTitle = isImageMode ? t('playground.regionList') : t('playground.results');
-    const typeNameById = useMemo(
-      () => new Map(entityTypes.map((type) => [type.id, type.name] as const)),
-      [entityTypes],
-    );
+    const typeNameById = useMemo(() => {
+      // 文本目录 + 图像管线目录都进映射：图像区域的 box.type 可能是
+      // custom_ocr_has_* 这类只存在于管线目录里的自定义项 id。
+      const map = new Map<string, string>();
+      for (const type of entityTypes) map.set(type.id, type.name);
+      for (const type of visionTypes) {
+        if (!map.has(type.id)) map.set(type.id, type.name);
+      }
+      return map;
+    }, [entityTypes, visionTypes]);
     const disabledReason =
       recognitionIssue && totalCount === 0
         ? recognitionIssue
@@ -228,7 +236,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
           </div>
           <ScrollArea className="flex-1">
             {isImageMode ? (
-              <BoxList boxes={visibleBoxes} onToggle={onToggleBox} />
+              <BoxList boxes={visibleBoxes} onToggle={onToggleBox} typeNameById={typeNameById} />
             ) : (
               <EntityList
                 entities={entities}
@@ -355,10 +363,11 @@ const RedactionBlockedNotice: FC<{
   );
 };
 
-const BoxList: FC<{ boxes: BoundingBox[]; onToggle: (id: string) => void }> = ({
-  boxes,
-  onToggle,
-}) => {
+const BoxList: FC<{
+  boxes: BoundingBox[];
+  onToggle: (id: string) => void;
+  typeNameById: Map<string, string>;
+}> = ({ boxes, onToggle, typeNameById }) => {
   const t = useT();
 
   if (boxes.length === 0) {
@@ -397,7 +406,7 @@ const BoxList: FC<{ boxes: BoundingBox[]; onToggle: (id: string) => void }> = ({
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex flex-wrap items-center gap-1.5">
                 <Badge variant="secondary">
-                  {getEntityTypeName(box.type)}
+                  {typeNameById.get(box.type) ?? getEntityTypeName(box.type)}
                 </Badge>
                 <Badge variant="outline">
                   {sourceLabel}
