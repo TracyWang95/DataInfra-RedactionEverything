@@ -557,9 +557,14 @@ export function getJob(jobId: string): Promise<JobDetail> {
   return get(`/jobs/${encodeURIComponent(jobId)}`).then(normalizeJobDetail);
 }
 
-export function getJobExportReport(jobId: string, fileIds: string[]): Promise<BatchExportReport> {
+export function getJobExportReport(
+  jobId: string,
+  fileIds: string[],
+  summaryOnly = false,
+): Promise<BatchExportReport> {
   const query = new URLSearchParams();
   fileIds.forEach((fileId) => query.append('file_ids', fileId));
+  if (summaryOnly) query.append('summary_only', 'true');
   const suffix = query.toString();
   return get(`/jobs/${encodeURIComponent(jobId)}/export-report${suffix ? `?${suffix}` : ''}`).then(
     normalizeJobExportReport,

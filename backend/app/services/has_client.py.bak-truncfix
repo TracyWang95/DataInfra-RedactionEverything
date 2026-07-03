@@ -244,30 +244,6 @@ class HaSClient:
         return "failed", None
 
     @staticmethod
-    def _trim_truncated_tail_value(result: dict[str, Any]) -> dict[str, Any]:
-        """Drop the cut-off tail value json_repair leaves in the last bucket.
-
-        A repetition loop truncated by max_tokens ends mid-value; the repaired
-        JSON keeps that fragment (e.g. '2') as a real value. Only drop it when
-        it is a proper prefix of an earlier value in the same bucket — the
-        signature of a truncated repetition, never of a legitimate value.
-        """
-        if not result:
-            return result
-        last_key = next(reversed(result))
-        values = result.get(last_key)
-        if not isinstance(values, list) or len(values) < 2:
-            return result
-        tail = values[-1]
-        if isinstance(tail, str) and tail and any(
-            isinstance(value, str) and value != tail and value.startswith(tail)
-            for value in values[:-1]
-        ):
-            result = dict(result)
-            result[last_key] = values[:-1]
-        return result
-
-    @staticmethod
     def _normalize_ner_type_name(type_name: str) -> str:
         value = str(type_name or "").strip()
         if not value:
@@ -400,8 +376,6 @@ class HaSClient:
         text: str,
         entity_types: list[str] | None = None,
         type_guidance: list[dict[str, Any]] | None = None,
-        *,
-        _allow_truncation_retry: bool = True,
     ) -> dict[str, list[str]]:
         """
         使用NER能力进行敏感实体识别
@@ -538,37 +512,6 @@ If nothing matches, return {{}}.
                 parse_mode,
                 round((time.perf_counter() - started) * 1000),
             )
-            if parse_mode.startswith("json_repair"):
-                # 输出被截断/损坏（如日期桶复读循环耗尽 max_tokens）：
-                # ①末桶的截断残值丢弃；②整桶丢失的请求类型补查一次并合并。
-                result = self._trim_truncated_tail_value(result)
-                if _allow_truncation_retry:
-                    missing = [t for t in types if t not in result]
-                    if missing:
-                        logger.warning(
-                            "HaS NER output recovered via %s; re-querying %d missing types: %s",
-                            parse_mode,
-                            len(missing),
-                            missing,
-                        )
-                        missing_set = set(missing)
-                        retry_guidance = [
-                            item for item in (type_guidance or [])
-                            if str(item.get("type") or "") in missing_set
-                        ] or None
-                        retry_result = self.ner(
-                            text,
-                            missing,
-                            retry_guidance,
-                            _allow_truncation_retry=False,
-                        )
-                        for key, values in (retry_result or {}).items():
-                            if not isinstance(values, list):
-                                continue
-                            bucket = result.setdefault(key, [])
-                            for value in values:
-                                if value and value not in bucket:
-                                    bucket.append(value)
             self._set_cached_ner(cache_key, result)
             return result
         except Exception as e:

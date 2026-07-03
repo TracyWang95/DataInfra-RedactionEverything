@@ -39,6 +39,8 @@ _USERNAME_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,80}$")
 _LEGACY_SUBJECT = "local_user"
 _ROLE_SUPER_ADMIN = "super_admin"
 _ROLE_USER = "user"
+# Per-user privileges an admin can grant on top of the base "user" role.
+_PERMISSION_BULK_CONFIRM = "bulk_confirm"
 
 
 class AuthStateError(RuntimeError):
@@ -299,6 +301,46 @@ def normalize_role(role: str | None) -> str:
     raise HTTPException(status_code=400, detail="Role must be 'super_admin' or 'user'.")
 
 
+def _user_permissions(user: dict | None) -> dict:
+    raw = (user or {}).get("permissions")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _can_bulk_confirm(user: dict | None) -> bool:
+    """Super admins always may; regular users need an explicit grant."""
+    if not user:
+        return False
+    if (user.get("role") or _ROLE_USER) == _ROLE_SUPER_ADMIN:
+        return True
+    return bool(_user_permissions(user).get(_PERMISSION_BULK_CONFIRM))
+
+
+def user_can_bulk_confirm(username: str | None) -> bool:
+    return _can_bulk_confirm(get_user(username))
+
+
+def set_user_bulk_confirm(username: str, allowed: bool) -> dict:
+    """Grant or revoke the batch one-click-confirm permission for a user."""
+    subject = normalize_username(username)
+    try:
+        with _auth_file_lock:
+            auth = _load_auth_unlocked()
+            users = _users(auth)
+            if subject not in users:
+                raise HTTPException(status_code=404, detail="User not found.")
+            current = dict(users.get(subject) or {})
+            permissions = dict(_user_permissions(current))
+            permissions[_PERMISSION_BULK_CONFIRM] = bool(allowed)
+            current["permissions"] = permissions
+            current["updated_at"] = datetime.now(UTC).isoformat()
+            users[subject] = current
+            auth["users"] = users
+            _save_auth_unlocked(auth)
+            return {"username": subject, **current}
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+
+
 def _resolve_login_username(auth: dict, username: str | None) -> str:
     users = _users(auth)
     if username and str(username).strip():
@@ -467,6 +509,7 @@ def list_users() -> list[dict]:
             "role": (user or {}).get("role") or _ROLE_USER,
             "created_at": (user or {}).get("created_at"),
             "updated_at": (user or {}).get("updated_at"),
+            "can_bulk_confirm": _can_bulk_confirm(user),
         }
         for username, user in sorted(users.items())
         if isinstance(user, dict)
@@ -583,6 +626,21 @@ async def require_super_admin(
     role = (user or {}).get("role")
     if role != _ROLE_SUPER_ADMIN:
         raise HTTPException(status_code=403, detail="Super administrator privileges are required.")
+    return str(subject)
+
+
+async def require_bulk_confirm(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> str:
+    """Require the batch one-click-confirm privilege (super admins always pass)."""
+    subject = await require_auth(request, credentials)
+    if not settings.AUTH_ENABLED:
+        return str(subject)
+    if not user_can_bulk_confirm(subject):
+        raise HTTPException(
+            status_code=403, detail="Batch confirm permission is required."
+        )
     return str(subject)
 
 

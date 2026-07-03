@@ -272,12 +272,6 @@ class Settings(BaseSettings):
     # default. Enable this only when tighter PaddleOCR-VL text fusion is worth
     # the extra GPU pass on the current hardware.
     OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL: bool = False
-    # When PaddleOCR-VL supplements the PP-Structure primary blocks, whether VL's
-    # text is allowed to overwrite a primary reading on overlap (VL reads glyphs
-    # more accurately than the PP-OCR line recognizer). True on accurate VL
-    # engines (CUDA); set False where the VL engine is the weaker reader (e.g.
-    # vllm-ascend, which can misread a value as "___"), keeping VL additive-only.
-    OCR_VL_PREFER_TEXT: bool = True
     # Use PP-StructureV3 as a short-field precision supplement for OCR/HaS
     # semantic detection. Disabled by default to keep the OCR path VL-only.
     OCR_STRUCTURE_TEXT_PRECISION_ENABLED: bool = False
@@ -307,6 +301,20 @@ class Settings(BaseSettings):
     HAS_NER_SINGLE_PASS_MAX_TYPES: int = 96
     HAS_NER_SINGLE_PASS_MAX_TEXT_CHARS: int = 1600
     HAS_NER_MAX_PARALLEL_REQUESTS: int = 4
+    # 全进程 HaS NER 并发闸门（shared_gpu_inference_slot 的信号量大小）。
+    # 1 = 历史串行行为（单卡小显存部署安全默认）；vLLM 多实例部署可放开
+    # （双卡 5090 生产 = 6：双实例 × 每实例 ~3，受 KV cache 预算约束）。
+    HAS_NER_GLOBAL_MAX_INFLIGHT: int = 1
+
+    # --- 批量异步导出（万级文件：分卷落盘，见 services/export_service.py） ---
+    EXPORT_VOLUME_MAX_BYTES: int = 2 * 1024**3   # 每卷 zip ≤2GB
+    EXPORT_VOLUME_MAX_FILES: int = 1000          # 每卷 ≤1000 文件
+    EXPORT_TTL_HOURS: float = 72.0               # 导出产物保留时长
+    EXPORT_SYNC_MAX_FILES: int = 200             # 超过则旧同步 zip 端点拒绝并引导异步
+    EXPORT_SYNC_MAX_BYTES: int = 500 * 1024**2
+    EXPORT_TABLE_ROWS_PER_FILE: int = 50_000     # 明细/表格类导出每卷行数（Excel 体验线）
+    STRUCTURED_MAX_EXPORT_ROWS: int = 5_000_000  # 库表导出硬护栏：超限报错，绝不静默截断
+    STRUCTURED_MAX_FILE_SIZE: int = 200 * 1024**2  # /structured/files 上传上限
     HAS_NER_BUILTIN_GUIDANCE_ENABLED: bool = False
     HAS_NER_CACHE_TTL_SEC: float = 300.0
     HAS_NER_CACHE_MAX_ITEMS: int = 256
@@ -409,6 +417,11 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_has_ner_max_parallel_requests(cls, v: int) -> int:
         return max(1, min(8, v))
+
+    @field_validator("HAS_NER_GLOBAL_MAX_INFLIGHT")
+    @classmethod
+    def _validate_has_ner_global_max_inflight(cls, v: int) -> int:
+        return max(1, min(12, v))
 
     @field_validator("HAS_NER_CUSTOM_MAX_TYPES_PER_REQUEST")
     @classmethod

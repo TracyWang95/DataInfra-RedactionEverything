@@ -201,7 +201,7 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
         isActive={active}
         tooltip={item.label}
         className={cn(
-          'min-h-8 rounded-xl border border-transparent px-2 py-1 transition-all duration-150',
+          'min-h-12 rounded-2xl border border-transparent px-3 py-2.5 transition-all duration-150',
           active &&
             'border-sidebar-border bg-sidebar-accent font-medium text-sidebar-foreground shadow-[var(--shadow-control)]',
         )}
@@ -212,14 +212,14 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
           aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
           data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '') || 'start'}`}
         >
-          <item.icon className="size-4 opacity-70" />
+          <item.icon className="size-4 shrink-0 opacity-70" />
           {item.sublabel ? (
-            <span className="flex min-w-0 flex-col gap-0.5 leading-snug">
+            <span className="flex min-w-0 flex-col gap-0.5 py-0.5 leading-snug">
               <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
               <span className="truncate text-[11px] font-normal leading-tight opacity-45">{item.sublabel}</span>
             </span>
           ) : (
-            <span className="truncate text-xs font-medium">{item.label}</span>
+            <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
           )}
         </NavLink>
       </SidebarMenuButton>
@@ -240,7 +240,7 @@ function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string
     <NavLink
       to={item.path}
       className={cn(
-        'grid min-h-7 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-sidebar-foreground/70 transition-all duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+        'grid min-h-9 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-xl border border-transparent px-2.5 py-1.5 text-sidebar-foreground/70 transition-all duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground',
         active && 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-[var(--shadow-control)]',
       )}
       aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}

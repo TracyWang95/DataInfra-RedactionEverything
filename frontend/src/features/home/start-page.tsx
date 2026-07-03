@@ -131,24 +131,24 @@ function WorkflowDemoCard() {
         </div>
       </div>
       <div className="relative flex min-h-0 flex-1 items-stretch">
-        <div className="absolute bottom-8 left-8 top-8 hidden w-px bg-border lg:block" />
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-rows-4">
+        <div className="absolute bottom-10 left-8 top-10 hidden w-px bg-border lg:block" />
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-rows-4">
           {workflowSteps.map(({ key, Icon, markerClass, dotClass }, index) => (
             <div
               key={key}
-              className="relative grid min-h-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-3 rounded-[20px] border border-border/60 bg-[var(--surface-control-muted)] px-3 py-3 lg:bg-transparent"
+              className="relative grid min-h-[5rem] grid-cols-[2.75rem_minmax(0,1fr)] items-start gap-3 rounded-[20px] border border-border/60 bg-[var(--surface-control-muted)] px-4 py-4 lg:bg-transparent"
             >
               <div
                 className={cn(
-                  'relative z-10 flex size-10 items-center justify-center rounded-full shadow-sm',
+                  'relative z-10 mt-0.5 flex size-10 items-center justify-center rounded-full shadow-sm',
                   markerClass,
                   index === 1 && 'animate-pulse',
                 )}
               >
                 <Icon className="size-4" />
               </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
+              <div className="min-w-0 pt-0.5">
+                <div className="flex items-center gap-1.5 leading-none">
                   <span
                     className={cn(
                       'size-1.5 rounded-full',
@@ -160,7 +160,7 @@ function WorkflowDemoCard() {
                     {t(`start.workflow.step.${key}.title`)}
                   </span>
                 </div>
-                <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                <p className="mt-1.5 text-sm leading-5 text-muted-foreground">
                   {t(`start.workflow.step.${key}.desc`)}
                 </p>
               </div>

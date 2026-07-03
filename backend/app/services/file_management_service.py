@@ -596,10 +596,14 @@ def _get_job_store():
 # Batch download ZIP
 # ---------------------------------------------------------------------------
 
-def build_batch_zip(request: BatchDownloadRequest, owner_id: str | None = None) -> tuple[bytes, str, dict[str, Any]]:
-    """
-    Build a ZIP file containing requested files.
-    Returns (zip_bytes, filename, manifest). Raises ValueError on errors.
+def collect_batch_zip_entries(
+    request: BatchDownloadRequest,
+    owner_id: str | None = None,
+) -> tuple[list[tuple[str, str, int]], dict[str, Any]]:
+    """筛选可导出的文件并附 st_size，供同步 zip 与异步分卷导出共用。
+
+    Returns ([(path, arcname, size_bytes)], manifest)。不打包、不读文件内容，
+    对 1 万文件也只是 1 万次 stat —— 这就是"1 万个文件导出多大"的秒回预估来源。
     """
     seen: set[str] = set()
     unique_ids: list[str] = []
@@ -609,8 +613,8 @@ def build_batch_zip(request: BatchDownloadRequest, owner_id: str | None = None) 
             unique_ids.append(fid)
 
     skipped: list[dict[str, str]] = []
-    included: list[dict[str, str]] = []
-    pairs: list[tuple[str, str]] = []
+    included: list[dict[str, Any]] = []
+    pairs: list[tuple[str, str, int]] = []
     used_names: dict[str, int] = {}
     item_status_map: dict[str, dict[str, str]] = {}
     if request.redacted:
@@ -661,15 +665,19 @@ def build_batch_zip(request: BatchDownloadRequest, owner_id: str | None = None) 
         n = used_names.get(safe, 0)
         used_names[safe] = n + 1
         arcname = safe if n == 0 else f"{n}_{safe}"
-        pairs.append((path, arcname))
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            skipped.append({"file_id": fid, "reason": "missing_redacted_output" if request.redacted else "missing_original_file"})
+            used_names[safe] = n  # 回滚占名
+            continue
+        pairs.append((path, arcname, size))
         included.append({
             "file_id": fid,
             "filename": original_filename,
             "archive_name": arcname,
+            "size_bytes": size,
         })
-
-    if not pairs:
-        raise ValueError("没有可下载的文件（不存在或未匿名化）")
 
     manifest = {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -680,10 +688,22 @@ def build_batch_zip(request: BatchDownloadRequest, owner_id: str | None = None) 
         "included": included,
         "skipped": skipped,
     }
+    return pairs, manifest
+
+
+def build_batch_zip(request: BatchDownloadRequest, owner_id: str | None = None) -> tuple[bytes, str, dict[str, Any]]:
+    """
+    Build a ZIP file containing requested files (small batches, in-memory).
+    Returns (zip_bytes, filename, manifest). Raises ValueError on errors.
+    大批量走异步分卷导出（export_service）；API 层按 EXPORT_SYNC_MAX_* 分流。
+    """
+    pairs, manifest = collect_batch_zip_entries(request, owner_id)
+    if not pairs:
+        raise ValueError("没有可下载的文件（不存在或未匿名化）")
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path, arcname in pairs:
+        for path, arcname, _size in pairs:
             zf.write(path, arcname)
         zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     buf.seek(0)

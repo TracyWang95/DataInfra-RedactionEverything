@@ -14,12 +14,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from starlette.responses import StreamingResponse
 
 import app.services.job_management_service as _jms
 from app.core.audit import audit_log
-from app.core.auth import require_auth
+from app.core.auth import require_auth, require_bulk_confirm
 from app.models.errors import ConflictError, NotFoundError, ValidationError
 from app.models.schemas import (
     BatchDetailsBody,
@@ -235,6 +235,10 @@ async def get_job_export_report(
             "to distinguish selected, actionable, and not_selected files."
         ),
     ),
+    summary_only: bool = Query(
+        False,
+        description="True 时只返回聚合汇总（files 为空数组）——十万级 item 的 job 请用它 + 明细 CSV 导出。",
+    ),
     store: JobStore = Depends(get_job_store),
     owner_id: str = Depends(require_auth),
 ) -> dict[str, Any]:
@@ -255,9 +259,39 @@ async def get_job_export_report(
             )
         file_ids = unique_file_ids
     try:
-        return _jms.build_export_report(store, job_id, selected_file_ids=file_ids)
+        return _jms.build_export_report(
+            store, job_id, selected_file_ids=file_ids, include_files=not summary_only
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/{job_id}/export-data", status_code=202)
+async def export_job_data(
+    job_id: str,
+    file_ids: list[str] | None = Body(None, embed=True),
+    include_entities: bool = Body(True, embed=True),
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_auth),
+) -> dict[str, Any]:
+    """异步导出批量结果明细：summary.json + files-partNN.csv (+ entities-partNN.csv)。
+
+    进度与下载复用 /files/batch/export/{export_id}(/volumes/{name}) 端点。
+    """
+    row = store.get_job(job_id)
+    _jms.assert_job_owner(row, owner_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="job not found")
+    import app.services.export_service as _export
+
+    task = _export.export_task_manager.submit(
+        owner_id=owner_id,
+        kind="job_data",
+        runner=_export.make_job_data_runner(store, job_id, file_ids, include_entities),
+        title=f"job_data_{job_id[:8]}",
+    )
+    audit_log("export", "job_data", task.export_id, detail={"job_id": job_id})
+    return task.public()
 
 
 @router.post("/{job_id}/items", response_model=JobItemResponse)
@@ -466,6 +500,32 @@ async def commit_item_review(
         raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/{job_id}/review/commit-all", response_model=dict)
+async def commit_all_item_reviews(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_bulk_confirm),
+) -> dict[str, Any]:
+    """Batch one-click confirm: approve every awaiting-review item in the job.
+
+    Gated by the per-user ``bulk_confirm`` permission (super admins always pass).
+    """
+    try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
+        result = await _jms.commit_all_reviews(store, job_id, reviewer=owner_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    audit_log(
+        "commit_all",
+        "job",
+        job_id,
+        detail={"confirmed": result.get("confirmed"), "failed": len(result.get("failed") or [])},
+    )
+    return result
 
 
 @router.get("/{job_id}/stream")

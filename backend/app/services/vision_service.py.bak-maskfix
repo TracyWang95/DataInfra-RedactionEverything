@@ -106,10 +106,6 @@ _REFINE_PAD_RATIO = 0.04
 # Reject refinement that collapses width below this floor/fraction of region.
 _REFINE_MIN_WIDTH_PX = 6
 _REFINE_MIN_WIDTH_RATIO = 0.18
-# Crops at or below this smaller-side size are single-line value crops where
-# rule-line pruning is untrustworthy (its run thresholds degenerate); if
-# pruning removes most of their ink, keep the raw ink mask.
-_REFINE_RULE_TRUST_MIN_SIDE = 48
 
 # --- OCR region expansion -----------------------------------------------------
 # Per-entity horizontal pad as a fraction of page width (default for others).
@@ -1100,18 +1096,7 @@ class VisionService:
         span = arr.max(axis=2) - arr.min(axis=2)
         red_mark = (red > _RED_MARK_MIN) & (red > green * _RED_MARK_R_OVER_G) & (red > blue * _RED_MARK_R_OVER_B)
         mask = ((gray < _INK_GRAY_DARK_MAX) | ((gray < _INK_GRAY_SOFT_MAX) & (span < _INK_SOFT_SPAN_MAX))) & ~red_mark
-        cleaned = VisionService._remove_ocr_rule_lines(mask)
-        # Rule pruning targets long page structure; its run thresholds are
-        # relative to the crop size, so inside a single-line value crop dense
-        # blurred glyph rows read as "rules" and the text itself gets wiped
-        # (low-res photo report: K124016 ink 825→28px, the mask collapsed to a
-        # 4px sliver). When such a small crop loses the majority of its ink to
-        # pruning, the ink WAS the text — keep the raw mask: over-masking a
-        # stray line is harmless, under-masking a value leaks PII. Large crops
-        # keep full pruning (genuine form lines can dominate their ink).
-        is_value_sized_crop = min(crop.width, crop.height) <= _REFINE_RULE_TRUST_MIN_SIDE
-        if not (is_value_sized_crop and int(cleaned.sum()) * 2 < int(mask.sum())):
-            mask = cleaned
+        mask = VisionService._remove_ocr_rule_lines(mask)
 
         ys, xs = np.where(mask)
         if len(xs) < max(_REFINE_MIN_INK_PIXELS, int(mask.size * _REFINE_MIN_INK_AREA_RATIO)):

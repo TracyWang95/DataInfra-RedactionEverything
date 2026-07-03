@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 
 from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
-from app.models.type_mapping import canonical_type_id, has_query_labels_for
+from app.models.type_mapping import TYPE_ID_TO_CN, canonical_type_id, has_query_labels_for
 from app.services.ocr_has_vision_service import OCRTextBlock
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,11 @@ def _canonical_image_text_type(entity_type: str | None) -> str:
     value = str(entity_type or "").strip()
     if not value:
         return ""
+    # Custom items are their own canonical form (same lowercase id the store
+    # and the text NER channel use); canonical_type_id would uppercase them
+    # into ids no catalog knows.
+    if value.lower().startswith("custom_"):
+        return value.lower()
     return canonical_type_id(value)
 
 
@@ -82,20 +87,25 @@ def _build_has_text_type_names(vision_types: list | None = None) -> list[str]:
     that label IS the type (识别出来是啥就是啥).
     """
     if not vision_types:
-        type_ids: list[str] = list(DEFAULT_HAS_TEXT_TYPE_IDS)
+        entries: list[tuple[str, str]] = [(type_id, "") for type_id in DEFAULT_HAS_TEXT_TYPE_IDS]
     else:
-        type_ids = []
+        entries = []
         seen_type_ids: set[str] = set()
         for vt in vision_types:
             type_id = _canonical_image_text_type(getattr(vt, "id", ""))
             if not type_id or type_id in VISUAL_ONLY_ENTITY_TYPES or type_id in seen_type_ids:
                 continue
             seen_type_ids.add(type_id)
-            type_ids.append(type_id)
+            entries.append((type_id, str(getattr(vt, "name", "") or "").strip()))
 
     labels: list[str] = []
-    for type_id in type_ids:
-        labels.extend(has_query_labels_for(type_id))
+    for type_id, name in entries:
+        if type_id in TYPE_ID_TO_CN:
+            labels.extend(has_query_labels_for(type_id))
+        else:
+            # Custom item: the registry has no Chinese label for it, and the
+            # raw id means nothing to the model — query by the user-given name.
+            labels.append(name or type_id)
     return list(dict.fromkeys(label for label in labels if label))
 
 def _compact_text(text: str | None) -> str:

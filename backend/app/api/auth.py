@@ -22,6 +22,8 @@ from app.core.auth import (
     require_super_admin,
     revoke_token,
     set_password,
+    set_user_bulk_confirm,
+    user_can_bulk_confirm,
     validate_password_strength,
 )
 from app.core.config import settings
@@ -34,6 +36,7 @@ from app.models.schemas import (
     PasswordRequest,
     TokenResponse,
     UserCreateRequest,
+    UserPermissionsRequest,
 )
 
 router = APIRouter(tags=["auth"])
@@ -83,6 +86,7 @@ def _build_token_response(token: str) -> JSONResponse:
 async def auth_status(subject: str | None = Depends(get_optional_subject)):
     user = get_user(subject) if subject else None
     role = (user or {}).get("role")
+    can_bulk_confirm = (not settings.AUTH_ENABLED) or user_can_bulk_confirm(subject)
     return {
         "auth_enabled": settings.AUTH_ENABLED,
         "password_set": is_password_set() if settings.AUTH_ENABLED else None,
@@ -90,6 +94,7 @@ async def auth_status(subject: str | None = Depends(get_optional_subject)):
         "username": subject,
         "role": role,
         "is_super_admin": role == "super_admin",
+        "can_bulk_confirm": can_bulk_confirm,
         "multi_user": True,
     }
 
@@ -166,6 +171,22 @@ async def create_auth_user(req: UserCreateRequest, _: str = Depends(require_supe
 @router.get("/auth/users", response_model=list[dict])
 async def list_auth_users(_: str = Depends(require_super_admin)):
     return list_users()
+
+
+@router.put("/auth/users/{username}/permissions", response_model=dict)
+async def update_user_permissions(
+    username: str,
+    req: UserPermissionsRequest,
+    _: str = Depends(require_super_admin),
+):
+    subject = normalize_username(username)
+    set_user_bulk_confirm(subject, req.bulk_confirm)
+    user = get_user(subject) or {}
+    return {
+        "username": subject,
+        "role": user.get("role") or "user",
+        "can_bulk_confirm": user_can_bulk_confirm(subject),
+    }
 
 
 @router.get("/auth/concurrency", response_model=ConcurrencySettingsResponse)

@@ -61,11 +61,11 @@ async def upload_structured_file(
     try:
         # 早校验扩展名，避免为不支持的类型读入整个文件体
         structured_service.extension_kind(file.filename)
-        content = await file.read()
-        path, kind = structured_service.save_structured_upload(
+        # 流式落盘 + STRUCTURED_MAX_FILE_SIZE 上限（此前整读进内存且无大小校验）
+        path, kind = structured_service.save_structured_upload_stream(
             owner_id=owner_id,
             filename=file.filename,
-            content=content,
+            fileobj=file.file,
         )
         result = structured_service.register_file_source(
             owner_id=owner_id,

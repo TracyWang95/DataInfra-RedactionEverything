@@ -16,6 +16,7 @@ __all__ = [
     "MessageResponse",
     "PasswordRequest",
     "UserCreateRequest",
+    "UserPermissionsRequest",
     "ConcurrencySettingsRequest",
     "ConcurrencySettingsResponse",
     "ChangePasswordRequest",
@@ -150,6 +151,10 @@ class UserCreateRequest(BaseModel):
     role: str = "user"
 
 
+class UserPermissionsRequest(BaseModel):
+    bulk_confirm: bool
+
+
 class ConcurrencySettingsRequest(BaseModel):
     job_concurrency: int
 
@@ -179,4 +184,5 @@ class AuthStatusResponse(BaseModel):
     username: str | None = None
     role: str | None = None
     is_super_admin: bool = False
+    can_bulk_confirm: bool = False
     multi_user: bool = False

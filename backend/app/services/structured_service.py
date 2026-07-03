@@ -284,6 +284,16 @@ def save_structured_upload(*, owner_id: str, filename: str, content: bytes) -> t
     return path, kind
 
 
+def save_structured_upload_stream(*, owner_id: str, filename: str, fileobj) -> tuple[str, str]:
+    """流式落盘 + 大小上限（大表 xlsx/csv 整读进内存曾是 OOM 缺口）。"""
+    kind = extension_kind(filename)
+    stored = f"{uuid.uuid4().hex}_{safe_filename(filename)}"
+    path = os.path.join(get_upload_dir(owner_id), stored)
+    max_bytes = int(getattr(settings, "STRUCTURED_MAX_FILE_SIZE", 200 * 1024**2))
+    copy_stream_with_limit(fileobj, path, max_bytes)
+    return path, kind
+
+
 def register_file_source(
     *,
     owner_id: str,
@@ -1530,6 +1540,312 @@ def bucket_value(text: str) -> str:
     return ">=1m"
 
 
+class _ExportRowLimitExceeded(Exception):
+    pass
+
+
+def copy_stream_with_limit(src, dst_path: str, max_bytes: int, chunk_size: int = 1024 * 1024) -> int:
+    """分块拷贝上传流并强制大小上限；超限删除半成品并报错（对齐 /files/upload）。"""
+    written = 0
+    try:
+        with open(dst_path, "wb") as dst:
+            while True:
+                chunk = src.read(chunk_size)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise ValueError(f"文件超过上传上限 {max_bytes // (1024 * 1024)}MB")
+                dst.write(chunk)
+    except Exception:
+        if os.path.exists(dst_path):
+            os.remove(dst_path)
+        raise
+    return written
+
+
+def iter_dataset_rows(
+    dataset: dict[str, Any],
+    *,
+    owner_id: str,
+    store: StructuredStore | None = None,
+):
+    """流式读数据集：返回 (columns, 行迭代器)，内存 O(1)。
+
+    preview/profile 仍走 load_dataset_rows（有限行）；导出用本函数，
+    十万行不再全量进内存。列集合与既有 read_* 的口径一致。
+    """
+    store = store or get_structured_store()
+    source_kind = str(dataset.get("source_kind") or "")
+    metadata = dataset.get("metadata") or {}
+    if dataset.get("source_id"):
+        path = str(metadata.get("path") or "")
+        if source_kind == "csv":
+            return _iter_csv_rows(path)
+        if source_kind == "jsonl":
+            return _iter_jsonl_rows(path)
+        if source_kind == "xlsx":
+            return _iter_xlsx_rows(path, sheet_name=str(metadata.get("sheet_name") or ""))
+        if source_kind == "sqlite":
+            return _iter_sqlite_rows(path, table_name=str(dataset.get("table_name") or dataset["name"]))
+    if dataset.get("connection_id"):
+        connection = store.get_connection(str(dataset["connection_id"]), owner_id=owner_id, include_secret=True)
+        if not connection:
+            raise ValueError("connection not found")
+        credential = decrypt_credential(connection.get("credential") or {})
+        engine = str(connection.get("engine") or "")
+        table_name = str(dataset.get("table_name") or dataset["name"])
+        if engine == "sqlite":
+            path = str(credential.get("sqlite_path") or credential.get("database") or "")
+            return _iter_sqlite_rows(path, table_name=table_name)
+        return _iter_connection_rows(
+            connection, credential,
+            schema_name=dataset.get("schema_name"), table_name=table_name,
+        )
+    raise ValueError("dataset source not available")
+
+
+def _iter_csv_rows(path: str):
+    encoding = detect_csv_encoding(path)
+    with open(path, encoding=encoding, newline="") as fh:
+        sample = fh.read(8192)
+        try:
+            dialect = csv.Sniffer().sniff(sample)
+        except csv.Error:
+            dialect = csv.excel
+        fh.seek(0)
+        columns = normalize_columns(csv.DictReader(fh, dialect=dialect).fieldnames or [])
+
+    def rows():
+        with open(path, encoding=encoding, newline="") as handle:
+            reader = csv.DictReader(handle, dialect=dialect)
+            for raw in reader:
+                yield {columns[i]: value for i, value in enumerate(raw.values()) if i < len(columns)}
+
+    return columns, rows()
+
+
+def _iter_jsonl_rows(path: str, probe_limit: int = MAX_PROFILE_ROWS):
+    columns: list[str] = []
+    seen: set[str] = set()
+    with open(path, encoding="utf-8-sig") as fh:
+        for index, line in enumerate(fh):
+            if index >= probe_limit:
+                break
+            if not line.strip():
+                continue
+            obj = json.loads(line)
+            if not isinstance(obj, dict):
+                obj = {"value": obj}
+            for key in obj:
+                if key not in seen:
+                    seen.add(key)
+                    columns.append(str(key))
+    normalized = normalize_columns(columns)
+
+    def rows():
+        with open(path, encoding="utf-8-sig") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                obj = json.loads(line)
+                if not isinstance(obj, dict):
+                    obj = {"value": obj}
+                yield {str(key): value for key, value in obj.items()}
+
+    return normalized, rows()
+
+
+def _iter_xlsx_rows(path: str, *, sheet_name: str):
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        ws = wb[sheet_name]
+        header = next(ws.iter_rows(values_only=True), None)
+        columns = normalize_columns([stringify_cell(value) for value in (header or [])])
+        if not columns:
+            columns = [f"column_{i + 1}" for i in range(ws.max_column or 0)]
+    finally:
+        wb.close()
+
+    def rows():
+        book = load_workbook(path, read_only=True, data_only=True)
+        try:
+            sheet = book[sheet_name]
+            iterator = sheet.iter_rows(values_only=True)
+            next(iterator, None)  # skip header
+            for values in iterator:
+                if not values or all(value is None for value in values):
+                    continue
+                yield {columns[i]: cell_to_json(value) for i, value in enumerate(values[: len(columns)])}
+        finally:
+            book.close()
+
+    return columns, rows()
+
+
+def _iter_sqlite_rows(path: str, *, table_name: str):
+    with sqlite3.connect(path) as conn:
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({quote_sqlite_ident(table_name)})")]
+
+    def rows():
+        with sqlite3.connect(path) as conn:
+            conn.row_factory = sqlite3.Row
+            for row in conn.execute(f"SELECT * FROM {quote_sqlite_ident(table_name)}"):
+                yield dict(row)
+
+    return columns, rows()
+
+
+def _iter_connection_rows(connection, credential, *, schema_name, table_name):
+    sa = sqlalchemy()
+    engine = str(connection.get("engine") or "")
+    url = build_sqlalchemy_url({**credential, "engine": engine})
+    sql_engine = sa.create_engine(url)
+    try:
+        table_ref = quote_sa_table(sa, sql_engine, schema_name=schema_name, table_name=table_name)
+        with sql_engine.connect() as conn:
+            columns = [str(key) for key in conn.execute(sa.text(f"SELECT * FROM {table_ref} LIMIT 0")).keys()]
+    except Exception:
+        sql_engine.dispose()
+        raise
+
+    def rows():
+        try:
+            with sql_engine.connect() as conn:
+                result = conn.execution_options(stream_results=True, yield_per=1000).execute(
+                    sa.text(f"SELECT * FROM {table_ref}")
+                )
+                for row in result:
+                    yield dict(row._mapping)
+        finally:
+            sql_engine.dispose()
+
+    return columns, rows()
+
+
+def _write_export_parts(
+    fmt: str,
+    out_dir: str,
+    base_filename: str,
+    table_name: str,
+    columns: list[str],
+    rows_iter,
+    rows_per_part: int | None,
+) -> list[dict[str, Any]]:
+    """流式写导出文件；xlsx 按 rows_per_part 分卷。失败时清掉已写文件再抛。"""
+    stem, ext = os.path.splitext(base_filename)
+    written_paths: list[str] = []
+    parts: list[dict[str, Any]] = []
+
+    def _part_path(index: int) -> tuple[str, str]:
+        name = f"{stem}-part{index:03d}{ext}"
+        return name, os.path.join(out_dir, name)
+
+    try:
+        if fmt == "csv":
+            path = os.path.join(out_dir, base_filename)
+            written_paths.append(path)
+            count = 0
+            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
+                writer.writeheader()
+                for row in rows_iter:
+                    writer.writerow(row)
+                    count += 1
+            parts.append({"filename": base_filename, "path": path, "rows": count})
+        elif fmt == "xlsx":
+            from openpyxl import Workbook
+
+            cap = max(1, int(rows_per_part or 50_000))
+            wb = ws = None
+            part_rows = 0
+
+            def _open(index: int):
+                nonlocal wb, ws, part_rows
+                name, path = _part_path(index)
+                written_paths.append(path)
+                parts.append({"filename": name, "path": path, "rows": 0})
+                wb = Workbook(write_only=True)
+                ws = wb.create_sheet("redacted")
+                ws.append(columns)
+                part_rows = 0
+
+            def _save():
+                nonlocal wb
+                if wb is not None:
+                    wb.save(parts[-1]["path"])
+                    parts[-1]["rows"] = part_rows
+                    wb = None
+
+            _open(1)
+            for row in rows_iter:
+                if part_rows >= cap:
+                    _save()
+                    _open(len(parts) + 1)
+                ws.append([row.get(col) for col in columns])
+                part_rows += 1
+            _save()
+            if len(parts) == 1:
+                # 单卷去 -part 后缀，保持既有交付命名
+                plain_path = os.path.join(out_dir, base_filename)
+                os.replace(parts[0]["path"], plain_path)
+                parts[0]["filename"] = base_filename
+                parts[0]["path"] = plain_path
+        elif fmt == "sqlite":
+            path = os.path.join(out_dir, base_filename)
+            written_paths.append(path)
+            if os.path.exists(path):
+                os.remove(path)
+            count = 0
+            with sqlite3.connect(path) as conn:
+                cols = ", ".join(f"{quote_sqlite_ident(col)} TEXT" for col in columns)
+                conn.execute(f"CREATE TABLE {quote_sqlite_ident(table_name)} ({cols})")
+                placeholders = ", ".join("?" for _ in columns)
+                col_names = ", ".join(quote_sqlite_ident(col) for col in columns)
+                batch: list[list[str]] = []
+                for row in rows_iter:
+                    batch.append([normalize_value(row.get(col)) for col in columns])
+                    count += 1
+                    if len(batch) >= 1000:
+                        conn.executemany(
+                            f"INSERT INTO {quote_sqlite_ident(table_name)} ({col_names}) VALUES ({placeholders})",
+                            batch,
+                        )
+                        batch = []
+                if batch:
+                    conn.executemany(
+                        f"INSERT INTO {quote_sqlite_ident(table_name)} ({col_names}) VALUES ({placeholders})",
+                        batch,
+                    )
+                conn.commit()
+            parts.append({"filename": base_filename, "path": path, "rows": count})
+        elif fmt == "sql":
+            path = os.path.join(out_dir, base_filename)
+            written_paths.append(path)
+            count = 0
+            with open(path, "w", encoding="utf-8") as fh:
+                cols = ", ".join(quote_sqlite_ident(col) for col in columns)
+                fh.write(f"-- Redacted export generated at {utc_iso()}\n")
+                for row in rows_iter:
+                    values = ", ".join(sql_literal(row.get(col)) for col in columns)
+                    fh.write(f"INSERT INTO {quote_sqlite_ident(table_name)} ({cols}) VALUES ({values});\n")
+                    count += 1
+            parts.append({"filename": base_filename, "path": path, "rows": count})
+        else:
+            raise ValueError(f"unsupported export format: {fmt}")
+    except Exception:
+        for path in written_paths:
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError:
+                pass
+        raise
+    return parts
+
+
 def export_dataset(
     dataset_id: str,
     *,
@@ -1542,13 +1858,28 @@ def export_dataset(
     dataset = store.get_dataset(dataset_id, owner_id=owner_id)
     if not dataset:
         raise ValueError("dataset not found")
-    table = load_dataset_rows(dataset, owner_id=owner_id, limit=MAX_EXPORT_ROWS, store=store)
     policy = get_or_create_policy(dataset_id, owner_id=owner_id, store=store)
-    rows = [redact_row(row, policy.get("columns") or [], owner_id=owner_id, dataset_id=dataset_id) for row in table.rows]
+    policy_columns = policy.get("columns") or []
     fmt = "csv" if export_format == "zip" else export_format
+    if fmt not in {"csv", "xlsx", "sqlite", "sql"}:
+        raise ValueError(f"unsupported export format: {export_format}")
     out_dir = os.path.join(settings.OUTPUT_DIR, "structured", safe_filename(owner_id), job_id)
     os.makedirs(out_dir, exist_ok=True)
     base = export_base_filename(dataset.get("name") or dataset_id)
+
+    columns, source_rows = iter_dataset_rows(dataset, owner_id=owner_id, store=store)
+    max_rows = int(getattr(settings, "STRUCTURED_MAX_EXPORT_ROWS", 0) or MAX_EXPORT_ROWS)
+    counter = {"rows": 0}
+
+    def redacted_rows():
+        for row in source_rows:
+            counter["rows"] += 1
+            if counter["rows"] > max_rows:
+                raise _ExportRowLimitExceeded()
+            yield redact_row(row, policy_columns, owner_id=owner_id, dataset_id=dataset_id)
+
+    rows_per_part = int(getattr(settings, "EXPORT_TABLE_ROWS_PER_FILE", 50_000)) if fmt == "xlsx" else None
+
     with _STRUCTURED_EXPORT_LOCK:
         filename = unique_export_filename(
             f"{base}.{fmt}",
@@ -1558,39 +1889,50 @@ def export_dataset(
             out_dir=out_dir,
             store=store,
         )
-        path = os.path.join(out_dir, filename)
         export_base = export_base_filename(filename)
-        if fmt == "csv":
-            write_csv(path, table.columns, rows)
-        elif fmt == "xlsx":
-            write_xlsx(path, table.columns, rows)
-        elif fmt == "sqlite":
-            write_sqlite(path, table_name=export_base, columns=table.columns, rows=rows)
-        elif fmt == "sql":
-            write_sql(path, table_name=export_base, columns=table.columns, rows=rows)
-        else:
-            raise ValueError(f"unsupported export format: {export_format}")
-    action_counts = Counter(str(col.get("action") or "keep") for col in policy.get("columns") or [] if col.get("enabled", True))
-    redacted_columns = sum(1 for col in policy.get("columns") or [] if col.get("enabled", True) and col.get("action") != "keep")
-    summary = {
+        try:
+            parts = _write_export_parts(
+                fmt, out_dir, filename, export_base, columns, redacted_rows(), rows_per_part
+            )
+        except _ExportRowLimitExceeded:
+            # 绝不静默截断：超限即失败，partial 已被 _write_export_parts 清理
+            raise ValueError(
+                f"数据集超过导出上限 {max_rows} 行（实际 ≥{counter['rows']}）；"
+                "请分表导出或调高 STRUCTURED_MAX_EXPORT_ROWS"
+            )
+
+    total_rows = counter["rows"]
+    action_counts = Counter(str(col.get("action") or "keep") for col in policy_columns if col.get("enabled", True))
+    redacted_columns = sum(1 for col in policy_columns if col.get("enabled", True) and col.get("action") != "keep")
+    base_summary = {
         "dataset_id": dataset_id,
         "dataset_name": dataset.get("name"),
-        "export_filename": filename,
-        "row_count": len(rows),
-        "column_count": len(table.columns),
+        "row_count": total_rows,
+        "column_count": len(columns),
         "redacted_column_count": redacted_columns,
         "action_counts": dict(action_counts),
         "shape_kind": dataset.get("shape_kind"),
+        "part_count": len(parts),
+        "total_rows": total_rows,
     }
-    return store.add_export(
-        owner_id=owner_id,
-        job_id=job_id,
-        dataset_id=dataset_id,
-        export_format=fmt,
-        file_path=path,
-        filename=filename,
-        summary=summary,
-    )
+    record: dict[str, Any] | None = None
+    for index, part in enumerate(parts):
+        record = store.add_export(
+            owner_id=owner_id,
+            job_id=job_id,
+            dataset_id=dataset_id,
+            export_format=fmt,
+            file_path=part["path"],
+            filename=part["filename"],
+            summary={
+                **base_summary,
+                "export_filename": part["filename"],
+                "part_index": index + 1,
+                "part_rows": part["rows"],
+            },
+        )
+    assert record is not None
+    return record
 
 
 def write_csv(path: str, columns: list[str], rows: list[dict[str, Any]]) -> None:

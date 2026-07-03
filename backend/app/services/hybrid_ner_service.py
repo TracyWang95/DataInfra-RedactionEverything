@@ -9,6 +9,7 @@
 4. 交叉验证：去重合并，提高准确率
 """
 
+import asyncio
 import logging
 import re
 
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
+from app.core.config import settings
 from app.core.safe_regex import RegexTimeoutError, safe_compile, safe_finditer
 from app.models.schemas import Entity
 from app.models.type_mapping import canonical_type_id, linkage_groups_for_type
@@ -215,14 +217,30 @@ class HybridNERService:
                 has_entities: list[Entity] = []
                 chunks = self._build_has_candidate_chunks(text)
                 if chunks:
-                    for chunk in chunks:
-                        chunk_entities = await self._extract_has_chunk_entities(
-                            chunk,
-                            text,
-                            semantic_entity_types,
-                            enabled_type_ids,
-                        )
-                        has_entities.extend(chunk_entities)
+                    # 有界并行：并发度与 HaS type-batch 扇出共用同一配置；
+                    # 单 chunk 失败只降级该 chunk，不丢其余已识别实体。
+                    chunk_sem = asyncio.Semaphore(
+                        max(1, int(settings.HAS_NER_MAX_PARALLEL_REQUESTS))
+                    )
+
+                    async def run_chunk(chunk: str) -> list[Entity]:
+                        async with chunk_sem:
+                            return await self._extract_has_chunk_entities(
+                                chunk,
+                                text,
+                                semantic_entity_types,
+                                enabled_type_ids,
+                            )
+
+                    chunk_results = await asyncio.gather(
+                        *(run_chunk(chunk) for chunk in chunks),
+                        return_exceptions=True,
+                    )
+                    for chunk_result in chunk_results:
+                        if isinstance(chunk_result, BaseException):
+                            logger.warning("  HaS chunk failed: %s", chunk_result)
+                            continue
+                        has_entities.extend(chunk_result)
                 else:
                     logger.info("  HaS NER skipped; no semantic candidate lines")
                 all_entities.extend(has_entities)

@@ -77,6 +77,13 @@ const PlaygroundInner: FC = () => {
   } = ctx;
 
   const { entityTypes } = recognition;
+  const visionTypes = useMemo(
+    () =>
+      (recognition.pipelines ?? []).flatMap((pipeline) =>
+        (pipeline.types ?? []).map((type) => ({ id: type.id, name: type.name })),
+      ),
+    [recognition.pipelines],
+  );
 
   const pagesArr = fileInfo?.pages;
   const hasTextPagination =
@@ -323,6 +330,7 @@ const PlaygroundInner: FC = () => {
               recognitionIssue={recognitionIssue}
               entities={pageFilteredEntities}
               entityTypes={entityTypes}
+              visionTypes={visionTypes}
               visibleBoxes={visibleBoxes}
               selectedCount={selectedCount}
               displaySelectedCount={isImageMode ? undefined : previewCoverageSelectedCount}

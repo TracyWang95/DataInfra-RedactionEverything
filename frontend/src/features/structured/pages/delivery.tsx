@@ -365,6 +365,11 @@ export function StructuredDelivery() {
               <p className="text-xs leading-4 text-muted-foreground">
                 {t('structured.delivery.settings.formatHint')}
               </p>
+              {exportFormat === 'xlsx' && (
+                <p className="text-xs leading-4 text-amber-700">
+                  {t('structured.delivery.settings.xlsxPartHint')}
+                </p>
+              )}
             </Field>
             <div className="rounded-xl border border-border bg-muted/25 p-3 text-sm">
               <div className="flex items-center justify-between gap-3">

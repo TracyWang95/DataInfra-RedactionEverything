@@ -69,6 +69,55 @@ export function getBatchZipManifest(blob: Blob): BatchZipManifestSummary | null 
   return (blob as BatchZipBlob).batchManifest ?? null;
 }
 
+// ─── 异步分卷导出（万级文件） ─────────────────────────────────
+
+export interface BatchExportEstimate {
+  total_bytes: number;
+  file_count: number;
+  estimated_volume_count: number;
+  skipped: BatchZipSkippedItem[];
+  skipped_count: number;
+}
+
+export interface BatchExportVolume {
+  name: string;
+  size_bytes: number;
+  file_count: number;
+}
+
+export interface BatchExportTask {
+  export_id: string;
+  kind: string;
+  title: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  error: string | null;
+  progress: { stage: string; current: number; total: number };
+  volumes: BatchExportVolume[];
+  total_bytes: number;
+  file_count: number;
+  estimated_volume_count?: number;
+}
+
+export const batchExportApi = {
+  estimate: async (fileIds: string[], redacted: boolean, jobId?: string | null): Promise<BatchExportEstimate> =>
+    api.post('/files/batch/export/estimate', { file_ids: fileIds, redacted, job_id: jobId ?? undefined }),
+
+  create: async (fileIds: string[], redacted: boolean, jobId?: string | null): Promise<BatchExportTask> =>
+    api.post('/files/batch/export', { file_ids: fileIds, redacted, job_id: jobId ?? undefined }),
+
+  get: async (exportId: string): Promise<BatchExportTask> =>
+    api.get(`/files/batch/export/${encodeURIComponent(exportId)}`),
+
+  createJobData: async (jobId: string, fileIds?: string[] | null): Promise<BatchExportTask> =>
+    api.post(`/jobs/${encodeURIComponent(jobId)}/export-data`, {
+      file_ids: fileIds ?? undefined,
+      include_entities: true,
+    }),
+
+  volumeUrl: (exportId: string, name: string): string =>
+    `${api.defaults.baseURL}/files/batch/export/${encodeURIComponent(exportId)}/volumes/${encodeURIComponent(name)}`,
+};
+
 export const fileApi = {
   upload: async (
     file: File,
