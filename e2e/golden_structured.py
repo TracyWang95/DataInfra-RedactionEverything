@@ -85,6 +85,19 @@ def golden_structured(page) -> None:
     page.wait_for_selector('[data-testid="delivery-download-job"]', timeout=180_000)
     print("  [ok] export completed, download available")
 
+    # 逐数据集删除（PM 需求）：删掉一个本轮登记的数据集并断言其从列表消失。
+    page.goto(f"{BASE_URL}/structured/files", wait_until="domcontentloaded")
+    page.wait_for_selector('[data-testid^="delete-dataset-"]', timeout=30_000)
+    first = page.locator('[data-testid^="delete-dataset-"]').first
+    target_testid = first.get_attribute("data-testid")
+    first.click()
+    page.locator('div[role="dialog"] button').filter(has_text="确认").first.click()
+    page.wait_for_timeout(2000)
+    assert page.locator(f'[data-testid="{target_testid}"]').count() == 0, (
+        "deleted dataset still present in the registry"
+    )
+    print("  [ok] per-dataset delete removes the entry")
+
 
 if __name__ == "__main__":
     run(golden_structured)

@@ -19,6 +19,7 @@ export function DatasetRegistryCard({
   emptyText,
   busy,
   primaryAction,
+  secondaryAction,
 }: {
   title: string;
   description: string;
@@ -26,6 +27,7 @@ export function DatasetRegistryCard({
   emptyText: string;
   busy?: string;
   primaryAction?: (dataset: StructuredDataset) => React.ReactNode;
+  secondaryAction?: (dataset: StructuredDataset) => React.ReactNode;
 }) {
   const t = useT();
   const [page, setPage] = React.useState(0);
@@ -57,6 +59,7 @@ export function DatasetRegistryCard({
                 <DatasetIdentity dataset={dataset} />
                 <div className="flex shrink-0 items-center gap-2">
                   {primaryAction?.(dataset)}
+                  {secondaryAction?.(dataset)}
                   {busy ? null : null}
                 </div>
               </div>

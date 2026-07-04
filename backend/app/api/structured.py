@@ -158,6 +158,19 @@ async def delete_connection(
     return {"id": connection_id, "deleted": True}
 
 
+@router.delete("/datasets/{dataset_id}")
+async def delete_dataset(
+    dataset_id: str,
+    owner_id: str = Depends(require_auth),
+    store: StructuredStore = Depends(get_structured_store),
+) -> dict[str, Any]:
+    """删除单个已登记数据集（含其字段策略/画像）；共享源文件保留给同源兄弟数据集。"""
+    if not store.delete_dataset(dataset_id, owner_id=owner_id):
+        raise HTTPException(status_code=404, detail="dataset not found")
+    audit_log("delete", "structured_dataset", dataset_id, user=owner_id)
+    return {"id": dataset_id, "deleted": True}
+
+
 @router.get("/connections/{connection_id}/datasets", response_model=StructuredDatasetsResponse)
 async def discover_connection_datasets(
     connection_id: str,

@@ -1,8 +1,9 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { RefreshCw, Upload } from 'lucide-react';
+import { RefreshCw, Trash2, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,7 +11,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { useT } from '@/i18n';
-import { uploadStructuredFile, type StructuredDataset } from '@/services/structuredApi';
+import {
+  deleteStructuredDataset,
+  uploadStructuredFile,
+  type StructuredDataset,
+} from '@/services/structuredApi';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { DatasetRegistryCard, FileTableNextStepCard } from '../components/files-cards';
 import { StructuredFrame } from '../components/structured-frame';
 import { useNotice } from '../hooks/use-notice';
@@ -22,7 +28,19 @@ export function StructuredFiles() {
   const navigate = useNavigate();
   const datasetsState = useDatasets();
   const notice = useNotice();
+  const [pendingDelete, setPendingDelete] = useState<StructuredDataset | null>(null);
   const fileDatasets = datasetsState.datasets.filter(isFileDataset);
+
+  async function handleDeleteDataset(dataset: StructuredDataset) {
+    setPendingDelete(null);
+    await notice.run('delete', async () => {
+      await deleteStructuredDataset(dataset.id);
+      await datasetsState.refresh();
+      notice.setMessage(
+        t('structured.files.notice.deleted').replace('{name}', dataset.name),
+      );
+    });
+  }
   const latestFileDataset = fileDatasets[0] ?? null;
   const deliverableFileCount = fileDatasets.filter(isDatasetDeliveryReady).length;
 
@@ -123,6 +141,18 @@ export function StructuredFiles() {
               </>
             );
           }}
+          secondaryAction={(dataset) => (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+              title={t('structured.files.deleteDataset')}
+              onClick={() => setPendingDelete(dataset)}
+              data-testid={`delete-dataset-${dataset.id}`}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
         />
         <FileTableNextStepCard
           dataset={latestFileDataset}
@@ -130,6 +160,19 @@ export function StructuredFiles() {
           deliverableCount={deliverableFileCount}
         />
       </section>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={t('structured.files.deleteConfirmTitle')}
+        message={t('structured.files.deleteConfirmMessage').replace(
+          '{name}',
+          pendingDelete?.name ?? '',
+        )}
+        danger
+        onConfirm={() => {
+          if (pendingDelete) void handleDeleteDataset(pendingDelete);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </StructuredFrame>
   );
 }

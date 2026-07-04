@@ -2390,6 +2390,11 @@ Object.assign(zhOverrides, {
   'structured.files.title': '文件表导入',
   'structured.files.description': '把离线表格、结构化日志和 SQLite 文件登记成数据集，再进入策略页做字段级去标识化。',
   'structured.files.notice.imported': '已导入 {count} 个数据集',
+  'structured.files.notice.deleted': '已删除数据集「{name}」',
+  'structured.files.deleteDataset': '删除该数据集',
+  'structured.files.deleteConfirmTitle': '删除数据集',
+  'structured.files.deleteConfirmMessage':
+    '将删除数据集「{name}」及其字段策略。同一文件的其他 Sheet 数据集与源文件不受影响。此操作不可撤销。',
   'structured.files.import.title': '导入文件',
   'structured.files.import.description': '上传后自动登记数据集，并进入字段策略。',
   'structured.files.import.choose': '选择结构化文件',

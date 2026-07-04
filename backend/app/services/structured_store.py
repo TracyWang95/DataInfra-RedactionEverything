@@ -317,6 +317,28 @@ class StructuredStore:
             conn.commit()
             return cur.rowcount > 0
 
+    def delete_dataset(self, dataset_id: str, *, owner_id: str) -> bool:
+        """Remove one dataset with its profile/policy rows.
+
+        The shared source file is kept on purpose: an xlsx upload spawns one
+        dataset per sheet and siblings still reference the same source.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM structured_profiles WHERE dataset_id = ? AND owner_id = ?",
+                (dataset_id, owner_id),
+            )
+            conn.execute(
+                "DELETE FROM structured_policies WHERE dataset_id = ? AND owner_id = ?",
+                (dataset_id, owner_id),
+            )
+            cur = conn.execute(
+                "DELETE FROM structured_datasets WHERE id = ? AND owner_id = ?",
+                (dataset_id, owner_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
     @staticmethod
     def _connection_out(row: dict[str, Any]) -> dict[str, Any]:
         row["metadata"] = _json_loads(row.pop("metadata_json", None), {})

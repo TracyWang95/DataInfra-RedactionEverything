@@ -1023,3 +1023,28 @@ def test_structured_api_discovers_sqlite_connection_datasets(tmp_path, monkeypat
             assert datasets[0]["column_count"] == 7
     finally:
         test_app.dependency_overrides.clear()
+
+
+def test_delete_dataset_cascades_and_isolates_owner(tmp_path):
+    """PM 需求：文件表逐数据集删除。级联策略/画像、越权 404、幂等。"""
+    store = StructuredStore(str(tmp_path / "structured.sqlite3"))
+    csv_path = tmp_path / "demo_customers.csv"
+    _write_demo_customer_csv(csv_path)
+    result = structured_service.register_file_source(
+        owner_id="admin",
+        filename="demo_customers.csv",
+        file_path=str(csv_path),
+        kind="csv",
+        store=store,
+    )
+    dataset_id = result["datasets"][0]["id"]
+    structured_service.profile_dataset(dataset_id, owner_id="admin", store=store)
+
+    # 他人无法删除，数据仍在
+    assert store.delete_dataset(dataset_id, owner_id="intruder") is False
+    assert any(d["id"] == dataset_id for d in store.list_datasets(owner_id="admin"))
+
+    # 本主删除成功，列表消失，重复删除幂等返回 False
+    assert store.delete_dataset(dataset_id, owner_id="admin") is True
+    assert all(d["id"] != dataset_id for d in store.list_datasets(owner_id="admin"))
+    assert store.delete_dataset(dataset_id, owner_id="admin") is False

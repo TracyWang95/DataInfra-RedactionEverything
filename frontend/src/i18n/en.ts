@@ -2427,6 +2427,11 @@ Object.assign(enOverrides, {
   'structured.files.description':
     'Register offline spreadsheets, structured logs, and SQLite files as datasets, then de-identify them field by field on the policy page.',
   'structured.files.notice.imported': 'Imported {count} datasets',
+  'structured.files.notice.deleted': 'Dataset "{name}" deleted',
+  'structured.files.deleteDataset': 'Delete this dataset',
+  'structured.files.deleteConfirmTitle': 'Delete dataset',
+  'structured.files.deleteConfirmMessage':
+    'This removes the dataset "{name}" and its field policy. Sibling sheet datasets from the same file and the source file itself are unaffected. This cannot be undone.',
   'structured.files.import.title': 'Import files',
   'structured.files.import.description': 'Uploads are registered as datasets automatically and proceed to field policies.',
   'structured.files.import.choose': 'Choose structured files',
