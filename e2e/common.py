@@ -55,5 +55,15 @@ def run(scenario) -> None:
         try:
             scenario(page)
             print(f"E2E_PASS {scenario.__name__}")
+        except Exception:
+            art = os.path.join(os.path.dirname(__file__), ".artifacts")
+            os.makedirs(art, exist_ok=True)
+            page.screenshot(path=os.path.join(art, f"{scenario.__name__}_fail.png"), full_page=True)
+            with open(
+                os.path.join(art, f"{scenario.__name__}_fail.txt"), "w", encoding="utf-8"
+            ) as fh:
+                fh.write(page.url + "\n\n" + page.locator("body").inner_text())
+            print(f"E2E_FAIL {scenario.__name__} -> artifacts in e2e/.artifacts/")
+            raise
         finally:
             browser.close()
