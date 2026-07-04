@@ -52,6 +52,8 @@ from app.models.schemas import (
     NERRequest,
     NERResult,
     ParseResult,
+    SftpPullRequest,
+    SftpSourceRequest,
 )
 from app.services.job_store import JobStore
 
@@ -109,6 +111,74 @@ async def import_inbox(
         "import",
         "inbox",
         f"{len(result['imported'])} imported / {len(result['failed'])} failed",
+        user=owner_id,
+    )
+    return result
+
+
+@router.get("/files/import-sftp/sources", response_model=list[dict])
+async def list_sftp_sources(owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    return sftp_import.list_sources(owner_id)
+
+
+@router.post("/files/import-sftp/sources", response_model=dict)
+async def create_sftp_source(body: SftpSourceRequest, owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    result = sftp_import.create_source(
+        owner_id,
+        name=body.name,
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        password=body.password,
+        private_key=body.private_key,
+        root_path=body.root_path,
+    )
+    audit_log("create", "sftp_source", result["source_id"], user=owner_id)
+    return result
+
+
+@router.delete("/files/import-sftp/sources/{source_id}", response_model=dict)
+async def delete_sftp_source(source_id: str, owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    if not sftp_import.delete_source(owner_id, source_id):
+        raise HTTPException(status_code=404, detail="SFTP 源不存在")
+    audit_log("delete", "sftp_source", source_id, user=owner_id)
+    return {"source_id": source_id, "deleted": True}
+
+
+@router.get("/files/import-sftp/browse", response_model=dict)
+async def browse_sftp(
+    source_id: str,
+    path: str = "",
+    owner_id: str = Depends(require_auth),
+):
+    from app.services import sftp_import
+
+    return sftp_import.browse(owner_id, source_id, path)
+
+
+@router.post(
+    "/files/import-sftp/pull",
+    response_model=dict,
+    dependencies=[Depends(_upload_throttle)],
+)
+async def pull_sftp(body: SftpPullRequest, owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    if not body.names:
+        raise HTTPException(status_code=400, detail="未选择文件")
+    result = await sftp_import.pull_files(
+        owner_id, body.source_id, body.names, path=body.path, job_id=body.job_id
+    )
+    audit_log(
+        "import",
+        "sftp",
+        f"{len(result['imported'])} pulled / {len(result['failed'])} failed",
         user=owner_id,
     )
     return result

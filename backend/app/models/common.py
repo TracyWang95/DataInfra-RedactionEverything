@@ -20,6 +20,8 @@ __all__ = [
     "UserStatusRequest",
     "ApiKeyCreateRequest",
     "ImportInboxRequest",
+    "SftpSourceRequest",
+    "SftpPullRequest",
     "ConcurrencySettingsRequest",
     "ConcurrencySettingsResponse",
     "ChangePasswordRequest",
@@ -173,6 +175,23 @@ class ImportInboxRequest(BaseModel):
     filenames: list[str]
     job_id: str | None = None
     batch_group_id: str | None = None
+
+
+class SftpSourceRequest(BaseModel):
+    name: str
+    host: str
+    port: int = 22
+    username: str
+    password: str | None = None
+    private_key: str | None = None
+    root_path: str = "/"
+
+
+class SftpPullRequest(BaseModel):
+    source_id: str
+    names: list[str]
+    path: str = ""
+    job_id: str | None = None
 
 
 class ConcurrencySettingsRequest(BaseModel):

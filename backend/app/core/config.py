@@ -398,6 +398,8 @@ class Settings(BaseSettings):
     # <IMPORT_INBOX_DIR>/<用户名>/，界面一键登记进批量任务（本地 move 零 HTTP）。
     # 空 = DATA_DIR/import_inbox。
     IMPORT_INBOX_DIR: str = ""
+    # SFTP 拉取源主机允许清单（逗号分隔；空 = 不限制，交付文档建议配置）
+    SFTP_HOST_ALLOWLIST: str = ""
 
     # 回收站保留天数（R1-4）：软删文件超期后由 retention 循环真删。
     TRASH_RETENTION_DAYS: int = 7
