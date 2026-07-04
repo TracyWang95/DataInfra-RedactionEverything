@@ -52,10 +52,13 @@ def _matched(gt_text: str, entities: list[dict]) -> dict | None:
 def main() -> None:
     expected = json.loads((CORPUS / "expected.json").read_text(encoding="utf-8"))
     ART.mkdir(exist_ok=True)
+    # 行业包可指定识别项集合（如医疗预设的 17 项）与 domain 档独立门槛
+    entity_type_ids = expected.get("_entity_type_ids") or None
+    domain_min = float(expected.get("_domain_min_recall") or 0.6)
 
     rows: list[tuple[str, str, str, str, str]] = []
     misses: list[str] = []
-    stats = {"identity": [0, 0], "standard": [0, 0]}  # [recalled, total]
+    stats = {"identity": [0, 0], "standard": [0, 0], "domain": [0, 0]}  # [recalled, total]
     type_ok = [0, 0]
 
     c = _client()
@@ -75,11 +78,12 @@ def main() -> None:
             file_id = up.json()["file_id"]
             parse = c.get(f"/api/v1/files/{file_id}/parse")
             assert parse.status_code == 200, f"{name} parse: {parse.status_code}"
-            ner = c.post(f"/api/v1/files/{file_id}/ner/hybrid", json={})
+            body = {"entity_type_ids": entity_type_ids} if entity_type_ids else {}
+            ner = c.post(f"/api/v1/files/{file_id}/ner/hybrid", json=body)
             assert ner.status_code == 200, f"{name} ner: {ner.status_code} {ner.text[:150]}"
             entities = ner.json().get("entities") or []
 
-            for category in ("identity", "standard"):
+            for category in ("identity", "standard", "domain"):
                 for gt in groups.get(category, []):
                     stats[category][1] += 1
                     hit = _matched(gt["text"], entities)
@@ -99,6 +103,8 @@ def main() -> None:
 
     id_recall = stats["identity"][0] / max(1, stats["identity"][1])
     std_recall = stats["standard"][0] / max(1, stats["standard"][1])
+    dom_total = stats["domain"][1]
+    dom_recall = stats["domain"][0] / max(1, dom_total)
     type_acc = type_ok[0] / max(1, type_ok[1])
 
     lines = [
@@ -106,6 +112,12 @@ def main() -> None:
         "",
         f"- identity 召回: **{stats['identity'][0]}/{stats['identity'][1]} = {id_recall:.1%}**（门槛 100%）",
         f"- standard 召回: **{stats['standard'][0]}/{stats['standard'][1]} = {std_recall:.1%}**（门槛 85%）",
+    ]
+    if dom_total:
+        lines.append(
+            f"- domain 召回: **{stats['domain'][0]}/{dom_total} = {dom_recall:.1%}**（门槛 {domain_min:.0%}，行业专项）"
+        )
+    lines += [
         f"- 类型标注正确率: {type_acc:.1%}（信息项，不计门槛）",
         "",
         "| 文件 | 类别 | 期望类型 | 真值 | 命中/实际类型 |",
@@ -123,6 +135,8 @@ def main() -> None:
 
     assert id_recall >= IDENTITY_MIN_RECALL, f"identity recall {id_recall:.1%} < 100%"
     assert std_recall >= STANDARD_MIN_RECALL, f"standard recall {std_recall:.1%} < 85%"
+    if dom_total:
+        assert dom_recall >= domain_min, f"domain recall {dom_recall:.1%} < {domain_min:.0%}"
     print(f"RECALL_PASS {PACK}")
 
 
