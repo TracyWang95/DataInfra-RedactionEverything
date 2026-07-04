@@ -57,9 +57,10 @@ def perm_matrix(page) -> None:
     api_matrix()
     login(page)
     page.goto(f"{BASE_URL}/settings/system", wait_until="domcontentloaded")
-    page.wait_for_timeout(900)
+    # Lazy route chunk can load slowly over the tunnel — wait for the actual
+    # notice instead of a fixed sleep.
+    page.wait_for_selector("text=需要管理员权限", timeout=30_000)
     body = page.locator("body").inner_text()
-    assert "需要管理员权限" in body, "regular user should see the access-denied notice"
     assert "创建用户" not in body, "admin panel leaked to regular user"
     print("  [ok] settings/system gated in UI")
 

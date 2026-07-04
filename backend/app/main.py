@@ -376,6 +376,11 @@ app.add_middleware(
 
 app.add_middleware(MaxBodySizeMiddleware)
 
+# Role matrix enforcement (viewer read-only, operator no review decisions)
+from app.core.role_enforcement import RoleEnforcementMiddleware  # noqa: E402
+
+app.add_middleware(RoleEnforcementMiddleware)
+
 # CSRF protection (double-submit cookie)
 from app.core.csrf import CSRFMiddleware  # noqa: E402
 

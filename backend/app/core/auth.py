@@ -292,13 +292,29 @@ def _users(auth: dict) -> dict[str, dict]:
     return users
 
 
+# Enterprise role matrix (Phase 1a). Enforcement lives in
+# app.core.role_enforcement:
+#   super_admin  everything + user management
+#   reviewer     full pipeline incl. review confirm (== legacy "user")
+#   user         legacy alias, same rights as reviewer
+#   operator     upload/recognise/export, but no review approve/commit
+#   viewer       read-only (safe methods + own auth endpoints)
+_ROLE_REVIEWER = "reviewer"
+_ROLE_OPERATOR = "operator"
+_ROLE_VIEWER = "viewer"
+_KNOWN_ROLES = {_ROLE_SUPER_ADMIN, _ROLE_USER, _ROLE_REVIEWER, _ROLE_OPERATOR, _ROLE_VIEWER}
+
+
 def normalize_role(role: str | None) -> str:
     value = str(role or _ROLE_USER).strip().lower()
-    if value in {"admin", _ROLE_SUPER_ADMIN}:
+    if value == "admin":
         return _ROLE_SUPER_ADMIN
-    if value == _ROLE_USER:
-        return _ROLE_USER
-    raise HTTPException(status_code=400, detail="Role must be 'super_admin' or 'user'.")
+    if value in _KNOWN_ROLES:
+        return value
+    raise HTTPException(
+        status_code=400,
+        detail="Role must be one of: super_admin, reviewer, user, operator, viewer.",
+    )
 
 
 def _user_permissions(user: dict | None) -> dict:

@@ -170,7 +170,14 @@ function AdminAccessPanel() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [role, setRole] = useState<'user' | 'super_admin'>('user');
+  const [role, setRole] = useState('user');
+  const roleLabels: Record<string, string> = {
+    super_admin: '管理员',
+    reviewer: '审核员',
+    user: '普通用户',
+    operator: '操作员',
+    viewer: '只读',
+  };
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -280,7 +287,7 @@ function AdminAccessPanel() {
                   {user.username}
                 </span>
                 <Badge variant={user.role === 'super_admin' ? 'default' : 'secondary'}>
-                  {user.role}
+                  {roleLabels[user.role] ?? user.role}
                 </Badge>
                 <span>
                   {user.role === 'super_admin' ? (
@@ -341,9 +348,12 @@ function AdminAccessPanel() {
             id="admin-new-role"
             className="flex h-10 w-full rounded-xl border border-input bg-[var(--surface-control)] px-3 py-2 text-sm shadow-[var(--shadow-control)]"
             value={role}
-            onChange={(event) => setRole(event.target.value === 'super_admin' ? 'super_admin' : 'user')}
+            onChange={(event) => setRole(event.target.value)}
           >
-            <option value="user">普通用户</option>
+            <option value="user">普通用户（完整流程）</option>
+            <option value="reviewer">审核员（完整流程，可授批量确认）</option>
+            <option value="operator">操作员（上传/识别/导出，不可确认审核）</option>
+            <option value="viewer">只读（仅查看）</option>
             <option value="super_admin">管理员</option>
           </select>
         </div>
