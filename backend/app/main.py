@@ -263,6 +263,10 @@ async def lifespan(app: FastAPI):
 
     _backup_task = asyncio.create_task(_periodic_backup())
 
+    # 6. Data-retention sweep (no-op unless DATA_RETENTION_DAYS > 0)
+    from app.services.retention_service import retention_loop
+    _retention_task = asyncio.create_task(retention_loop())
+
     yield
 
     # === Shutdown (graceful: wait up to 30s for in-progress work) ===
@@ -270,7 +274,8 @@ async def lifespan(app: FastAPI):
     _worker_tasks = _task_queue.stop()
     _cleanup_task.cancel()
     _backup_task.cancel()
-    tasks_to_wait = [_cleanup_task, _backup_task] + _worker_tasks
+    _retention_task.cancel()
+    tasks_to_wait = [_cleanup_task, _backup_task, _retention_task] + _worker_tasks
     done, pending = await asyncio.wait(tasks_to_wait, timeout=30.0)
     for t in pending:
         t.cancel()
@@ -571,6 +576,20 @@ async def services_health():
         for key in ("paddle_ocr", "has_ner", "visual_features")
     )
 
+    # Disk watermark for the DATA volume (data-governance surface)
+    disk = None
+    try:
+        import shutil as _shutil
+
+        usage = _shutil.disk_usage(settings.DATA_DIR)
+        disk = {
+            "total_gb": round(usage.total / 1024**3, 1),
+            "free_gb": round(usage.free / 1024**3, 1),
+            "used_ratio": round(1 - usage.free / usage.total, 4),
+        }
+    except OSError:
+        pass
+
     return {
         "all_online": all_online,
         "services": services,
@@ -578,6 +597,8 @@ async def services_health():
         "checked_at": datetime.now(UTC).isoformat(),
         "gpu_memory": gpu_mem,
         "gpu_memory_all": gpu_mem_all,
+        "disk": disk,
+        "retention_days": int(settings.DATA_RETENTION_DAYS or 0),
         # Endpoint is intentionally unauthenticated (dev.mjs waitJson probes it),
         # so process names/PIDs are not exposed. Field kept for the frontend hook.
         "gpu_processes": [],

@@ -33,6 +33,7 @@ export interface ServicesHealth {
   checked_at?: string;
   gpu_memory?: { used_mb: number; total_mb: number } | null;
   gpu_memory_all?: { index: number; used_mb: number; total_mb: number }[] | null;
+  disk?: { total_gb: number; free_gb: number; used_ratio: number } | null;
   accelerator?: string | null;
   gpu_processes?: GpuProcessInfo[];
   services: {
@@ -200,6 +201,7 @@ export function normalizeHealthPayload(value: unknown): ServicesHealth {
     checked_at: typeof data.checked_at === 'string' ? data.checked_at : undefined,
     gpu_memory: data.gpu_memory ?? null,
     gpu_memory_all: normalizeGpuMemoryAll((data as { gpu_memory_all?: unknown }).gpu_memory_all),
+    disk: ((data as { disk?: ServicesHealth['disk'] }).disk ?? null),
     accelerator: typeof (data as { accelerator?: unknown }).accelerator === 'string'
       ? ((data as { accelerator?: string }).accelerator as string)
       : null,

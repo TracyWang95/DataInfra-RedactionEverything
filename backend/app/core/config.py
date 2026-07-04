@@ -350,8 +350,17 @@ class Settings(BaseSettings):
     LOCAL_PASSWORD_HASH: str = ""  # PBKDF2 hash, set via setup endpoint
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
+    # 数据保留策略（天）。0 = 关闭（默认，行为不变）；>0 时后台每 6 小时清理
+    # 超龄上传文件及其成品（走 delete_file 全量清除 + 审计留痕）。
+    DATA_RETENTION_DAYS: int = 0
+
     # 批量任务并发配置
     JOB_CONCURRENCY: int = 3  # Number of concurrent job items to process
+
+    @field_validator("DATA_RETENTION_DAYS")
+    @classmethod
+    def _validate_data_retention_days(cls, v: int) -> int:
+        return max(0, min(3650, v))
 
     @field_validator("JOB_CONCURRENCY")
     @classmethod

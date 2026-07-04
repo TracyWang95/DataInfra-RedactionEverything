@@ -533,10 +533,18 @@ function AdminMonitoringPanel() {
           刷新
         </Button>
       </div>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-4">
         <MetricCard label="整体状态" value={checking ? '检测中' : allOnline ? '全部在线' : '需处理'} />
         <MetricCard label="后端探测" value={roundTripMs == null ? '-' : `${roundTripMs} ms`} />
         <MetricCard label="GPU 显存" value={gpuText(health)} />
+        <MetricCard
+          label="数据盘"
+          value={
+            health?.disk
+              ? `余 ${health.disk.free_gb}G / 已用 ${(health.disk.used_ratio * 100).toFixed(0)}%`
+              : '-'
+          }
+        />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {services.map(({ key, service }) => (
