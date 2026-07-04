@@ -17,6 +17,7 @@ __all__ = [
     "PasswordRequest",
     "UserCreateRequest",
     "UserPermissionsRequest",
+    "UserStatusRequest",
     "ConcurrencySettingsRequest",
     "ConcurrencySettingsResponse",
     "ChangePasswordRequest",
@@ -154,6 +155,10 @@ class UserCreateRequest(BaseModel):
 
 class UserPermissionsRequest(BaseModel):
     bulk_confirm: bool
+
+
+class UserStatusRequest(BaseModel):
+    disabled: bool
 
 
 class ConcurrencySettingsRequest(BaseModel):

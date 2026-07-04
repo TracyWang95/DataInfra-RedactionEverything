@@ -394,6 +394,21 @@ class Settings(BaseSettings):
     BACKUP_INCLUDE_FILES: bool = False  # True 时 health 检查文件备份 marker 是否新鲜
     BACKUP_FILES_MIN_FREE_GB: int = 20  # 供 backup_files.sh 读取的磁盘水位闸
 
+    # 全局限流（R1-3）。按用户主体计数；上传默认 240/min（4 并发万级批量
+    # ≈4 文件/秒，留足余量），导出 20/min。0 不可取——validator 夹下限。
+    UPLOAD_RATE_PER_MIN: int = 240
+    EXPORT_RATE_PER_MIN: int = 20
+
+    @field_validator("UPLOAD_RATE_PER_MIN")
+    @classmethod
+    def _validate_upload_rate(cls, v: int) -> int:
+        return max(10, min(100000, v))
+
+    @field_validator("EXPORT_RATE_PER_MIN")
+    @classmethod
+    def _validate_export_rate(cls, v: int) -> int:
+        return max(2, min(10000, v))
+
     @field_validator("BACKUP_INTERVAL_SEC")
     @classmethod
     def _validate_backup_interval_sec(cls, v: int) -> int:

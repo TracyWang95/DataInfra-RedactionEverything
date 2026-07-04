@@ -6,6 +6,7 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from app.core.audit import audit_log
 from app.core.auth import (
     bump_user_auth_version,
     check_password,
@@ -25,6 +26,7 @@ from app.core.auth import (
     revoke_token,
     set_password,
     set_user_bulk_confirm,
+    set_user_disabled,
     user_can_bulk_confirm,
     validate_password_strength,
 )
@@ -40,6 +42,7 @@ from app.models.schemas import (
     TokenResponse,
     UserCreateRequest,
     UserPermissionsRequest,
+    UserStatusRequest,
 )
 
 router = APIRouter(tags=["auth"])
@@ -246,6 +249,23 @@ async def update_user_permissions(
         "role": user.get("role") or "user",
         "can_bulk_confirm": user_can_bulk_confirm(subject),
     }
+
+
+@router.put("/auth/users/{username}/status", response_model=dict)
+async def update_user_status(
+    username: str,
+    req: UserStatusRequest,
+    actor: str = Depends(require_super_admin),
+):
+    """禁用/启用账号（R1-2）。禁用立即生效：本地登录被拒且有效期内 JWT 失效。"""
+    result = set_user_disabled(actor, username, req.disabled)
+    audit_log(
+        "disable" if req.disabled else "enable",
+        "user_account",
+        result["username"],
+        user=actor,
+    )
+    return result
 
 
 @router.get("/auth/concurrency", response_model=ConcurrencySettingsResponse)

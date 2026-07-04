@@ -546,6 +546,47 @@ def provision_ldap_user(username: str, role: str) -> str:
         raise _auth_state_unavailable() from exc
 
 
+def set_user_disabled(actor: str, username: str, disabled: bool) -> dict:
+    """管理员禁用/启用账号。护栏：不能禁自己；不能禁用最后一个可用超管。"""
+    subject = normalize_username(username)
+    actor_subject = normalize_username(actor)
+    try:
+        with _auth_file_lock:
+            auth = _load_auth_unlocked()
+            users = _users(auth)
+            record = users.get(subject)
+            if not isinstance(record, dict):
+                raise HTTPException(status_code=404, detail="User not found.")
+            if disabled and subject == actor_subject:
+                raise HTTPException(status_code=400, detail="不能禁用自己的账号。")
+            if disabled and record.get("role") == _ROLE_SUPER_ADMIN:
+                active_admins = [
+                    name
+                    for name, user in users.items()
+                    if isinstance(user, dict)
+                    and user.get("role") == _ROLE_SUPER_ADMIN
+                    and not user.get("disabled")
+                ]
+                if len(active_admins) <= 1:
+                    raise HTTPException(
+                        status_code=400, detail="不能禁用最后一个可用的超级管理员。"
+                    )
+            record = dict(record)
+            record["disabled"] = bool(disabled)
+            record["updated_at"] = datetime.now(UTC).isoformat()
+            users[subject] = record
+            auth["users"] = users
+            _save_auth_unlocked(auth)
+            return {"username": subject, "disabled": bool(disabled)}
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+
+
+def is_user_disabled(username: str | None) -> bool:
+    user = get_user(username)
+    return bool(isinstance(user, dict) and user.get("disabled"))
+
+
 def get_user(username: str | None) -> dict | None:
     if not username:
         return None
@@ -573,6 +614,7 @@ def list_users() -> list[dict]:
             "created_at": (user or {}).get("created_at"),
             "updated_at": (user or {}).get("updated_at"),
             "can_bulk_confirm": _can_bulk_confirm(user),
+            "disabled": bool((user or {}).get("disabled")),
         }
         for username, user in sorted(users.items())
         if isinstance(user, dict)
@@ -586,6 +628,8 @@ def check_password(password: str, *, username: str | None = None) -> str | None:
         raise _auth_state_unavailable() from exc
     subject = _resolve_login_username(auth, username)
     user = _users(auth).get(subject) or {}
+    if user.get("disabled"):
+        return None
     stored = user.get("password_hash", "")
     if not stored:
         return None
@@ -677,7 +721,13 @@ async def require_auth(
         raise HTTPException(status_code=401, detail="Authentication is required.")
 
     payload = decode_token(token)
-    return payload.get("sub", "unknown")
+    subject = payload.get("sub", "unknown")
+    # 被禁用的账号：即使 JWT 仍在有效期也立即失效（每请求查一次，
+    # _load_auth 有 mtime 缓存；非本地用户记录如 service 主体不受影响）
+    user = get_user(subject)
+    if isinstance(user, dict) and user.get("disabled"):
+        raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员。")
+    return subject
 
 
 async def require_super_admin(

@@ -90,3 +90,25 @@ class RateLimiter:
 
 # Pre-built limiter instance for upload endpoints (reusable across modules)
 upload_limiter = RateLimiter(max_requests=120, window_seconds=60)
+
+
+def make_user_throttle(limiter: RateLimiter, action: str):
+    """按用户主体限流的 FastAPI 依赖工厂（R1-3）。
+
+    上传/导出端点此前完全不限流。按 subject（而非 IP）计数：内网多人常
+    共享出口 IP。分块续传的 chunk 请求不应挂本依赖——只在 init/整文件
+    上传挂，万级批量不受影响。
+    """
+    from fastapi import Depends, HTTPException
+
+    from app.core.auth import require_auth
+
+    async def _dep(subject: str | None = Depends(require_auth)) -> None:
+        key = f"{action}:{subject or 'anonymous'}"
+        if not limiter.check(key):
+            raise HTTPException(
+                status_code=429,
+                detail=f"操作过于频繁（{action}），请稍后再试。",
+            )
+
+    return _dep

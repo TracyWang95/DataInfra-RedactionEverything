@@ -11,11 +11,16 @@ _audit_logger = logging.getLogger("audit")
 _audit_logger.setLevel(logging.INFO)
 _audit_logger.propagate = False
 
-# File handler
+# File handler with rotation — audit.log is compliance-critical and grew
+# unbounded before (disk-fill risk); 50MB x 10 keeps ~500MB of history.
+from logging.handlers import RotatingFileHandler
+
 _log_dir = os.path.join(settings.DATA_DIR, "audit")
 os.makedirs(_log_dir, exist_ok=True)
-_handler = logging.FileHandler(
+_handler = RotatingFileHandler(
     os.path.join(_log_dir, "audit.log"),
+    maxBytes=50 * 1024 * 1024,
+    backupCount=10,
     encoding="utf-8",
 )
 _handler.setFormatter(logging.Formatter("%(message)s"))

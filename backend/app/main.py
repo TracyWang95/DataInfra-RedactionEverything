@@ -252,6 +252,15 @@ async def lifespan(app: FastAPI):
     if _redispatched:
         logger.info("Startup: re-enqueued %d items (recognition + redaction)", _redispatched)
 
+    # 3b. 单 worker 约束告警（auth.json 仅进程内锁保护，见 docs/backup-restore.md）
+    _workers_env = os.environ.get("WEB_CONCURRENCY") or os.environ.get("UVICORN_WORKERS")
+    if _workers_env and _workers_env.strip().isdigit() and int(_workers_env) > 1:
+        logger.error(
+            "检测到多 worker 配置（%s）：auth.json 等 JSON 存储仅有进程内锁，"
+            "多 worker 并发写存在竞态。本平台要求单 worker 部署。",
+            _workers_env,
+        )
+
     # 4. Start periodic orphan cleanup
     _cleanup_task = asyncio.create_task(_periodic_cleanup())
 

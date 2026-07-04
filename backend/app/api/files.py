@@ -41,6 +41,7 @@ from app.core.audit import audit_log
 from app.core.auth import require_auth
 from app.core.config import settings
 from app.core.idempotency import check_idempotency, save_idempotency
+from app.core.rate_limit import RateLimiter, make_user_throttle
 from app.models.schemas import (
     APIResponse,
     BatchDownloadRequest,
@@ -54,6 +55,17 @@ from app.models.schemas import (
 from app.services.job_store import JobStore
 
 router = APIRouter()
+
+# R1-3 全局限流：按用户主体计数。上传只挂整文件与 resumable init（chunk 不
+# 计数——万级批量的分块流量不受影响）；导出挂批量打包。速率 env 可调。
+_upload_throttle = make_user_throttle(
+    RateLimiter(max_requests=settings.UPLOAD_RATE_PER_MIN, window_seconds=60),
+    "upload",
+)
+_export_throttle = make_user_throttle(
+    RateLimiter(max_requests=settings.EXPORT_RATE_PER_MIN, window_seconds=60),
+    "export",
+)
 
 
 def validate_file(file: UploadFile) -> None:
@@ -198,7 +210,7 @@ def _assert_batch_delivery_ready(
         )
 
 
-@router.post("/files/batch/download")
+@router.post("/files/batch/download", dependencies=[Depends(_export_throttle)])
 async def batch_download_zip(
     request: BatchDownloadRequest,
     store: JobStore = Depends(get_job_store),
@@ -314,7 +326,11 @@ async def download_batch_export_volume(
     return FileResponse(path, media_type=media, filename=name)
 
 
-@router.post("/files/upload", response_model=FileUploadResponse)
+@router.post(
+    "/files/upload",
+    response_model=FileUploadResponse,
+    dependencies=[Depends(_upload_throttle)],
+)
 async def upload_file(
     file: UploadFile = File(...),
     batch_group_id: str | None = Form(None),
@@ -476,7 +492,7 @@ def _cleanup_stale_partials(owner_dir: str) -> None:
         pass
 
 
-@router.post("/files/upload/resumable/init")
+@router.post("/files/upload/resumable/init", dependencies=[Depends(_upload_throttle)])
 async def resumable_upload_init(
     body: ResumableUploadInitBody,
     owner_id: str = Depends(require_auth),
