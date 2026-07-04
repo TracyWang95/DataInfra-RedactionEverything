@@ -38,7 +38,12 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined;
+          if (!id.includes('node_modules')) {
+            // zh stays statically imported (sync, modulepreloaded — no flicker)
+            // but lives in its own file so the entry chunk stays small.
+            if (id.replace(/\\/g, '/').includes('/src/i18n/zh')) return 'locale-zh';
+            return undefined;
+          }
           if (
             id.includes('react-router-dom') ||
             id.includes('react-router') ||
