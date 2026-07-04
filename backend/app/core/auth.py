@@ -499,6 +499,45 @@ def create_user(username: str, password: str, *, role: str = _ROLE_USER) -> str:
         raise _auth_state_unavailable() from exc
 
 
+def provision_ldap_user(username: str, role: str) -> str:
+    """Upsert a directory-backed (LDAP) user record and return the subject.
+
+    LDAP users never carry a ``password_hash`` — the local password path can
+    never authenticate them. An existing record that is NOT
+    ``auth_source == "ldap"`` is a local account and must never be hijacked
+    (raises ``ValueError``). Directory role changes are applied on later
+    logins only when ``settings.LDAP_ROLE_SYNC`` is enabled.
+    """
+    subject = normalize_username(username)
+    normalized_role = normalize_role(role)
+    try:
+        with _auth_file_lock:
+            auth = _load_auth_unlocked()
+            users = _users(auth)
+            existing = users.get(subject)
+            now = datetime.now(UTC).isoformat()
+            if existing is None:
+                users[subject] = {
+                    "auth_source": "ldap",
+                    "role": normalized_role,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            else:
+                if not isinstance(existing, dict) or existing.get("auth_source") != "ldap":
+                    raise ValueError("同名本地账号已存在，目录账号不可接管该用户名。")
+                record = dict(existing)
+                if settings.LDAP_ROLE_SYNC:
+                    record["role"] = normalized_role
+                record["updated_at"] = now
+                users[subject] = record
+            auth["users"] = users
+            _save_auth_unlocked(auth)
+            return subject
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+
+
 def get_user(username: str | None) -> dict | None:
     if not username:
         return None
