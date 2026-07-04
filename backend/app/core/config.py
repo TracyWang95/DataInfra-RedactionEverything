@@ -350,6 +350,37 @@ class Settings(BaseSettings):
     LOCAL_PASSWORD_HASH: str = ""  # PBKDF2 hash, set via setup endpoint
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
+    # 企业目录（LDAP/AD）登录。默认关闭：登录行为与纯本地账号完全一致。
+    # 开启后 /auth/login 先走目录认证（本地 super_admin 保留 break-glass 本地
+    # 通道）；两种模式与组→角色映射见 app/core/ldap_auth.py。
+    LDAP_ENABLED: bool = False
+    LDAP_SERVER_URL: str = ""  # 生产要求 ldaps://（见 LDAP_TLS_REQUIRED）
+    LDAP_BIND_DN_TEMPLATE: str = ""  # 直接绑定模式，如 "uid={username},ou=people,dc=corp,dc=com"
+    LDAP_SEARCH_BASE: str = ""  # 设置后启用 搜索+绑定 模式（优先于直接绑定）
+    LDAP_SERVICE_BIND_DN: str = ""
+    LDAP_SERVICE_BIND_PASSWORD: str = ""
+    LDAP_USER_FILTER: str = "(sAMAccountName={username})"
+    LDAP_GROUP_ROLE_MAP: str = ""  # JSON 对象文本：{"组DN": "角色"}，声明顺序优先
+    LDAP_DEFAULT_ROLE: str = "user"
+    LDAP_TIMEOUT_SECONDS: float = 5.0
+    LDAP_TLS_REQUIRED: bool = True
+    LDAP_CA_CERT_FILE: str = ""
+    LDAP_ROLE_SYNC: bool = True  # 每次登录按目录组重算并落库角色
+
+    @field_validator("LDAP_TIMEOUT_SECONDS")
+    @classmethod
+    def _validate_ldap_timeout_seconds(cls, v: float) -> float:
+        return max(1.0, min(30.0, v))
+
+    # 不 import app.core.auth（避免循环依赖），直接对照角色字面量集合。
+    @field_validator("LDAP_DEFAULT_ROLE")
+    @classmethod
+    def _validate_ldap_default_role(cls, v: str) -> str:
+        value = str(v or "user").strip().lower()
+        if value not in {"super_admin", "user", "reviewer", "operator", "viewer"}:
+            raise ValueError("LDAP_DEFAULT_ROLE must be one of: super_admin, reviewer, user, operator, viewer.")
+        return value
+
     # 数据保留策略（天）。0 = 关闭（默认，行为不变）；>0 时后台每 6 小时清理
     # 超龄上传文件及其成品（走 delete_file 全量清除 + 审计留痕）。
     DATA_RETENTION_DAYS: int = 0
