@@ -587,6 +587,16 @@ const zhBase: Record<string, string> = {
   'settings.runtime.jobConcurrencyHint': '当前 {current}，默认 {default}。超过显存承载能力会增加排队和失败风险。',
   'settings.updateFailed': '更新失败',
 
+  // system-settings.tsx
+  'system.error.loadSettings': '运行配置加载失败',
+  'system.error.saveSettings': '保存失败，请稍后重试',
+  'system.error.loadUsers': '用户列表加载失败',
+  'system.error.createUser': '创建用户失败',
+  'system.error.updatePermission': '权限更新失败',
+  'system.error.loadAudit': '审计日志加载失败',
+  'system.error.exportAudit': '导出失败',
+  'system.error.licenseUpload': '证书文件无法解析或安装失败',
+
   'sidebar.subtitle': '匿名化数据基础设施',
   'sidebar.devInProgress': '开发中',
 
@@ -1439,6 +1449,7 @@ const zhOverrides: Record<string, string> = {
   'common.test': '测试',
   'common.testing': '测试中...',
   'common.saving': '保存中...',
+  'common.downloading': '下载中...',
   'common.saveConfig': '保存配置',
   'common.endpointUrl': '接口地址',
   'errorBoundary.title': '页面出现异常',
@@ -1494,6 +1505,7 @@ const zhOverrides: Record<string, string> = {
   'settings.textModel.confirmClearOverride':
     '确定清除前端保存的配置，并恢复为服务端环境变量默认值吗？',
   'settings.textModel.resetSuccess': '已恢复为环境变量默认值。',
+  'settings.textModel.resetFailed': '恢复默认失败，请稍后重试。',
   'settings.visionModel.infoTitle': '视觉推理服务',
   'settings.visionModel.infoDesc':
     '在这里统一管理图像侧推理接口。内置服务和外部服务都可以在同一页里测试和查看状态。',
@@ -1791,6 +1803,7 @@ Object.assign(zhOverrides, {
   'auth.error.title': '登录失败',
   'auth.error.generic': '请求没有成功，请稍后重试。',
   'auth.error.passwordMismatch': '两次输入的密码不一致。',
+  'auth.error.logoutFailed': '退出登录失败。',
 });
 
 Object.assign(zhOverrides, {
@@ -2472,6 +2485,8 @@ Object.assign(zhOverrides, {
   'structured.database.form.database': '库名',
   'structured.database.form.username': '用户名',
   'structured.database.form.password': '密码',
+  'structured.database.form.required': '必填',
+  'structured.database.form.portRange': '端口需为 1-65535 的数字',
   'structured.database.form.test': '测试新连接',
   'structured.database.form.save': '保存为新连接',
   'structured.database.savedConnections': '已保存连接',
@@ -2495,6 +2510,8 @@ Object.assign(zhOverrides, {
   'structured.database.selectFiltered': '全选当前筛选 ({count})',
   'structured.database.selectAll': '全选全部',
   'structured.database.registerSelected': '登记选中 ({count})',
+  'structured.database.registering': '登记中...',
+  'structured.database.discovering': '发现中...',
   'structured.database.filterAll': '全部 {count}',
   'structured.database.schemaTooltip': '{tables} 个表，{views} 个视图',
   'structured.database.filterSummary': '当前筛选 {count} 个对象。',
@@ -2671,6 +2688,7 @@ Object.assign(zhOverrides, {
   'structured.delivery.createSingle': '执行单次交付',
   'structured.delivery.downloadZip': '下载 ZIP 包',
   'structured.delivery.downloadResult': '下载结果',
+  'structured.delivery.creating': '交付执行中...',
   'structured.delivery.jobTitleSingle': '库表单次去标识化',
   'structured.delivery.jobTitleBatch': '库表批量去标识化（{count}）',
   'structured.delivery.error.selectOne': '请至少选择一个数据集',

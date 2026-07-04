@@ -4,6 +4,7 @@ import { useT } from '@/i18n';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { Pencil, Trash2 } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,8 @@ export function VisionModel() {
     builtinLive,
     testingModelId,
     testResult,
+    loadError,
+    fetchModelConfigs,
     saveModelConfig,
     deleteModelConfig,
     testModelConfig,
@@ -70,6 +73,21 @@ export function VisionModel() {
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
         <div className="page-stack gap-3">
+          {loadError && (
+            <Alert variant="destructive" data-testid="vision-model-load-error">
+              <AlertDescription className="flex items-center justify-between gap-3">
+                <span>{loadError}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0"
+                  onClick={() => void fetchModelConfigs()}
+                >
+                  {t('common.retry')}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
           <section className="surface-subtle flex shrink-0 flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
               <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('nav.visionModel')}</h1>

@@ -14,6 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { authFetch } from '@/services/api-client';
+import { localizeErrorMessage } from '@/utils/localizeError';
 
 interface Props {
   open: boolean;
@@ -68,7 +69,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
       // Backend rotates the session cookie in the response - no re-login needed.
       setDone(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('auth.changePassword.failed'));
+      setError(localizeErrorMessage(err, 'auth.changePassword.failed'));
     } finally {
       setSaving(false);
     }
@@ -86,6 +87,14 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
           </DialogDescription>
         </DialogHeader>
 
+        <form
+          className="grid gap-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (done || saving || !oldPassword || !newPassword || !confirmPassword) return;
+            void submit();
+          }}
+        >
         {!done && (
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -138,9 +147,8 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
                 {t('common.cancel')}
               </Button>
               <Button
-                type="button"
+                type="submit"
                 disabled={saving || !oldPassword || !newPassword || !confirmPassword}
-                onClick={() => void submit()}
                 data-testid="change-password-submit"
               >
                 {saving ? t('auth.changePassword.saving') : t('auth.changePassword')}
@@ -148,6 +156,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
             </>
           )}
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

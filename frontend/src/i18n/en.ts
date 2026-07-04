@@ -695,6 +695,16 @@ const enBase: Record<string, string> = {
     'Current {current}, default {default}. Higher values can increase queue pressure and failures when VRAM is tight.',
   'settings.updateFailed': 'Update failed',
 
+  // system-settings.tsx
+  'system.error.loadSettings': 'Failed to load runtime settings.',
+  'system.error.saveSettings': 'Save failed. Please try again.',
+  'system.error.loadUsers': 'Failed to load the user list.',
+  'system.error.createUser': 'Failed to create the user.',
+  'system.error.updatePermission': 'Failed to update the permission.',
+  'system.error.loadAudit': 'Failed to load audit logs.',
+  'system.error.exportAudit': 'Export failed.',
+  'system.error.licenseUpload': 'The license file could not be parsed or installed.',
+
   'sidebar.subtitle': 'Anonymization Data Infrastructure',
   'sidebar.devInProgress': 'In Dev',
 
@@ -1635,6 +1645,7 @@ const enOverrides: Record<string, string> = {
   'common.test': 'Test',
   'common.testing': 'Testing...',
   'common.saving': 'Saving...',
+  'common.downloading': 'Downloading...',
   'common.saveConfig': 'Save configuration',
   'common.endpointUrl': 'Endpoint URL',
   'errorBoundary.title': 'Something went wrong on this page',
@@ -1695,6 +1706,7 @@ const enOverrides: Record<string, string> = {
   'settings.textModel.confirmClearOverride':
     'Clear the saved frontend configuration and fall back to the server environment defaults?',
   'settings.textModel.resetSuccess': 'Reset to the environment default.',
+  'settings.textModel.resetFailed': 'Reset failed. Please try again.',
   'settings.visionModel.infoTitle': 'Vision inference services',
   'settings.visionModel.infoDesc':
     'Manage image-side inference endpoints here. Built-in services and custom providers can all be tested from the same page.',
@@ -1893,6 +1905,7 @@ const enOverrides: Record<string, string> = {
   'auth.error.title': 'Authentication failed',
   'auth.error.generic': 'Unable to complete the request.',
   'auth.error.passwordMismatch': 'The two passwords do not match.',
+  'auth.error.logoutFailed': 'Unable to log out.',
 
   // Image BBox Editor
   'editor.resize.nw': 'Resize top-left',
@@ -2514,6 +2527,8 @@ Object.assign(enOverrides, {
   'structured.database.form.database': 'Database',
   'structured.database.form.username': 'Username',
   'structured.database.form.password': 'Password',
+  'structured.database.form.required': 'Required',
+  'structured.database.form.portRange': 'Port must be a number between 1 and 65535',
   'structured.database.form.test': 'Test new connection',
   'structured.database.form.save': 'Save as new connection',
   'structured.database.savedConnections': 'Saved connections',
@@ -2540,6 +2555,8 @@ Object.assign(enOverrides, {
   'structured.database.selectFiltered': 'Select filtered ({count})',
   'structured.database.selectAll': 'Select all',
   'structured.database.registerSelected': 'Register selected ({count})',
+  'structured.database.registering': 'Registering...',
+  'structured.database.discovering': 'Discovering...',
   'structured.database.filterAll': 'All {count}',
   'structured.database.schemaTooltip': '{tables} tables, {views} views',
   'structured.database.filterSummary': '{count} objects in current filter.',
@@ -2723,6 +2740,7 @@ Object.assign(enOverrides, {
   'structured.delivery.createSingle': 'Run single delivery',
   'structured.delivery.downloadZip': 'Download ZIP',
   'structured.delivery.downloadResult': 'Download result',
+  'structured.delivery.creating': 'Delivering...',
   'structured.delivery.jobTitleSingle': 'Structured data de-identification (single)',
   'structured.delivery.jobTitleBatch': 'Structured data de-identification (batch of {count})',
   'structured.delivery.error.selectOne': 'Select at least one dataset',

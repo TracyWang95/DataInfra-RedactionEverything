@@ -35,6 +35,8 @@ export function SettingsHub() {
     resetPipelines,
     handleExportPresets,
     handleImportPresets,
+    fetchEntityTypes,
+    fetchPipelines,
   } = useEntityTypes();
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -119,7 +121,20 @@ export function SettingsHub() {
         <Tabs defaultValue="text" className="page-stack gap-3 overflow-hidden">
           {loadError && (
             <Alert variant="destructive" data-testid="settings-load-error">
-              <AlertDescription>{loadError}</AlertDescription>
+              <AlertDescription className="flex items-center justify-between gap-3">
+                <span>{loadError}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0"
+                  onClick={() => {
+                    void fetchEntityTypes();
+                    void fetchPipelines();
+                  }}
+                >
+                  {t('common.retry')}
+                </Button>
+              </AlertDescription>
             </Alert>
           )}
 
