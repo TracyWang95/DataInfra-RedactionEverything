@@ -159,6 +159,14 @@ export function EntityTypeDialog({
           <DialogDescription>{dialogDescription}</DialogDescription>
         </DialogHeader>
 
+        <form
+          className="grid gap-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!canSubmit || saving) return;
+            onSave(form);
+          }}
+        >
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={nameInputId}>识别项名称 *</Label>
@@ -230,6 +238,7 @@ export function EntityTypeDialog({
 
         <DialogFooter>
           <Button
+            type="button"
             variant="outline"
             onClick={() => onOpenChange(false)}
             data-testid="entity-type-cancel"
@@ -237,8 +246,8 @@ export function EntityTypeDialog({
             {t('settings.cancel')}
           </Button>
           <Button
+            type="submit"
             disabled={!canSubmit || saving}
-            onClick={() => onSave(form)}
             data-testid="entity-type-save"
           >
             {saving
@@ -248,6 +257,7 @@ export function EntityTypeDialog({
                 : t('settings.save')}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

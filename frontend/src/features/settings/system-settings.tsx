@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
+import { EmptyState } from '@/components/EmptyState';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -318,11 +319,14 @@ function AdminAccessPanel() {
                 </span>
               </div>
             ))}
-            {!users.length && (
-              <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                {loading ? '正在加载用户...' : '暂无用户'}
-              </div>
-            )}
+            {!users.length &&
+              (loading ? (
+                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  正在加载用户...
+                </div>
+              ) : (
+                <EmptyState title="暂无用户" description="使用右侧表单创建第一个账号。" />
+              ))}
           </div>
         </div>
       </div>
@@ -517,11 +521,15 @@ function AdminAuditPanel() {
               </span>
             </div>
           ))}
-          {!entries.length && (
-            <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-              {loading ? '正在加载…' : '暂无匹配的审计记录'}
-            </div>
-          )}
+          {!entries.length &&
+            (loading ? (
+              <div className="px-3 py-8 text-center text-sm text-muted-foreground">正在加载…</div>
+            ) : (
+              <EmptyState
+                title="暂无匹配的审计记录"
+                description="调整用户、动作或关键字筛选后再查询。"
+              />
+            ))}
         </div>
       </div>
     </section>

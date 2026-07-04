@@ -2527,6 +2527,8 @@ Object.assign(enOverrides, {
   'structured.database.form.database': 'Database',
   'structured.database.form.username': 'Username',
   'structured.database.form.password': 'Password',
+  'structured.database.form.required': 'Required',
+  'structured.database.form.portRange': 'Port must be a number between 1 and 65535',
   'structured.database.form.test': 'Test new connection',
   'structured.database.form.save': 'Save as new connection',
   'structured.database.savedConnections': 'Saved connections',

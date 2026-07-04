@@ -63,6 +63,24 @@ export function DatabaseConnectionCard({
   const isSqlite = payload.engine === 'sqlite';
   const activeTarget = activeConnection ? connectionTargetLabel(activeConnection) : '';
   const activeDatasetCount = activeConnection ? Number(activeConnection.metadata?.dataset_count ?? 0) : 0;
+
+  const [touched, setTouched] = React.useState<Record<string, boolean>>({});
+  const [portText, setPortText] = React.useState(payload.port == null ? '' : String(payload.port));
+  React.useEffect(() => {
+    setPortText(payload.port == null ? '' : String(payload.port));
+  }, [payload.port]);
+  const markTouched = (field: string) => setTouched((current) => ({ ...current, [field]: true }));
+
+  const hostMissing = !isSqlite && !(payload.host ?? '').trim();
+  const databaseMissing = !isSqlite && !(payload.database ?? '').trim();
+  const usernameMissing = !isSqlite && !(payload.username ?? '').trim();
+  const trimmedPort = portText.trim();
+  const portInvalid =
+    !isSqlite &&
+    trimmedPort !== '' &&
+    (!/^\d+$/.test(trimmedPort) || Number(trimmedPort) < 1 || Number(trimmedPort) > 65535);
+  const formInvalid = hostMissing || databaseMissing || usernameMissing || portInvalid;
+
   return (
     <Card className="page-surface border-border/70 shadow-[var(--shadow-control)]">
       <CardHeader className="px-4 py-3">
@@ -70,6 +88,14 @@ export function DatabaseConnectionCard({
         <CardDescription>{t('structured.database.form.description')}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2 px-4 pb-4 pt-0">
+        <form
+          className="grid gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (Boolean(busy) || formInvalid) return;
+            onSave();
+          }}
+        >
         <div className="grid gap-2 sm:grid-cols-2">
           <Field label={t('structured.database.form.engine')}>
             <Select
@@ -112,28 +138,58 @@ export function DatabaseConnectionCard({
               <Field label={t('structured.database.form.host')}>
                 <Input
                   value={payload.host ?? ''}
+                  className={cn(touched.host && hostMissing && 'border-destructive')}
+                  onBlur={() => markTouched('host')}
                   onChange={(event) => onPayloadChange({ ...payload, host: event.target.value })}
                 />
+                {touched.host && hostMissing ? (
+                  <p className="text-xs text-destructive">{t('structured.database.form.required')}</p>
+                ) : null}
               </Field>
               <Field label={t('structured.database.form.port')}>
                 <Input
-                  value={payload.port ?? ''}
-                  onChange={(event) =>
-                    onPayloadChange({ ...payload, port: Number(event.target.value) || undefined })
-                  }
+                  value={portText}
+                  inputMode="numeric"
+                  className={cn(portInvalid && 'border-destructive')}
+                  onChange={(event) => {
+                    const text = event.target.value;
+                    setPortText(text);
+                    const trimmed = text.trim();
+                    if (!trimmed) {
+                      onPayloadChange({ ...payload, port: undefined });
+                      return;
+                    }
+                    const parsed = Number(trimmed);
+                    if (/^\d+$/.test(trimmed) && parsed >= 1 && parsed <= 65535) {
+                      onPayloadChange({ ...payload, port: parsed });
+                    }
+                  }}
                 />
+                {portInvalid ? (
+                  <p className="text-xs text-destructive">{t('structured.database.form.portRange')}</p>
+                ) : null}
               </Field>
               <Field label={t('structured.database.form.database')}>
                 <Input
                   value={payload.database ?? ''}
+                  className={cn(touched.database && databaseMissing && 'border-destructive')}
+                  onBlur={() => markTouched('database')}
                   onChange={(event) => onPayloadChange({ ...payload, database: event.target.value })}
                 />
+                {touched.database && databaseMissing ? (
+                  <p className="text-xs text-destructive">{t('structured.database.form.required')}</p>
+                ) : null}
               </Field>
               <Field label={t('structured.database.form.username')}>
                 <Input
                   value={payload.username ?? ''}
+                  className={cn(touched.username && usernameMissing && 'border-destructive')}
+                  onBlur={() => markTouched('username')}
                   onChange={(event) => onPayloadChange({ ...payload, username: event.target.value })}
                 />
+                {touched.username && usernameMissing ? (
+                  <p className="text-xs text-destructive">{t('structured.database.form.required')}</p>
+                ) : null}
               </Field>
               <Field label={t('structured.database.form.password')}>
                 <Input
@@ -146,15 +202,23 @@ export function DatabaseConnectionCard({
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={onTest} disabled={Boolean(busy)}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8"
+            onClick={onTest}
+            disabled={Boolean(busy) || formInvalid}
+          >
             <Server className="size-4" />
             {busy === 'testConnection' ? t('common.testing') : t('structured.database.form.test')}
           </Button>
-          <Button size="sm" onClick={onSave} disabled={Boolean(busy)}>
+          <Button type="submit" size="sm" className="h-8" disabled={Boolean(busy) || formInvalid}>
             <Save className="size-4" />
             {busy === 'saveConnection' ? t('common.saving') : t('structured.database.form.save')}
           </Button>
         </div>
+        </form>
         <div className="grid gap-1.5">
           <Label>{t('structured.database.savedConnections')}</Label>
           <div className="flex flex-wrap gap-2">
@@ -163,6 +227,7 @@ export function DatabaseConnectionCard({
                 key={connection.id}
                 variant={activeConnectionId === connection.id ? 'default' : 'outline'}
                 size="sm"
+                className="h-8"
                 onClick={() => onSelectConnection(connection.id)}
               >
                 {connection.display_name}
@@ -198,7 +263,7 @@ export function DatabaseConnectionCard({
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-background hover:text-destructive"
+                  className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-background hover:text-destructive"
                   title={t('structured.database.removeConnection')}
                   aria-label={t('structured.database.removeCurrentConnection')}
                   data-testid="db-delete-active-connection"
@@ -218,7 +283,13 @@ export function DatabaseConnectionCard({
             {t('structured.database.selectConnectionFirst')}
           </div>
         )}
-        <Button variant="outline" size="sm" onClick={onDiscover} disabled={!activeConnectionId || Boolean(busy)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8"
+          onClick={onDiscover}
+          disabled={!activeConnectionId || Boolean(busy)}
+        >
           <Eye className="size-4" />
           {busy === 'discover' ? t('structured.database.discovering') : t('structured.database.discover')}
         </Button>
@@ -575,7 +646,7 @@ export function DiscoveredTablesCard({
                           </td>
                           {isRegisteredMode ? (
                             <td className="px-2 py-1 text-right">
-                              <Button asChild variant="outline" size="sm" className="h-7 px-2">
+                              <Button asChild variant="outline" size="sm" className="h-8 px-2">
                                 <Link to={`/structured/datasets?datasetId=${encodeURIComponent(dataset.id)}`}>
                                   {t('structured.common.goToPolicy')}
                                 </Link>

@@ -2485,6 +2485,8 @@ Object.assign(zhOverrides, {
   'structured.database.form.database': '库名',
   'structured.database.form.username': '用户名',
   'structured.database.form.password': '密码',
+  'structured.database.form.required': '必填',
+  'structured.database.form.portRange': '端口需为 1-65535 的数字',
   'structured.database.form.test': '测试新连接',
   'structured.database.form.save': '保存为新连接',
   'structured.database.savedConnections': '已保存连接',
