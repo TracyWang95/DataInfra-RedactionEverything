@@ -14,6 +14,7 @@ import { Link } from 'react-router-dom';
 import { t, useI18n, useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/EmptyState';
+import { AsyncListShell } from '@/components/shared/AsyncListShell';
 import {
   clampPageSize,
   interpolateDensity,
@@ -233,33 +234,39 @@ export function JobsTable({
         style={bodyStyle}
         data-testid="jobs-table-body"
       >
-        {hardLoading ? (
-          <div className="flex flex-col gap-2 px-4 py-4 pb-7">
-            {Array.from({ length: getJobsSkeletonCount(pageSize) }).map((_, i) => (
-              <Skeleton
-                key={i}
-                className="w-full rounded-lg"
-                style={{ height: `${density.skeletonHeight}px` }}
+        <AsyncListShell
+          hardLoading={hardLoading}
+          isEmpty={rows.length === 0}
+          className="min-h-full"
+          skeleton={
+            <div className="flex flex-col gap-2 px-4 py-4 pb-7">
+              {Array.from({ length: getJobsSkeletonCount(pageSize) }).map((_, i) => (
+                <Skeleton
+                  key={i}
+                  className="w-full rounded-lg"
+                  style={{ height: `${density.skeletonHeight}px` }}
+                />
+              ))}
+            </div>
+          }
+          emptyContent={
+            <div
+              className="flex min-h-full items-center justify-center px-4"
+              data-testid="jobs-table-empty"
+            >
+              <EmptyState
+                title={t('jobs.noRecords')}
+                description={t('jobs.noRecordsHint')}
+                action={{
+                  label: t('jobs.gotoBatch'),
+                  onClick: () => {
+                    window.location.href = '/batch';
+                  },
+                }}
               />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div
-            className="flex min-h-full items-center justify-center px-4"
-            data-testid="jobs-table-empty"
-          >
-            <EmptyState
-              title={t('jobs.noRecords')}
-              description={t('jobs.noRecordsHint')}
-              action={{
-                label: t('jobs.gotoBatch'),
-                onClick: () => {
-                  window.location.href = '/batch';
-                },
-              }}
-            />
-          </div>
-        ) : (
+            </div>
+          }
+        >
           <ul className="jobs-table-list flex min-h-full min-w-full flex-col divide-y divide-border/70">
             {rows.map((job, index) => (
               <JobRow
@@ -282,7 +289,7 @@ export function JobsTable({
               />
             ))}
           </ul>
-        )}
+        </AsyncListShell>
       </div>
     </div>
   );
