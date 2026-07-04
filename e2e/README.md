@@ -1,23 +1,41 @@
-﻿# E2E Harness锛堟湁澶?Chrome锛屾案涓嶆棤澶达級
+# E2E Harness（有头 Chrome，永不无头）
 
-浜斿眰闂搁棬鐨勭 3 灞傘€傜洰鏍囩敱 `E2E_BASE_URL` 鍐冲畾锛堥粯璁?`http://localhost:8000`锛屽嵆闅ч亾鍒?5090 鎴栨湰鍦板叏鏍堬級銆?
-## 鍒嗗眰
+五层闸门的第 3 层。目标由 `E2E_BASE_URL` 决定（默认 `http://localhost:8000`，即隧道到 5090 或本地全栈）。
 
-| Tier | 鑴氭湰 | GPU | 浣曟椂璺?|
+## 分层
+
+| Tier | 脚本 | GPU | 何时跑 |
 |---|---|---|---|
-| 1 鍐掔儫 | `smoke_routes.py`锛堝叏璺敱娓叉煋锛夈€乣perm_matrix.py`锛堟潈闄愮煩闃碉細API 403 + UI 闂ㄧ锛?| 鏃?| 姣忚疆蹇呰窇锛岄殢鏃跺彲鎵撶敓浜ч毀閬?|
-| 2 榛勯噾璺緞 | `golden_single.py`锛堝崟鏂囦欢鏂囨湰鍏ㄩ摼璺細涓婁紶鈫掕瘑鍒啋鍖垮悕鍖栤啋鎴愬搧鏍忔棤鍘熷PII锛屸渽宸插疄鐜帮級 | 杞?| 閮ㄧ讲鍚?/ 闅忔椂锛堟枃鏈矾寰勭绾э級 |
-| 2 寰呭疄鐜?| `golden_batch.py`锛堟壒閲忎簲姝ュ惈鎵归噺纭锛夈€乣golden_structured.py`锛堝鍏モ啋绛栫暐鈫掍氦浠橈級銆乣golden_export.py`锛堝紓姝ュ垎鍗峰鍑猴級 | 鏈?| 涓嬩竴杞?loop |
+| 1 冒烟 | `smoke_routes.py`（全路由渲染）、`perm_matrix.py`（权限矩阵：API 403 + UI 门禁） | 无 | 每轮必跑，随时可打生产隧道 |
+| 2 黄金路径 | `golden_single.py`（单文件文本全链路：上传→识别→匿名化→成品栏无原始PII）✅ | 轻 | 随时（文本路径秒级） |
+| 2 黄金路径 | `golden_batch.py`（批量五步全流程 + 批量确认权限门断言）✅ | 轻 | 随时（2 个小文本文件） |
+| 2 待实现 | `golden_structured.py`（导入→策略→交付）、`golden_export.py`（异步分卷导出） | 有 | 下一轮 loop |
 
-## 杩愯
+## 运行
 
 ```bash
 cd e2e
 python smoke_routes.py          # Tier 1
 python perm_matrix.py
-# 鎴?cd frontend && npm run e2e 锛? Tier 1 鍏ㄩ儴锛?```
+python golden_single.py         # Tier 2
+python golden_batch.py
+# 或 cd frontend && npm run e2e （= Tier 1 全部）
+```
 
-璐﹀彿锛歚E2E_USERNAME`/`E2E_PASSWORD`锛堥粯璁?e2e_user锛岄璺戣嚜鍔ㄦ敞鍐岋紝鏅€氳鑹诧級銆?绠＄悊鍛樹晶鏂█闇€瑕?`E2E_ADMIN_USERNAME`/`E2E_ADMIN_PASSWORD`锛堜笉鍏ュ簱锛岃窇鍓?export锛夈€?
-## 绾﹀畾
+账号：`E2E_USERNAME`/`E2E_PASSWORD`（默认 e2e_user，首跑自动注册，普通角色）。
+管理员侧断言需要 `E2E_ADMIN_USERNAME`/`E2E_ADMIN_PASSWORD`（不入库，跑前 export）。
 
-- 閫夋嫨鍣ㄤ紭鍏?`data-testid`锛涙柊鍔熻兘钀藉湴鏃跺悓姝ヨˉ testid銆?- 姣忎釜鑴氭湰涓€涓満鏅嚱鏁帮紝`common.run()` 璐熻矗璧锋祻瑙堝櫒/鐧诲綍/缁撴灉妯箙锛坄E2E_PASS xxx`锛夈€?- 澶辫触=鎶?AssertionError锛岄€€鍑虹爜闈?0锛孋I 鍙洿鎺ユ帴銆?
+## 约定
+
+- 选择器优先 `data-testid`；新功能落地时同步补 testid。
+- 每个脚本一个场景函数，`common.run()` 负责起浏览器/登录/结果横幅（`E2E_PASS xxx`）；失败自动存全页截图+正文到 `e2e/.artifacts/`。
+- 失败=抛 AssertionError，退出码非 0，CI 可直接接。
+- ⚠️ 改这个目录的中文文件别用 PowerShell Get/Set-Content 回转（GBK 读+UTF8 写=乱码），用编辑工具直接写。
+
+## 已编码的坑
+
+- httpx 必须 `trust_env=False`（Mihomo 注册表代理会 502 掉 localhost）
+- auth 限流 5 次/分钟：连跑脚本触发 429 时等 65s（`_login_token`）
+- Windows 上传文件句柄被 Chrome 占用：不能用 TemporaryDirectory 自动清理
+- 结果页是原文|成品双栏：PII 断言要 scope 到 `playground-redacted-pane`
+- step1 的 `confirm-step1` 是勾选框，前进按钮是 `advance-upload`
