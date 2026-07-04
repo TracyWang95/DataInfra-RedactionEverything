@@ -2156,6 +2156,7 @@ Object.assign(enOverrides, {
   'settings.redaction.presetName.industry_contract_legal_disclosure': 'Legal industry',
   'settings.redaction.presetName.industry_medical_record_release': 'Healthcare industry',
   'settings.redaction.presetName.industry_finance_audit_sharing': 'Financial industry',
+  'settings.redaction.presetName.industry_gov_document_release': 'Government industry',
   'settings.redaction.presetName.industry_hr_personnel_file': 'Industry - HR and personnel file',
   'settings.redaction.presetName.industry_public_sector_release':
     'Industry - Public-sector document release',

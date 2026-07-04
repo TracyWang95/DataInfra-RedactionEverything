@@ -2081,6 +2081,7 @@ Object.assign(zhOverrides, {
   'settings.redaction.presetName.industry_contract_legal_disclosure': '法律行业',
   'settings.redaction.presetName.industry_medical_record_release': '医疗行业',
   'settings.redaction.presetName.industry_finance_audit_sharing': '金融行业',
+  'settings.redaction.presetName.industry_gov_document_release': '政务行业',
   'settings.redaction.presetName.industry_hr_personnel_file': '人事档案',
   'settings.redaction.presetName.industry_public_sector_release': '政务公文',
   'settings.redaction.presetName.industry_image_heavy_certificates': '证照表单',
