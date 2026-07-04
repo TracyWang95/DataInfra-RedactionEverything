@@ -191,6 +191,13 @@ export function BatchStep4Review() {
     rerunRecognitionLoading,
   } = w;
 
+  // 批量确认后成品在后台逐份生成（万级要几分钟）：给「进入导出」灰态一个
+  // 看得见的解释，否则用户以为按钮坏了（PM 5188 份实战反馈）。
+  const settlingCount = rows.filter(
+    (row) => row.analyzeStatus === 'review_approved' || row.analyzeStatus === 'redacting',
+  ).length;
+  const completedOutputCount = rows.filter((row) => row.analyzeStatus === 'completed').length;
+
   // 审阅键盘流（审核员批量作业刚需）：← / → 上一份/下一份，Ctrl+Enter 确认当前份。
   // 输入控件聚焦时不响应；门禁与按钮完全一致（不越过必读页/只读态）。
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
@@ -523,6 +530,17 @@ export function BatchStep4Review() {
           <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
             {t('batchWizard.step4.confirmed')} {reviewedOutputCount}/{rows.length}
           </span>
+          {settlingCount > 0 && (
+            <span
+              className="shrink-0 whitespace-nowrap text-xs font-medium text-[var(--warning-foreground)] tabular-nums"
+              data-testid="review-settling-progress"
+              title={t('batchWizard.step4.settlingHint')}
+            >
+              {t('batchWizard.step4.settlingProgress')
+                .replace('{done}', String(completedOutputCount))
+                .replace('{total}', String(rows.length))}
+            </span>
+          )}
           {reviewTotalPages > 1 &&
             !reviewFileReadOnly &&
             !reviewRequiredPagesVisited &&
@@ -599,9 +617,11 @@ export function BatchStep4Review() {
               !canAdvanceToExport || reviewLoading || reviewDraftSaving || reviewExecuteLoading
             }
             title={
-              waitingForBackgroundRecognition && !canAdvanceToExport
-                ? t('batchWizard.step4.backgroundRecognitionHint')
-                : undefined
+              !canAdvanceToExport && settlingCount > 0
+                ? t('batchWizard.step4.settlingHint')
+                : waitingForBackgroundRecognition && !canAdvanceToExport
+                  ? t('batchWizard.step4.backgroundRecognitionHint')
+                  : undefined
             }
             onClick={() => void advanceToExportStep()}
             className={cn(

@@ -826,6 +826,24 @@ export function useBatchWizard() {
         .length,
     [rows],
   );
+
+  // 成品全部生成通知：批量确认后 review_approved/redacting 归零=可进导出
+  //（万级要几分钟，用户多半已切走页签——PM 5188 份实战反馈）。
+  const settlingActiveCount = useMemo(
+    () =>
+      rows.filter(
+        (row) => row.analyzeStatus === 'review_approved' || row.analyzeStatus === 'redacting',
+      ).length,
+    [rows],
+  );
+  const prevSettlingActiveRef = useRef(0);
+  useEffect(() => {
+    const prev = prevSettlingActiveRef.current;
+    prevSettlingActiveRef.current = settlingActiveCount;
+    if (step === 4 && !isPreviewMode && phaseJustFinished(prev, settlingActiveCount)) {
+      notifyDone(t('notify.outputsReady'));
+    }
+  }, [settlingActiveCount, step, isPreviewMode, t]);
   const prevRecognitionActiveRef = useRef(0);
   useEffect(() => {
     const prev = prevRecognitionActiveRef.current;
