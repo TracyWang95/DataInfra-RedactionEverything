@@ -9,7 +9,9 @@
 | 1 冒烟 | `smoke_routes.py`（全路由渲染）、`perm_matrix.py`（权限矩阵：API 403 + UI 门禁） | 无 | 每轮必跑，随时可打生产隧道 |
 | 2 黄金路径 | `golden_single.py`（单文件文本全链路：上传→识别→匿名化→成品栏无原始PII）✅ | 轻 | 随时（文本路径秒级） |
 | 2 黄金路径 | `golden_batch.py`（批量五步全流程 + 批量确认权限门断言）✅ | 轻 | 随时（2 个小文本文件） |
-| 2 待实现 | `golden_structured.py`（导入→策略→交付）、`golden_export.py`（异步分卷导出） | 有 | 下一轮 loop |
+| 2 黄金路径 | `golden_structured.py`（库表：上传→字段策略→确认→保存→交付→下载）✅ | 无 | 随时（本地规则，无GPU） |
+| 2 黄金路径 | `golden_export.py`（异步分卷导出 API 闭环：估算秒回→后台任务→分卷zip下载）✅ | 无 | 随时 |
+| 1 黄金路径 | `golden_password.py`（改密闭环：UI改→新密码登录→还原）✅ | 无 | 随时 |
 
 ## 运行
 
