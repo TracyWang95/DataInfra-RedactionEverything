@@ -914,6 +914,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step4.bulkConfirmQueued': 'Queued {count} file(s) for redaction...',
   'batchWizard.step4.bulkConfirmPartial': 'Confirmed {confirmed}, {failed} failed',
   'batchWizard.step4.bulkConfirmDone': 'All files confirmed',
+  'batchWizard.step4.keyboardHint': 'Shortcuts: ← / → switch file · Ctrl+Enter confirm',
   'batchWizard.step4.bulkConfirmNoPermission':
     'Ask an administrator to enable Batch confirm for your account in Settings > Access.',
   'batchWizard.step4.readOnlyHint':

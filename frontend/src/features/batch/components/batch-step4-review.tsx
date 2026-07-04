@@ -1,6 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -190,6 +190,49 @@ export function BatchStep4Review() {
     rerunCurrentItemRecognition: onRerunRecognition,
     rerunRecognitionLoading,
   } = w;
+
+  // 审阅键盘流（审核员批量作业刚需）：← / → 上一份/下一份，Ctrl+Enter 确认当前份。
+  // 输入控件聚焦时不响应；门禁与按钮完全一致（不越过必读页/只读态）。
+  const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  keyHandlerRef.current = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    if (!reviewFile || reviewLoading || reviewExecuteLoading) return;
+
+    if (event.key === 'ArrowLeft' && reviewIndex > 0) {
+      event.preventDefault();
+      void navigateReviewIndex(reviewIndex - 1);
+      return;
+    }
+    if (event.key === 'ArrowRight') {
+      const next = getNextReviewIndex(doneRows, reviewIndex, reviewFile.file_id);
+      const blockedByCurrent = reviewFile.reviewConfirmed !== true && !reviewFileReadOnly;
+      if (next !== null && !blockedByCurrent) {
+        event.preventDefault();
+        void navigateReviewIndex(next);
+      }
+      return;
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      if (!reviewDraftSaving && !reviewFileReadOnly && reviewRequiredPagesVisited) {
+        event.preventDefault();
+        void confirmCurrentReview();
+      }
+    }
+  };
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => keyHandlerRef.current(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
 
   if (!doneRows.length) {
     return (
@@ -471,6 +514,12 @@ export function BatchStep4Review() {
               )}
             </div>
           )}
+          <span
+            className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground/70 lg:inline"
+            title={t('batchWizard.step4.keyboardHint')}
+          >
+            {t('batchWizard.step4.keyboardHint')}
+          </span>
           <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
             {t('batchWizard.step4.confirmed')} {reviewedOutputCount}/{rows.length}
           </span>

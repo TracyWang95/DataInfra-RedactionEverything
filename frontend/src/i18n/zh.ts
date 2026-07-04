@@ -793,6 +793,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.step4.bulkConfirmQueued': '已提交 {count} 份文件匿名化，正在处理…',
   'batchWizard.step4.bulkConfirmPartial': '已提交 {confirmed} 份，{failed} 份失败',
   'batchWizard.step4.bulkConfirmDone': '已确认全部文件',
+  'batchWizard.step4.keyboardHint': '快捷键：← / → 切换文件 · Ctrl+Enter 确认',
   'batchWizard.step4.bulkConfirmNoPermission':
     '需要管理员在「系统设置 › 权限信息」为你的账号开启「批量确认」权限',
   'batchWizard.step4.readOnlyHint':
