@@ -385,6 +385,25 @@ class Settings(BaseSettings):
     # 超龄上传文件及其成品（走 delete_file 全量清除 + 审计留痕）。
     DATA_RETENTION_DAYS: int = 0
 
+    # 例行备份（R1-1）。默认值 = 既有行为（每小时、保留 24 份、DATA_DIR/backups）。
+    # 文件树（uploads/outputs）刻意不进应用进程备份——见 scripts/backup_files.sh
+    # 与 docs/backup-restore.md：库备份 ≠ 文件备份。
+    BACKUP_INTERVAL_SEC: int = 3600
+    BACKUP_RETENTION_COUNT: int = 24
+    BACKUP_DIR: str = ""  # 空 = DATA_DIR/backups
+    BACKUP_INCLUDE_FILES: bool = False  # True 时 health 检查文件备份 marker 是否新鲜
+    BACKUP_FILES_MIN_FREE_GB: int = 20  # 供 backup_files.sh 读取的磁盘水位闸
+
+    @field_validator("BACKUP_INTERVAL_SEC")
+    @classmethod
+    def _validate_backup_interval_sec(cls, v: int) -> int:
+        return max(300, min(86400, v))
+
+    @field_validator("BACKUP_RETENTION_COUNT")
+    @classmethod
+    def _validate_backup_retention_count(cls, v: int) -> int:
+        return max(1, min(168, v))
+
     # 批量任务并发配置
     JOB_CONCURRENCY: int = 3  # Number of concurrent job items to process
 

@@ -155,10 +155,10 @@ async def lifespan(app: FastAPI):
     # === Startup ===
 
     # 0. Database integrity check + restore from backup if corrupted
-    from app.core.db_backup import backup_sqlite, ensure_db_healthy
+    from app.core.db_backup import ensure_db_healthy
     ensure_db_healthy(settings.JOB_DB_PATH)
 
-    # Also check file_store and token_blacklist databases
+    # Also check file_store, token_blacklist and structured_store databases
     from app.services.file_management_service import get_file_store
     _fs = get_file_store()
     if hasattr(_fs, 'db_path'):
@@ -167,6 +167,7 @@ async def lifespan(app: FastAPI):
     _bl = get_blacklist()
     if hasattr(_bl, 'db_path'):
         ensure_db_healthy(_bl.db_path)
+    ensure_db_healthy(os.path.join(settings.DATA_DIR, "structured_store.sqlite3"))
 
     # 0b. Run file-store migrations (JSON->SQLite, path normalization)
     from app.services.file_management_service import run_startup_migrations
@@ -254,28 +255,21 @@ async def lifespan(app: FastAPI):
     # 4. Start periodic orphan cleanup
     _cleanup_task = asyncio.create_task(_periodic_cleanup())
 
-    # 5. Start periodic database backup (every hour) - all SQLite databases
+    # 5. Start periodic backup — full inventory (4 SQLite + config/credential
+    # files) via backup_all; blocking sqlite Online Backup runs in executor.
     async def _periodic_backup():
+        from app.core.db_backup import backup_all
+
         while True:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(settings.BACKUP_INTERVAL_SEC)
             try:
-                backup_sqlite(settings.JOB_DB_PATH)
+                loop = asyncio.get_event_loop()
+                results = await loop.run_in_executor(None, backup_all)
+                failed = [name for name, ok in results.items() if not ok]
+                if failed:
+                    logger.error("periodic backup failures: %s", ", ".join(failed))
             except Exception:
-                logger.exception("periodic database backup failed: jobs")
-            try:
-                from app.services.file_management_service import get_file_store
-                fs = get_file_store()
-                if hasattr(fs, 'db_path'):
-                    backup_sqlite(fs.db_path)
-            except Exception:
-                logger.exception("periodic database backup failed: file_store")
-            try:
-                from app.core.token_blacklist import get_blacklist
-                bl = get_blacklist()
-                if hasattr(bl, 'db_path'):
-                    backup_sqlite(bl.db_path)
-            except Exception:
-                logger.exception("periodic database backup failed: token_blacklist")
+                logger.exception("periodic backup sweep failed")
 
     _backup_task = asyncio.create_task(_periodic_backup())
 
@@ -618,6 +612,31 @@ async def services_health():
     except OSError:
         pass
 
+    # Backup freshness (timestamps only — endpoint is unauthenticated, no paths)
+    backup_info = None
+    try:
+        from app.core.db_backup import get_backup_status
+
+        status = get_backup_status()
+        stale_after = settings.BACKUP_INTERVAL_SEC * 2
+        now_ts = datetime.now(UTC)
+        stale = False
+        stores = {}
+        for name, entry in status.items():
+            last = entry.get("last_success_at")
+            stores[name] = last
+            if last:
+                age = (now_ts - datetime.fromisoformat(last)).total_seconds()
+                if age > stale_after:
+                    stale = True
+        backup_info = {
+            "stores": stores,
+            "stale": stale,
+            "include_files": bool(settings.BACKUP_INCLUDE_FILES),
+        }
+    except Exception:
+        pass
+
     return {
         "all_online": all_online,
         "services": services,
@@ -627,6 +646,7 @@ async def services_health():
         "gpu_memory_all": gpu_mem_all,
         "disk": disk,
         "retention_days": int(settings.DATA_RETENTION_DAYS or 0),
+        "backup": backup_info,
         # Endpoint is intentionally unauthenticated (dev.mjs waitJson probes it),
         # so process names/PIDs are not exposed. Field kept for the frontend hook.
         "gpu_processes": [],
