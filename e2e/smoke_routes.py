@@ -27,6 +27,9 @@ ROUTES = [
 
 def smoke_routes(page) -> None:
     login(page)
+    # Version stamp (sidebar footer) must render on every build.
+    page.wait_for_selector('[data-testid="app-version"]', timeout=15_000)
+    print(f"  [ok] version stamp: {page.locator('[data-testid=\"app-version\"]').inner_text()}")
     failures: list[str] = []
     for route in ROUTES:
         page.goto(f"{BASE_URL}{route}", wait_until="domcontentloaded")

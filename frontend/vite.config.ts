@@ -25,6 +25,10 @@ const backendProxy = {
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.0.0'),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

@@ -400,6 +400,13 @@ function SidebarServiceStatus({
           </span>
         </div>
       )}
+      <p
+        className="mt-2 truncate text-center text-[10px] text-sidebar-foreground/50"
+        data-testid="app-version"
+        title={`v${__APP_VERSION__} · ${__BUILD_TIME__}`}
+      >
+        {`v${__APP_VERSION__} · ${__BUILD_TIME__}`}
+      </p>
     </section>
   );
 }
