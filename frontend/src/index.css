@@ -19,7 +19,7 @@
   --card-foreground: #171717;
   --popover: rgba(255, 255, 255, 0.96);
   --popover-foreground: #171717;
-  --primary: #10a37f;
+  --primary: var(--brand);
   --primary-foreground: #ffffff;
   --secondary: #f1f1ea;
   --secondary-foreground: #1f2937;
@@ -35,10 +35,10 @@
   --panel-strong: rgba(255, 255, 255, 0.92);
 
   --select-regex: #7288ad;
-  --select-ner: #10a37f;
+  --select-ner: var(--brand);
   --select-yolo: #6d7c93;
 
-  --success: #10a37f;
+  --success: var(--brand);
   --warning: #d97706;
   --error: #dc2626;
   --info: #7288ad;
@@ -869,6 +869,8 @@ input[type='checkbox']:focus-visible {
 }
 
 :root {
+  /* 白标单点：换品牌主色只改这一处（--primary/--success/语义选区 accent 均引用它） */
+  --brand: #10a37f;
   --page-shell-offset: 4.75rem;
   color-scheme: light;
   --background: #ffffff;
@@ -933,7 +935,7 @@ input[type='checkbox']:focus-visible {
   --selection-regex-text: #38506d;
   --selection-regex-muted: rgba(56, 80, 109, 0.82);
   --selection-regex-ring: rgba(111, 134, 167, 0.28);
-  --selection-semantic-accent: #10a37f;
+  --selection-semantic-accent: var(--brand);
   --selection-semantic-border: rgba(16, 163, 127, 0.22);
   --selection-semantic-soft: rgba(16, 163, 127, 0.08);
   --selection-semantic-surface: rgba(16, 163, 127, 0.12);

@@ -1176,7 +1176,6 @@ const enBase: Record<string, string> = {
 const enOverrides: Record<string, string> = {
   'common.download': 'Download',
   'sidebar.productName': 'Redaction Assistant',
-  'sidebar.subtitle': 'One file first, then batch',
   'nav.playground': 'Process One File',
   'nav.playground.sub': 'Confirm results first',
   'nav.batch': 'Process Many Files',

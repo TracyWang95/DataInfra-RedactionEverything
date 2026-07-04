@@ -8,7 +8,10 @@ import { queryClient } from '@/lib/query-client';
 import { AuthProvider } from '@/features/auth/auth-context';
 import { router } from './router';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { applyBrand } from '@/config/brand';
 import './index.css';
+
+applyBrand();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

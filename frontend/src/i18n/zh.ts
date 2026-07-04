@@ -1020,7 +1020,6 @@ const zhBase: Record<string, string> = {
 const zhOverrides: Record<string, string> = {
   'common.download': '下载',
   'sidebar.productName': '匿名化处理助手',
-  'sidebar.subtitle': '先单文件，再批量',
   'nav.start': '开始处理',
   'nav.start.sub': '选择下一步',
   'nav.playground': '处理单个文件',

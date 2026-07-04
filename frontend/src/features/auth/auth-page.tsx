@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LockKeyhole, ShieldCheck } from 'lucide-react';
+import { BRAND, brandName, brandTagline } from '@/config/brand';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -73,8 +73,12 @@ export function AuthPage() {
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(15,23,42,0.04)_0%,transparent_38%,rgba(15,23,42,0.03)_100%)]" />
       <Card className="relative z-10 w-full max-w-md border-border/70 bg-background/92">
         <CardHeader className="space-y-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-foreground text-background shadow-[var(--shadow-md)]">
-            {needsSetup ? <ShieldCheck className="h-5 w-5" /> : <LockKeyhole className="h-5 w-5" />}
+          <div className="flex items-center gap-3">
+            <img src={BRAND.logoUrl} alt="" className="size-12 rounded-2xl shadow-[var(--shadow-md)]" />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold tracking-tight">{brandName(t)}</div>
+              <div className="truncate text-xs text-muted-foreground">{brandTagline(t)}</div>
+            </div>
           </div>
           <div className="space-y-2">
             <CardTitle className="text-2xl tracking-[-0.04em]">
