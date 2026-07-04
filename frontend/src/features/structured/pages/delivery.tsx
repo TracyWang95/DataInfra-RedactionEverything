@@ -366,7 +366,7 @@ export function StructuredDelivery() {
                 {t('structured.delivery.settings.formatHint')}
               </p>
               {exportFormat === 'xlsx' && (
-                <p className="text-xs leading-4 text-amber-700">
+                <p className="text-xs leading-4 text-[var(--warning-foreground)]">
                   {t('structured.delivery.settings.xlsxPartHint')}
                 </p>
               )}

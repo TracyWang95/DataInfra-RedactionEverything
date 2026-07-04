@@ -88,8 +88,8 @@ function BBoxOverlayBoxInner({
       box.source === 'ocr_has'
         ? 'border-[var(--selection-regex-border)] bg-[var(--selection-regex-soft)] text-[var(--selection-regex-text)]'
         : box.source === 'visual_features'
-          ? 'border-[var(--selection-yolo-border)] bg-[var(--selection-yolo-soft)] text-[var(--selection-yolo-text)]'
-          : 'border-[var(--selection-ner-border)] bg-[var(--selection-ner-soft)] text-[var(--selection-ner-text)]',
+          ? 'border-[var(--selection-visual-border)] bg-[var(--selection-visual-soft)] text-[var(--selection-visual-text)]'
+          : 'border-[var(--selection-semantic-border)] bg-[var(--selection-semantic-soft)] text-[var(--selection-semantic-text)]',
     [box.source],
   );
   const posStyle: React.CSSProperties = useMemo(

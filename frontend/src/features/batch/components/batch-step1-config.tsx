@@ -195,7 +195,7 @@ function BatchStep1ConfigInner() {
           {t('batchHub.noActiveJobsDesc')}
         </p>
         {jobConfigLocked && (
-          <p className="text-xs font-medium text-amber-700" data-testid="step1-config-locked">
+          <p className="text-xs font-medium text-[var(--warning-foreground)]" data-testid="step1-config-locked">
             {t('batchWizard.step1.lockedHint')}
           </p>
         )}
@@ -204,7 +204,7 @@ function BatchStep1ConfigInner() {
       <CardContent className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-3 pt-2">
         {presetLoadError && (
           <div
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--warning-border)] bg-[var(--warning-surface)] px-3 py-2 text-xs text-[var(--warning-foreground)]"
             data-testid="batch-preset-load-error"
           >
             <span>{presetLoadError}</span>
