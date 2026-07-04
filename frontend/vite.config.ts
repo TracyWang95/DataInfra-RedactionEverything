@@ -55,7 +55,9 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: 'jsdom',
+    // Pure-logic tests only for now; switch to jsdom (and install it) when
+    // component tests arrive.
+    environment: 'node',
     setupFiles: [],
   },
   server: {
