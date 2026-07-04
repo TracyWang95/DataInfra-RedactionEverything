@@ -347,6 +347,8 @@ export interface RedactionConfig {
   image_redaction_method?: ImageRedactionMethod;
   image_redaction_strength?: number;
   image_fill_color?: string;
+  /** 成品水印文案（图像/PDF 输出平铺半透明叠加）；空=不加 */
+  watermark_text?: string;
 }
 
 export interface RedactionRequest {

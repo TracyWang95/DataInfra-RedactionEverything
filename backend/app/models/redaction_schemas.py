@@ -50,6 +50,11 @@ class RedactionConfig(BaseModel):
         default="#000000",
         description="Fill color for fill mode (#RRGGBB).",
     )
+    watermark_text: str | None = Field(
+        default=None,
+        max_length=64,
+        description="成品水印文案（图像/PDF 输出平铺半透明叠加）；空=不加",
+    )
 
 
 class RedactionRequest(BaseModel):
