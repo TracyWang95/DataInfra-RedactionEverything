@@ -596,6 +596,8 @@ const zhBase: Record<string, string> = {
   'system.error.loadAudit': '审计日志加载失败',
   'system.error.exportAudit': '导出失败',
   'system.error.licenseUpload': '证书文件无法解析或安装失败',
+  'system.error.apiKeyCreate': '密钥创建失败',
+  'system.error.apiKeyRevoke': '密钥吊销失败',
 
   'sidebar.subtitle': '匿名化数据基础设施',
   'sidebar.devInProgress': '开发中',

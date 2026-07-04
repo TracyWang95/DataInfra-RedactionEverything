@@ -704,6 +704,8 @@ const enBase: Record<string, string> = {
   'system.error.loadAudit': 'Failed to load audit logs.',
   'system.error.exportAudit': 'Export failed.',
   'system.error.licenseUpload': 'The license file could not be parsed or installed.',
+  'system.error.apiKeyCreate': 'Failed to create the API key.',
+  'system.error.apiKeyRevoke': 'Failed to revoke the API key.',
 
   'sidebar.subtitle': 'Anonymization Data Infrastructure',
   'sidebar.devInProgress': 'In Dev',

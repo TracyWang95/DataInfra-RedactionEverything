@@ -99,8 +99,28 @@ async def trash_sweep() -> int:
             purged += 1
         except Exception as exc:
             logger.warning("trash sweep: unable to purge %s: %s", file_id, exc)
+
+    # 结构化数据集回收站同窗清扫（F1-1）
+    try:
+        from app.services.structured_store import get_structured_store
+
+        ds_purged = get_structured_store().purge_expired_trashed_datasets(
+            older_than_iso=cutoff.isoformat()
+        )
+        if ds_purged:
+            audit_log(
+                "trash_purge",
+                "structured_dataset",
+                f"{ds_purged} datasets",
+                user="system",
+                detail={"trash_retention_days": days},
+            )
+            purged += ds_purged
+    except Exception:
+        logger.exception("trash sweep: dataset purge failed")
+
     if purged:
-        logger.info("trash sweep: purged %d file(s) past %d-day window", purged, days)
+        logger.info("trash sweep: purged %d item(s) past %d-day window", purged, days)
     return purged
 
 

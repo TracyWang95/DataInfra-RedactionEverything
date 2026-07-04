@@ -648,7 +648,169 @@ function AdminLicensePanel() {
         <MetricCard label="版本" value={status?.edition || '-'} />
         <MetricCard label="已授权行业包" value={industries} />
       </div>
+      <AdminApiKeysSection />
     </section>
+  );
+}
+
+interface ApiKeyRow {
+  key_id: string;
+  name: string;
+  scope: string;
+  expires_at?: string | null;
+  created_at?: string | null;
+  last_used_at?: string | null;
+  revoked: boolean;
+}
+
+function AdminApiKeysSection() {
+  const [keys, setKeys] = useState<ApiKeyRow[]>([]);
+  const [name, setName] = useState('');
+  const [scope, setScope] = useState<'readonly' | 'readwrite'>('readonly');
+  const [creating, setCreating] = useState(false);
+  const [plaintext, setPlaintext] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/auth/api-keys');
+      if (res.ok) setKeys((await res.json()) as ApiKeyRow[]);
+    } catch {
+      /* 列表失败下方显示空态 */
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
+    if (!name.trim() || creating) return;
+    setCreating(true);
+    setErr(null);
+    setPlaintext(null);
+    try {
+      const res = await authFetch('/api/v1/auth/api-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), scope }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { api_key?: string; message?: string; detail?: string }
+        | null;
+      if (!res.ok) throw new Error(data?.message || data?.detail || `HTTP ${res.status}`);
+      setPlaintext(data?.api_key ?? null);
+      setName('');
+      await load();
+    } catch (e) {
+      setErr(localizeErrorMessage(e, 'system.error.apiKeyCreate'));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleRevoke(keyId: string) {
+    setErr(null);
+    try {
+      const res = await authFetch(`/api/v1/auth/api-keys/${encodeURIComponent(keyId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await load();
+    } catch (e) {
+      setErr(localizeErrorMessage(e, 'system.error.apiKeyRevoke'));
+    }
+  }
+
+  return (
+    <div className="space-y-3 border-t border-border/70 pt-4" data-testid="admin-api-keys">
+      <div>
+        <h3 className="text-sm font-semibold tracking-tight">API 密钥（系统对接）</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          供外部系统以 X-API-Key 请求头调用；明文只在创建时显示一次。只读密钥不能执行任何修改操作。
+        </p>
+      </div>
+      <form className="flex flex-wrap items-center gap-2" onSubmit={handleCreate}>
+        <input
+          value={name}
+          maxLength={64}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="密钥名称（如 etl-sync）"
+          className="h-8 w-56 rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+          data-testid="api-key-name-input"
+        />
+        <select
+          value={scope}
+          onChange={(event) => setScope(event.target.value as 'readonly' | 'readwrite')}
+          className="h-8 rounded-lg border border-border bg-background px-2 text-sm"
+          data-testid="api-key-scope-select"
+        >
+          <option value="readonly">只读</option>
+          <option value="readwrite">读写</option>
+        </select>
+        <Button type="submit" size="sm" className="h-8" disabled={!name.trim() || creating}>
+          {creating ? '创建中…' : '创建密钥'}
+        </Button>
+      </form>
+      {plaintext && (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--warning-border)] bg-[var(--warning-surface)] px-3 py-2 text-xs"
+          data-testid="api-key-plaintext"
+        >
+          <span className="font-medium text-[var(--warning-foreground)]">
+            请立即复制，此明文不再显示：
+          </span>
+          <code className="select-all break-all font-mono">{plaintext}</code>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 px-2 text-xs"
+            onClick={() => void navigator.clipboard?.writeText(plaintext)}
+          >
+            复制
+          </Button>
+        </div>
+      )}
+      {err && <p className="text-sm text-[var(--error-foreground)]">{err}</p>}
+      <div className="space-y-1.5">
+        {keys.length === 0 && (
+          <p className="py-3 text-center text-sm text-muted-foreground">暂无密钥</p>
+        )}
+        {keys.map((row) => (
+          <div
+            key={row.key_id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/70 px-3 py-2 text-sm"
+            data-testid={`api-key-row-${row.key_id}`}
+          >
+            <div className="min-w-0">
+              <span className="font-medium">{row.name}</span>
+              <span className="ml-2 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground">
+                {row.scope === 'readwrite' ? '读写' : '只读'}
+              </span>
+              {row.revoked && (
+                <span className="ml-2 text-xs text-[var(--error-foreground)]">已吊销</span>
+              )}
+              <div className="text-xs text-muted-foreground">
+                最近使用：{row.last_used_at ? row.last_used_at.slice(0, 19).replace('T', ' ') : '从未'}
+              </div>
+            </div>
+            {!row.revoked && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-[var(--error-foreground)]"
+                onClick={() => void handleRevoke(row.key_id)}
+                data-testid={`api-key-revoke-${row.key_id}`}
+              >
+                吊销
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

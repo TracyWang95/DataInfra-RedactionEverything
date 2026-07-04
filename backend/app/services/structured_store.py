@@ -126,6 +126,10 @@ class StructuredStore:
         ensure_db_dir(self.db_path)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # 启动迁移（F1-1）：数据集软删标记。老库无此列则补。
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(structured_datasets)")}
+            if "deleted_at" not in cols:
+                conn.execute("ALTER TABLE structured_datasets ADD COLUMN deleted_at TEXT")
             conn.commit()
 
     def create_source(
@@ -317,6 +321,59 @@ class StructuredStore:
             conn.commit()
             return cur.rowcount > 0
 
+    def soft_delete_dataset(self, dataset_id: str, *, owner_id: str) -> bool:
+        """软删（F1-1）：打 deleted_at 标记，策略/画像保留以便还原。"""
+        from datetime import UTC, datetime
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE structured_datasets SET deleted_at = ? "
+                "WHERE id = ? AND owner_id = ? AND deleted_at IS NULL",
+                (datetime.now(UTC).isoformat(), dataset_id, owner_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def restore_dataset(self, dataset_id: str, *, owner_id: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE structured_datasets SET deleted_at = NULL "
+                "WHERE id = ? AND owner_id = ? AND deleted_at IS NOT NULL",
+                (dataset_id, owner_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def list_trashed_datasets(self, *, owner_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM structured_datasets "
+                "WHERE owner_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+                (owner_id,),
+            ).fetchall()
+        return [self._dataset_out(dict(row)) for row in rows]
+
+    def purge_expired_trashed_datasets(self, *, older_than_iso: str) -> int:
+        """真删超期软删数据集（级联 profile/policy），供 trash_sweep 调用。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, owner_id FROM structured_datasets "
+                "WHERE deleted_at IS NOT NULL AND deleted_at < ?",
+                (older_than_iso,),
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    "DELETE FROM structured_profiles WHERE dataset_id = ? AND owner_id = ?",
+                    (row["id"], row["owner_id"]),
+                )
+                conn.execute(
+                    "DELETE FROM structured_policies WHERE dataset_id = ? AND owner_id = ?",
+                    (row["id"], row["owner_id"]),
+                )
+                conn.execute("DELETE FROM structured_datasets WHERE id = ?", (row["id"],))
+            conn.commit()
+            return len(rows)
+
     def delete_dataset(self, dataset_id: str, *, owner_id: str) -> bool:
         """Remove one dataset with its profile/policy rows.
 
@@ -434,7 +491,7 @@ class StructuredStore:
         source_id: str | None = None,
         connection_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        where = ["d.owner_id = ?"]
+        where = ["d.owner_id = ?", "d.deleted_at IS NULL"]
         params: list[Any] = [owner_id]
         if source_id:
             where.append("d.source_id = ?")

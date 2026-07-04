@@ -158,17 +158,50 @@ async def delete_connection(
     return {"id": connection_id, "deleted": True}
 
 
+@router.get("/datasets/trash")
+async def list_trashed_datasets(
+    owner_id: str = Depends(require_auth),
+    store: StructuredStore = Depends(get_structured_store),
+) -> dict[str, Any]:
+    """数据集回收站。注册在 /datasets/{dataset_id} 之前，避免被路径参数吞掉。"""
+    from app.core.config import settings
+
+    return {
+        "items": store.list_trashed_datasets(owner_id=owner_id),
+        "retention_days": int(settings.TRASH_RETENTION_DAYS),
+    }
+
+
 @router.delete("/datasets/{dataset_id}")
 async def delete_dataset(
+    dataset_id: str,
+    purge: bool = False,
+    owner_id: str = Depends(require_auth),
+    store: StructuredStore = Depends(get_structured_store),
+) -> dict[str, Any]:
+    """删除数据集：默认进回收站（软删）；purge=true 彻底删除（级联策略/画像）。
+    共享源文件保留给同源兄弟数据集。"""
+    if purge:
+        if not store.delete_dataset(dataset_id, owner_id=owner_id):
+            raise HTTPException(status_code=404, detail="dataset not found")
+        audit_log("purge", "structured_dataset", dataset_id, user=owner_id)
+        return {"id": dataset_id, "deleted": True}
+    if not store.soft_delete_dataset(dataset_id, owner_id=owner_id):
+        raise HTTPException(status_code=404, detail="dataset not found or already trashed")
+    audit_log("soft_delete", "structured_dataset", dataset_id, user=owner_id)
+    return {"id": dataset_id, "deleted": True, "trashed": True}
+
+
+@router.post("/datasets/{dataset_id}/restore")
+async def restore_dataset(
     dataset_id: str,
     owner_id: str = Depends(require_auth),
     store: StructuredStore = Depends(get_structured_store),
 ) -> dict[str, Any]:
-    """删除单个已登记数据集（含其字段策略/画像）；共享源文件保留给同源兄弟数据集。"""
-    if not store.delete_dataset(dataset_id, owner_id=owner_id):
-        raise HTTPException(status_code=404, detail="dataset not found")
-    audit_log("delete", "structured_dataset", dataset_id, user=owner_id)
-    return {"id": dataset_id, "deleted": True}
+    if not store.restore_dataset(dataset_id, owner_id=owner_id):
+        raise HTTPException(status_code=404, detail="dataset not in trash")
+    audit_log("restore", "structured_dataset", dataset_id, user=owner_id)
+    return {"id": dataset_id, "restored": True}
 
 
 @router.get("/connections/{connection_id}/datasets", response_model=StructuredDatasetsResponse)
