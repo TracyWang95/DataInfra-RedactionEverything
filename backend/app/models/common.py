@@ -126,6 +126,7 @@ class HealthResponse(BaseModel):
     status: str = "healthy"
     version: str
     timestamp: datetime = Field(default_factory=datetime.now)
+    license: dict | None = None  # {state, expires_at, days_left}，见 app/core/license.py
 
 
 class ToggleResponse(BaseModel):

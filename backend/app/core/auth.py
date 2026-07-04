@@ -486,6 +486,14 @@ def create_user(username: str, password: str, *, role: str = _ROLE_USER) -> str:
             users = _users(auth)
             if subject in users:
                 raise HTTPException(status_code=409, detail="User already exists.")
+            from app.core.license import license_seat_limit
+
+            seat_limit = license_seat_limit()
+            if seat_limit is not None and len(users) >= seat_limit:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"License seat limit reached ({seat_limit} users). Renew or upgrade the license.",
+                )
             users[subject] = {
                 "password_hash": hash_password(password),
                 "created_at": datetime.now(UTC).isoformat(),
