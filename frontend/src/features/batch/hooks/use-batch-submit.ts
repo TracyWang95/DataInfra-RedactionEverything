@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '@/i18n';
@@ -139,7 +139,7 @@ export function useBatchSubmit(
       const poll = async () => {
         if (firstReviewablePollRunRef.current !== runId) return;
         try {
-          const detail = await getJob(jobId);
+          const detail = await getJob(jobId, { performance: false });
           if (firstReviewablePollRunRef.current !== runId) return;
           if (applyJobItemsToRows(detail.items)) return;
         } catch {

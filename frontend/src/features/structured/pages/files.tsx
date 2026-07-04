@@ -17,6 +17,7 @@ import {
   type StructuredDataset,
 } from '@/services/structuredApi';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { localizeErrorMessage } from '@/utils/localizeError';
 import { DatasetRegistryCard, FileTableNextStepCard } from '../components/files-cards';
 import { StructuredFrame } from '../components/structured-frame';
 import { useNotice } from '../hooks/use-notice';
@@ -48,13 +49,39 @@ export function StructuredFiles() {
     const fileList = Array.from(files ?? []);
     if (!fileList.length) return;
     await notice.run('upload', async () => {
+      // 部分成功语义：多文件串行上传时，一个失败不吞掉已成功的
+      //（曾经一处 throw 全盘报 500，成功文件也不刷新不跳转）。
       const uploaded: StructuredDataset[] = [];
+      const failures: string[] = [];
       for (const file of fileList) {
-        const response = await uploadStructuredFile(file);
-        uploaded.push(...response.datasets);
+        try {
+          const response = await uploadStructuredFile(file);
+          uploaded.push(...response.datasets);
+        } catch (err) {
+          failures.push(
+            `${file.name}: ${localizeErrorMessage(err, 'structured.files.notice.uploadFailed')}`,
+          );
+        }
       }
-      await datasetsState.refresh();
-      notice.setMessage(t('structured.files.notice.imported').replace('{count}', String(uploaded.length)));
+      if (uploaded.length) {
+        await datasetsState.refresh();
+      }
+      if (failures.length) {
+        const summary = failures.join('；');
+        if (uploaded.length) {
+          notice.setMessage(
+            t('structured.files.notice.partial')
+              .replace('{ok}', String(uploaded.length))
+              .replace('{fail}', String(failures.length)) + ` ${summary}`,
+          );
+        } else {
+          throw new Error(summary);
+        }
+      } else {
+        notice.setMessage(
+          t('structured.files.notice.imported').replace('{count}', String(uploaded.length)),
+        );
+      }
       if (uploaded[0]) {
         navigate(
           `/structured/datasets?datasetId=${encodeURIComponent(uploaded[0].id)}&source=file&registered=${uploaded.length}`,

@@ -287,7 +287,13 @@ def save_structured_upload(*, owner_id: str, filename: str, content: bytes) -> t
 def save_structured_upload_stream(*, owner_id: str, filename: str, fileobj) -> tuple[str, str]:
     """流式落盘 + 大小上限（大表 xlsx/csv 整读进内存曾是 OOM 缺口）。"""
     kind = extension_kind(filename)
+    # 纯中文文件名坑：safe_filename("项目概算.xlsx") → "_.xlsx" → strip("._")
+    # 连点一起剥掉 → 存盘名无扩展名 → openpyxl 按空格式抛 InvalidFileException
+    # （线上 500 真栈）。显式补回已通过校验的真实扩展名。
+    ext = os.path.splitext(filename.lower())[1]
     stored = f"{uuid.uuid4().hex}_{safe_filename(filename)}"
+    if ext and not stored.lower().endswith(ext):
+        stored = f"{stored}{ext}"
     path = os.path.join(get_upload_dir(owner_id), stored)
     max_bytes = int(getattr(settings, "STRUCTURED_MAX_FILE_SIZE", 200 * 1024**2))
     copy_stream_with_limit(fileobj, path, max_bytes)
@@ -311,7 +317,14 @@ def register_file_source(
         file_path=file_path,
         metadata={"original_filename": filename, "file_size": os.path.getsize(file_path)},
     )
-    for dataset in discover_file_datasets(source, owner_id=owner_id):
+    try:
+        discovered = discover_file_datasets(source, owner_id=owner_id)
+    except ValueError:
+        raise
+    except Exception as exc:
+        # 解析器异常（如 openpyxl InvalidFileException）转干净 400 而非裸 500
+        raise ValueError(f"无法解析文件「{filename}」：{exc}") from exc
+    for dataset in discovered:
         store.upsert_dataset(owner_id=owner_id, **dataset)
     datasets = store.list_datasets(owner_id=owner_id, source_id=source["id"])
     return {"source": source, "datasets": datasets}

@@ -553,8 +553,14 @@ export async function listJobs(params: {
   };
 }
 
-export function getJob(jobId: string): Promise<JobDetail> {
-  return get(`/jobs/${encodeURIComponent(jobId)}`).then(normalizeJobDetail);
+export function getJob(
+  jobId: string,
+  options?: { performance?: boolean },
+): Promise<JobDetail> {
+  // performance:false = 轻量模式。万级任务的全量详情（含每文件性能数据）
+  // 可达 38MB；向导恢复与轮询只需要 items 的状态字段。
+  const suffix = options?.performance === false ? '?performance=false' : '';
+  return get(`/jobs/${encodeURIComponent(jobId)}${suffix}`).then(normalizeJobDetail);
 }
 
 export function getJobExportReport(

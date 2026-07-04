@@ -2391,6 +2391,8 @@ Object.assign(zhOverrides, {
   'structured.files.description': '把离线表格、结构化日志和 SQLite 文件登记成数据集，再进入策略页做字段级去标识化。',
   'structured.files.notice.imported': '已导入 {count} 个数据集',
   'structured.files.notice.deleted': '已删除数据集「{name}」',
+  'structured.files.notice.partial': '成功导入 {ok} 个数据集，{fail} 个文件失败：',
+  'structured.files.notice.uploadFailed': '上传失败，请检查文件格式',
   'structured.files.deleteDataset': '删除该数据集',
   'structured.files.deleteConfirmTitle': '删除数据集',
   'structured.files.deleteConfirmMessage':

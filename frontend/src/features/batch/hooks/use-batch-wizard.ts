@@ -304,7 +304,7 @@ export function useBatchWizard() {
 
       const promise = (async () => {
         try {
-          const detail = await getJob(jobId);
+          const detail = await getJob(jobId, { performance: false });
           const itemMap = new Map(detail.items.map((it) => [it.file_id, it]));
           itemIdByFileIdRef.current = {
             ...itemIdByFileIdRef.current,
@@ -691,7 +691,7 @@ export function useBatchWizard() {
 
     (async () => {
       try {
-        const detail = await getJob(jobId);
+        const detail = await getJob(jobId, { performance: false });
         if (hydrateGen !== batchHydrateGenRef.current) return;
         const validTypes: string[] = ['smart_batch', 'text_batch', 'image_batch'];
         if (!validTypes.includes(detail.job_type)) {
@@ -860,6 +860,16 @@ export function useBatchWizard() {
       } catch (e) {
         if (hydrateGen === batchHydrateGenRef.current) {
           setMsg({ text: localizeErrorMessage(e, 'batchWizard.loadJobFailed'), tone: 'err' });
+          // 详情拉取失败（万级任务曾因 38MB 载荷超时）不再静默卡在第 1 步：
+          // 按 URL 意图落步，行数据靠轻量轮询自愈。
+          if (urlStepParsed !== null && urlStepParsed >= 2) {
+            setActiveJobId(jobId);
+            batchGroupIdRef.current = jobId;
+            setConfirmStep1(true);
+            setStep(urlStepParsed);
+            setFurthestStep((prev) => Math.max(prev, urlStepParsed) as Step);
+            hydratedFromUrlRef.current = true;
+          }
         }
       }
     })();

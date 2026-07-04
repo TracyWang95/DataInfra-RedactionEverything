@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@/i18n';
@@ -334,7 +334,7 @@ export function useBatchFiles(
           });
           if (activeJobId) {
             try {
-              const d = await getJob(activeJobId);
+              const d = await getJob(activeJobId, { performance: false });
               const m = { ...itemIdByFileIdRef.current };
               for (const it of d.items) m[it.file_id] = it.id;
               itemIdByFileIdRef.current = m;
@@ -420,7 +420,7 @@ export function useBatchFiles(
       if (cancelled || inFlight) return;
       inFlight = true;
       try {
-        const detail = await getJob(activeJobId);
+        const detail = await getJob(activeJobId, { performance: false });
         if (cancelled) return;
         const itemMap = new Map(detail.items.map((it) => [it.file_id, it]));
         setRows((prev) => {

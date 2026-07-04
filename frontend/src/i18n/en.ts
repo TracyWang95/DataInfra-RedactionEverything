@@ -2428,6 +2428,8 @@ Object.assign(enOverrides, {
     'Register offline spreadsheets, structured logs, and SQLite files as datasets, then de-identify them field by field on the policy page.',
   'structured.files.notice.imported': 'Imported {count} datasets',
   'structured.files.notice.deleted': 'Dataset "{name}" deleted',
+  'structured.files.notice.partial': 'Imported {ok} dataset(s); {fail} file(s) failed:',
+  'structured.files.notice.uploadFailed': 'Upload failed - check the file format',
   'structured.files.deleteDataset': 'Delete this dataset',
   'structured.files.deleteConfirmTitle': 'Delete dataset',
   'structured.files.deleteConfirmMessage':
