@@ -706,9 +706,21 @@ async def require_auth(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str | None:
-    """Require a valid JWT when auth is enabled."""
+    """Require a valid JWT (or X-API-Key service credential) when auth is enabled."""
     if not settings.AUTH_ENABLED:
         return "anonymous"
+
+    # M2M：X-API-Key（R1-5）。readonly scope 只放行安全方法。
+    api_key_header = request.headers.get("x-api-key")
+    if api_key_header:
+        from app.core.api_keys import verify_api_key
+
+        identity = verify_api_key(api_key_header)
+        if identity is None:
+            raise HTTPException(status_code=401, detail="API key is invalid, expired or revoked.")
+        if identity["scope"] == "readonly" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            raise HTTPException(status_code=403, detail="This API key is read-only.")
+        return identity["subject"]
 
     token: str | None = None
     if credentials is not None:

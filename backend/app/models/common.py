@@ -18,6 +18,7 @@ __all__ = [
     "UserCreateRequest",
     "UserPermissionsRequest",
     "UserStatusRequest",
+    "ApiKeyCreateRequest",
     "ConcurrencySettingsRequest",
     "ConcurrencySettingsResponse",
     "ChangePasswordRequest",
@@ -159,6 +160,12 @@ class UserPermissionsRequest(BaseModel):
 
 class UserStatusRequest(BaseModel):
     disabled: bool
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+    scope: str = "readonly"
+    expires_at: str | None = None
 
 
 class ConcurrencySettingsRequest(BaseModel):

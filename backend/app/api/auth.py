@@ -34,6 +34,7 @@ from app.core.config import settings
 from app.core.errors import AppError
 from app.core.rate_limit import RateLimiter, get_client_ip
 from app.models.schemas import (
+    ApiKeyCreateRequest,
     AuthStatusResponse,
     ChangePasswordRequest,
     ConcurrencySettingsRequest,
@@ -266,6 +267,38 @@ async def update_user_status(
         user=actor,
     )
     return result
+
+
+@router.get("/auth/api-keys", response_model=list[dict])
+async def list_service_api_keys(_: str = Depends(require_super_admin)):
+    from app.core.api_keys import list_api_keys
+
+    return list_api_keys()
+
+
+@router.post("/auth/api-keys", response_model=dict)
+async def create_service_api_key(
+    req: ApiKeyCreateRequest,
+    actor: str = Depends(require_super_admin),
+):
+    """创建 M2M 密钥；明文只在本响应返回一次。"""
+    from app.core.api_keys import create_api_key
+
+    result = create_api_key(
+        req.name, scope=req.scope, expires_at=req.expires_at, created_by=actor
+    )
+    audit_log("create", "api_key", result["key_id"], user=actor, detail={"scope": req.scope})
+    return result
+
+
+@router.delete("/auth/api-keys/{key_id}", response_model=dict)
+async def revoke_service_api_key(key_id: str, actor: str = Depends(require_super_admin)):
+    from app.core.api_keys import revoke_api_key
+
+    if not revoke_api_key(key_id):
+        raise HTTPException(status_code=404, detail="密钥不存在或已吊销")
+    audit_log("revoke", "api_key", key_id, user=actor)
+    return {"key_id": key_id, "revoked": True}
 
 
 @router.get("/auth/concurrency", response_model=ConcurrencySettingsResponse)
