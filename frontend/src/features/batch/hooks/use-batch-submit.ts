@@ -5,6 +5,7 @@ import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
 import { fileApi, getBatchZipManifest } from '@/services/api';
+import { ensureNotifyPermission } from '@/lib/notifications';
 import type { BatchWizardMode, BatchWizardPersistedConfig } from '@/services/batchPipeline';
 import {
   submitJob as apiSubmitJob,
@@ -185,6 +186,8 @@ export function useBatchSubmit(
       setMsg({ text: t('batchWizard.noActiveJob'), tone: 'warn' });
       return;
     }
+    // 用户手势上下文里预请求系统通知权限（识别完成时可能已切走页签）
+    ensureNotifyPermission();
     setMsg(null);
     setRows((prev) =>
       prev.map((r) =>

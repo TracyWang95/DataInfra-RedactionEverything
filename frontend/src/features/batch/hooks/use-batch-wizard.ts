@@ -7,6 +7,7 @@ import { localizeErrorMessage } from '@/utils/localizeError';
 
 import { batchGetFileRaw, type BatchWizardMode } from '@/services/batchPipeline';
 import { commitAllReviews, createJob, getJob, updateJobDraft } from '@/services/jobsApi';
+import { ensureNotifyPermission, notifyDone, phaseJustFinished } from '@/lib/notifications';
 import {
   buildPreviewBatchRows,
   isPreviewBatchJobId,
@@ -1280,8 +1281,29 @@ export function useBatchWizard() {
 
   const [bulkConfirmLoading, setBulkConfirmLoading] = useState(false);
   useEffect(() => {
-    if (bulkConfirmActive && pendingReviewCount === 0) setBulkConfirmActive(false);
-  }, [bulkConfirmActive, pendingReviewCount]);
+    if (bulkConfirmActive && pendingReviewCount === 0) {
+      setBulkConfirmActive(false);
+      // 万级批量确认在后台跑数分钟，用户可能已切走页签
+      notifyDone(t('notify.bulkConfirmDone'));
+    }
+  }, [bulkConfirmActive, pendingReviewCount, t]);
+
+  // 识别全部完成通知（W2-2）：analyzing/pending 活跃数 >0 → 0 的翻转，
+  // 仅在识别步（step3）响，避免 step2 清空队列误报。
+  const recognitionActiveCount = useMemo(
+    () =>
+      rows.filter((row) => row.analyzeStatus === 'analyzing' || row.analyzeStatus === 'pending')
+        .length,
+    [rows],
+  );
+  const prevRecognitionActiveRef = useRef(0);
+  useEffect(() => {
+    const prev = prevRecognitionActiveRef.current;
+    prevRecognitionActiveRef.current = recognitionActiveCount;
+    if (step === 3 && !isPreviewMode && phaseJustFinished(prev, recognitionActiveCount)) {
+      notifyDone(t('notify.recognitionDone'), t('notify.recognitionDoneBody').replace('{n}', String(rows.length)));
+    }
+  }, [recognitionActiveCount, step, isPreviewMode, rows.length, t]);
   const bulkConfirmAll = useCallback(async () => {
     if (bulkConfirmLoading || reviewExecuteLoading) return;
     if (isPreviewMode) {
@@ -1297,6 +1319,7 @@ export function useBatchWizard() {
       return;
     }
     if (!activeJobId) return;
+    ensureNotifyPermission();
     setBulkConfirmLoading(true);
     setMsg(null);
     try {
