@@ -1877,6 +1877,17 @@ const enOverrides: Record<string, string> = {
   'auth.password.placeholder': 'Enter password',
   'auth.confirmPassword': 'Confirm password',
   'auth.confirmPassword.placeholder': 'Enter password again',
+  'auth.changePassword': 'Change password',
+  'auth.changePassword.desc':
+    'Verify your current password to set a new one. This session stays signed in.',
+  'auth.changePassword.old': 'Current password',
+  'auth.changePassword.new': 'New password',
+  'auth.changePassword.policy':
+    'At least 8 characters with upper/lowercase letters, a number and a symbol.',
+  'auth.changePassword.mismatch': 'The two new passwords do not match.',
+  'auth.changePassword.failed': 'Change failed. Please try again.',
+  'auth.changePassword.saving': 'Submitting...',
+  'auth.changePassword.success': 'Password changed. Sessions on other devices are signed out.',
   'auth.submitting': 'Submitting...',
   'auth.logout': 'Sign out',
   'auth.error.title': 'Authentication failed',
