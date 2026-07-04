@@ -13,6 +13,7 @@ import { useServiceHealth, type ServiceInfo, type ServicesHealth } from '@/hooks
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { authFetch } from '@/services/api-client';
+import { localizeErrorMessage } from '@/utils/localizeError';
 
 interface ConcurrencySettings {
   job_concurrency: number;
@@ -110,13 +111,13 @@ function AdminRuntimePanel() {
           setError(null);
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('auth.error.generic'));
+        if (!cancelled) setError(localizeErrorMessage(err, 'system.error.loadSettings'));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [t]);
+  }, []);
 
   async function save() {
     setSaving(true);
@@ -133,7 +134,7 @@ function AdminRuntimePanel() {
       setSettings(body);
       setValue(String(body.job_concurrency));
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('auth.error.generic'));
+      setError(localizeErrorMessage(err, 'system.error.saveSettings'));
     } finally {
       setSaving(false);
     }
@@ -201,7 +202,7 @@ function AdminAccessPanel() {
       }
       setUsers(body);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '用户列表加载失败');
+      setError(localizeErrorMessage(err, 'system.error.loadUsers'));
     } finally {
       setLoading(false);
     }
@@ -233,7 +234,7 @@ function AdminAccessPanel() {
       setUsers((prev) =>
         prev.map((u) => (u.username === user.username ? { ...u, can_bulk_confirm: !next } : u)),
       );
-      setError(err instanceof Error ? err.message : '权限更新失败');
+      setError(localizeErrorMessage(err, 'system.error.updatePermission'));
     }
   }
 
@@ -258,7 +259,7 @@ function AdminAccessPanel() {
       setRole('user');
       await loadUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建用户失败');
+      setError(localizeErrorMessage(err, 'system.error.createUser'));
     } finally {
       setSaving(false);
     }
@@ -388,6 +389,7 @@ function AdminAuditPanel() {
   const [actionFilter, setActionFilter] = useState('');
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const buildQuery = () => {
@@ -408,7 +410,7 @@ function AdminAuditPanel() {
       if (!res.ok || !body?.entries) throw new Error(body?.detail || `HTTP ${res.status}`);
       setEntries(body.entries);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '审计日志加载失败');
+      setError(localizeErrorMessage(err, 'system.error.loadAudit'));
     } finally {
       setLoading(false);
     }
@@ -420,6 +422,7 @@ function AdminAuditPanel() {
   }, []);
 
   async function exportCsv() {
+    setExporting(true);
     setError(null);
     try {
       const qs = buildQuery();
@@ -433,7 +436,9 @@ function AdminAuditPanel() {
       a.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败');
+      setError(localizeErrorMessage(err, 'system.error.exportAudit'));
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -477,8 +482,8 @@ function AdminAuditPanel() {
         <Button size="sm" disabled={loading} onClick={() => void load()}>
           {loading ? '查询中…' : '查询'}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void exportCsv()}>
-          导出 CSV
+        <Button size="sm" variant="outline" disabled={exporting} onClick={() => void exportCsv()}>
+          {exporting ? '导出中…' : '导出 CSV'}
         </Button>
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-background">
@@ -579,7 +584,7 @@ function AdminLicensePanel() {
       setMsg('授权证书已安装并生效');
       await load();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '证书文件无法解析');
+      setErr(localizeErrorMessage(e, 'system.error.licenseUpload'));
     }
   }
 

@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { AUTH_UNAUTHORIZED_EVENT, authFetch } from '@/services/api-client';
 import { STORAGE_KEYS } from '@/constants/storage-keys';
+import { localizeErrorMessage } from '@/utils/localizeError';
 
 export interface AuthStatus {
   auth_enabled: boolean;
@@ -213,7 +214,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       shouldRefresh = true;
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to log out.');
+      setError(localizeErrorMessage(err, 'auth.error.logoutFailed'));
     } finally {
       markUnauthenticated(shouldRefresh);
       if (shouldRefresh) {

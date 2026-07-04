@@ -148,11 +148,11 @@ export function DatabaseConnectionCard({
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" size="sm" onClick={onTest} disabled={Boolean(busy)}>
             <Server className="size-4" />
-            {t('structured.database.form.test')}
+            {busy === 'testConnection' ? t('common.testing') : t('structured.database.form.test')}
           </Button>
           <Button size="sm" onClick={onSave} disabled={Boolean(busy)}>
             <Save className="size-4" />
-            {t('structured.database.form.save')}
+            {busy === 'saveConnection' ? t('common.saving') : t('structured.database.form.save')}
           </Button>
         </div>
         <div className="grid gap-1.5">
@@ -220,7 +220,7 @@ export function DatabaseConnectionCard({
         )}
         <Button variant="outline" size="sm" onClick={onDiscover} disabled={!activeConnectionId || Boolean(busy)}>
           <Eye className="size-4" />
-          {t('structured.database.discover')}
+          {busy === 'discover' ? t('structured.database.discovering') : t('structured.database.discover')}
         </Button>
       </CardContent>
     </Card>
@@ -419,7 +419,9 @@ export function DiscoveredTablesCard({
                   size="sm"
                   className="h-8 px-2.5 text-xs"
                 >
-                  {t('structured.database.registerSelected').replace('{count}', String(selected.size))}
+                  {busy === 'register'
+                    ? t('structured.database.registering')
+                    : t('structured.database.registerSelected').replace('{count}', String(selected.size))}
                 </Button>
               </>
             )}

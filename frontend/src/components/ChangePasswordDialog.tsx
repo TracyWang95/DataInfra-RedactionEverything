@@ -14,6 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { authFetch } from '@/services/api-client';
+import { localizeErrorMessage } from '@/utils/localizeError';
 
 interface Props {
   open: boolean;
@@ -68,7 +69,7 @@ export function ChangePasswordDialog({ open, onClose }: Props) {
       // Backend rotates the session cookie in the response - no re-login needed.
       setDone(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('auth.changePassword.failed'));
+      setError(localizeErrorMessage(err, 'auth.changePassword.failed'));
     } finally {
       setSaving(false);
     }

@@ -1,6 +1,6 @@
 ﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import type { FC } from 'react';
+import { useState, type FC } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { getEntityTypeName } from '@/config/entityTypes';
@@ -15,7 +15,7 @@ export interface PlaygroundResultActionBarProps {
   canDownload?: boolean;
   onBackToEdit: () => void;
   onReset: () => void;
-  onDownload: () => void;
+  onDownload: () => void | Promise<void>;
 }
 
 export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
@@ -30,6 +30,13 @@ export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
   const t = useT();
   const locale = useI18n((state) => state.locale);
   const flowCopy = resultActionFlowCopy(locale, redactedCount);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadClick = () => {
+    if (downloading) return;
+    setDownloading(true);
+    void Promise.resolve(onDownload()).finally(() => setDownloading(false));
+  };
 
   return (
     <div className="mb-3 flex-shrink-0">
@@ -92,11 +99,12 @@ export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
               <Button
                 size="sm"
                 variant="default"
-                onClick={onDownload}
+                onClick={handleDownloadClick}
+                disabled={downloading}
                 data-testid="playground-download"
                 className="h-9 whitespace-nowrap px-3"
               >
-                {t('playground.downloadFile')}
+                {downloading ? t('common.downloading') : t('playground.downloadFile')}
               </Button>
             )}
           </div>
