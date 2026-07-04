@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useT } from '@/i18n';
 import { useState } from 'react';
@@ -248,7 +248,7 @@ export function VisionModel() {
                         <Button
                           size="icon"
                           variant="ghost"
-                          className="h-8 w-8"
+                          className="size-8"
                           onClick={() => openEdit(config)}
                           data-testid={`edit-model-${config.id}`}
                           aria-label={t('common.edit')}
@@ -260,7 +260,7 @@ export function VisionModel() {
                           variant="ghost"
                           disabled={BUILTIN_VISION_IDS.has(config.id)}
                           className={cn(
-                            'h-8 w-8',
+                            'size-8',
                             BUILTIN_VISION_IDS.has(config.id) && 'cursor-not-allowed opacity-20',
                           )}
                           onClick={() =>

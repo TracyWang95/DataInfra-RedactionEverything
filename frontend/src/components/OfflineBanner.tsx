@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useEffect, useState } from 'react';
 import { WifiOff } from 'lucide-react';
@@ -28,7 +28,7 @@ export function OfflineBanner() {
   return (
     <div className="pointer-events-none fixed inset-x-0 top-3 z-[9999] flex justify-center px-4">
       <div className="pointer-events-auto inline-flex max-w-full items-center gap-2 rounded-full border border-[var(--warning-border)] bg-[var(--warning-surface)] px-4 py-2 text-sm font-medium text-[var(--warning-foreground)] shadow-[var(--shadow-control)] backdrop-blur-xl">
-        <WifiOff className="h-4 w-4 shrink-0" />
+        <WifiOff className="size-4 shrink-0" />
         <span className="truncate">{t('offline.banner')}</span>
       </div>
     </div>

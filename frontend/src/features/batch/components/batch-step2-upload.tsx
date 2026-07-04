@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { memo, useEffect, useMemo, useState } from 'react';
 
@@ -347,7 +347,7 @@ function BatchStep2UploadInner({
                     title={t('batchWizard.step2.removeFile')}
                     data-testid={`step2-remove-${r.file_id}`}
                   >
-                    <X className="h-4 w-4" />
+                    <X className="size-4" />
                   </Button>
                 </div>
               ))

@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Download, RefreshCw, SlidersHorizontal, Trash2 } from 'lucide-react';
@@ -262,7 +262,7 @@ export function HistoryFilters({
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
           <span className="saas-kicker inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap !px-2 !py-1">
-            <SlidersHorizontal className="h-3.5 w-3.5" />
+            <SlidersHorizontal className="size-3.5" />
             {t('history.filters.kicker')}
           </span>
           <h2 className="page-title truncate text-base">{t('history.filters.title')}</h2>

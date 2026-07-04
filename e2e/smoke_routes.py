@@ -36,6 +36,10 @@ def smoke_routes(page) -> None:
         page.wait_for_timeout(900)
         body = page.locator("body").inner_text()
         if not body.strip():
+            # 隧道下懒加载 chunk 可能超过 900ms（曾误报 /settings/redaction）
+            page.wait_for_timeout(5000)
+            body = page.locator("body").inner_text()
+        if not body.strip():
             failures.append(f"{route}: empty body")
             continue
         for marker in ("Application error", "组件渲染出错", "ErrorBoundary"):

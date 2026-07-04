@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 // SPDX-License-Identifier: Apache-2.0
 
 import React from 'react';
@@ -159,7 +159,7 @@ export function ProfilePolicyCard({
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 w-8 shrink-0 p-0"
+              className="size-8 shrink-0 p-0"
               disabled={matchedColumnIndexes.length === 0}
               onClick={() => goToFieldMatch(-1)}
               aria-label={t('structured.policy.prevMatch')}
@@ -170,7 +170,7 @@ export function ProfilePolicyCard({
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 w-8 shrink-0 p-0"
+              className="size-8 shrink-0 p-0"
               disabled={matchedColumnIndexes.length === 0}
               onClick={() => goToFieldMatch(1)}
               aria-label={t('structured.policy.nextMatch')}

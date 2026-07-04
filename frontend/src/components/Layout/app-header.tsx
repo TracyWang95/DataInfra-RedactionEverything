@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useState } from 'react';
 import { Globe, KeyRound, LogOut } from 'lucide-react';
@@ -62,7 +62,7 @@ export function AppHeader() {
           role="status"
           aria-label={healthLabel}
           title={healthLabel}
-          className="grid h-8 w-8 place-items-center rounded-full"
+          className="grid size-8 place-items-center rounded-full"
           data-testid="health-indicator"
         >
           <span
@@ -85,7 +85,7 @@ export function AppHeader() {
           aria-label={t('layout.languageSwitch')}
           data-testid="lang-toggle"
         >
-          <Globe className="h-3.5 w-3.5" />
+          <Globe className="size-3.5" />
           <span className="hidden sm:inline">
             {locale === 'zh' ? t('layout.switchToEnglish') : t('layout.switchToChinese')}
           </span>
@@ -101,7 +101,7 @@ export function AppHeader() {
               aria-label={t('auth.changePassword')}
               data-testid="change-password-btn"
             >
-              <KeyRound className="h-3.5 w-3.5" />
+              <KeyRound className="size-3.5" />
               <span className="hidden sm:inline">{t('auth.changePassword')}</span>
             </Button>
             <Button
@@ -111,7 +111,7 @@ export function AppHeader() {
               onClick={() => void logout()}
               aria-label={t('auth.logout')}
             >
-              <LogOut className="h-3.5 w-3.5" />
+              <LogOut className="size-3.5" />
               <span className="hidden sm:inline">{t('auth.logout')}</span>
             </Button>
           </>

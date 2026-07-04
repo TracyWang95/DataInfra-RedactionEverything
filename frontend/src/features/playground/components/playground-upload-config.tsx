@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { type FC, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -92,7 +92,7 @@ function ConfigLoadingState({
             key={item}
             className="flex min-w-0 items-center gap-1.5 rounded-xl border border-border/70 px-2.5 py-1.5"
           >
-            <Skeleton className="h-3.5 w-3.5 rounded-sm" />
+            <Skeleton className="size-3.5 rounded-sm" />
             <Skeleton className="h-4 grow rounded-md" />
           </div>
         ))}
@@ -263,7 +263,7 @@ export const TextTypeGroups: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                               : [...previous, type.id],
                           );
                         }}
-                        className="h-3.5 w-3.5"
+                        className="size-3.5"
                       />
                       <span className="min-w-0 truncate font-medium">{typeName}</span>
                     </label>
@@ -491,7 +491,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                         aria-label={
                           localizeRecognitionTypeName(type, t)
                         }
-                        className="h-3.5 w-3.5"
+                        className="size-3.5"
                       />
                       <span className="min-w-0 truncate font-medium">
                         {localizeRecognitionTypeName(type, t)}

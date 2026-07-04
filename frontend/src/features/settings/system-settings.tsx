@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
@@ -529,7 +529,7 @@ function AdminMonitoringPanel() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <PanelHeading title="服务监控" description="查看模型服务、GPU 显存和健康探测状态。" />
         <Button variant="outline" size="sm" onClick={refresh}>
-          <RefreshCw className={cn('mr-2 h-4 w-4', checking && 'animate-spin')} />
+          <RefreshCw className={cn('mr-2 size-4', checking && 'animate-spin')} />
           刷新
         </Button>
       </div>

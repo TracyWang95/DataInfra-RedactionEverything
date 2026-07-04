@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { memo, useMemo } from 'react';
 
@@ -329,7 +329,7 @@ function BatchStep1PresetCardsInner({
                               imageFillColor: event.target.value,
                             }))
                           }
-                          className="h-6 w-6 rounded-md border-0 bg-transparent p-0"
+                          className="size-6 rounded-md border-0 bg-transparent p-0"
                           data-testid="image-redaction-color"
                         />
                         <span className="text-xs font-medium text-foreground">

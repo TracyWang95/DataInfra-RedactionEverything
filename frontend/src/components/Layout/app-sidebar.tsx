@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { NavLink, useLocation } from 'react-router-dom';
 import {
@@ -7,10 +7,10 @@ import {
   PackageCheck,
   RefreshCw,
   Server,
-  ShieldCheck,
   TableProperties,
 } from 'lucide-react';
 import { useT } from '@/i18n';
+import { BRAND, brandName, brandTagline } from '@/config/brand';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth/auth-context';
 import { useServiceHealth, type ServiceInfo, type ServicesHealth } from '@/hooks/use-service-health';
@@ -133,15 +133,17 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="offcanvas" variant="inset">
       <SidebarHeader className="h-16 flex-row items-center gap-3 border-b border-sidebar-border px-4">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-[var(--shadow-sm)]">
-          <ShieldCheck className="h-4 w-4" />
-        </div>
+        <img
+          src={BRAND.logoUrl}
+          alt=""
+          className="size-10 shrink-0 rounded-xl shadow-[var(--shadow-sm)]"
+        />
         <div className="min-w-0">
           <span className="block truncate text-sm font-semibold leading-tight tracking-tight text-sidebar-foreground">
-            {t('sidebar.productName')}
+            {brandName(t)}
           </span>
           <p className="mt-0.5 truncate text-xs text-sidebar-foreground/55">
-            {t('sidebar.subtitle')}
+            {brandTagline(t)}
           </p>
         </div>
       </SidebarHeader>
@@ -246,7 +248,7 @@ function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string
       aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
       data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '')}`}
     >
-      <item.icon className="h-[14px] w-[14px] opacity-65" />
+      <item.icon className="size-3.5 opacity-65" />
       <span className="min-w-0">
         <span className="block truncate text-xs font-medium">{item.label}</span>
         {item.sublabel ? (
@@ -335,12 +337,12 @@ function SidebarServiceStatus({
         <button
           type="button"
           onClick={onRefresh}
-          className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-sidebar-foreground/60 transition hover:bg-sidebar-primary hover:text-sidebar-foreground"
+          className="grid size-6 shrink-0 place-items-center rounded-full text-sidebar-foreground/60 transition hover:bg-sidebar-primary hover:text-sidebar-foreground"
           title={t('health.refreshTitle')}
           aria-label={t('health.refreshTitle')}
           data-testid="health-refresh"
         >
-          <RefreshCw className={cn('h-3.5 w-3.5', checking && 'animate-spin')} />
+          <RefreshCw className={cn('size-3.5', checking && 'animate-spin')} />
         </button>
       </div>
 

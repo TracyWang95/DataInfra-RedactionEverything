@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { ArrowLeftRight, ArrowRight, ChevronDown, ChevronRight, Download, Trash2 } from 'lucide-react';
 import { memo, useMemo, useRef, type CSSProperties } from 'react';
@@ -638,9 +638,9 @@ const HistoryBatchRow = memo(function HistoryBatchRow({
               data-testid={`history-batch-toggle-${group.id}`}
             >
               {collapsed ? (
-                <ChevronRight className="h-3.5 w-3.5" />
+                <ChevronRight className="size-3.5" />
               ) : (
-                <ChevronDown className="h-3.5 w-3.5" />
+                <ChevronDown className="size-3.5" />
               )}
             </Button>
             <div className="flex min-w-0 items-center gap-2">
@@ -838,7 +838,7 @@ export function HistoryTable({
                     }}
                   >
                     <div className="jobs-tree-cell">
-                      <Skeleton className="h-4 w-4 rounded" />
+                      <Skeleton className="size-4 rounded" />
                     </div>
                     <div className="jobs-task-cell min-w-0">
                       <Skeleton

@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import {
   type FC,
@@ -425,7 +425,7 @@ const BoxList: FC<{
             <Checkbox
               checked={box.selected}
               onCheckedChange={() => onToggle(box.id)}
-              className="h-4 w-4"
+              className="size-4"
             />
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex flex-wrap items-center gap-1.5">
@@ -491,7 +491,7 @@ const EntityRow: FC<{
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 shrink-0 rounded-xl text-muted-foreground hover:text-destructive"
+        className="size-8 shrink-0 rounded-xl text-muted-foreground hover:text-destructive"
         onClick={(event) => {
           event.stopPropagation();
           onRemove(entity.id);
@@ -499,7 +499,7 @@ const EntityRow: FC<{
         aria-label={t('playground.removeAnnotation')}
       >
         <svg
-          className="h-3.5 w-3.5"
+          className="size-3.5"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
