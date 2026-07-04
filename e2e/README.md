@@ -7,7 +7,8 @@
 | Tier | 脚本 | GPU | 何时跑 |
 |---|---|---|---|
 | 1 冒烟 | `smoke_routes.py`（全路由渲染）、`perm_matrix.py`（权限矩阵：API 403 + UI 门禁） | 无 | 每轮必跑，随时可打生产隧道 |
-| 2 黄金路径 | `golden_batch.py`（批量五步含批量确认）、`golden_single.py`（单文件）、`golden_structured.py`（导入→策略→交付）、`golden_export.py`（异步分卷导出） | 有 | 部署后 / 生产空闲时；**待实现（Phase 0 收尾项）** |
+| 2 黄金路径 | `golden_single.py`（单文件文本全链路：上传→识别→匿名化→成品栏无原始PII，✅已实现） | 轻 | 部署后 / 随时（文本路径秒级） |
+| 2 待实现 | `golden_batch.py`（批量五步含批量确认）、`golden_structured.py`（导入→策略→交付）、`golden_export.py`（异步分卷导出） | 有 | 下一轮 loop |
 
 ## 运行
 
