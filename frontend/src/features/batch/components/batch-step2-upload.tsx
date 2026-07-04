@@ -1,6 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import { memo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
@@ -10,10 +10,13 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { PaginationRail } from '@/components/PaginationRail';
 
 import type { BatchWizardMode } from '@/services/batchPipeline';
 import { isPreviewBatchJobId } from '../lib/batch-preview-fixtures';
 import type { BatchRow, BatchUploadIssue, BatchUploadProgress, Step } from '../types';
+
+const QUEUE_PAGE_SIZE = 100;
 
 function formatFileSize(bytes: number | undefined): string {
   const value = Number(bytes);
@@ -63,6 +66,17 @@ function BatchStep2UploadInner({
   const jobLabel = previewJob ? t('batchWizard.previewJobLabel') : activeJobId;
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  // 万级队列不能无界渲染（6720 文件 ≈ 4 万 DOM 节点且每个进度 tick 全量重渲）
+  // —— 复用 PaginationRail 分页展示，上传/删除逻辑不变。
+  const [queuePage, setQueuePage] = useState(1);
+  const queueTotalPages = Math.max(1, Math.ceil(rows.length / QUEUE_PAGE_SIZE));
+  useEffect(() => {
+    setQueuePage((prev) => Math.min(Math.max(1, prev), queueTotalPages));
+  }, [queueTotalPages]);
+  const pagedRows = useMemo(
+    () => rows.slice((queuePage - 1) * QUEUE_PAGE_SIZE, queuePage * QUEUE_PAGE_SIZE),
+    [rows, queuePage],
+  );
 
   const handleRemove = async (fileId: string) => {
     setPendingRemoveId(fileId);
@@ -306,7 +320,7 @@ function BatchStep2UploadInner({
                 {t('batchWizard.step2.noFiles')}
               </p>
             ) : (
-              rows.map((r) => (
+              pagedRows.map((r) => (
                 <div
                   key={r.file_id}
                   className="grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_5rem_4.5rem_1.75rem] sm:py-1.5"
@@ -339,6 +353,19 @@ function BatchStep2UploadInner({
               ))
             )}
           </CardContent>
+          {rows.length > QUEUE_PAGE_SIZE && (
+            <div className="border-t border-border/70 px-3 py-1.5">
+              <PaginationRail
+                page={queuePage}
+                pageSize={QUEUE_PAGE_SIZE}
+                totalItems={rows.length}
+                totalPages={queueTotalPages}
+                onPageChange={setQueuePage}
+                compact
+                testIdPrefix="step2-queue"
+              />
+            </div>
+          )}
         </Card>
       </div>
     </div>
