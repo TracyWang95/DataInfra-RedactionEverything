@@ -224,7 +224,7 @@ class LocateAnythingGroundingService:
                 return_exceptions=True,
             )
             raw_boxes = []
-            for slug, res in zip(model_slugs, results):
+            for slug, res in zip(model_slugs, results, strict=False):
                 if isinstance(res, BaseException):
                     logger.warning("LocateAnything category %s failed, skipping: %s", slug, res)
                     continue

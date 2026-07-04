@@ -246,10 +246,12 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
         ocr_has = set(medical.get("ocrHasTypes") or [])
         # The medical-release preset redacts identity/administrative atoms and
         # deliberately keeps clinical content (diagnosis, medication, ...).
+        # 2026-06-18 taxonomy: MED_INSTITUTION was removed as redundant — the
+        # base INSTITUTION_NAME label covers medical institutions.
         identity_atoms = {
             "PERSON",
             "ID_CARD",
-            "MED_INSTITUTION",
+            "INSTITUTION_NAME",
             "MED_RECORD_ID",
             "INPATIENT_NO",
             "REGISTRATION_NO",

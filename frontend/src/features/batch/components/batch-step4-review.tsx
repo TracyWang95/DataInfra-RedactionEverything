@@ -1,10 +1,13 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
+import { useState } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useAuth } from '@/features/auth/auth-context';
 import { tonePanelClass } from '@/utils/toneClasses';
 
 import { useBatchWizardContext } from '../batch-wizard-context';
@@ -154,6 +157,9 @@ function ReviewQueueStatus({
 export function BatchStep4Review() {
   const t = useT();
   const w = useBatchWizardContext();
+  const { status } = useAuth();
+  const canBulkConfirm = status?.can_bulk_confirm === true;
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
 
   const {
     doneRows,
@@ -177,6 +183,9 @@ export function BatchStep4Review() {
     canAdvanceToExport,
     confirmCurrentReview,
     advanceToExportStep,
+    bulkConfirmAll,
+    bulkConfirmLoading,
+    pendingReviewCount,
     loadReviewData,
     rerunCurrentItemRecognition: onRerunRecognition,
     rerunRecognitionLoading,
@@ -481,6 +490,35 @@ export function BatchStep4Review() {
                 {t('batchWizard.step4.nextUnvisitedPage')}
               </Button>
             )}
+          {pendingReviewCount > 0 && (
+            <span
+              className="shrink-0"
+              title={!canBulkConfirm ? t('batchWizard.step4.bulkConfirmNoPermission') : undefined}
+            >
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="whitespace-nowrap"
+                disabled={
+                  !canBulkConfirm ||
+                  reviewLoading ||
+                  reviewDraftSaving ||
+                  reviewExecuteLoading ||
+                  bulkConfirmLoading
+                }
+                onClick={() => setBulkConfirmOpen(true)}
+                data-testid="bulk-confirm-all"
+              >
+                {bulkConfirmLoading
+                  ? t('batchWizard.step4.bulkConfirming')
+                  : t('batchWizard.step4.bulkConfirmAll').replace(
+                      '{count}',
+                      String(pendingReviewCount),
+                    )}
+              </Button>
+            </span>
+          )}
           <Button
             size="sm"
             className="shrink-0 whitespace-nowrap"
@@ -527,6 +565,21 @@ export function BatchStep4Review() {
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={bulkConfirmOpen}
+        title={t('batchWizard.step4.bulkConfirmTitle')}
+        message={t('batchWizard.step4.bulkConfirmMessage').replace(
+          '{count}',
+          String(pendingReviewCount),
+        )}
+        confirmText={t('batchWizard.step4.bulkConfirmConfirm')}
+        onConfirm={() => {
+          setBulkConfirmOpen(false);
+          void bulkConfirmAll();
+        }}
+        onCancel={() => setBulkConfirmOpen(false)}
+      />
     </Card>
   );
 }

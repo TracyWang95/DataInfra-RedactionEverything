@@ -20,6 +20,7 @@ export interface AuthStatus {
   username?: string | null;
   role?: string | null;
   is_super_admin?: boolean;
+  can_bulk_confirm?: boolean;
   multi_user?: boolean;
 }
 

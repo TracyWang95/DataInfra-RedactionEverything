@@ -840,6 +840,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step2.clearConfirm': 'Remove all {count} files? This cannot be undone.',
   'batchWizard.step2.uploadIssuesTitle': '{count} upload issues',
   'batchWizard.step2.dismissIssues': 'Dismiss',
+  'batchWizard.step2.retryFailed': 'Retry failed ({count})',
   'batchWizard.step2.moreIssues': '+ {count} more issues',
   'batchWizard.step2.rejectTooLarge': 'The file exceeds the 50 MB upload limit.',
   'batchWizard.step2.rejectInvalidType': 'This file type is not supported by the current uploader.',
@@ -904,6 +905,17 @@ const enBase: Record<string, string> = {
   'batchWizard.step4.confirmRedact': 'Confirm Redaction',
   'batchWizard.step4.submitting': 'Submitting...',
   'batchWizard.step4.completed': 'Completed',
+  'batchWizard.step4.bulkConfirmAll': 'Confirm remaining {count}',
+  'batchWizard.step4.bulkConfirming': 'Confirming...',
+  'batchWizard.step4.bulkConfirmTitle': 'Batch confirm',
+  'batchWizard.step4.bulkConfirmMessage':
+    'This redacts the remaining {count} file(s) using their current recognition results, skipping per-file manual review. This cannot be undone.',
+  'batchWizard.step4.bulkConfirmConfirm': 'Confirm all',
+  'batchWizard.step4.bulkConfirmQueued': 'Queued {count} file(s) for redaction...',
+  'batchWizard.step4.bulkConfirmPartial': 'Confirmed {confirmed}, {failed} failed',
+  'batchWizard.step4.bulkConfirmDone': 'All files confirmed',
+  'batchWizard.step4.bulkConfirmNoPermission':
+    'Ask an administrator to enable Batch confirm for your account in Settings > Access.',
   'batchWizard.step4.readOnlyHint':
     'This file is already redacted. To re-redact, reject it in job details first.',
   'batchWizard.step4.originalImage': 'Original Image',

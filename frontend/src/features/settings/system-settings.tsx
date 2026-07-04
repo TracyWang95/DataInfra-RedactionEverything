@@ -25,6 +25,7 @@ interface AdminUser {
   username: string;
   role: string;
   created_at?: string | null;
+  can_bulk_confirm?: boolean;
 }
 
 async function parseJson<T>(res: Response): Promise<T | null> {
@@ -37,14 +38,13 @@ async function parseJson<T>(res: Response): Promise<T | null> {
 
 export function SystemSettings() {
   const { status } = useAuth();
-  const t = useT();
 
   if (!status?.is_super_admin) {
     return (
       <div className="saas-page flex min-h-0 min-w-0 flex-1 flex-col bg-background">
         <div className="page-shell !max-w-[min(100%,1920px)] !px-3 !py-2 sm:!px-4 sm:!py-3">
           <Alert variant="destructive">
-            <AlertDescription>{t('settings.system.adminRequired')}</AlertDescription>
+            <AlertDescription>需要管理员权限。</AlertDescription>
           </Alert>
         </div>
       </div>
@@ -57,13 +57,13 @@ export function SystemSettings() {
         <Tabs defaultValue="runtime" className="page-stack gap-3 overflow-hidden">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">{t('settings.system.title')}</h1>
-              <p className="text-sm text-muted-foreground">{t('settings.system.subtitle')}</p>
+              <h1 className="text-2xl font-semibold tracking-tight text-foreground">系统设置</h1>
+              <p className="text-sm text-muted-foreground">运行配置、用户权限和本地服务监控。</p>
             </div>
             <TabsList className="rounded-xl border border-border/70 bg-muted/40 p-1">
-              <TabsTrigger value="runtime">{t('settings.system.tabRuntime')}</TabsTrigger>
-              <TabsTrigger value="access">{t('settings.system.tabAccess')}</TabsTrigger>
-              <TabsTrigger value="monitoring">{t('settings.system.tabMonitoring')}</TabsTrigger>
+              <TabsTrigger value="runtime">运行配置</TabsTrigger>
+              <TabsTrigger value="access">权限信息</TabsTrigger>
+              <TabsTrigger value="monitoring">服务监控</TabsTrigger>
             </TabsList>
           </div>
 
@@ -133,7 +133,7 @@ function AdminRuntimePanel() {
 
   return (
     <section className="surface-subtle max-w-2xl space-y-4 p-4" data-testid="admin-runtime-panel">
-      <PanelHeading title={t('settings.system.runtimeTitle')} description={t('settings.system.runtimeDesc')} />
+      <PanelHeading title="运行配置" description="控制后台批量任务并发，不需要重启模型服务。" />
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -166,7 +166,6 @@ function AdminRuntimePanel() {
 
 function AdminAccessPanel() {
   const { status } = useAuth();
-  const t = useT();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -187,7 +186,7 @@ function AdminAccessPanel() {
       }
       setUsers(body);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('settings.system.loadUsersFailed'));
+      setError(err instanceof Error ? err.message : '用户列表加载失败');
     } finally {
       setLoading(false);
     }
@@ -197,9 +196,35 @@ function AdminAccessPanel() {
     void loadUsers();
   }, []);
 
+  async function toggleBulkConfirm(user: AdminUser) {
+    if (user.role === 'super_admin') return; // super admins always have it
+    const next = !user.can_bulk_confirm;
+    setUsers((prev) =>
+      prev.map((u) => (u.username === user.username ? { ...u, can_bulk_confirm: next } : u)),
+    );
+    setError(null);
+    try {
+      const res = await authFetch(
+        `/api/v1/auth/users/${encodeURIComponent(user.username)}/permissions`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ bulk_confirm: next }),
+        },
+      );
+      const body = await parseJson<{ detail?: string }>(res);
+      if (!res.ok) throw new Error(body?.detail || `HTTP ${res.status}`);
+    } catch (err) {
+      setUsers((prev) =>
+        prev.map((u) => (u.username === user.username ? { ...u, can_bulk_confirm: !next } : u)),
+      );
+      setError(err instanceof Error ? err.message : '权限更新失败');
+    }
+  }
+
   async function createUser() {
     if (password !== confirmPassword) {
-      setError(t('settings.system.passwordMismatch'));
+      setError('两次输入的密码不一致。');
       return;
     }
     setSaving(true);
@@ -218,7 +243,7 @@ function AdminAccessPanel() {
       setRole('user');
       await loadUsers();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('settings.system.createUserFailed'));
+      setError(err instanceof Error ? err.message : '创建用户失败');
     } finally {
       setSaving(false);
     }
@@ -227,28 +252,29 @@ function AdminAccessPanel() {
   return (
     <section className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_22rem]" data-testid="admin-access-panel">
       <div className="surface-subtle space-y-4 p-4">
-        <PanelHeading title={t('settings.system.accessTitle')} description={t('settings.system.accessDesc')} />
+        <PanelHeading title="权限信息" description="每个用户只访问自己的文件、任务和结果。" />
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
         <div className="grid gap-3 sm:grid-cols-3">
-          <MetricCard label={t('settings.system.currentAccount')} value={status?.username || '-'} />
-          <MetricCard label={t('settings.system.currentRole')} value={status?.role || 'user'} />
-          <MetricCard label={t('settings.system.accountCount')} value={loading ? '...' : String(users.length)} />
+          <MetricCard label="当前账号" value={status?.username || '-'} />
+          <MetricCard label="当前角色" value={status?.role || 'user'} />
+          <MetricCard label="账号数量" value={loading ? '...' : String(users.length)} />
         </div>
         <div className="overflow-hidden rounded-lg border border-border bg-background">
-          <div className="grid grid-cols-[minmax(0,1fr)_8rem_11rem] border-b border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
-            <span>{t('settings.system.colUser')}</span>
-            <span>{t('settings.system.colRole')}</span>
-            <span>{t('settings.system.colCreatedAt')}</span>
+          <div className="grid grid-cols-[minmax(0,1fr)_7rem_7rem_10rem] border-b border-border px-3 py-2 text-xs font-semibold text-muted-foreground">
+            <span>用户</span>
+            <span>角色</span>
+            <span title="允许在批量审阅时一键确认剩余全部文件">批量确认</span>
+            <span>创建时间</span>
           </div>
           <div className="max-h-[26rem] overflow-auto">
             {users.map((user) => (
               <div
                 key={user.username}
-                className="grid min-h-10 grid-cols-[minmax(0,1fr)_8rem_11rem] items-center border-b border-border/60 px-3 py-2 text-sm last:border-b-0"
+                className="grid min-h-10 grid-cols-[minmax(0,1fr)_7rem_7rem_10rem] items-center border-b border-border/60 px-3 py-2 text-sm last:border-b-0"
               >
                 <span className="truncate" title={user.username}>
                   {user.username}
@@ -256,6 +282,21 @@ function AdminAccessPanel() {
                 <Badge variant={user.role === 'super_admin' ? 'default' : 'secondary'}>
                   {user.role}
                 </Badge>
+                <span>
+                  {user.role === 'super_admin' ? (
+                    <span className="text-xs text-muted-foreground">始终允许</span>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={user.can_bulk_confirm ? 'default' : 'outline'}
+                      className="h-7 px-2 text-xs"
+                      onClick={() => void toggleBulkConfirm(user)}
+                    >
+                      {user.can_bulk_confirm ? '已允许' : '未允许'}
+                    </Button>
+                  )}
+                </span>
                 <span className="truncate text-xs text-muted-foreground">
                   {formatDate(user.created_at)}
                 </span>
@@ -263,7 +304,7 @@ function AdminAccessPanel() {
             ))}
             {!users.length && (
               <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                {loading ? t('settings.system.loadingUsers') : t('settings.system.noUsers')}
+                {loading ? '正在加载用户...' : '暂无用户'}
               </div>
             )}
           </div>
@@ -271,13 +312,13 @@ function AdminAccessPanel() {
       </div>
 
       <div className="surface-subtle space-y-4 p-4">
-        <PanelHeading title={t('settings.system.createUserTitle')} description={t('settings.system.createUserDesc')} />
+        <PanelHeading title="创建用户" description="管理员可以创建普通用户或管理员。" />
         <div className="space-y-2">
-          <Label htmlFor="admin-new-username">{t('settings.system.usernameLabel')}</Label>
+          <Label htmlFor="admin-new-username">用户名</Label>
           <Input id="admin-new-username" value={username} onChange={(event) => setUsername(event.target.value)} />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="admin-new-password">{t('settings.system.passwordLabel')}</Label>
+          <Label htmlFor="admin-new-password">密码</Label>
           <Input
             id="admin-new-password"
             type="password"
@@ -286,7 +327,7 @@ function AdminAccessPanel() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="admin-new-confirm-password">{t('settings.system.confirmPasswordLabel')}</Label>
+          <Label htmlFor="admin-new-confirm-password">确认密码</Label>
           <Input
             id="admin-new-confirm-password"
             type="password"
@@ -295,19 +336,19 @@ function AdminAccessPanel() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="admin-new-role">{t('settings.system.roleLabel')}</Label>
+          <Label htmlFor="admin-new-role">角色</Label>
           <select
             id="admin-new-role"
             className="flex h-10 w-full rounded-xl border border-input bg-[var(--surface-control)] px-3 py-2 text-sm shadow-[var(--shadow-control)]"
             value={role}
             onChange={(event) => setRole(event.target.value === 'super_admin' ? 'super_admin' : 'user')}
           >
-            <option value="user">{t('settings.system.roleUser')}</option>
-            <option value="super_admin">{t('settings.system.roleAdmin')}</option>
+            <option value="user">普通用户</option>
+            <option value="super_admin">管理员</option>
           </select>
         </div>
         <Button className="w-full" disabled={saving || !username || !password} onClick={() => void createUser()}>
-          {saving ? t('settings.system.creating') : t('settings.system.createUserButton')}
+          {saving ? '创建中...' : '创建用户'}
         </Button>
       </div>
     </section>
@@ -315,7 +356,6 @@ function AdminAccessPanel() {
 }
 
 function AdminMonitoringPanel() {
-  const t = useT();
   const { health, checking, roundTripMs, refresh } = useServiceHealth();
   const services = serviceRows(health);
   const allOnline = health?.all_online;
@@ -323,25 +363,16 @@ function AdminMonitoringPanel() {
   return (
     <section className="surface-subtle space-y-4 p-4" data-testid="admin-monitoring-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <PanelHeading title={t('settings.system.monitoringTitle')} description={t('settings.system.monitoringDesc')} />
+        <PanelHeading title="服务监控" description="查看模型服务、GPU 显存和健康探测状态。" />
         <Button variant="outline" size="sm" onClick={refresh}>
           <RefreshCw className={cn('mr-2 h-4 w-4', checking && 'animate-spin')} />
-          {t('settings.system.refresh')}
+          刷新
         </Button>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
-        <MetricCard
-          label={t('settings.system.overallStatus')}
-          value={
-            checking
-              ? t('settings.system.statusChecking')
-              : allOnline
-                ? t('settings.system.statusAllOnline')
-                : t('settings.system.statusNeedsAttention')
-          }
-        />
-        <MetricCard label={t('settings.system.backendProbe')} value={roundTripMs == null ? '-' : `${roundTripMs} ms`} />
-        <MetricCard label={t('settings.system.gpuMemory')} value={gpuText(health)} />
+        <MetricCard label="整体状态" value={checking ? '检测中' : allOnline ? '全部在线' : '需处理'} />
+        <MetricCard label="后端探测" value={roundTripMs == null ? '-' : `${roundTripMs} ms`} />
+        <MetricCard label="GPU 显存" value={gpuText(health)} />
       </div>
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {services.map(({ key, service }) => (
@@ -351,9 +382,9 @@ function AdminMonitoringPanel() {
               <StatusBadge status={service.status} />
             </div>
             <dl className="mt-3 space-y-1 text-xs text-muted-foreground">
-              <InfoRow label={t('settings.system.runtimeLabel')} value={service.detail?.runtime || '-'} />
-              <InfoRow label={t('settings.system.modeLabel')} value={service.detail?.runtime_mode || '-'} />
-              <InfoRow label={t('settings.system.deviceLabel')} value={service.detail?.device || '-'} />
+              <InfoRow label="运行时" value={service.detail?.runtime || '-'} />
+              <InfoRow label="模式" value={service.detail?.runtime_mode || '-'} />
+              <InfoRow label="设备" value={service.detail?.device || '-'} />
             </dl>
           </div>
         ))}

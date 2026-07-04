@@ -34,6 +34,8 @@ interface BatchStep2UploadProps {
   uploadIssues: BatchUploadIssue[];
   uploadProgress?: BatchUploadProgress | null;
   clearUploadIssues: () => void;
+  failedUploadCount?: number;
+  retryFailedUploads?: () => void;
   goStep: (s: Step) => void;
   removeRow: (fileId: string) => Promise<void>;
   clearRows: () => Promise<void>;
@@ -50,6 +52,8 @@ function BatchStep2UploadInner({
   uploadIssues,
   uploadProgress,
   clearUploadIssues,
+  failedUploadCount = 0,
+  retryFailedUploads,
   goStep,
   removeRow,
   clearRows,
@@ -134,15 +138,32 @@ function BatchStep2UploadInner({
                     String(uploadIssues.length),
                   )}
                 </CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={clearUploadIssues}
-                  data-testid="upload-issues-dismiss"
-                >
-                  {t('batchWizard.step2.dismissIssues')}
-                </Button>
+                <div className="flex items-center gap-1">
+                  {failedUploadCount > 0 && retryFailedUploads && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      disabled={loading}
+                      onClick={retryFailedUploads}
+                      data-testid="retry-failed-uploads"
+                    >
+                      {t('batchWizard.step2.retryFailed').replace(
+                        '{count}',
+                        String(failedUploadCount),
+                      )}
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={clearUploadIssues}
+                    data-testid="upload-issues-dismiss"
+                  >
+                    {t('batchWizard.step2.dismissIssues')}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="max-h-28 space-y-1.5 overflow-y-auto px-3 pb-3 pt-0">
                 {uploadIssues.slice(0, 5).map((issue) => (

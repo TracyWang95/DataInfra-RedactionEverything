@@ -821,6 +821,64 @@ class JobStore:
         if file_id_to_clean:
             self._clear_outputs_for_file_ids([file_id_to_clean])
 
+    def approve_items_review_bulk(
+        self, item_ids: list[str], reviewer: str = "local"
+    ) -> list[tuple[str, str]]:
+        """Bulk-approve awaiting_review items in ONE transaction.
+
+        万级批量确认的性能路径：逐条 approve_item_review 是每条一个事务 +
+        每条一次全表 job 状态刷新，6000+ 条会拖到分钟级。这里单事务批量
+        UPDATE（带 status 守卫，并发重复调用天然幂等），返回真正被批准的
+        [(item_id, file_id)]。
+        """
+        if not item_ids:
+            return []
+        now = _utc_iso()
+        approved: list[tuple[str, str]] = []
+        with self._connect() as conn:
+            for start in range(0, len(item_ids), 500):
+                batch = [str(i) for i in item_ids[start : start + 500]]
+                placeholders = ",".join("?" * len(batch))
+                rows = conn.execute(
+                    f"SELECT id, file_id FROM job_items WHERE id IN ({placeholders}) AND status = ?",
+                    (*batch, JobItemStatus.AWAITING_REVIEW.value),
+                ).fetchall()
+                ids = [row["id"] for row in rows]
+                if not ids:
+                    continue
+                update_placeholders = ",".join("?" * len(ids))
+                conn.execute(
+                    f"""
+                    UPDATE job_items
+                    SET status = ?, reviewed_at = ?, reviewer = ?, updated_at = ?
+                    WHERE id IN ({update_placeholders})
+                    """,
+                    (JobItemStatus.REVIEW_APPROVED.value, now, reviewer, now, *ids),
+                )
+                approved.extend((row["id"], str(row["file_id"])) for row in rows)
+            conn.commit()
+        if approved:
+            self._clear_outputs_for_file_ids([file_id for _, file_id in approved])
+        return approved
+
+    def list_item_review_drafts(self, job_id: str) -> dict[str, tuple[str, dict[str, Any]]]:
+        """Return {item_id: (file_id, draft)} for items that have a saved draft."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, file_id, review_draft_json FROM job_items "
+                "WHERE job_id = ? AND review_draft_json IS NOT NULL AND review_draft_json != ''",
+                (job_id,),
+            ).fetchall()
+        drafts: dict[str, tuple[str, dict[str, Any]]] = {}
+        for row in rows:
+            try:
+                draft = json.loads(row["review_draft_json"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(draft, dict):
+                drafts[row["id"]] = (str(row["file_id"]), draft)
+        return drafts
+
     def get_item_review_draft(self, item_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             cur = conn.execute(

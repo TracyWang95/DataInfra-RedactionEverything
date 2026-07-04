@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { getSelectionToneClasses, type SelectionTone } from '@/ui/selectionPalette';
 import { localizeRecognitionTypeName } from '@/features/settings/lib/redaction-display';
 import type { usePlayground } from '../hooks/use-playground';
-import type { PipelineConfig } from '../types';
+import type { PipelineConfig, VisionTypeConfig } from '../types';
 
 type RecognitionCtx = ReturnType<typeof usePlayground>['recognition'];
 const CONFIG_TILE_PAGE_SIZE = 12;
@@ -303,20 +303,17 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
   const t = useT();
   const [pipelinePages, setPipelinePages] = useState<Record<string, number>>({});
   const pageSize = VISION_PIPELINE_PAGE_SIZE;
-  // Option B:视觉页两段并列——「文本视觉」(OCR+HaS,图像里读出的文字)与「图像视觉」
-  // (视觉特征)。「文本视觉」段复用「文本」页的共享语义选择 selectedTypes(下方渲染时
-  // selectedSet/toggle 都走 selectedTypes),不再独立配一份,与图像 OCR 实际取数一致。
   const displayPipelines = useMemo(() => {
     const ocrPipeline = rec.pipelines.find((pipeline) => pipeline.mode === 'ocr_has');
     const visualPipeline = rec.pipelines.find((pipeline) => pipeline.mode === 'visual_features');
+    const visualTypes: VisionTypeConfig[] = dedupeTypesByIdName(visualPipeline?.types ?? []).map(
+      (type) => ({ ...type, pipelineMode: 'visual_features' }),
+    );
     const mergedPipelines: PipelineConfig[] = [];
 
     if (ocrPipeline) {
       mergedPipelines.push({
-        mode: 'ocr_has',
-        name: t('settings.pipelineDisplayName.ocr'),
-        description: t('settings.pipelineDescription.ocr'),
-        enabled: ocrPipeline.enabled,
+        ...ocrPipeline,
         types: dedupeTypesByIdName(ocrPipeline.types).map((type) => ({
           ...type,
           pipelineMode: 'ocr_has',
@@ -330,10 +327,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
         name: t('settings.pipelineDisplayName.image'),
         description: t('settings.pipelineDescription.image'),
         enabled: visualPipeline.enabled,
-        types: dedupeTypesByIdName(visualPipeline.types).map((type) => ({
-          ...type,
-          pipelineMode: 'visual_features',
-        })),
+        types: visualTypes,
       });
     }
 
@@ -389,7 +383,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
         const pipelineTypes = pipeline.types;
         const selectedSet = isVisualFeatures
           ? rec.selectedVisualFeatureTypes
-          : rec.selectedTypes;
+          : rec.selectedOcrHasTypes;
         const recommendedIds = pipelineTypes.map((type) => type.id);
         const allSelected =
           recommendedIds.length > 0 && recommendedIds.every((id) => selectedSet.includes(id));
@@ -443,13 +437,19 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                 className="h-6 shrink-0 whitespace-nowrap rounded-full px-2 text-[10px]"
                 disabled={recommendedIds.length === 0}
                 onClick={() => {
-                  if (isVisualFeatures) {
-                    rec.clearPlaygroundVisionPresetTracking();
-                    rec.updateVisualFeatureTypes(allSelected ? [] : recommendedIds);
+                  rec.clearPlaygroundVisionPresetTracking();
+                  if (allSelected) {
+                    if (isVisualFeatures) {
+                      rec.updateVisualFeatureTypes([]);
+                    } else {
+                      rec.updateOcrHasTypes([]);
+                    }
                   } else {
-                    // 文本视觉段 = 共享语义选择,全选/清空走 selectedTypes
-                    rec.clearPlaygroundTextPresetTracking();
-                    rec.setPlaygroundTextTypeGroupSelection(recommendedIds, !allSelected);
+                    if (isVisualFeatures) {
+                      rec.updateVisualFeatureTypes(recommendedIds);
+                    } else {
+                      rec.updateOcrHasTypes(recommendedIds);
+                    }
                   }
                 }}
               >
@@ -471,7 +471,7 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                   const checked =
                     typeMode === 'visual_features'
                       ? rec.selectedVisualFeatureTypes.includes(type.id)
-                      : rec.selectedTypes.includes(type.id);
+                      : rec.selectedOcrHasTypes.includes(type.id);
                   return (
                     <label
                       key={`${typeMode}-${type.id}`}
@@ -485,19 +485,9 @@ export const VisionPipelines: FC<{ rec: RecognitionCtx }> = ({ rec }) => {
                     >
                       <Checkbox
                         checked={checked}
-                        onCheckedChange={() => {
-                          if (typeMode === 'visual_features') {
-                            rec.toggleVisionType(type.id, typeMode);
-                          } else {
-                            // 文本视觉段 = 共享语义选择,toggle 走 selectedTypes
-                            rec.clearPlaygroundTextPresetTracking();
-                            rec.setSelectedTypes((previous) =>
-                              previous.includes(type.id)
-                                ? previous.filter((id) => id !== type.id)
-                                : [...previous, type.id],
-                            );
-                          }
-                        }}
+                        onCheckedChange={() =>
+                          rec.toggleVisionType(type.id, typeMode)
+                        }
                         aria-label={
                           localizeRecognitionTypeName(type, t)
                         }

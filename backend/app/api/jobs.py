@@ -19,7 +19,7 @@ from starlette.responses import StreamingResponse
 
 import app.services.job_management_service as _jms
 from app.core.audit import audit_log
-from app.core.auth import require_auth
+from app.core.auth import require_auth, require_bulk_confirm
 from app.models.errors import ConflictError, NotFoundError, ValidationError
 from app.models.schemas import (
     BatchDetailsBody,
@@ -37,7 +37,7 @@ from app.models.schemas import (
     ReviewDraftBody,
     ReviewDraftResponse,
 )
-from app.services.job_store import JobStatus, JobStore, get_job_store
+from app.services.job_store import JobItemStatus, JobStatus, JobStore, get_job_store
 
 router = APIRouter(prefix="/jobs", tags=["batch jobs"])
 
@@ -500,6 +500,62 @@ async def commit_item_review(
         raise HTTPException(status_code=400, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/{job_id}/review/commit-all", response_model=dict)
+async def commit_all_item_reviews(
+    job_id: str,
+    store: JobStore = Depends(get_job_store),
+    owner_id: str = Depends(require_bulk_confirm),
+) -> dict[str, Any]:
+    """Batch one-click confirm: approve every awaiting-review item in the job.
+
+    Gated by the per-user ``bulk_confirm`` permission (super admins always pass).
+    万级 job 在后台执行（批量事务 + 逐条入队仍要几十秒），立即返回
+    total_awaiting；前端靠既有轮询看着 已确认 计数爬升。重复调用幂等
+    （bulk approve 带 status 守卫）。
+    """
+    try:
+        _jms.assert_job_owner(store.get_job(job_id), owner_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    awaiting_count = sum(
+        1
+        for it in store.list_items(job_id)
+        if it["status"] == JobItemStatus.AWAITING_REVIEW.value
+    )
+    if awaiting_count == 0:
+        return {
+            "job_id": job_id,
+            "total_awaiting": 0,
+            "confirmed": 0,
+            "failed": [],
+            "started": False,
+        }
+
+    async def _run_commit_all() -> None:
+        try:
+            result = await _jms.commit_all_reviews(store, job_id, reviewer=owner_id)
+            audit_log(
+                "commit_all",
+                "job",
+                job_id,
+                detail={
+                    "confirmed": result.get("confirmed"),
+                    "failed": len(result.get("failed") or []),
+                },
+            )
+        except Exception:
+            logger.exception("commit-all background task failed for job %s", job_id[:8])
+
+    asyncio.create_task(_run_commit_all())
+    return {
+        "job_id": job_id,
+        "total_awaiting": awaiting_count,
+        "confirmed": 0,
+        "failed": [],
+        "started": True,
+    }
 
 
 @router.get("/{job_id}/stream")

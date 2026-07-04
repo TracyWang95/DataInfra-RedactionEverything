@@ -147,8 +147,9 @@ export function EntityTypeDialog({
     form.name.trim() && (form.use_llm || form.regex_pattern.trim()),
   );
 
-  const dialogTitle = mode === 'create' ? t('settings.entityDialog.createTitle') : t('settings.editType');
-  const dialogDescription = t('settings.entityDialog.desc');
+  const dialogTitle = mode === 'create' ? '新建自定义识别项' : t('settings.editType');
+  const dialogDescription =
+    '语义标签：名称直接作为开放词表标签交给 HaS 识别。正则兜底：在文本链路最后一步用正则补充 HaS 未覆盖的内容。';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -160,20 +161,20 @@ export function EntityTypeDialog({
 
         <div className="flex flex-col gap-4 py-2">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor={nameInputId}>{t('settings.entityDialog.nameLabel')}</Label>
+            <Label htmlFor={nameInputId}>识别项名称 *</Label>
             <Input
               id={nameInputId}
               value={form.name}
               onChange={(event) =>
                 setForm((current) => ({ ...current, name: event.target.value }))
               }
-              placeholder={t('settings.entityDialog.namePlaceholder')}
+              placeholder="例如：文书编号、出生日期、供应商编号"
               data-testid="entity-type-name"
             />
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label>{t('settings.entityDialog.kindLabel')}</Label>
+            <Label>类型</Label>
             <div className="flex gap-2">
               <Button
                 type="button"
@@ -182,7 +183,7 @@ export function EntityTypeDialog({
                 onClick={() => setForm((current) => ({ ...current, use_llm: true, regex_pattern: '' }))}
                 data-testid="entity-type-kind-semantic"
               >
-                {t('settings.entityDialog.kindSemantic')}
+                语义标签
               </Button>
               <Button
                 type="button"
@@ -191,28 +192,28 @@ export function EntityTypeDialog({
                 onClick={() => setForm((current) => ({ ...current, use_llm: false }))}
                 data-testid="entity-type-kind-regex"
               >
-                {t('settings.entityDialog.kindRegex')}
+                正则兜底
               </Button>
             </div>
           </div>
 
           {!form.use_llm && (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor={regexInputId}>{t('settings.entityDialog.regexLabel')}</Label>
+              <Label htmlFor={regexInputId}>正则表达式 *</Label>
               <Input
                 id={regexInputId}
                 value={form.regex_pattern}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, regex_pattern: event.target.value }))
                 }
-                placeholder={t('settings.entityDialog.regexPlaceholder')}
+                placeholder="例如：(?<!\d)\d{17}[\dXx](?!\d)"
                 data-testid="entity-type-regex"
               />
             </div>
           )}
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor={descriptionInputId}>{t('settings.entityDialog.descriptionLabel')}</Label>
+            <Label htmlFor={descriptionInputId}>描述</Label>
             <Textarea
               id={descriptionInputId}
               value={form.description}
@@ -220,7 +221,7 @@ export function EntityTypeDialog({
                 setForm((current) => ({ ...current, description: event.target.value }))
               }
               rows={4}
-              placeholder={t('settings.entityDialog.descriptionPlaceholder')}
+              placeholder="可选。用于帮助模型理解这个识别项的语义边界。"
               data-testid="entity-type-description"
             />
           </div>

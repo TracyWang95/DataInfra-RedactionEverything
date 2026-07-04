@@ -719,6 +719,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.step2.clearConfirm': '确定要清空全部 {count} 个文件吗？此操作无法撤销。',
   'batchWizard.step2.uploadIssuesTitle': '{count} 个上传问题',
   'batchWizard.step2.dismissIssues': '关闭',
+  'batchWizard.step2.retryFailed': '重试失败文件 ({count})',
   'batchWizard.step2.moreIssues': '还有 {count} 个问题',
   'batchWizard.step2.rejectTooLarge': '文件超过 50 MB 上传上限。',
   'batchWizard.step2.rejectInvalidType': '当前上传器不支持该文件类型。',
@@ -783,6 +784,17 @@ const zhBase: Record<string, string> = {
   'batchWizard.step4.confirmRedact': '确认匿名化',
   'batchWizard.step4.submitting': '提交中…',
   'batchWizard.step4.completed': '已完成',
+  'batchWizard.step4.bulkConfirmAll': '一键确认剩余 {count} 份',
+  'batchWizard.step4.bulkConfirming': '确认中…',
+  'batchWizard.step4.bulkConfirmTitle': '批量一键确认',
+  'batchWizard.step4.bulkConfirmMessage':
+    '将对剩余 {count} 份待确认文件按当前识别结果直接匿名化，跳过逐份人工复核。确认后不可撤销。',
+  'batchWizard.step4.bulkConfirmConfirm': '确认全部',
+  'batchWizard.step4.bulkConfirmQueued': '已提交 {count} 份文件匿名化，正在处理…',
+  'batchWizard.step4.bulkConfirmPartial': '已提交 {confirmed} 份，{failed} 份失败',
+  'batchWizard.step4.bulkConfirmDone': '已确认全部文件',
+  'batchWizard.step4.bulkConfirmNoPermission':
+    '需要管理员在「系统设置 › 权限信息」为你的账号开启「批量确认」权限',
   'batchWizard.step4.readOnlyHint':
     '该文件已完成匿名化，仅供查阅。如需重新匿名化请先在任务详情驳回。',
   'batchWizard.step4.noRecognized': '暂无已完成识别的文件，请先完成第 3 步批量识别。',

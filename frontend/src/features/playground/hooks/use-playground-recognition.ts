@@ -363,17 +363,11 @@ export function usePlaygroundRecognition() {
 
     setPresetSaving(true);
     try {
-      // Option B:视觉预设的文本通道(ocrHasTypes)= 共享语义选择(过滤 regex),
-      // 与行业预设 ocrHasTypes=selectedEntityTypeIds 同口径,保证图像文本检出可用。
-      const sharedTextTypes = selectedTypes.filter((id) => {
-        const ty = entityTypes.find((type) => type.id === id);
-        return ty ? !ty.regex_pattern : true;
-      });
       const created = await createPreset({
         name,
         kind: 'vision',
         selectedEntityTypeIds: [],
-        ocrHasTypes: sharedTextTypes,
+        ocrHasTypes: selectedOcrHasTypes,
         visualFeatureTypes: uniqueIds(selectedVisualFeatureTypes),
         replacementMode: 'structured',
       });
@@ -391,8 +385,7 @@ export function usePlaygroundRecognition() {
     closePresetDialog,
     presetDialogName,
     selectedVisualFeatureTypes,
-    selectedTypes,
-    entityTypes,
+    selectedOcrHasTypes,
     invalidatePresets,
   ]);
 
@@ -423,25 +416,47 @@ export function usePlaygroundRecognition() {
     [ownerKey, setSelectedTypes],
   );
 
-  const fetchVisionTypes = useCallback(async () => {
+  const fetchVisionTypes = useCallback(async (preserveSelection = false) => {
     try {
       const normalizedPipelines = normalizeVisionPipelines(
         (await fetchRecognitionPipelines(RECOGNITION_FETCH_TIMEOUT_MS)) as PipelineConfig[],
       );
-      const nextVisionSelections = resolveVisionSelectionsFromStorage(normalizedPipelines, ownerKey);
       const nextVisionTypes = flattenVisionTypes(normalizedPipelines);
+      const hadLoaded = visionConfigLoadedRef.current;
 
       setPipelines(normalizedPipelines);
       setVisionTypes(nextVisionTypes);
       visionConfigLoadedRef.current = normalizedPipelines.length > 0;
       setVisionConfigState(normalizedPipelines.length > 0 ? 'ready' : 'empty');
-      updateOcrHasTypes(nextVisionSelections.ocrHasTypes);
-      updateVisualFeatureTypes(nextVisionSelections.visualFeatureTypes);
-      setScopedStorageItem(
-        STORAGE_KEYS.VISION_SELECTION_SIGNATURE,
-        nextVisionSelections.visionSelectionSignature,
-        ownerKey,
-      );
+      if (preserveSelection && hadLoaded) {
+        // A refetch (window focus / config-changed event) must NOT clobber the
+        // user's current selection (e.g. an applied preset). Mirror
+        // fetchEntityTypes: keep the live selection, only dropping ids that no
+        // longer exist in the pipelines. Re-resolving from storage here is what
+        // caused the re-recognize 13<->7 flip (a focus refetch reset an applied
+        // medical preset back to the default type set).
+        const ocrIds = new Set(
+          normalizedPipelines
+            .filter((pipeline) => pipeline.mode === 'ocr_has')
+            .flatMap((pipeline) => pipeline.types.map((type) => type.id)),
+        );
+        const imageIds = new Set(
+          normalizedPipelines
+            .filter((pipeline) => pipeline.mode === 'visual_features')
+            .flatMap((pipeline) => pipeline.types.map((type) => type.id)),
+        );
+        updateOcrHasTypes(selectedOcrHasTypesRef.current.filter((id) => ocrIds.has(id)));
+        updateVisualFeatureTypes(selectedVisualFeatureTypesRef.current.filter((id) => imageIds.has(id)));
+      } else {
+        const nextVisionSelections = resolveVisionSelectionsFromStorage(normalizedPipelines, ownerKey);
+        updateOcrHasTypes(nextVisionSelections.ocrHasTypes);
+        updateVisualFeatureTypes(nextVisionSelections.visualFeatureTypes);
+        setScopedStorageItem(
+          STORAGE_KEYS.VISION_SELECTION_SIGNATURE,
+          nextVisionSelections.visionSelectionSignature,
+          ownerKey,
+        );
+      }
       updateRecognitionConfigCache({ pipelines: normalizedPipelines }, ownerKey);
     } catch (error) {
       if (import.meta.env.DEV) console.error('fetch vision pipelines failed', error);
@@ -453,7 +468,7 @@ export function usePlaygroundRecognition() {
 
   const loadRecognitionConfig = useCallback(
     async (preserveSelection = false) => {
-      await Promise.allSettled([fetchEntityTypes(preserveSelection), fetchVisionTypes()]);
+      await Promise.allSettled([fetchEntityTypes(preserveSelection), fetchVisionTypes(preserveSelection)]);
     },
     [fetchEntityTypes, fetchVisionTypes],
   );

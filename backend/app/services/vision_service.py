@@ -664,7 +664,7 @@ class VisionService:
             outcomes = await asyncio.gather(
                 *(factory() for _label, factory in jobs), return_exceptions=True
             )
-            for (label, _factory), result in zip(jobs, outcomes):
+            for (label, _factory), result in zip(jobs, outcomes, strict=False):
                 await record_pipeline_result(label, result)
         else:
             for label, factory in jobs:

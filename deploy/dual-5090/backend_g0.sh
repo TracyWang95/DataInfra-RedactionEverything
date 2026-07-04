@@ -9,10 +9,14 @@ export LOCATE_ANYTHING_ENABLED=1
 export OCR_STRUCTURE_ENABLED=true OCR_STRUCTURE_PRIMARY=true OCR_VL_ENABLED=1 VISION_DUAL_PIPELINE_PARALLEL=0 OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL=1 OCR_MAX_NEW_TOKENS=8192
 export AUTH_ENABLED=true
 export JWT_SECRET_KEY=REPLACE_WITH_YOUR_JWT_SECRET
-export JOB_CONCURRENCY=4
-export BATCH_RECOGNITION_PAGE_CONCURRENCY=2
+export JOB_CONCURRENCY=6
+export BATCH_RECOGNITION_PAGE_CONCURRENCY=3
 # HaS NER 全局并发闸门：双卡 vLLM 双实例 × 每实例 ~3（KV 预算内），1=退回全串行
 export HAS_NER_GLOBAL_MAX_INFLIGHT=6
+# 视觉特征合并趟并发：LA 双实例（split 拓扑）正好每实例一页
+export BATCH_VISUAL_MERGE_PAGE_CONCURRENCY=2
+# 双卡静态驻留 ~80%（OCR 扩容后），0.90 会把健康负载误判为饱和
+export GPU_SATURATION_RATIO=0.95
 export DATA_DIR=~/redaction-deploy/backend/data
 export UPLOAD_DIR=~/redaction-deploy/backend/uploads
 export OUTPUT_DIR=~/redaction-deploy/backend/outputs

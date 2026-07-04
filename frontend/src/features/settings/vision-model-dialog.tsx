@@ -136,7 +136,7 @@ export function VisionModelDialog({
                 onChange={(e) => onUpdateForm({ api_key: e.target.value })}
                 className="font-mono text-sm"
                 placeholder={
-                  form.api_key === '__REDACTED__' ? t('settings.visionDialog.apiKeySavedPlaceholder') : 'sk-...'
+                  form.api_key === '__REDACTED__' ? '已保存，输入新密钥可替换' : 'sk-...'
                 }
                 data-testid="vision-model-api-key"
                 autoComplete="off"

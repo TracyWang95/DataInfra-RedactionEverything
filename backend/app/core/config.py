@@ -247,9 +247,19 @@ class Settings(BaseSettings):
     # Per-file page-level concurrency for vision recognition. This is not batch
     # item concurrency; JOB_CONCURRENCY controls how many job items the worker
     # consumes at once. The runtime caps this value to the current file's page
-    # count, and the validator below clamps operator overrides to 1..4. Lower
-    # this to 1 when GPU memory is already above 90% or model services are cold.
+    # count, and the validator below clamps operator overrides to 1..8. Lower
+    # this to 1 when GPU memory is already above the saturation ratio or model
+    # services are cold.
     BATCH_RECOGNITION_PAGE_CONCURRENCY: int = 2
+    # Page concurrency for the multi-page visual-features merge pass. Default 1
+    # keeps the historical serial behaviour (safe on a single GPU); deployments
+    # with one LocateAnything instance per card can raise to 2.
+    BATCH_VISUAL_MERGE_PAGE_CONCURRENCY: int = 1
+    # GPU memory used/total ratio at/above which vision page concurrency is
+    # forced down to 1. Raise on multi-service cards whose *static* residency is
+    # already high (e.g. dual-GPU prod ~80% at idle) so healthy load is not
+    # misread as saturation.
+    GPU_SATURATION_RATIO: float = 0.90
     # Single-GPU safety: OCR/HaS and LocateAnything run SEQUENTIALLY. On one GPU,
     # running both heavy VLMs at once causes ~5-10x slowdown from contention
     # (measured: 54s parallel vs ~10s serial on one file).
@@ -351,7 +361,17 @@ class Settings(BaseSettings):
     @field_validator("BATCH_RECOGNITION_PAGE_CONCURRENCY")
     @classmethod
     def _validate_batch_page_concurrency(cls, v: int) -> int:
+        return max(1, min(8, v))
+
+    @field_validator("BATCH_VISUAL_MERGE_PAGE_CONCURRENCY")
+    @classmethod
+    def _validate_batch_visual_merge_page_concurrency(cls, v: int) -> int:
         return max(1, min(4, v))
+
+    @field_validator("GPU_SATURATION_RATIO")
+    @classmethod
+    def _validate_gpu_saturation_ratio(cls, v: float) -> float:
+        return max(0.5, min(0.99, v))
 
     @field_validator("OCR_MAX_NEW_TOKENS")
     @classmethod

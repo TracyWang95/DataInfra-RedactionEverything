@@ -6,7 +6,7 @@ import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
 
 import { batchGetFileRaw, type BatchWizardMode } from '@/services/batchPipeline';
-import { createJob, getJob, updateJobDraft } from '@/services/jobsApi';
+import { commitAllReviews, createJob, getJob, updateJobDraft } from '@/services/jobsApi';
 import {
   buildPreviewBatchRows,
   isPreviewBatchJobId,
@@ -140,6 +140,8 @@ export function useBatchWizard() {
     uploadIssues,
     uploadProgress,
     clearUploadIssues,
+    failedUploadCount,
+    retryFailedUploads,
     failedRows,
     batchGroupIdRef,
     itemIdByFileIdRef,
@@ -282,6 +284,18 @@ export function useBatchWizard() {
   );
   const step3HasReviewableRows = useMemo(() => hasReviewableRecognitionRows(rows), [rows]);
   const step4HasUnsettledRows = step3HasRowsNeedingRefresh;
+  // Rows confirmed via batch one-click confirm redact asynchronously. Their
+  // in-flight states (review_approved/redacting) count as "recognition-done",
+  // so the recognition poll below skips them — track them separately.
+  const step4HasSettlingRows = useMemo(
+    () =>
+      rows.some(
+        (row) => row.analyzeStatus === 'redacting' || row.analyzeStatus === 'review_approved',
+      ),
+    [rows],
+  );
+  // 批量确认在后端后台执行（万级 job），置位后保持轮询直到全部确认落定。
+  const [bulkConfirmActive, setBulkConfirmActive] = useState(false);
   const refreshRowsFromActiveJob = useCallback(
     async (jobId = activeJobId): Promise<BatchJobDetail | null> => {
       if (isPreviewMode || !jobId) return null;
@@ -415,6 +429,33 @@ export function useBatchWizard() {
       window.clearInterval(intervalId);
     };
   }, [activeJobId, isPreviewMode, refreshRowsFromActiveJob, step, step4HasUnsettledRows]);
+
+  // Poll while batch-confirmed items are still approving/redacting on the
+  // worker pool. bulkConfirmActive covers the window where the backend's
+  // background commit-all is still flipping rows out of awaiting_review.
+  useEffect(() => {
+    if (step !== 4 || isPreviewMode || !activeJobId) return;
+    if (!step4HasSettlingRows && !bulkConfirmActive) return;
+
+    let cancelled = false;
+    const refresh = () => {
+      if (cancelled) return;
+      void refreshRowsFromActiveJob(activeJobId);
+    };
+
+    const intervalId = window.setInterval(refresh, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    activeJobId,
+    bulkConfirmActive,
+    isPreviewMode,
+    refreshRowsFromActiveJob,
+    step,
+    step4HasSettlingRows,
+  ]);
 
   useEffect(() => {
     if (step !== 4) return;
@@ -1227,6 +1268,70 @@ export function useBatchWizard() {
     stepActionLoading,
   ]);
 
+  const [bulkConfirmLoading, setBulkConfirmLoading] = useState(false);
+  useEffect(() => {
+    if (bulkConfirmActive && pendingReviewCount === 0) setBulkConfirmActive(false);
+  }, [bulkConfirmActive, pendingReviewCount]);
+  const bulkConfirmAll = useCallback(async () => {
+    if (bulkConfirmLoading || reviewExecuteLoading) return;
+    if (isPreviewMode) {
+      setRows((prev) =>
+        prev.map((row) =>
+          RECOGNITION_DONE_STATUSES.has(row.analyzeStatus) && row.reviewConfirmed !== true
+            ? { ...row, reviewConfirmed: true, has_output: true, analyzeStatus: 'completed' as const }
+            : row,
+        ),
+      );
+      setFurthestStep((prev) => Math.max(prev, 5) as Step);
+      setMsg({ text: t('batchWizard.step4.bulkConfirmDone'), tone: 'ok' });
+      return;
+    }
+    if (!activeJobId) return;
+    setBulkConfirmLoading(true);
+    setMsg(null);
+    try {
+      // Persist the currently open file's edits before confirming the whole batch.
+      const draftSaved = await flushCurrentReviewDraft();
+      if (!draftSaved) {
+        setMsg({ text: t('batchWizard.autoSaveFailed'), tone: 'err' });
+        return;
+      }
+      const result = await commitAllReviews(activeJobId);
+      setBulkConfirmActive(true);
+      await refreshRowsFromActiveJob(activeJobId);
+      if (result.failed.length > 0) {
+        setMsg({
+          text: t('batchWizard.step4.bulkConfirmPartial')
+            .replace('{confirmed}', String(result.confirmed))
+            .replace('{failed}', String(result.failed.length)),
+          tone: 'warn',
+        });
+      } else {
+        setMsg({
+          text: t('batchWizard.step4.bulkConfirmQueued').replace(
+            '{count}',
+            String(result.total_awaiting || result.confirmed),
+          ),
+          tone: 'ok',
+        });
+      }
+    } catch (e) {
+      setMsg({ text: localizeErrorMessage(e, 'batchWizard.actionFailed'), tone: 'err' });
+    } finally {
+      setBulkConfirmLoading(false);
+    }
+  }, [
+    activeJobId,
+    bulkConfirmLoading,
+    reviewExecuteLoading,
+    flushCurrentReviewDraft,
+    isPreviewMode,
+    refreshRowsFromActiveJob,
+    setFurthestStep,
+    setMsg,
+    setRows,
+  ]);
+
   // ── Blocker effects ──
   const [leaveConfirmOpen, _setLeaveConfirmOpen] = useState(false);
   const showLeaveConfirmModal = leaveConfirmOpen || navigationBlocker.state === 'blocked';
@@ -1275,6 +1380,8 @@ export function useBatchWizard() {
     resolveExportIssue,
     advanceToUploadStep,
     advanceToExportStep,
+    bulkConfirmAll,
+    bulkConfirmLoading,
 
     // Config
     cfg,
@@ -1315,6 +1422,8 @@ export function useBatchWizard() {
     uploadIssues,
     uploadProgress,
     clearUploadIssues,
+    failedUploadCount,
+    retryFailedUploads,
 
     // Recognition
     submitQueueToWorker,

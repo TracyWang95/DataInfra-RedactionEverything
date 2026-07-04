@@ -27,7 +27,9 @@ import {
 } from '../utils/file-type';
 import { isBatchRowReadyForDelivery } from '../lib/batch-export-report';
 
-const BATCH_UPLOAD_CONCURRENCY = 1;
+// 并发上传：串行 1 在万级文件下极慢。4 路并发 + 幂等键（fileApi.upload 发
+// X-Idempotency-Key，后端去重）→ 重复/重试不会重复注册。
+const BATCH_UPLOAD_CONCURRENCY = 4;
 const BATCH_JOB_POLL_HIDDEN_MS = 5000;
 const BATCH_FIRST_REVIEWABLE_POLL_MS = 250;
 
@@ -68,6 +70,8 @@ export interface BatchFilesState {
   uploadIssues: BatchUploadIssue[];
   uploadProgress: BatchUploadProgress | null;
   clearUploadIssues: () => void;
+  failedUploadCount: number;
+  retryFailedUploads: () => void;
   failedRows: BatchRow[];
   analyzeRunning: boolean;
   hasItemsInProgress: boolean;
@@ -94,6 +98,9 @@ export function useBatchFiles(
   const itemIdByFileIdRef = useRef<Record<string, string>>({});
   const pendingUploadKeysRef = useRef<Set<string>>(new Set());
   const uploadedUploadKeysRef = useRef<Set<string>>(new Set());
+  // 上传失败的文件保留 File 引用，支持一键重试（不必重新选文件）。
+  const failedFilesRef = useRef<Map<string, File>>(new Map());
+  const [failedUploadCount, setFailedUploadCount] = useState(0);
 
   useEffect(() => {
     uploadedUploadKeysRef.current = new Set(rows.map(rowUploadKey));
@@ -239,6 +246,22 @@ export function useBatchFiles(
         const bg = batchGroupIdRef.current;
         const uploadedByIndex: Array<BatchRow | undefined> = new Array(modeAccepted.length);
         let cursor = 0;
+        // 网络抖动/隧道断连的自动重试：幂等键保证重试不会重复注册；
+        // 大文件在 fileApi.upload 内部走分块断点续传，这里的重试是最后兜底。
+        const uploadWithRetry = async (file: File) => {
+          let lastErr: unknown;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              return await fileApi.upload(file, bg, activeJobId ?? undefined, 'batch');
+            } catch (err) {
+              lastErr = err;
+              if (attempt < 3) {
+                await new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
+              }
+            }
+          }
+          throw lastErr;
+        };
         const uploadNext = async () => {
           while (cursor < modeAccepted.length) {
             const index = cursor;
@@ -251,8 +274,9 @@ export function useBatchFiles(
             );
             let ok = false;
             try {
-              const r = await fileApi.upload(file, bg, activeJobId ?? undefined, 'batch');
+              const r = await uploadWithRetry(file);
               uploadedUploadKeysRef.current.add(fileUploadKey(file));
+              failedFilesRef.current.delete(fileUploadKey(file));
               const fileType = resolveBatchFileType(r.file_type);
               uploadedByIndex[index] = {
                 file_id: r.file_id,
@@ -268,6 +292,7 @@ export function useBatchFiles(
               };
               ok = true;
             } catch (err) {
+              failedFilesRef.current.set(fileUploadKey(file), file);
               failed.push({
                 id: `upload-${file.name}-${file.size}-${Date.now()}`,
                 filename: file.name,
@@ -320,6 +345,7 @@ export function useBatchFiles(
         }
       } finally {
         pendingKeys.forEach((key) => pendingUploadKeysRef.current.delete(key));
+        setFailedUploadCount(failedFilesRef.current.size);
         const issues = [...rejectedIssues, ...failed];
         if (issues.length) {
           setUploadIssues(issues);
@@ -336,6 +362,17 @@ export function useBatchFiles(
     },
     [activeJobId, isPreviewMode, mode, modeRejectedIssue, rejectionToIssue, rows],
   );
+
+  // 一键重试：用保留的 File 引用重走上传管线（幂等键防重复注册），
+  // 断线恢复后不需要重新选文件。
+  const retryFailedUploads = useCallback(() => {
+    const files = Array.from(failedFilesRef.current.values());
+    if (!files.length) return;
+    failedFilesRef.current.clear();
+    setFailedUploadCount(0);
+    setUploadIssues([]);
+    void onDrop(files, []);
+  }, [onDrop]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -612,6 +649,8 @@ export function useBatchFiles(
     uploadIssues,
     uploadProgress,
     clearUploadIssues,
+    failedUploadCount,
+    retryFailedUploads,
     failedRows,
     analyzeRunning,
     hasItemsInProgress,

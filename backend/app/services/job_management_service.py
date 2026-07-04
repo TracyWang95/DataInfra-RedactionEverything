@@ -1598,6 +1598,88 @@ def reject_review(store: JobStore, job_id: str, item_id: str, reviewer: str = "l
     return item_to_out(ir)
 
 
+async def _seed_file_store_from_draft_payload(file_id: str, draft: dict) -> None:
+    """Push a saved review draft into the file store so the async redaction
+    worker (which reads recognized regions from the file store) honours the
+    reviewer's edits. No-op when the item has no draft (un-opened files keep
+    their recognized regions)."""
+    from app.services.file_management_service import _file_store_lock, file_store
+
+    entities = draft.get("entities")
+    boxes = draft.get("bounding_boxes")
+    if not entities and not boxes:
+        return
+    async with _file_store_lock:
+        info = file_store.get(file_id)
+        if not isinstance(info, dict):
+            return
+        if entities is not None:
+            info["entities"] = to_jsonable(entities)
+        if boxes is not None:
+            # The redaction worker accepts a flat list of box dicts directly.
+            info["bounding_boxes"] = to_jsonable(boxes)
+        file_store.set(file_id, info)
+
+
+async def commit_all_reviews(
+    store: JobStore, job_id: str, reviewer: str = "local"
+) -> dict[str, Any]:
+    """Batch one-click confirm: approve every awaiting-review item in a job at once.
+
+    Scale path（万级 job）: drafts are fetched in one query, approval is one
+    bulk transaction（per-item approve + per-item job-status refresh 在 6000+
+    条时是分钟级 O(N²)）, then items are enqueued for async redaction so the
+    worker pool honours JOB_CONCURRENCY. Items whose review was edited use
+    their draft; un-opened items keep recognized regions.
+    """
+    job = store.get_job(job_id)
+    if not job:
+        raise NotFoundError("job not found")
+
+    awaiting = [
+        it
+        for it in store.list_items(job_id)
+        if it["status"] == JobItemStatus.AWAITING_REVIEW.value
+    ]
+    if not awaiting:
+        return {"job_id": job_id, "total_awaiting": 0, "confirmed": 0, "failed": []}
+
+    awaiting_ids = [it["id"] for it in awaiting]
+    awaiting_id_set = set(awaiting_ids)
+
+    failed: list[dict[str, Any]] = []
+    try:
+        drafts = store.list_item_review_drafts(job_id)
+    except Exception:
+        logger.exception("commit_all_reviews: draft prefetch failed for job %s", job_id[:8])
+        drafts = {}
+    for item_id, (file_id, draft) in drafts.items():
+        if item_id not in awaiting_id_set:
+            continue
+        try:
+            await _seed_file_store_from_draft_payload(file_id, draft)
+        except Exception as exc:  # draft seeding must not abort the batch
+            logger.warning("commit_all_reviews: draft seed failed for %s: %s", item_id[:8], exc)
+
+    approved = store.approve_items_review_bulk(awaiting_ids, reviewer=reviewer)
+    approved_ids = {item_id for item_id, _ in approved}
+    for item_id in awaiting_ids:
+        if item_id not in approved_ids:
+            failed.append({"item_id": item_id, "error": "not approvable (status changed)"})
+
+    for item_id, file_id in approved:
+        enqueue_task("redaction", job_id, item_id, file_id)
+
+    store.touch_job_updated(job_id)
+    refresh_job_status(store, job_id)
+    return {
+        "job_id": job_id,
+        "total_awaiting": len(awaiting),
+        "confirmed": len(approved),
+        "failed": failed,
+    }
+
+
 async def commit_review(
     store: JobStore,
     job_id: str,

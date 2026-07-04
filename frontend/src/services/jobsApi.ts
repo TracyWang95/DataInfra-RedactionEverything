@@ -649,3 +649,20 @@ export function commitItemReview(
     body,
   );
 }
+
+export type CommitAllReviewsResult = {
+  job_id: string;
+  total_awaiting: number;
+  confirmed: number;
+  failed: Array<{ item_id: string; error: string }>;
+  /** 万级 job 后台执行：true = 已受理，进度靠轮询 已确认 计数 */
+  started?: boolean;
+};
+
+/** Batch one-click confirm: approve every awaiting-review item in a job at once. */
+export function commitAllReviews(jobId: string): Promise<CommitAllReviewsResult> {
+  return post<CommitAllReviewsResult>(
+    `/jobs/${encodeURIComponent(jobId)}/review/commit-all`,
+    {},
+  );
+}

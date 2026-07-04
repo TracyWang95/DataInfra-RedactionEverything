@@ -201,7 +201,7 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
         isActive={active}
         tooltip={item.label}
         className={cn(
-          'min-h-8 rounded-xl border border-transparent px-2 py-1 transition-all duration-150',
+          'min-h-12 rounded-2xl border border-transparent px-3 py-2.5 transition-all duration-150',
           active &&
             'border-sidebar-border bg-sidebar-accent font-medium text-sidebar-foreground shadow-[var(--shadow-control)]',
         )}
@@ -212,14 +212,14 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
           aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
           data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '') || 'start'}`}
         >
-          <item.icon className="size-4 opacity-70" />
+          <item.icon className="size-4 shrink-0 opacity-70" />
           {item.sublabel ? (
-            <span className="flex min-w-0 flex-col gap-0.5 leading-snug">
+            <span className="flex min-w-0 flex-col gap-0.5 py-0.5 leading-snug">
               <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
               <span className="truncate text-[11px] font-normal leading-tight opacity-45">{item.sublabel}</span>
             </span>
           ) : (
-            <span className="truncate text-xs font-medium">{item.label}</span>
+            <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
           )}
         </NavLink>
       </SidebarMenuButton>
@@ -240,7 +240,7 @@ function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string
     <NavLink
       to={item.path}
       className={cn(
-        'grid min-h-7 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-lg border border-transparent px-2 py-0.5 text-sidebar-foreground/70 transition-all duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground',
+        'grid min-h-9 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-xl border border-transparent px-2.5 py-1.5 text-sidebar-foreground/70 transition-all duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground',
         active && 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-[var(--shadow-control)]',
       )}
       aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
@@ -306,6 +306,9 @@ function SidebarServiceStatus({
           ? t('health.someDegraded')
           : t('health.allOnline');
   const gpuText = getGpuText(health, t);
+  // Accelerator family reported by the backend (npu on Ascend, gpu on NVIDIA),
+  // so the device rows/badges read NPU 0 / NPU 1 on the NPU box and GPU on the 5090.
+  const accelLabel = (health?.accelerator ?? 'gpu').toUpperCase();
 
   return (
     <section
@@ -344,7 +347,7 @@ function SidebarServiceStatus({
       <div className="mt-1.5 flex flex-col gap-1">
         {services.map(({ key, service }) => {
           const status = displayStatus(service);
-          const runtime = runtimeBadge(service, t);
+          const runtime = runtimeBadge(service, t, accelLabel);
           const serviceName = t(`health.service.${key}`);
 
           return (
@@ -379,7 +382,7 @@ function SidebarServiceStatus({
               key={card.index}
               className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5"
             >
-              <span className="shrink-0 text-[11px] font-semibold">{`${t('health.gpuUsage')} ${card.index}`}</span>
+              <span className="shrink-0 text-[11px] font-semibold">{`${accelLabel} ${card.index}`}</span>
               <span
                 className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70"
                 title={cardText}
@@ -391,7 +394,7 @@ function SidebarServiceStatus({
         })
       ) : (
         <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
-          <span className="shrink-0 text-[11px] font-semibold">{t('health.gpuUsage')}</span>
+          <span className="shrink-0 text-[11px] font-semibold">{accelLabel}</span>
           <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
             {gpuText}
           </span>
@@ -434,8 +437,11 @@ function getGpuText(health: ServicesHealth | null, t: (key: string) => string) {
   return t('health.gpuNotDetected');
 }
 
-function runtimeBadge(service: ServiceInfo, t: (key: string) => string) {
+function runtimeBadge(service: ServiceInfo, t: (key: string) => string, accelLabel: string) {
   if (service.detail?.cpu_fallback_risk) return t('health.runtime.cpuRisk');
-  if (service.detail?.runtime_mode) return t(`health.runtime.${service.detail.runtime_mode}`);
+  const mode = service.detail?.runtime_mode;
+  // 'gpu' runtime renders as the host accelerator family (NPU on Ascend, GPU on NVIDIA).
+  if (mode === 'gpu') return accelLabel;
+  if (mode) return t(`health.runtime.${mode}`);
   return null;
 }

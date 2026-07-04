@@ -80,6 +80,8 @@ export function BatchWizard() {
               uploadIssues={w.uploadIssues}
               uploadProgress={w.uploadProgress}
               clearUploadIssues={w.clearUploadIssues}
+              failedUploadCount={w.failedUploadCount}
+              retryFailedUploads={w.retryFailedUploads}
               goStep={w.goStep}
               removeRow={w.removeRow}
               clearRows={w.clearRows}
