@@ -85,6 +85,7 @@ export function BatchWizard() {
               goStep={w.goStep}
               removeRow={w.removeRow}
               clearRows={w.clearRows}
+              onInboxImported={() => void w.refreshRowsFromActiveJob()}
             />
           )}
 

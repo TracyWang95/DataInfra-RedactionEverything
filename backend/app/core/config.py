@@ -394,6 +394,11 @@ class Settings(BaseSettings):
     BACKUP_INCLUDE_FILES: bool = False  # True 时 health 检查文件备份 marker 是否新鲜
     BACKUP_FILES_MIN_FREE_GB: int = 20  # 供 backup_files.sh 读取的磁盘水位闸
 
+    # 内网落地目录导入（第五段方案一）：运维把文件 scp/rsync 到
+    # <IMPORT_INBOX_DIR>/<用户名>/，界面一键登记进批量任务（本地 move 零 HTTP）。
+    # 空 = DATA_DIR/import_inbox。
+    IMPORT_INBOX_DIR: str = ""
+
     # 回收站保留天数（R1-4）：软删文件超期后由 retention 循环真删。
     TRASH_RETENTION_DAYS: int = 7
 

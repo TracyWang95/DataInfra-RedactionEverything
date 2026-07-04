@@ -19,6 +19,7 @@ __all__ = [
     "UserPermissionsRequest",
     "UserStatusRequest",
     "ApiKeyCreateRequest",
+    "ImportInboxRequest",
     "ConcurrencySettingsRequest",
     "ConcurrencySettingsResponse",
     "ChangePasswordRequest",
@@ -166,6 +167,12 @@ class ApiKeyCreateRequest(BaseModel):
     name: str
     scope: str = "readonly"
     expires_at: str | None = None
+
+
+class ImportInboxRequest(BaseModel):
+    filenames: list[str]
+    job_id: str | None = None
+    batch_group_id: str | None = None
 
 
 class ConcurrencySettingsRequest(BaseModel):

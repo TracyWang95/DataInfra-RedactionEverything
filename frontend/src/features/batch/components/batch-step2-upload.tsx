@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { PaginationRail } from '@/components/PaginationRail';
+import { ImportInboxDialog } from './import-inbox-dialog';
 
 import type { BatchWizardMode } from '@/services/batchPipeline';
 import { isPreviewBatchJobId } from '../lib/batch-preview-fixtures';
@@ -42,6 +43,8 @@ interface BatchStep2UploadProps {
   goStep: (s: Step) => void;
   removeRow: (fileId: string) => Promise<void>;
   clearRows: () => Promise<void>;
+  /** 内网落地目录导入完成后的 rows 刷新回调（缺省不显示导入入口） */
+  onInboxImported?: () => void;
 }
 
 function BatchStep2UploadInner({
@@ -60,6 +63,7 @@ function BatchStep2UploadInner({
   goStep,
   removeRow,
   clearRows,
+  onInboxImported,
 }: BatchStep2UploadProps) {
   const t = useT();
   const previewJob = activeJobId ? isPreviewBatchJobId(activeJobId) : false;
@@ -301,18 +305,23 @@ function BatchStep2UploadInner({
                 {t('batchWizard.step2.queueCount').replace('{count}', String(rows.length))}
               </p>
             </div>
-            {rows.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 shrink-0 whitespace-nowrap text-xs text-muted-foreground hover:text-destructive"
-                onClick={handleClear}
-                disabled={clearing || loading}
-                data-testid="step2-clear-all"
-              >
-                {clearing ? t('batchWizard.step2.clearing') : t('batchWizard.step2.clearAll')}
-              </Button>
-            )}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {!previewJob && onInboxImported && (
+                <ImportInboxDialog jobId={activeJobId} onImported={onInboxImported} />
+              )}
+              {rows.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 whitespace-nowrap text-xs text-muted-foreground hover:text-destructive"
+                  onClick={handleClear}
+                  disabled={clearing || loading}
+                  data-testid="step2-clear-all"
+                >
+                  {clearing ? t('batchWizard.step2.clearing') : t('batchWizard.step2.clearAll')}
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-y-auto divide-y p-0">
             {rows.length === 0 ? (

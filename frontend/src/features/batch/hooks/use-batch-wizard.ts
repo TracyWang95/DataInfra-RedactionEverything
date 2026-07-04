@@ -889,6 +889,7 @@ export function useBatchWizard() {
     modeValid,
     mode,
     activeJobId,
+    refreshRowsFromActiveJob,
     jobConfigLocked,
     previewMode: isPreviewMode,
     interactionLocked: false,

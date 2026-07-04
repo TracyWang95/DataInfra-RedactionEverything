@@ -48,6 +48,7 @@ from app.models.schemas import (
     FileListResponse,
     FileUploadResponse,
     HybridNERRequest,
+    ImportInboxRequest,
     NERRequest,
     NERResult,
     ParseResult,
@@ -78,6 +79,39 @@ def validate_file(file: UploadFile) -> None:
             status_code=400,
             detail=f"不支持的文件类型: {ext}，支持的类型: {settings.ALLOWED_EXTENSIONS}"
         )
+
+
+@router.get("/files/import-inbox", response_model=dict)
+async def list_import_inbox(owner_id: str = Depends(require_auth)):
+    """内网落地目录：列出本人 inbox 待导入文件。注册在 /files/{file_id} 之前。"""
+    return _fms.list_import_inbox(owner_id)
+
+
+@router.post(
+    "/files/import-inbox",
+    response_model=dict,
+    dependencies=[Depends(_upload_throttle)],
+)
+async def import_inbox(
+    body: ImportInboxRequest,
+    owner_id: str = Depends(require_auth),
+):
+    """把 inbox 内选中文件登记进平台（本地 move 零 HTTP 传输，部分成功语义）。"""
+    if not body.filenames:
+        raise HTTPException(status_code=400, detail="未选择文件")
+    result = await _fms.import_inbox_files(
+        owner_id,
+        body.filenames,
+        job_id=body.job_id,
+        batch_group_id=body.batch_group_id,
+    )
+    audit_log(
+        "import",
+        "inbox",
+        f"{len(result['imported'])} imported / {len(result['failed'])} failed",
+        user=owner_id,
+    )
+    return result
 
 
 @router.get("/files/trash", response_model=dict)
