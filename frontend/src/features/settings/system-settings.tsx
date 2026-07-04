@@ -1,6 +1,6 @@
 ﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -64,6 +64,7 @@ export function SystemSettings() {
               <TabsTrigger value="runtime">运行配置</TabsTrigger>
               <TabsTrigger value="access">权限信息</TabsTrigger>
               <TabsTrigger value="audit">审计日志</TabsTrigger>
+              <TabsTrigger value="license">授权许可</TabsTrigger>
               <TabsTrigger value="monitoring">服务监控</TabsTrigger>
             </TabsList>
           </div>
@@ -76,6 +77,9 @@ export function SystemSettings() {
           </TabsContent>
           <TabsContent value="audit" className="mt-0 overflow-auto">
             <AdminAuditPanel />
+          </TabsContent>
+          <TabsContent value="license" className="mt-0 overflow-auto">
+            <AdminLicensePanel />
           </TabsContent>
           <TabsContent value="monitoring" className="mt-0 overflow-auto">
             <AdminMonitoringPanel />
@@ -514,6 +518,122 @@ function AdminAuditPanel() {
             </div>
           )}
         </div>
+      </div>
+    </section>
+  );
+}
+
+interface LicenseStatus {
+  state: string;
+  customer?: string | null;
+  edition?: string | null;
+  expires_at?: string | null;
+  days_left?: number | null;
+  max_users?: number | null;
+  seats_used?: number | null;
+  features?: Record<string, unknown> | null;
+}
+
+const LICENSE_STATE_LABEL: Record<string, string> = {
+  unlicensed: '未启用授权（开发/评估模式）',
+  valid: '授权有效',
+  expiring_soon: '即将到期',
+  grace_readonly: '已过期（宽限期·只读）',
+  blocked: '已停用（超出宽限期）',
+  invalid: '证书无效',
+};
+
+function AdminLicensePanel() {
+  const [status, setStatus] = useState<LicenseStatus | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await authFetch('/api/v1/license/status');
+      if (res.ok) setStatus((await res.json()) as LicenseStatus);
+    } catch {
+      /* 状态加载失败面板显示占位 */
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function handleUpload(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    setMsg(null);
+    setErr(null);
+    try {
+      const document = JSON.parse(await file.text()) as Record<string, unknown>;
+      const res = await authFetch('/api/v1/license/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(document),
+      });
+      if (!res.ok) {
+        const detail = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(detail?.message || `HTTP ${res.status}`);
+      }
+      setMsg('授权证书已安装并生效');
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '证书文件无法解析');
+    }
+  }
+
+  const industries = Array.isArray(status?.features?.industries)
+    ? (status.features.industries as string[]).join('、')
+    : '-';
+
+  return (
+    <section className="surface-subtle space-y-4 p-4" data-testid="admin-license-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <PanelHeading
+          title="授权许可"
+          description="离线签名证书：状态、席位与续期。默认关闭强制（unlicensed），客户交付构建才启用。"
+        />
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted">
+          上传续期证书
+          <input
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={(event) => {
+              void handleUpload(event.target.files);
+              event.target.value = '';
+            }}
+            data-testid="license-upload-input"
+          />
+        </label>
+      </div>
+      {msg && <p className="text-sm text-[var(--success-foreground)]">{msg}</p>}
+      {err && <p className="text-sm text-[var(--error-foreground)]">{err}</p>}
+      <div className="grid gap-3 sm:grid-cols-4">
+        <MetricCard
+          label="授权状态"
+          value={status ? (LICENSE_STATE_LABEL[status.state] ?? status.state) : '加载中…'}
+        />
+        <MetricCard label="客户" value={status?.customer || '-'} />
+        <MetricCard
+          label="到期日"
+          value={
+            status?.expires_at
+              ? `${status.expires_at}${status.days_left != null ? `（余 ${status.days_left} 天）` : ''}`
+              : '-'
+          }
+        />
+        <MetricCard
+          label="席位"
+          value={
+            status?.max_users != null ? `${status.seats_used ?? '-'} / ${status.max_users}` : '-'
+          }
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <MetricCard label="版本" value={status?.edition || '-'} />
+        <MetricCard label="已授权行业包" value={industries} />
       </div>
     </section>
   );
