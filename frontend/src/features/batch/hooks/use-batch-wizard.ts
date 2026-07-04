@@ -5,7 +5,7 @@ import { useLocation, useParams, useBlocker, useSearchParams } from 'react-route
 import { t } from '@/i18n';
 import { localizeErrorMessage } from '@/utils/localizeError';
 
-import { batchGetFileRaw, type BatchWizardMode } from '@/services/batchPipeline';
+import { type BatchWizardMode } from '@/services/batchPipeline';
 import { createJob, getJob, updateJobDraft } from '@/services/jobsApi';
 import { notifyDone, phaseJustFinished } from '@/lib/notifications';
 import {
@@ -46,30 +46,6 @@ import { useBatchPolling } from './use-batch-polling';
 import { useBatchReview } from './use-batch-review';
 import { useBatchSubmit } from './use-batch-submit';
 import { isBatchImageMode, resolveBatchFileType } from '../utils/file-type';
-
-const BATCH_URL_HYDRATE_FILE_CONCURRENCY = 4;
-
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  if (items.length === 0) return [];
-  const limit = Math.max(1, Math.min(concurrency, items.length));
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-
-  async function worker() {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index], index);
-    }
-  }
-
-  await Promise.all(Array.from({ length: limit }, () => worker()));
-  return results;
-}
 
 export function useBatchWizard() {
   const { batchMode } = useParams<{ batchMode: string }>();
@@ -579,15 +555,16 @@ export function useBatchWizard() {
           persistDraftFingerprint(Math.max(restoredFurthest ?? 1, resolvedNextStep) as Step);
         }
 
-        const hydratedItems = await mapWithConcurrency(
-          detail.items,
-          BATCH_URL_HYDRATE_FILE_CONCURRENCY,
-          async (entry) => {
-            const info = await batchGetFileRaw(entry.file_id);
-            return { item: entry, info };
-          },
-        );
-        if (hydrateGen !== batchHydrateGenRef.current) return;
+        // PM 万级任务「继续审阅」卡第 1 步的真根因：这里曾对每个 item 逐文件
+        // batchGetFileRaw（4 并发），5188 文件经隧道要 2-4 分钟，期间 setStep(4)
+        // 不执行、页面死停在第 1 步。后端 items 载荷已带 filename/file_type/
+        // has_output/entity_count/created_at 全部所需字段——fan-out 是纯冗余，
+        // 砍掉后万级恢复即时落步。fan-out 独有的 file_size/is_scanned 用安全
+        // 缺省（审阅页打开单个文件时会拉全量元数据）。
+        const hydratedItems = detail.items.map((entry) => ({
+          item: entry,
+          info: {} as Record<string, unknown>,
+        }));
 
         const fileIdToItemId = Object.fromEntries(
           hydratedItems.map((entry) => [entry.item.file_id, entry.item.id]),
