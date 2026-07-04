@@ -133,6 +133,7 @@ export function buildJobConfigForWorker(
     image_redaction_method: c.imageRedactionMethod,
     image_redaction_strength: c.imageRedactionStrength,
     image_fill_color: c.imageFillColor,
+    watermark_text: (c.watermarkText || '').trim() || undefined,
     batch_wizard_mode: wizardMode,
     preferred_execution: c.executionDefault === 'local' ? 'local' : 'queue',
     wizard_furthest_step: wizardFurthestStep,
@@ -175,6 +176,8 @@ export function mergeJobConfigIntoWizardCfg(
         : c.imageRedactionStrength,
     imageFillColor:
       typeof jc.image_fill_color === 'string' ? jc.image_fill_color : c.imageFillColor,
+    watermarkText:
+      typeof jc.watermark_text === 'string' ? jc.watermark_text : c.watermarkText,
   };
 }
 

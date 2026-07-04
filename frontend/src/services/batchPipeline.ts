@@ -115,6 +115,8 @@ export interface BatchWizardPersistedConfig {
   imageRedactionMethod?: 'mosaic' | 'blur' | 'fill';
   imageRedactionStrength?: number;
   imageFillColor?: string;
+  /** 成品水印文案（W2-1）；空=不加 */
+  watermarkText?: string;
   presetTextId?: string | null;
   presetVisionId?: string | null;
   executionDefault?: 'queue' | 'local';

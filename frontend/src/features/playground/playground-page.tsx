@@ -340,6 +340,8 @@ const PlaygroundInner: FC = () => {
               }
               replacementMode={recognition.replacementMode}
               setReplacementMode={recognition.setReplacementMode}
+              watermarkText={recognition.watermarkText}
+              setWatermarkText={recognition.setWatermarkText}
               clearPlaygroundTextPresetTracking={recognition.clearPlaygroundTextPresetTracking}
               onRerunNer={handleRerunNer}
               onRedact={handleRedact}

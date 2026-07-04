@@ -376,6 +376,23 @@ function BatchStep1PresetCardsInner({
                     />
                   </div>
                 )}
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    {t('batchWizard.step1.watermarkLabel')}
+                  </p>
+                  <input
+                    type="text"
+                    maxLength={64}
+                    value={cfg.watermarkText ?? ''}
+                    disabled={disabled}
+                    placeholder={t('batchWizard.step1.watermarkPlaceholder')}
+                    onChange={(event) =>
+                      setCfg((current) => ({ ...current, watermarkText: event.target.value }))
+                    }
+                    className="h-8 w-full rounded-lg border border-border/70 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                    data-testid="batch-watermark-input"
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>

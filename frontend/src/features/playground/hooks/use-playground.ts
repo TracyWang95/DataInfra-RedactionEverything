@@ -242,6 +242,7 @@ export function usePlayground() {
             replacement_mode: recognition.replacementMode,
             entity_types: [],
             custom_replacements: {},
+            watermark_text: recognition.watermarkText.trim() || undefined,
           },
         }),
         signal,

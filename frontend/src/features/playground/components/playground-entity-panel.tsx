@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -36,6 +38,8 @@ export interface PlaygroundEntityPanelProps {
   displayStats?: Record<string, { total: number; selected: number }>;
   replacementMode: 'structured' | 'smart' | 'mask';
   setReplacementMode: (mode: 'structured' | 'smart' | 'mask') => void;
+  watermarkText: string;
+  setWatermarkText: (text: string) => void;
   clearPlaygroundTextPresetTracking: () => void;
   onRerunNer: () => void;
   onRedact: () => void;
@@ -61,6 +65,8 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
     displayStats,
     replacementMode,
     setReplacementMode,
+    watermarkText,
+    setWatermarkText,
     clearPlaygroundTextPresetTracking,
     onRerunNer,
     onRedact,
@@ -178,6 +184,24 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
                 }}
               />
             )}
+
+            <div className="space-y-1">
+              <Label
+                htmlFor="playground-watermark"
+                className="text-xs text-muted-foreground"
+              >
+                {t('playground.watermarkLabel')}
+              </Label>
+              <Input
+                id="playground-watermark"
+                value={watermarkText}
+                maxLength={64}
+                onChange={(event) => setWatermarkText(event.target.value)}
+                placeholder={t('playground.watermarkPlaceholder')}
+                className="h-8 text-xs"
+                data-testid="playground-watermark-input"
+              />
+            </div>
 
             {!isImageMode && Object.keys(stats).length > 0 && (
               <div className="max-h-32 space-y-2 overflow-y-auto pr-1">
