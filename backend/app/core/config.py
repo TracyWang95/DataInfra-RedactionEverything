@@ -394,6 +394,14 @@ class Settings(BaseSettings):
     BACKUP_INCLUDE_FILES: bool = False  # True 时 health 检查文件备份 marker 是否新鲜
     BACKUP_FILES_MIN_FREE_GB: int = 20  # 供 backup_files.sh 读取的磁盘水位闸
 
+    # 回收站保留天数（R1-4）：软删文件超期后由 retention 循环真删。
+    TRASH_RETENTION_DAYS: int = 7
+
+    @field_validator("TRASH_RETENTION_DAYS")
+    @classmethod
+    def _validate_trash_retention_days(cls, v: int) -> int:
+        return max(1, min(365, v))
+
     # 全局限流（R1-3）。按用户主体计数；上传默认 240/min（4 并发万级批量
     # ≈4 文件/秒，留足余量），导出 20/min。0 不可取——validator 夹下限。
     UPLOAD_RATE_PER_MIN: int = 240

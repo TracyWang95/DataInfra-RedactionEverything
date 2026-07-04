@@ -80,6 +80,25 @@ def validate_file(file: UploadFile) -> None:
         )
 
 
+@router.get("/files/trash", response_model=dict)
+async def list_trash(owner_id: str = Depends(require_auth)):
+    """回收站清单（只含本人文件）。注册在 /files/{file_id} 之前，避免被路径参数吞掉。"""
+    rows = await _fms.list_trashed_files(owner_id=owner_id)
+    return {
+        "items": [
+            {
+                "file_id": r.get("file_id"),
+                "original_filename": r.get("original_filename") or r.get("filename"),
+                "file_type": r.get("file_type"),
+                "deleted_at": r.get("deleted_at"),
+                "has_output": bool(r.get("output_path")),
+            }
+            for r in rows
+        ],
+        "retention_days": int(settings.TRASH_RETENTION_DAYS),
+    }
+
+
 @router.get("/files", response_model=FileListResponse)
 async def list_files(
     page: int = Query(1, ge=1, description="页码，从 1 开始"),
@@ -118,6 +137,8 @@ async def list_files(
     for fid, info in file_store.items_for_owner(owner_id):
         if not isinstance(info, dict):
             continue
+        if info.get("deleted_at"):
+            continue  # 回收站文件不进处理历史（R1-4）
         if _fms.file_owner_id(info) != owner_id:
             continue
         if job_file_ids is not None and fid not in job_file_ids:
@@ -906,14 +927,38 @@ async def get_page_image(
 
 
 @router.delete("/files/{file_id}")
-async def delete_file(file_id: str, owner_id: str = Depends(require_auth)):
-    """删除文件"""
+async def delete_file(
+    file_id: str,
+    purge: bool = Query(False, description="true=彻底删除（跳过回收站）"),
+    owner_id: str = Depends(require_auth),
+):
+    """删除文件：默认进回收站（软删，TRASH_RETENTION_DAYS 后自动清除）；purge=true 彻底删除。"""
     try:
         _fms.assert_file_owner(file_id, owner_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="file not found")
-    snapshot = await _fms.delete_file(file_id)
+    if purge:
+        snapshot = await _fms.delete_file(file_id)
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        audit_log("purge", "file", file_id, user=owner_id)
+        return APIResponse(message="文件已彻底删除")
+    snapshot = await _fms.soft_delete_file(file_id)
     if not snapshot:
-        raise HTTPException(status_code=404, detail="文件不存在")
-    audit_log("delete", "file", file_id)
-    return APIResponse(message="文件删除成功")
+        raise HTTPException(status_code=404, detail="文件不存在或已在回收站")
+    audit_log("soft_delete", "file", file_id, user=owner_id)
+    return APIResponse(message="文件已移入回收站")
+
+
+@router.post("/files/{file_id}/restore", response_model=APIResponse)
+async def restore_trashed_file(file_id: str, owner_id: str = Depends(require_auth)):
+    """从回收站还原文件。"""
+    try:
+        _fms.assert_file_owner(file_id, owner_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="file not found")
+    restored = await _fms.restore_file(file_id)
+    if not restored:
+        raise HTTPException(status_code=404, detail="文件不在回收站")
+    audit_log("restore", "file", file_id, user=owner_id)
+    return APIResponse(message="文件已还原")

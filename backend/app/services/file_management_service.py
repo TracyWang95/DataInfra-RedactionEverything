@@ -733,6 +733,48 @@ async def get_file_snapshot(file_id: str) -> dict[str, Any] | None:
         return dict(info)
 
 
+async def soft_delete_file(file_id: str) -> dict[str, Any] | None:
+    """软删除（R1-4 回收站）：只打 deleted_at 标记，磁盘文件保留。
+
+    过期由 retention 扫描调用 delete_file 真删（TRASH_RETENTION_DAYS）。
+    返回快照；文件不存在或已在回收站返回 None。
+    """
+    async with _file_store_lock:
+        file_info = file_store.get(file_id)
+        if not file_info or file_info.get("deleted_at"):
+            return None
+        info = dict(file_info)
+        info["deleted_at"] = datetime.now(UTC).isoformat()
+        file_store.set(file_id, info)
+        return info
+
+
+async def restore_file(file_id: str) -> dict[str, Any] | None:
+    """从回收站还原：去掉 deleted_at 标记。"""
+    async with _file_store_lock:
+        file_info = file_store.get(file_id)
+        if not file_info or not file_info.get("deleted_at"):
+            return None
+        info = dict(file_info)
+        info.pop("deleted_at", None)
+        file_store.set(file_id, info)
+        return info
+
+
+async def list_trashed_files(owner_id: str | None = None) -> list[dict[str, Any]]:
+    """回收站清单（带 deleted_at 的记录），按删除时间倒序。"""
+    async with _file_store_lock:
+        rows = [
+            {"file_id": fid, **dict(info)}
+            for fid, info in file_store.items()
+            if isinstance(info, dict) and info.get("deleted_at")
+        ]
+    if owner_id is not None:
+        rows = [r for r in rows if r.get("owner_id") == owner_id]
+    rows.sort(key=lambda r: str(r.get("deleted_at") or ""), reverse=True)
+    return rows
+
+
 async def delete_file(file_id: str) -> dict[str, Any] | None:
     """
     Delete file from store and disk. Returns the snapshot of deleted info,

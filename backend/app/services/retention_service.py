@@ -68,6 +68,42 @@ async def retention_sweep() -> int:
     return deleted
 
 
+async def trash_sweep() -> int:
+    """清空超期回收站（R1-4）：deleted_at 超过 TRASH_RETENTION_DAYS 的真删。
+
+    与 DATA_RETENTION_DAYS 独立——回收站清扫始终开启（软删不清扫=磁盘只增不减）。
+    """
+    days = int(settings.TRASH_RETENTION_DAYS or 7)
+    from app.services.file_management_service import delete_file, file_store
+
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    expired: list[str] = []
+    for file_id, info in file_store.items():
+        if not isinstance(info, dict) or not info.get("deleted_at"):
+            continue
+        deleted_at = _parse_created_at(info.get("deleted_at"))
+        if deleted_at is not None and deleted_at < cutoff:
+            expired.append(str(file_id))
+
+    purged = 0
+    for file_id in expired:
+        try:
+            await delete_file(file_id)
+            audit_log(
+                "trash_purge",
+                "file",
+                file_id,
+                user="system",
+                detail={"trash_retention_days": days},
+            )
+            purged += 1
+        except Exception as exc:
+            logger.warning("trash sweep: unable to purge %s: %s", file_id, exc)
+    if purged:
+        logger.info("trash sweep: purged %d file(s) past %d-day window", purged, days)
+    return purged
+
+
 async def retention_loop() -> None:
     await asyncio.sleep(_FIRST_SWEEP_DELAY_SECONDS)
     while True:
@@ -75,4 +111,8 @@ async def retention_loop() -> None:
             await retention_sweep()
         except Exception:
             logger.exception("retention sweep failed")
+        try:
+            await trash_sweep()
+        except Exception:
+            logger.exception("trash sweep failed")
         await asyncio.sleep(_SWEEP_INTERVAL_SECONDS)
