@@ -32,6 +32,9 @@ from app.api import (
     structured,
     vision_pipeline,
 )
+from app.api import (
+    license as license_api,
+)
 from app.api import safety as safety_api
 from app.core.auth import require_auth, require_super_admin
 from app.core.config import settings
@@ -39,6 +42,7 @@ from app.core.errors import AppError, app_error_handler, http_exception_handler,
 from app.core.gpu_memory import query_gpu_memory as _query_gpu_memory
 from app.core.gpu_memory import query_gpu_memory_all as _query_gpu_memory_all
 from app.core.health_checks import check_has_ner_health, check_ocr_health_sync, check_service_health_sync
+from app.core.license import get_license_state
 from app.core.logging_config import setup_logging
 from app.models.schemas import HealthResponse
 
@@ -183,6 +187,18 @@ async def lifespan(app: FastAPI):
         logger.info("OCR service online (%s)", ocr_service.get_model_name())
     else:
         logger.info("OCR service offline (expected at %s)", ocr_service.base_url)
+
+    # 2a. Offline license state — one loud line so every boot log shows it
+    _license = get_license_state()
+    logger.warning(
+        "LICENSE: state=%s customer=%s edition=%s expires=%s days_left=%s enforcement=%s",
+        _license.state,
+        _license.customer or "-",
+        _license.edition or "-",
+        _license.expires_at or "-",
+        _license.days_left,
+        "on" if settings.LICENSE_ENFORCEMENT_ENABLED else "off",
+    )
 
     # 2b. Repair dirty data
     from app.services.job_store import get_job_store
@@ -387,6 +403,11 @@ from app.core.role_enforcement import RoleEnforcementMiddleware  # noqa: E402
 
 app.add_middleware(RoleEnforcementMiddleware)
 
+# Offline license enforcement (grace/blocked/invalid → mutating /api requests 403)
+from app.core.license_enforcement import LicenseEnforcementMiddleware  # noqa: E402
+
+app.add_middleware(LicenseEnforcementMiddleware)
+
 # CSRF protection (double-submit cookie)
 from app.core.csrf import CSRFMiddleware  # noqa: E402
 
@@ -414,6 +435,7 @@ os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
 # 注册路由
 app.include_router(auth_api.router, prefix=settings.API_PREFIX)
 app.include_router(audit_api.router, prefix=settings.API_PREFIX, tags=["审计日志"])
+app.include_router(license_api.router, prefix=settings.API_PREFIX, tags=["license"])
 app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理"], dependencies=[Depends(require_auth)])
 app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["redaction"], dependencies=[Depends(require_auth)])
 app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
@@ -464,9 +486,15 @@ async def root():
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health_check():
     """Basic health check."""
+    _license = get_license_state()
     return HealthResponse(
         status="healthy",
         version=settings.APP_VERSION,
+        license={
+            "state": _license.state,
+            "expires_at": _license.expires_at or None,
+            "days_left": _license.days_left,
+        },
     )
 
 

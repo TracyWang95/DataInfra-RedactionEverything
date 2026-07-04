@@ -357,6 +357,30 @@ class Settings(BaseSettings):
     # 批量任务并发配置
     JOB_CONCURRENCY: int = 3  # Number of concurrent job items to process
 
+    # 离线 License（Ed25519 签名校验，见 app/core/license.py）。默认关闭 =
+    # 现有部署行为完全不变；开启后 License 缺失/过期/无效时，变更类 /api 请求
+    # 由 LicenseEnforcementMiddleware 拒绝（403），席位数在创建用户时受限。
+    LICENSE_ENFORCEMENT_ENABLED: bool = False
+    LICENSE_FILE_PATH: str = ""  # 空 = DATA_DIR/license.json（license.py 内解析）
+    LICENSE_RECHECK_INTERVAL_HOURS: float = 24.0
+    LICENSE_EXPIRY_WARN_DAYS: int = 30
+    LICENSE_GRACE_DAYS: int = 14
+
+    @field_validator("LICENSE_RECHECK_INTERVAL_HOURS")
+    @classmethod
+    def _validate_license_recheck_interval_hours(cls, v: float) -> float:
+        return max(1.0, min(168.0, v))
+
+    @field_validator("LICENSE_EXPIRY_WARN_DAYS")
+    @classmethod
+    def _validate_license_expiry_warn_days(cls, v: int) -> int:
+        return max(1, min(120, v))
+
+    @field_validator("LICENSE_GRACE_DAYS")
+    @classmethod
+    def _validate_license_grace_days(cls, v: int) -> int:
+        return max(0, min(90, v))
+
     @field_validator("DATA_RETENTION_DAYS")
     @classmethod
     def _validate_data_retention_days(cls, v: int) -> int:
