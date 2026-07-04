@@ -47,6 +47,7 @@ def api_matrix() -> None:
             == 403
         )
         assert c.get("/api/v1/auth/concurrency", headers=h).status_code == 403
+        assert c.get("/api/v1/audit/logs", headers=h).status_code == 403
         assert (
             c.post("/api/v1/jobs/nonexistent/review/commit-all", headers=h).status_code == 403
         )

@@ -19,6 +19,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.types import Message
 
+from app.api import audit as audit_api
 from app.api import auth as auth_api
 from app.api import (
     entity_types,
@@ -407,6 +408,7 @@ os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
 
 # 注册路由
 app.include_router(auth_api.router, prefix=settings.API_PREFIX)
+app.include_router(audit_api.router, prefix=settings.API_PREFIX, tags=["审计日志"])
 app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理"], dependencies=[Depends(require_auth)])
 app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["redaction"], dependencies=[Depends(require_auth)])
 app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
