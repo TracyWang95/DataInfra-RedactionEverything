@@ -231,6 +231,12 @@ class Settings(BaseSettings):
     # must be OFF for the GLM backend, which has no phantom class and whose
     # real stamped-over signatures would be swallowed.
     ABSORB_SIGNATURES_IN_SEALS: bool = True
+    # Zoom pass for margin (binding) seals: at page scale the grounding model
+    # boxes only the most stamp-like part of an edge sliver (star/characters,
+    # dropping the serial digits below); on a tall margin-strip crop it
+    # returns the full extent. Re-detect on the affected side's margin
+    # windows and let the seal hull merge grow the box — coverage only grows.
+    VISUAL_EDGE_SEAL_REFINE: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280

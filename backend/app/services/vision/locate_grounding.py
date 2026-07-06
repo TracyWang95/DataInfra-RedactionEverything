@@ -333,6 +333,82 @@ class LocateAnythingGroundingService:
                 _elapsed_ms(supplement_start),
             )
 
+        if (
+            bool(getattr(settings, "VISUAL_EDGE_SEAL_REFINE", True))
+            and model_slugs
+            and "official_seal" in model_slugs
+        ):
+            # Margin (binding) seals: at page scale the model boxes only the
+            # most stamp-like part of an edge sliver, dropping the serial
+            # digits below it. Re-detect on the affected side's margin
+            # windows (native resolution restores the full extent) and let
+            # _merge_seal_shards hull the results with the originals —
+            # coverage can only grow. Sides use the same outer-third
+            # geometry as _margin_tiles.
+            refine_sides = set()
+            for b in boxes:
+                if b.type != "official_seal":
+                    continue
+                center_x = b.x + b.width / 2.0
+                if center_x <= 1.0 / 3.0:
+                    refine_sides.add("left")
+                elif center_x >= 2.0 / 3.0:
+                    refine_sides.add("right")
+            if refine_sides:
+                refine_start = time.perf_counter()
+
+                def _side_tiles(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
+                    return [
+                        t for t in _margin_tiles(width, height)
+                        if ("left" in refine_sides and t[0] == 0)
+                        or ("right" in refine_sides and t[0] != 0)
+                    ]
+
+                refine_boxes = await self._detect_on_tiles(
+                    image_data,
+                    page,
+                    ["official_seal"],
+                    tiles_for=_side_tiles,
+                    source_detail="locate_anything:edge_refine",
+                )
+                # A refine box exists because of a specific full-frame edge
+                # seal, so fold it into the nearest one (argmin on y-center
+                # distance, no threshold) as a grow-only hull. Refine boxes
+                # never merge originals with each other, so two distinct
+                # stamps in the same margin column stay separate.
+                originals = [
+                    (i, b) for i, b in enumerate(boxes) if b.type == "official_seal"
+                ]
+                folded = 0
+                for rb in refine_boxes:
+                    if not originals:
+                        boxes.append(rb)
+                        continue
+                    rb_cy = rb.y + rb.height / 2.0
+                    idx, target = min(
+                        originals,
+                        key=lambda item: abs(item[1].y + item[1].height / 2.0 - rb_cy),
+                    )
+                    x1 = min(target.x, rb.x)
+                    y1 = min(target.y, rb.y)
+                    x2 = max(target.x + target.width, rb.x + rb.width)
+                    y2 = max(target.y + target.height, rb.y + rb.height)
+                    grown = target.model_copy(update={
+                        "x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1,
+                    })
+                    boxes[idx] = grown
+                    originals = [
+                        (i, boxes[i] if i == idx else b) for i, b in originals
+                    ]
+                    folded += 1
+                logger.info(
+                    "Edge-seal refine (%s): %d box(es) folded into %d edge seal(s) in %dms",
+                    "/".join(sorted(refine_sides)),
+                    folded,
+                    len({i for i, _ in originals}),
+                    _elapsed_ms(refine_start),
+                )
+
         retry_slugs = [
             slug
             for slug in (model_slugs or [])
@@ -433,13 +509,16 @@ class LocateAnythingGroundingService:
         image_data: bytes,
         page: int,
         slugs: list[str],
+        tiles_for=None,
+        source_detail: str = "locate_anything:tile_retry",
     ) -> list[BoundingBox]:
-        """Re-run zero-recall categories on native-resolution tiles.
+        """Re-run categories on native-resolution tiles.
 
-        Margin strips for binding seals, a bottom row for watermark QR
-        codes. Hits are mapped back to page-normalized coordinates;
-        duplicates from overlapping tiles collapse in the merge layer
-        (seal hull merge / IoU dedup).
+        Default tiling: margin strips for binding seals, a bottom row for
+        watermark QR codes; callers may pass ``tiles_for(slug, w, h)`` for a
+        custom tile set (edge-seal refine). Hits are mapped back to
+        page-normalized coordinates; duplicates from overlapping tiles
+        collapse in the merge layer (seal hull merge / IoU dedup).
         """
         try:
             image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
@@ -452,11 +531,14 @@ class LocateAnythingGroundingService:
         tasks = []
         metas = []
         for slug in slugs:
-            tiles = (
-                _margin_tiles(width, height)
-                if slug in _TILE_RETRY_MARGIN_SLUGS
-                else _bottom_tiles(width, height)
-            )
+            if tiles_for is not None:
+                tiles = tiles_for(slug, width, height)
+            else:
+                tiles = (
+                    _margin_tiles(width, height)
+                    if slug in _TILE_RETRY_MARGIN_SLUGS
+                    else _bottom_tiles(width, height)
+                )
             for x0, y0, x1, y1 in tiles:
                 encoded = io.BytesIO()
                 image.crop((x0, y0, x1, y1)).save(encoded, format="JPEG", quality=_JPEG_QUALITY)
@@ -507,7 +589,7 @@ class LocateAnythingGroundingService:
                         page=page,
                         confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
                         source="visual_features",
-                        source_detail="locate_anything:tile_retry",
+                        source_detail=source_detail,
                         evidence_source="visual_feature_model",
                     )
                 )
