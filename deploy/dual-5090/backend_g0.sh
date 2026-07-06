@@ -13,7 +13,10 @@ export VISUAL_FEATURES_MODEL_NAME=GLM-4.6V-Flash-FP8
 export LOCATE_ANYTHING_ENABLED=1
 export OCR_STRUCTURE_ENABLED=true OCR_STRUCTURE_PRIMARY=true OCR_VL_ENABLED=1 VISION_DUAL_PIPELINE_PARALLEL=0 OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL=1 OCR_MAX_NEW_TOKENS=8192
 export AUTH_ENABLED=true
-export JWT_SECRET_KEY=REPLACE_WITH_YOUR_JWT_SECRET
+# JWT secret externalized to ~/.redaction_secrets (chmod 600) — CP0-5/CP5-1.
+# Fail fast if the secrets file is missing rather than silently using a weak default.
+if [ ! -f ~/.redaction_secrets ]; then echo 'FATAL: ~/.redaction_secrets missing'; exit 1; fi
+. ~/.redaction_secrets
 export JOB_CONCURRENCY=6
 export BATCH_RECOGNITION_PAGE_CONCURRENCY=3
 export DATA_DIR=~/redaction-deploy/backend/data
