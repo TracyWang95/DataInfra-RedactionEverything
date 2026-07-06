@@ -50,9 +50,11 @@ prometheus-client>=0.20.0
 
 # Security
 cryptography>=46.0.7
+ldap3>=2.9.1  # 企业 AD/LDAP 对接（LDAP_ENABLED=true 时才懒加载；纯 Python，可离线 wheel）
 # pyclamd>=0.4.0  # Optional; requires a ClamAV daemon.
 
 # Development tools
 python-dotenv>=1.2.2
 pytest>=9.0.3
 setuptools>=77,<81
+paramiko>=3.4  # SFTP 主动拉取（内网服务器间文件接入,第五段方案二）

@@ -8,15 +8,29 @@ app.services.file_management_service.
 import json
 import logging
 import os
+import re
 import shutil
+import time
 import uuid
 
 import aiofiles
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 
-from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, Response
 
 import app.services.export_service as _export
@@ -27,19 +41,34 @@ from app.core.audit import audit_log
 from app.core.auth import require_auth
 from app.core.config import settings
 from app.core.idempotency import check_idempotency, save_idempotency
+from app.core.rate_limit import RateLimiter, make_user_throttle
 from app.models.schemas import (
     APIResponse,
     BatchDownloadRequest,
     FileListResponse,
     FileUploadResponse,
     HybridNERRequest,
+    ImportInboxRequest,
     NERRequest,
     NERResult,
     ParseResult,
+    SftpPullRequest,
+    SftpSourceRequest,
 )
 from app.services.job_store import JobStore
 
 router = APIRouter()
+
+# R1-3 全局限流：按用户主体计数。上传只挂整文件与 resumable init（chunk 不
+# 计数——万级批量的分块流量不受影响）；导出挂批量打包。速率 env 可调。
+_upload_throttle = make_user_throttle(
+    RateLimiter(max_requests=settings.UPLOAD_RATE_PER_MIN, window_seconds=60),
+    "upload",
+)
+_export_throttle = make_user_throttle(
+    RateLimiter(max_requests=settings.EXPORT_RATE_PER_MIN, window_seconds=60),
+    "export",
+)
 
 
 def validate_file(file: UploadFile) -> None:
@@ -52,6 +81,126 @@ def validate_file(file: UploadFile) -> None:
             status_code=400,
             detail=f"不支持的文件类型: {ext}，支持的类型: {settings.ALLOWED_EXTENSIONS}"
         )
+
+
+@router.get("/files/import-inbox", response_model=dict)
+async def list_import_inbox(owner_id: str = Depends(require_auth)):
+    """内网落地目录：列出本人 inbox 待导入文件。注册在 /files/{file_id} 之前。"""
+    return _fms.list_import_inbox(owner_id)
+
+
+@router.post(
+    "/files/import-inbox",
+    response_model=dict,
+    dependencies=[Depends(_upload_throttle)],
+)
+async def import_inbox(
+    body: ImportInboxRequest,
+    owner_id: str = Depends(require_auth),
+):
+    """把 inbox 内选中文件登记进平台（本地 move 零 HTTP 传输，部分成功语义）。"""
+    if not body.filenames:
+        raise HTTPException(status_code=400, detail="未选择文件")
+    result = await _fms.import_inbox_files(
+        owner_id,
+        body.filenames,
+        job_id=body.job_id,
+        batch_group_id=body.batch_group_id,
+    )
+    audit_log(
+        "import",
+        "inbox",
+        f"{len(result['imported'])} imported / {len(result['failed'])} failed",
+        user=owner_id,
+    )
+    return result
+
+
+@router.get("/files/import-sftp/sources", response_model=list[dict])
+async def list_sftp_sources(owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    return sftp_import.list_sources(owner_id)
+
+
+@router.post("/files/import-sftp/sources", response_model=dict)
+async def create_sftp_source(body: SftpSourceRequest, owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    result = sftp_import.create_source(
+        owner_id,
+        name=body.name,
+        host=body.host,
+        port=body.port,
+        username=body.username,
+        password=body.password,
+        private_key=body.private_key,
+        root_path=body.root_path,
+    )
+    audit_log("create", "sftp_source", result["source_id"], user=owner_id)
+    return result
+
+
+@router.delete("/files/import-sftp/sources/{source_id}", response_model=dict)
+async def delete_sftp_source(source_id: str, owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    if not sftp_import.delete_source(owner_id, source_id):
+        raise HTTPException(status_code=404, detail="SFTP 源不存在")
+    audit_log("delete", "sftp_source", source_id, user=owner_id)
+    return {"source_id": source_id, "deleted": True}
+
+
+@router.get("/files/import-sftp/browse", response_model=dict)
+async def browse_sftp(
+    source_id: str,
+    path: str = "",
+    owner_id: str = Depends(require_auth),
+):
+    from app.services import sftp_import
+
+    return sftp_import.browse(owner_id, source_id, path)
+
+
+@router.post(
+    "/files/import-sftp/pull",
+    response_model=dict,
+    dependencies=[Depends(_upload_throttle)],
+)
+async def pull_sftp(body: SftpPullRequest, owner_id: str = Depends(require_auth)):
+    from app.services import sftp_import
+
+    if not body.names:
+        raise HTTPException(status_code=400, detail="未选择文件")
+    result = await sftp_import.pull_files(
+        owner_id, body.source_id, body.names, path=body.path, job_id=body.job_id
+    )
+    audit_log(
+        "import",
+        "sftp",
+        f"{len(result['imported'])} pulled / {len(result['failed'])} failed",
+        user=owner_id,
+    )
+    return result
+
+
+@router.get("/files/trash", response_model=dict)
+async def list_trash(owner_id: str = Depends(require_auth)):
+    """回收站清单（只含本人文件）。注册在 /files/{file_id} 之前，避免被路径参数吞掉。"""
+    rows = await _fms.list_trashed_files(owner_id=owner_id)
+    return {
+        "items": [
+            {
+                "file_id": r.get("file_id"),
+                "original_filename": r.get("original_filename") or r.get("filename"),
+                "file_type": r.get("file_type"),
+                "deleted_at": r.get("deleted_at"),
+                "has_output": bool(r.get("output_path")),
+            }
+            for r in rows
+        ],
+        "retention_days": int(settings.TRASH_RETENTION_DAYS),
+    }
 
 
 @router.get("/files", response_model=FileListResponse)
@@ -92,6 +241,8 @@ async def list_files(
     for fid, info in file_store.items_for_owner(owner_id):
         if not isinstance(info, dict):
             continue
+        if info.get("deleted_at"):
+            continue  # 回收站文件不进处理历史（R1-4）
         if _fms.file_owner_id(info) != owner_id:
             continue
         if job_file_ids is not None and fid not in job_file_ids:
@@ -184,7 +335,7 @@ def _assert_batch_delivery_ready(
         )
 
 
-@router.post("/files/batch/download")
+@router.post("/files/batch/download", dependencies=[Depends(_export_throttle)])
 async def batch_download_zip(
     request: BatchDownloadRequest,
     store: JobStore = Depends(get_job_store),
@@ -300,7 +451,11 @@ async def download_batch_export_volume(
     return FileResponse(path, media_type=media, filename=name)
 
 
-@router.post("/files/upload", response_model=FileUploadResponse)
+@router.post(
+    "/files/upload",
+    response_model=FileUploadResponse,
+    dependencies=[Depends(_upload_throttle)],
+)
 async def upload_file(
     file: UploadFile = File(...),
     batch_group_id: str | None = Form(None),
@@ -396,6 +551,254 @@ async def upload_file(
             raise HTTPException(status_code=500, detail="任务注册失败，文件已回滚")
 
     audit_log("upload", "file", response.file_id, detail={"filename": file.filename})
+    save_idempotency(scoped_idempotency_key, response)
+    return response
+
+
+# ── 断点续传（分块上传）──────────────────────────────────────────────
+# 弱网/隧道场景下大文件整包上传一断全丢。分块方案：init 建会话 → 逐块 PUT
+# （偏移必须等于已收字节，重放幂等）→ 断线后 GET 查已收字节从断点续 →
+# complete 走与 /files/upload 完全相同的校验注册路径（magic bytes/病毒扫描/
+# 任务挂接），因此安全语义与整包上传一致。
+
+_RESUMABLE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_RESUMABLE_TTL_SECONDS = 24 * 3600
+_RESUMABLE_MAX_CHUNK_BYTES = 8 * 1024 * 1024
+_RESUMABLE_CHUNK_SIZE_HINT = 5 * 1024 * 1024
+
+
+class ResumableUploadInitBody(BaseModel):
+    filename: str
+    file_size: int
+    batch_group_id: str | None = None
+    job_id: str | None = None
+    upload_source: str | None = None
+
+
+def _resumable_owner_dir(owner_id: str) -> str:
+    safe_owner = re.sub(r"[^A-Za-z0-9_.@-]", "_", str(owner_id or "local_user"))
+    return os.path.join(settings.UPLOAD_DIR, "partial", safe_owner)
+
+
+def _resumable_paths(owner_id: str, upload_id: str) -> tuple[str, str]:
+    if not _RESUMABLE_ID_RE.match(upload_id or ""):
+        raise HTTPException(status_code=404, detail="上传会话不存在")
+    owner_dir = _resumable_owner_dir(owner_id)
+    return (
+        os.path.join(owner_dir, f"{upload_id}.part"),
+        os.path.join(owner_dir, f"{upload_id}.json"),
+    )
+
+
+def _load_resumable_session(owner_id: str, upload_id: str) -> tuple[str, str, dict]:
+    part_path, meta_path = _resumable_paths(owner_id, upload_id)
+    if not (os.path.exists(part_path) and os.path.exists(meta_path)):
+        raise HTTPException(status_code=404, detail="上传会话不存在或已过期")
+    try:
+        with open(meta_path, encoding="utf-8") as fh:
+            meta = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(status_code=404, detail="上传会话不存在或已过期")
+    return part_path, meta_path, meta
+
+
+def _cleanup_stale_partials(owner_dir: str) -> None:
+    """Best-effort: drop partial sessions older than the TTL."""
+    try:
+        cutoff = time.time() - _RESUMABLE_TTL_SECONDS
+        for name in os.listdir(owner_dir):
+            path = os.path.join(owner_dir, name)
+            try:
+                if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+
+@router.post("/files/upload/resumable/init", dependencies=[Depends(_upload_throttle)])
+async def resumable_upload_init(
+    body: ResumableUploadInitBody,
+    owner_id: str = Depends(require_auth),
+):
+    if not body.filename:
+        raise HTTPException(status_code=400, detail="缺少文件名")
+    ext = os.path.splitext(body.filename)[1].lower()
+    if ext not in settings.ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"不支持的文件类型: {ext}，支持的类型: {settings.ALLOWED_EXTENSIONS}",
+        )
+    if body.file_size <= 0 or body.file_size > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"文件大小无效，最大支持 {settings.MAX_FILE_SIZE // 1024 // 1024}MB",
+        )
+
+    owner_dir = _resumable_owner_dir(owner_id)
+    os.makedirs(owner_dir, exist_ok=True)
+    _cleanup_stale_partials(owner_dir)
+
+    disk = shutil.disk_usage(owner_dir)
+    if disk.free < body.file_size + 500 * 1024 * 1024:
+        raise HTTPException(status_code=507, detail="磁盘空间不足，请清理后重试")
+
+    upload_id = uuid.uuid4().hex
+    part_path, meta_path = _resumable_paths(owner_id, upload_id)
+    with open(part_path, "wb"):
+        pass
+    with open(meta_path, "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "filename": body.filename,
+                "file_size": int(body.file_size),
+                "batch_group_id": body.batch_group_id,
+                "job_id": body.job_id,
+                "upload_source": body.upload_source,
+                "created_at": time.time(),
+            },
+            fh,
+        )
+    return {
+        "upload_id": upload_id,
+        "received_bytes": 0,
+        "chunk_size": _RESUMABLE_CHUNK_SIZE_HINT,
+    }
+
+
+@router.get("/files/upload/resumable/{upload_id}")
+async def resumable_upload_status(
+    upload_id: str,
+    owner_id: str = Depends(require_auth),
+):
+    part_path, _meta_path, meta = _load_resumable_session(owner_id, upload_id)
+    return {
+        "upload_id": upload_id,
+        "received_bytes": os.path.getsize(part_path),
+        "file_size": meta.get("file_size"),
+    }
+
+
+@router.put("/files/upload/resumable/{upload_id}/chunk")
+async def resumable_upload_chunk(
+    upload_id: str,
+    request: Request,
+    offset: int = Query(..., ge=0),
+    owner_id: str = Depends(require_auth),
+):
+    part_path, _meta_path, meta = _load_resumable_session(owner_id, upload_id)
+    declared_size = int(meta.get("file_size") or 0)
+    current = os.path.getsize(part_path)
+    if offset < current:
+        # 重放（客户端超时但服务端其实已收到）：幂等返回当前进度
+        return {"upload_id": upload_id, "received_bytes": current, "replayed": True}
+    if offset > current:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "偏移不连续，请从 received_bytes 续传", "received_bytes": current},
+        )
+
+    written = 0
+    try:
+        async with aiofiles.open(part_path, "ab") as f:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                written += len(chunk)
+                if written > _RESUMABLE_MAX_CHUNK_BYTES or current + written > declared_size:
+                    raise HTTPException(status_code=400, detail="分块超出声明大小")
+                await f.write(chunk)
+    except HTTPException:
+        _truncate_partial(part_path, current)
+        raise
+    except OSError:
+        _truncate_partial(part_path, current)
+        raise HTTPException(status_code=500, detail="分块保存失败，请重试")
+
+    return {"upload_id": upload_id, "received_bytes": current + written}
+
+
+def _truncate_partial(part_path: str, size: int) -> None:
+    """Restore the append-only invariant after a failed/oversized chunk."""
+    try:
+        with open(part_path, "ab") as fh:
+            fh.truncate(size)
+    except OSError:
+        logger.warning("unable to truncate partial upload %s to %d", part_path, size)
+
+
+@router.post("/files/upload/resumable/{upload_id}/complete")
+async def resumable_upload_complete(
+    upload_id: str,
+    x_idempotency_key: str | None = Header(None, alias="X-Idempotency-Key"),
+    owner_id: str = Depends(require_auth),
+):
+    # 幂等在会话查找之前：complete 响应丢失后的重试，此时 partial 已被消费，
+    # 只能靠幂等缓存返回同一个注册结果。
+    scoped_idempotency_key = f"{owner_id}:{x_idempotency_key}" if x_idempotency_key else None
+    cached = check_idempotency(scoped_idempotency_key)
+    if cached is not None:
+        return cached
+
+    part_path, meta_path, meta = _load_resumable_session(owner_id, upload_id)
+    declared_size = int(meta.get("file_size") or 0)
+    received = os.path.getsize(part_path)
+    if received != declared_size:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "文件未传完，请续传", "received_bytes": received},
+        )
+
+    filename = str(meta.get("filename") or "")
+    file_id = str(uuid.uuid4())
+    file_ext = os.path.splitext(filename)[1].lower()
+    stored_filename = f"{file_id}{file_ext}"
+    file_path = os.path.realpath(os.path.join(settings.UPLOAD_DIR, stored_filename))
+    os.replace(part_path, file_path)
+    try:
+        os.remove(meta_path)
+    except OSError:
+        pass
+
+    try:
+        response, jid = await _fms.process_upload(
+            file_path=file_path,
+            file_ext=file_ext,
+            filename=filename,
+            file_size=received,
+            batch_group_id=meta.get("batch_group_id"),
+            job_id=meta.get("job_id"),
+            upload_source=meta.get("upload_source"),
+            owner_id=owner_id,
+        )
+    except ValueError as exc:
+        await _fms.rollback_upload(file_id, file_path)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to register resumable upload %s, rolling back", file_id)
+        await _fms.rollback_upload(file_id, file_path)
+        raise HTTPException(status_code=500, detail="文件注册失败，文件已回滚")
+
+    if jid:
+        try:
+            _fms.register_file_with_job(jid, response.file_id, owner_id=owner_id)
+        except ValueError as exc:
+            await _fms.rollback_upload(response.file_id, file_path)
+            raise HTTPException(status_code=400, detail=str(exc))
+        except HTTPException:
+            await _fms.rollback_upload(response.file_id, file_path)
+            raise
+        except Exception:
+            logger.exception(
+                "Failed to register resumable file %s with job %s, rolling back",
+                response.file_id,
+                jid,
+            )
+            await _fms.rollback_upload(response.file_id, file_path)
+            raise HTTPException(status_code=500, detail="任务注册失败，文件已回滚")
+
+    audit_log("upload", "file", response.file_id, detail={"filename": filename, "resumable": True})
     save_idempotency(scoped_idempotency_key, response)
     return response
 
@@ -628,14 +1031,38 @@ async def get_page_image(
 
 
 @router.delete("/files/{file_id}")
-async def delete_file(file_id: str, owner_id: str = Depends(require_auth)):
-    """删除文件"""
+async def delete_file(
+    file_id: str,
+    purge: bool = Query(False, description="true=彻底删除（跳过回收站）"),
+    owner_id: str = Depends(require_auth),
+):
+    """删除文件：默认进回收站（软删，TRASH_RETENTION_DAYS 后自动清除）；purge=true 彻底删除。"""
     try:
         _fms.assert_file_owner(file_id, owner_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="file not found")
-    snapshot = await _fms.delete_file(file_id)
+    if purge:
+        snapshot = await _fms.delete_file(file_id)
+        if not snapshot:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        audit_log("purge", "file", file_id, user=owner_id)
+        return APIResponse(message="文件已彻底删除")
+    snapshot = await _fms.soft_delete_file(file_id)
     if not snapshot:
-        raise HTTPException(status_code=404, detail="文件不存在")
-    audit_log("delete", "file", file_id)
-    return APIResponse(message="文件删除成功")
+        raise HTTPException(status_code=404, detail="文件不存在或已在回收站")
+    audit_log("soft_delete", "file", file_id, user=owner_id)
+    return APIResponse(message="文件已移入回收站")
+
+
+@router.post("/files/{file_id}/restore", response_model=APIResponse)
+async def restore_trashed_file(file_id: str, owner_id: str = Depends(require_auth)):
+    """从回收站还原文件。"""
+    try:
+        _fms.assert_file_owner(file_id, owner_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="file not found")
+    restored = await _fms.restore_file(file_id)
+    if not restored:
+        raise HTTPException(status_code=404, detail="文件不在回收站")
+    audit_log("restore", "file", file_id, user=owner_id)
+    return APIResponse(message="文件已还原")

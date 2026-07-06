@@ -228,5 +228,72 @@
       "organization_like",
       "person_like"
     ]
+  },
+  {
+    "id": "industry_gov_document_release",
+    "name": "Industry - Government document release",
+    "kind": "full",
+    "selectedEntityTypeIds": [
+      "PERSON",
+      "ID_CARD",
+      "PASSPORT",
+      "PHONE",
+      "EMAIL",
+      "ADDRESS",
+      "INSTITUTION_NAME",
+      "DATE",
+      "SOCIAL_SECURITY",
+      "DOCUMENT_NUMBER",
+      "BANK_CARD"
+    ],
+    "ocrHasTypes": [
+      "PERSON",
+      "ID_CARD",
+      "PASSPORT",
+      "PHONE",
+      "EMAIL",
+      "ADDRESS",
+      "INSTITUTION_NAME",
+      "DATE",
+      "SOCIAL_SECURITY",
+      "DOCUMENT_NUMBER",
+      "BANK_CARD"
+    ],
+    "visualFeatureTypes": [
+      "face",
+      "id_card",
+      "passport",
+      "official_seal",
+      "signature",
+      "fingerprint"
+    ],
+    "replacementMode": "structured",
+    "created_at": "2026-07-04T00:00:00+00:00",
+    "updated_at": "2026-07-04T00:00:00+00:00",
+    "dataDomains": [
+      "account_transaction",
+      "address_location",
+      "document_record",
+      "organization_subject",
+      "pii",
+      "time_event"
+    ],
+    "genericTargets": [
+      "GEN_ACCOUNT_TRANSACTION",
+      "GEN_ADDRESS_LOCATION",
+      "GEN_CONTACT",
+      "GEN_DATE_TIME",
+      "GEN_NUMBER_CODE",
+      "GEN_ORGANIZATION_SUBJECT",
+      "GEN_PERSON_SUBJECT"
+    ],
+    "linkageGroups": [
+      "account_like",
+      "address_like",
+      "date_like",
+      "identifier_like",
+      "organization_like",
+      "person_like"
+    ]
   }
 ]

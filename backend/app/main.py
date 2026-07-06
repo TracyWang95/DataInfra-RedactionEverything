@@ -19,6 +19,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 from starlette.types import Message
 
+from app.api import audit as audit_api
 from app.api import auth as auth_api
 from app.api import (
     entity_types,
@@ -31,6 +32,9 @@ from app.api import (
     structured,
     vision_pipeline,
 )
+from app.api import (
+    license as license_api,
+)
 from app.api import safety as safety_api
 from app.core.auth import require_auth, require_super_admin
 from app.core.config import settings
@@ -38,6 +42,7 @@ from app.core.errors import AppError, app_error_handler, http_exception_handler,
 from app.core.gpu_memory import query_gpu_memory as _query_gpu_memory
 from app.core.gpu_memory import query_gpu_memory_all as _query_gpu_memory_all
 from app.core.health_checks import check_has_ner_health, check_ocr_health_sync, check_service_health_sync
+from app.core.license import get_license_state
 from app.core.logging_config import setup_logging
 from app.models.schemas import HealthResponse
 
@@ -150,10 +155,10 @@ async def lifespan(app: FastAPI):
     # === Startup ===
 
     # 0. Database integrity check + restore from backup if corrupted
-    from app.core.db_backup import backup_sqlite, ensure_db_healthy
+    from app.core.db_backup import ensure_db_healthy
     ensure_db_healthy(settings.JOB_DB_PATH)
 
-    # Also check file_store and token_blacklist databases
+    # Also check file_store, token_blacklist and structured_store databases
     from app.services.file_management_service import get_file_store
     _fs = get_file_store()
     if hasattr(_fs, 'db_path'):
@@ -162,6 +167,7 @@ async def lifespan(app: FastAPI):
     _bl = get_blacklist()
     if hasattr(_bl, 'db_path'):
         ensure_db_healthy(_bl.db_path)
+    ensure_db_healthy(os.path.join(settings.DATA_DIR, "structured_store.sqlite3"))
 
     # 0b. Run file-store migrations (JSON->SQLite, path normalization)
     from app.services.file_management_service import run_startup_migrations
@@ -182,6 +188,18 @@ async def lifespan(app: FastAPI):
         logger.info("OCR service online (%s)", ocr_service.get_model_name())
     else:
         logger.info("OCR service offline (expected at %s)", ocr_service.base_url)
+
+    # 2a. Offline license state — one loud line so every boot log shows it
+    _license = get_license_state()
+    logger.warning(
+        "LICENSE: state=%s customer=%s edition=%s expires=%s days_left=%s enforcement=%s",
+        _license.state,
+        _license.customer or "-",
+        _license.edition or "-",
+        _license.expires_at or "-",
+        _license.days_left,
+        "on" if settings.LICENSE_ENFORCEMENT_ENABLED else "off",
+    )
 
     # 2b. Repair dirty data
     from app.services.job_store import get_job_store
@@ -234,33 +252,39 @@ async def lifespan(app: FastAPI):
     if _redispatched:
         logger.info("Startup: re-enqueued %d items (recognition + redaction)", _redispatched)
 
+    # 3b. 单 worker 约束告警（auth.json 仅进程内锁保护，见 docs/backup-restore.md）
+    _workers_env = os.environ.get("WEB_CONCURRENCY") or os.environ.get("UVICORN_WORKERS")
+    if _workers_env and _workers_env.strip().isdigit() and int(_workers_env) > 1:
+        logger.error(
+            "检测到多 worker 配置（%s）：auth.json 等 JSON 存储仅有进程内锁，"
+            "多 worker 并发写存在竞态。本平台要求单 worker 部署。",
+            _workers_env,
+        )
+
     # 4. Start periodic orphan cleanup
     _cleanup_task = asyncio.create_task(_periodic_cleanup())
 
-    # 5. Start periodic database backup (every hour) - all SQLite databases
+    # 5. Start periodic backup — full inventory (4 SQLite + config/credential
+    # files) via backup_all; blocking sqlite Online Backup runs in executor.
     async def _periodic_backup():
+        from app.core.db_backup import backup_all
+
         while True:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(settings.BACKUP_INTERVAL_SEC)
             try:
-                backup_sqlite(settings.JOB_DB_PATH)
+                loop = asyncio.get_event_loop()
+                results = await loop.run_in_executor(None, backup_all)
+                failed = [name for name, ok in results.items() if not ok]
+                if failed:
+                    logger.error("periodic backup failures: %s", ", ".join(failed))
             except Exception:
-                logger.exception("periodic database backup failed: jobs")
-            try:
-                from app.services.file_management_service import get_file_store
-                fs = get_file_store()
-                if hasattr(fs, 'db_path'):
-                    backup_sqlite(fs.db_path)
-            except Exception:
-                logger.exception("periodic database backup failed: file_store")
-            try:
-                from app.core.token_blacklist import get_blacklist
-                bl = get_blacklist()
-                if hasattr(bl, 'db_path'):
-                    backup_sqlite(bl.db_path)
-            except Exception:
-                logger.exception("periodic database backup failed: token_blacklist")
+                logger.exception("periodic backup sweep failed")
 
     _backup_task = asyncio.create_task(_periodic_backup())
+
+    # 6. Data-retention sweep (no-op unless DATA_RETENTION_DAYS > 0)
+    from app.services.retention_service import retention_loop
+    _retention_task = asyncio.create_task(retention_loop())
 
     yield
 
@@ -269,7 +293,8 @@ async def lifespan(app: FastAPI):
     _worker_tasks = _task_queue.stop()
     _cleanup_task.cancel()
     _backup_task.cancel()
-    tasks_to_wait = [_cleanup_task, _backup_task] + _worker_tasks
+    _retention_task.cancel()
+    tasks_to_wait = [_cleanup_task, _backup_task, _retention_task] + _worker_tasks
     done, pending = await asyncio.wait(tasks_to_wait, timeout=30.0)
     for t in pending:
         t.cancel()
@@ -376,6 +401,16 @@ app.add_middleware(
 
 app.add_middleware(MaxBodySizeMiddleware)
 
+# Role matrix enforcement (viewer read-only, operator no review decisions)
+from app.core.role_enforcement import RoleEnforcementMiddleware  # noqa: E402
+
+app.add_middleware(RoleEnforcementMiddleware)
+
+# Offline license enforcement (grace/blocked/invalid → mutating /api requests 403)
+from app.core.license_enforcement import LicenseEnforcementMiddleware  # noqa: E402
+
+app.add_middleware(LicenseEnforcementMiddleware)
+
 # CSRF protection (double-submit cookie)
 from app.core.csrf import CSRFMiddleware  # noqa: E402
 
@@ -402,6 +437,8 @@ os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
 
 # 注册路由
 app.include_router(auth_api.router, prefix=settings.API_PREFIX)
+app.include_router(audit_api.router, prefix=settings.API_PREFIX, tags=["审计日志"])
+app.include_router(license_api.router, prefix=settings.API_PREFIX, tags=["license"])
 app.include_router(files.router, prefix=settings.API_PREFIX, tags=["文件管理"], dependencies=[Depends(require_auth)])
 app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["redaction"], dependencies=[Depends(require_auth)])
 app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
@@ -452,9 +489,15 @@ async def root():
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 async def health_check():
     """Basic health check."""
+    _license = get_license_state()
     return HealthResponse(
         status="healthy",
         version=settings.APP_VERSION,
+        license={
+            "state": _license.state,
+            "expires_at": _license.expires_at or None,
+            "days_left": _license.days_left,
+        },
     )
 
 
@@ -564,6 +607,45 @@ async def services_health():
         for key in ("paddle_ocr", "has_ner", "visual_features")
     )
 
+    # Disk watermark for the DATA volume (data-governance surface)
+    disk = None
+    try:
+        import shutil as _shutil
+
+        usage = _shutil.disk_usage(settings.DATA_DIR)
+        disk = {
+            "total_gb": round(usage.total / 1024**3, 1),
+            "free_gb": round(usage.free / 1024**3, 1),
+            "used_ratio": round(1 - usage.free / usage.total, 4),
+        }
+    except OSError:
+        pass
+
+    # Backup freshness (timestamps only — endpoint is unauthenticated, no paths)
+    backup_info = None
+    try:
+        from app.core.db_backup import get_backup_status
+
+        status = get_backup_status()
+        stale_after = settings.BACKUP_INTERVAL_SEC * 2
+        now_ts = datetime.now(UTC)
+        stale = False
+        stores = {}
+        for name, entry in status.items():
+            last = entry.get("last_success_at")
+            stores[name] = last
+            if last:
+                age = (now_ts - datetime.fromisoformat(last)).total_seconds()
+                if age > stale_after:
+                    stale = True
+        backup_info = {
+            "stores": stores,
+            "stale": stale,
+            "include_files": bool(settings.BACKUP_INCLUDE_FILES),
+        }
+    except Exception:
+        pass
+
     return {
         "all_online": all_online,
         "services": services,
@@ -571,6 +653,9 @@ async def services_health():
         "checked_at": datetime.now(UTC).isoformat(),
         "gpu_memory": gpu_mem,
         "gpu_memory_all": gpu_mem_all,
+        "disk": disk,
+        "retention_days": int(settings.DATA_RETENTION_DAYS or 0),
+        "backup": backup_info,
         # Endpoint is intentionally unauthenticated (dev.mjs waitJson probes it),
         # so process names/PIDs are not exposed. Field kept for the frontend hook.
         "gpu_processes": [],

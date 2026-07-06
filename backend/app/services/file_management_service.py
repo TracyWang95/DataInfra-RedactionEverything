@@ -16,6 +16,7 @@ import logging
 import ntpath
 import os
 import re
+import shutil
 import uuid
 import zipfile
 from datetime import UTC, datetime
@@ -731,6 +732,153 @@ async def get_file_snapshot(file_id: str) -> dict[str, Any] | None:
         if not info:
             return None
         return dict(info)
+
+
+# ---------------------------------------------------------------------------
+# 内网落地目录导入（第五段方案一）：inbox/<用户>/ 内文件一键登记进平台。
+# 登记链全量复用 process_upload（magic bytes/病毒扫描/file_store/job 挂接）。
+# ---------------------------------------------------------------------------
+
+def _safe_owner_segment(owner_id: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(owner_id or "user")).strip("._")
+    return cleaned[:64] or "user"
+
+
+def import_inbox_dir(owner_id: str) -> str:
+    base = settings.IMPORT_INBOX_DIR or os.path.join(settings.DATA_DIR, "import_inbox")
+    path = os.path.join(base, _safe_owner_segment(owner_id))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def list_import_inbox(owner_id: str) -> dict[str, Any]:
+    """列出本人 inbox 内受支持扩展名的文件（上限 20000）。"""
+    inbox = import_inbox_dir(owner_id)
+    items: list[dict[str, Any]] = []
+    try:
+        with os.scandir(inbox) as entries:
+            for entry in entries:
+                if len(items) >= 20000:
+                    break
+                if not entry.is_file():
+                    continue
+                ext = os.path.splitext(entry.name)[1].lower()
+                if ext not in settings.ALLOWED_EXTENSIONS:
+                    continue
+                stat = entry.stat()
+                items.append({
+                    "name": entry.name,
+                    "size": stat.st_size,
+                    "mtime": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(),
+                })
+    except OSError:
+        logger.exception("import inbox scan failed: %s", inbox)
+    items.sort(key=lambda x: x["name"])
+    return {"path": inbox, "items": items}
+
+
+async def import_inbox_files(
+    owner_id: str,
+    filenames: list[str],
+    *,
+    job_id: str | None = None,
+    batch_group_id: str | None = None,
+) -> dict[str, Any]:
+    """把 inbox 内选中文件 move 进平台并登记。部分成功语义：单文件失败
+    移回 inbox 并继续，返回 imported/failed 明细。"""
+    inbox = os.path.realpath(import_inbox_dir(owner_id))
+    imported: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
+    for name in filenames[:2000]:
+        src = os.path.realpath(os.path.join(inbox, name))
+        # 路径穿越防护：必须落在本人 inbox 内
+        if os.path.dirname(src) != inbox or not os.path.isfile(src):
+            failed.append({"name": name, "reason": "文件不存在"})
+            continue
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in settings.ALLOWED_EXTENSIONS:
+            failed.append({"name": name, "reason": f"不支持的类型 {ext}"})
+            continue
+        size = os.path.getsize(src)
+        if size > settings.MAX_FILE_SIZE:
+            failed.append({"name": name, "reason": "文件过大"})
+            continue
+        # magic bytes 预检在 move 之前做：process_upload 对伪造文件的语义是
+        # 直接删除（上传场景合理），inbox 场景必须让原件留在原地给运维核查。
+        if not validate_magic_bytes(src, ext):
+            failed.append({"name": name, "reason": f"文件内容与扩展名 {ext} 不匹配"})
+            continue
+        file_id = str(uuid.uuid4())
+        dest = os.path.realpath(os.path.join(settings.UPLOAD_DIR, f"{file_id}{ext}"))
+        try:
+            shutil.move(src, dest)  # 同盘瞬时；跨设备自动 copy+unlink
+        except OSError as exc:
+            failed.append({"name": name, "reason": f"移动失败: {exc}"})
+            continue
+        try:
+            response, _jid = await process_upload(
+                file_path=dest,
+                file_ext=ext,
+                filename=name,
+                file_size=size,
+                batch_group_id=batch_group_id,
+                job_id=job_id,
+                upload_source="batch" if job_id or batch_group_id else None,
+                owner_id=owner_id,
+            )
+            imported.append({"name": name, "file_id": response.file_id})
+        except Exception as exc:  # noqa: BLE001 — 单文件失败移回 inbox 继续
+            logger.warning("inbox import failed for %s: %s", name, exc)
+            try:
+                if os.path.exists(dest):
+                    shutil.move(dest, src)
+            except OSError:
+                pass
+            reason = str(exc)
+            failed.append({"name": name, "reason": reason[:200] or "登记失败"})
+    return {"imported": imported, "failed": failed}
+
+
+async def soft_delete_file(file_id: str) -> dict[str, Any] | None:
+    """软删除（R1-4 回收站）：只打 deleted_at 标记，磁盘文件保留。
+
+    过期由 retention 扫描调用 delete_file 真删（TRASH_RETENTION_DAYS）。
+    返回快照；文件不存在或已在回收站返回 None。
+    """
+    async with _file_store_lock:
+        file_info = file_store.get(file_id)
+        if not file_info or file_info.get("deleted_at"):
+            return None
+        info = dict(file_info)
+        info["deleted_at"] = datetime.now(UTC).isoformat()
+        file_store.set(file_id, info)
+        return info
+
+
+async def restore_file(file_id: str) -> dict[str, Any] | None:
+    """从回收站还原：去掉 deleted_at 标记。"""
+    async with _file_store_lock:
+        file_info = file_store.get(file_id)
+        if not file_info or not file_info.get("deleted_at"):
+            return None
+        info = dict(file_info)
+        info.pop("deleted_at", None)
+        file_store.set(file_id, info)
+        return info
+
+
+async def list_trashed_files(owner_id: str | None = None) -> list[dict[str, Any]]:
+    """回收站清单（带 deleted_at 的记录），按删除时间倒序。"""
+    async with _file_store_lock:
+        rows = [
+            {"file_id": fid, **dict(info)}
+            for fid, info in file_store.items()
+            if isinstance(info, dict) and info.get("deleted_at")
+        ]
+    if owner_id is not None:
+        rows = [r for r in rows if r.get("owner_id") == owner_id]
+    rows.sort(key=lambda r: str(r.get("deleted_at") or ""), reverse=True)
+    return rows
 
 
 async def delete_file(file_id: str) -> dict[str, Any] | None:

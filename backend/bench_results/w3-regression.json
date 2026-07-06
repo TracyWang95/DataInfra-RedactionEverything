@@ -1,0 +1,22 @@
+{
+  "label": "w3-regression",
+  "job_id": "a10c7e14-a541-4a82-9bf0-c57d96796eb2",
+  "files": 60,
+  "upload_sec": 2.2,
+  "upload_files_per_min": 1652.3,
+  "recognition_wall_sec": 111.8,
+  "files_per_min": 32.21,
+  "pages_per_min": 48.32,
+  "item_statuses": {
+    "completed": 60
+  },
+  "pages_measured": 90,
+  "page_ms_p50": 2729.0,
+  "page_ms_p95": 4887.0,
+  "recognition_wall_ms_p50": 3120.0,
+  "recognition_wall_ms_p95": 38024.0,
+  "has_slot_wait_ms_total": 0.0,
+  "has_slot_wait_ms_p95": 0.0,
+  "has_model_ms_total": 0.0,
+  "has_duplicate_wait_ms_total": 0.0
+}

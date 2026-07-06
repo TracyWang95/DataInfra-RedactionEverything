@@ -158,6 +158,16 @@ class Redactor(TextRedactorMixin, ImageRedactorMixin):
                 file_path, file_type, selected_boxes, output_path, config
             )
 
+        watermark_text = (getattr(config, "watermark_text", None) or "").strip()
+        if watermark_text and os.path.exists(output_path):
+            # 水印失败不阻断匿名化交付，只响亮记录
+            try:
+                from app.services.redaction.watermark import apply_watermark
+
+                apply_watermark(output_path, watermark_text)
+            except Exception:
+                logger.warning("watermark failed for %s", output_path, exc_info=True)
+
         return {
             "output_file_id": output_file_id,
             "output_path": output_path,

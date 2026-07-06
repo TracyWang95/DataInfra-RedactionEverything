@@ -247,9 +247,19 @@ class Settings(BaseSettings):
     # Per-file page-level concurrency for vision recognition. This is not batch
     # item concurrency; JOB_CONCURRENCY controls how many job items the worker
     # consumes at once. The runtime caps this value to the current file's page
-    # count, and the validator below clamps operator overrides to 1..4. Lower
-    # this to 1 when GPU memory is already above 90% or model services are cold.
+    # count, and the validator below clamps operator overrides to 1..8. Lower
+    # this to 1 when GPU memory is already above the saturation ratio or model
+    # services are cold.
     BATCH_RECOGNITION_PAGE_CONCURRENCY: int = 2
+    # Page concurrency for the multi-page visual-features merge pass. Default 1
+    # keeps the historical serial behaviour (safe on a single GPU); deployments
+    # with one LocateAnything instance per card can raise to 2.
+    BATCH_VISUAL_MERGE_PAGE_CONCURRENCY: int = 1
+    # GPU memory used/total ratio at/above which vision page concurrency is
+    # forced down to 1. Raise on multi-service cards whose *static* residency is
+    # already high (e.g. dual-GPU prod ~80% at idle) so healthy load is not
+    # misread as saturation.
+    GPU_SATURATION_RATIO: float = 0.90
     # Single-GPU safety: OCR/HaS and LocateAnything run SEQUENTIALLY. On one GPU,
     # running both heavy VLMs at once causes ~5-10x slowdown from contention
     # (measured: 54s parallel vs ~10s serial on one file).
@@ -340,8 +350,121 @@ class Settings(BaseSettings):
     LOCAL_PASSWORD_HASH: str = ""  # PBKDF2 hash, set via setup endpoint
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
+    # 企业目录（LDAP/AD）登录。默认关闭：登录行为与纯本地账号完全一致。
+    # 开启后 /auth/login 先走目录认证（本地 super_admin 保留 break-glass 本地
+    # 通道）；两种模式与组→角色映射见 app/core/ldap_auth.py。
+    LDAP_ENABLED: bool = False
+    LDAP_SERVER_URL: str = ""  # 生产要求 ldaps://（见 LDAP_TLS_REQUIRED）
+    LDAP_BIND_DN_TEMPLATE: str = ""  # 直接绑定模式，如 "uid={username},ou=people,dc=corp,dc=com"
+    LDAP_SEARCH_BASE: str = ""  # 设置后启用 搜索+绑定 模式（优先于直接绑定）
+    LDAP_SERVICE_BIND_DN: str = ""
+    LDAP_SERVICE_BIND_PASSWORD: str = ""
+    LDAP_USER_FILTER: str = "(sAMAccountName={username})"
+    LDAP_GROUP_ROLE_MAP: str = ""  # JSON 对象文本：{"组DN": "角色"}，声明顺序优先
+    LDAP_DEFAULT_ROLE: str = "user"
+    LDAP_TIMEOUT_SECONDS: float = 5.0
+    LDAP_TLS_REQUIRED: bool = True
+    LDAP_CA_CERT_FILE: str = ""
+    LDAP_ROLE_SYNC: bool = True  # 每次登录按目录组重算并落库角色
+
+    @field_validator("LDAP_TIMEOUT_SECONDS")
+    @classmethod
+    def _validate_ldap_timeout_seconds(cls, v: float) -> float:
+        return max(1.0, min(30.0, v))
+
+    # 不 import app.core.auth（避免循环依赖），直接对照角色字面量集合。
+    @field_validator("LDAP_DEFAULT_ROLE")
+    @classmethod
+    def _validate_ldap_default_role(cls, v: str) -> str:
+        value = str(v or "user").strip().lower()
+        if value not in {"super_admin", "user", "reviewer", "operator", "viewer"}:
+            raise ValueError("LDAP_DEFAULT_ROLE must be one of: super_admin, reviewer, user, operator, viewer.")
+        return value
+
+    # 数据保留策略（天）。0 = 关闭（默认，行为不变）；>0 时后台每 6 小时清理
+    # 超龄上传文件及其成品（走 delete_file 全量清除 + 审计留痕）。
+    DATA_RETENTION_DAYS: int = 0
+
+    # 例行备份（R1-1）。默认值 = 既有行为（每小时、保留 24 份、DATA_DIR/backups）。
+    # 文件树（uploads/outputs）刻意不进应用进程备份——见 scripts/backup_files.sh
+    # 与 docs/backup-restore.md：库备份 ≠ 文件备份。
+    BACKUP_INTERVAL_SEC: int = 3600
+    BACKUP_RETENTION_COUNT: int = 24
+    BACKUP_DIR: str = ""  # 空 = DATA_DIR/backups
+    BACKUP_INCLUDE_FILES: bool = False  # True 时 health 检查文件备份 marker 是否新鲜
+    BACKUP_FILES_MIN_FREE_GB: int = 20  # 供 backup_files.sh 读取的磁盘水位闸
+
+    # 内网落地目录导入（第五段方案一）：运维把文件 scp/rsync 到
+    # <IMPORT_INBOX_DIR>/<用户名>/，界面一键登记进批量任务（本地 move 零 HTTP）。
+    # 空 = DATA_DIR/import_inbox。
+    IMPORT_INBOX_DIR: str = ""
+    # SFTP 拉取源主机允许清单（逗号分隔；空 = 不限制，交付文档建议配置）
+    SFTP_HOST_ALLOWLIST: str = ""
+
+    # 回收站保留天数（R1-4）：软删文件超期后由 retention 循环真删。
+    TRASH_RETENTION_DAYS: int = 7
+
+    @field_validator("TRASH_RETENTION_DAYS")
+    @classmethod
+    def _validate_trash_retention_days(cls, v: int) -> int:
+        return max(1, min(365, v))
+
+    # 全局限流（R1-3）。按用户主体计数；上传默认 240/min（4 并发万级批量
+    # ≈4 文件/秒，留足余量），导出 20/min。0 不可取——validator 夹下限。
+    UPLOAD_RATE_PER_MIN: int = 240
+    EXPORT_RATE_PER_MIN: int = 20
+
+    @field_validator("UPLOAD_RATE_PER_MIN")
+    @classmethod
+    def _validate_upload_rate(cls, v: int) -> int:
+        return max(10, min(100000, v))
+
+    @field_validator("EXPORT_RATE_PER_MIN")
+    @classmethod
+    def _validate_export_rate(cls, v: int) -> int:
+        return max(2, min(10000, v))
+
+    @field_validator("BACKUP_INTERVAL_SEC")
+    @classmethod
+    def _validate_backup_interval_sec(cls, v: int) -> int:
+        return max(300, min(86400, v))
+
+    @field_validator("BACKUP_RETENTION_COUNT")
+    @classmethod
+    def _validate_backup_retention_count(cls, v: int) -> int:
+        return max(1, min(168, v))
+
     # 批量任务并发配置
     JOB_CONCURRENCY: int = 3  # Number of concurrent job items to process
+
+    # 离线 License（Ed25519 签名校验，见 app/core/license.py）。默认关闭 =
+    # 现有部署行为完全不变；开启后 License 缺失/过期/无效时，变更类 /api 请求
+    # 由 LicenseEnforcementMiddleware 拒绝（403），席位数在创建用户时受限。
+    LICENSE_ENFORCEMENT_ENABLED: bool = False
+    LICENSE_FILE_PATH: str = ""  # 空 = DATA_DIR/license.json（license.py 内解析）
+    LICENSE_RECHECK_INTERVAL_HOURS: float = 24.0
+    LICENSE_EXPIRY_WARN_DAYS: int = 30
+    LICENSE_GRACE_DAYS: int = 14
+
+    @field_validator("LICENSE_RECHECK_INTERVAL_HOURS")
+    @classmethod
+    def _validate_license_recheck_interval_hours(cls, v: float) -> float:
+        return max(1.0, min(168.0, v))
+
+    @field_validator("LICENSE_EXPIRY_WARN_DAYS")
+    @classmethod
+    def _validate_license_expiry_warn_days(cls, v: int) -> int:
+        return max(1, min(120, v))
+
+    @field_validator("LICENSE_GRACE_DAYS")
+    @classmethod
+    def _validate_license_grace_days(cls, v: int) -> int:
+        return max(0, min(90, v))
+
+    @field_validator("DATA_RETENTION_DAYS")
+    @classmethod
+    def _validate_data_retention_days(cls, v: int) -> int:
+        return max(0, min(3650, v))
 
     @field_validator("JOB_CONCURRENCY")
     @classmethod
@@ -351,7 +474,17 @@ class Settings(BaseSettings):
     @field_validator("BATCH_RECOGNITION_PAGE_CONCURRENCY")
     @classmethod
     def _validate_batch_page_concurrency(cls, v: int) -> int:
+        return max(1, min(8, v))
+
+    @field_validator("BATCH_VISUAL_MERGE_PAGE_CONCURRENCY")
+    @classmethod
+    def _validate_batch_visual_merge_page_concurrency(cls, v: int) -> int:
         return max(1, min(4, v))
+
+    @field_validator("GPU_SATURATION_RATIO")
+    @classmethod
+    def _validate_gpu_saturation_ratio(cls, v: float) -> float:
+        return max(0.5, min(0.99, v))
 
     @field_validator("OCR_MAX_NEW_TOKENS")
     @classmethod

@@ -292,13 +292,29 @@ def _users(auth: dict) -> dict[str, dict]:
     return users
 
 
+# Enterprise role matrix (Phase 1a). Enforcement lives in
+# app.core.role_enforcement:
+#   super_admin  everything + user management
+#   reviewer     full pipeline incl. review confirm (== legacy "user")
+#   user         legacy alias, same rights as reviewer
+#   operator     upload/recognise/export, but no review approve/commit
+#   viewer       read-only (safe methods + own auth endpoints)
+_ROLE_REVIEWER = "reviewer"
+_ROLE_OPERATOR = "operator"
+_ROLE_VIEWER = "viewer"
+_KNOWN_ROLES = {_ROLE_SUPER_ADMIN, _ROLE_USER, _ROLE_REVIEWER, _ROLE_OPERATOR, _ROLE_VIEWER}
+
+
 def normalize_role(role: str | None) -> str:
     value = str(role or _ROLE_USER).strip().lower()
-    if value in {"admin", _ROLE_SUPER_ADMIN}:
+    if value == "admin":
         return _ROLE_SUPER_ADMIN
-    if value == _ROLE_USER:
-        return _ROLE_USER
-    raise HTTPException(status_code=400, detail="Role must be 'super_admin' or 'user'.")
+    if value in _KNOWN_ROLES:
+        return value
+    raise HTTPException(
+        status_code=400,
+        detail="Role must be one of: super_admin, reviewer, user, operator, viewer.",
+    )
 
 
 def _user_permissions(user: dict | None) -> dict:
@@ -470,6 +486,14 @@ def create_user(username: str, password: str, *, role: str = _ROLE_USER) -> str:
             users = _users(auth)
             if subject in users:
                 raise HTTPException(status_code=409, detail="User already exists.")
+            from app.core.license import license_seat_limit
+
+            seat_limit = license_seat_limit()
+            if seat_limit is not None and len(users) >= seat_limit:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"License seat limit reached ({seat_limit} users). Renew or upgrade the license.",
+                )
             users[subject] = {
                 "password_hash": hash_password(password),
                 "created_at": datetime.now(UTC).isoformat(),
@@ -481,6 +505,86 @@ def create_user(username: str, password: str, *, role: str = _ROLE_USER) -> str:
             return subject
     except AuthStateError as exc:
         raise _auth_state_unavailable() from exc
+
+
+def provision_ldap_user(username: str, role: str) -> str:
+    """Upsert a directory-backed (LDAP) user record and return the subject.
+
+    LDAP users never carry a ``password_hash`` — the local password path can
+    never authenticate them. An existing record that is NOT
+    ``auth_source == "ldap"`` is a local account and must never be hijacked
+    (raises ``ValueError``). Directory role changes are applied on later
+    logins only when ``settings.LDAP_ROLE_SYNC`` is enabled.
+    """
+    subject = normalize_username(username)
+    normalized_role = normalize_role(role)
+    try:
+        with _auth_file_lock:
+            auth = _load_auth_unlocked()
+            users = _users(auth)
+            existing = users.get(subject)
+            now = datetime.now(UTC).isoformat()
+            if existing is None:
+                users[subject] = {
+                    "auth_source": "ldap",
+                    "role": normalized_role,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            else:
+                if not isinstance(existing, dict) or existing.get("auth_source") != "ldap":
+                    raise ValueError("同名本地账号已存在，目录账号不可接管该用户名。")
+                record = dict(existing)
+                if settings.LDAP_ROLE_SYNC:
+                    record["role"] = normalized_role
+                record["updated_at"] = now
+                users[subject] = record
+            auth["users"] = users
+            _save_auth_unlocked(auth)
+            return subject
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+
+
+def set_user_disabled(actor: str, username: str, disabled: bool) -> dict:
+    """管理员禁用/启用账号。护栏：不能禁自己；不能禁用最后一个可用超管。"""
+    subject = normalize_username(username)
+    actor_subject = normalize_username(actor)
+    try:
+        with _auth_file_lock:
+            auth = _load_auth_unlocked()
+            users = _users(auth)
+            record = users.get(subject)
+            if not isinstance(record, dict):
+                raise HTTPException(status_code=404, detail="User not found.")
+            if disabled and subject == actor_subject:
+                raise HTTPException(status_code=400, detail="不能禁用自己的账号。")
+            if disabled and record.get("role") == _ROLE_SUPER_ADMIN:
+                active_admins = [
+                    name
+                    for name, user in users.items()
+                    if isinstance(user, dict)
+                    and user.get("role") == _ROLE_SUPER_ADMIN
+                    and not user.get("disabled")
+                ]
+                if len(active_admins) <= 1:
+                    raise HTTPException(
+                        status_code=400, detail="不能禁用最后一个可用的超级管理员。"
+                    )
+            record = dict(record)
+            record["disabled"] = bool(disabled)
+            record["updated_at"] = datetime.now(UTC).isoformat()
+            users[subject] = record
+            auth["users"] = users
+            _save_auth_unlocked(auth)
+            return {"username": subject, "disabled": bool(disabled)}
+    except AuthStateError as exc:
+        raise _auth_state_unavailable() from exc
+
+
+def is_user_disabled(username: str | None) -> bool:
+    user = get_user(username)
+    return bool(isinstance(user, dict) and user.get("disabled"))
 
 
 def get_user(username: str | None) -> dict | None:
@@ -510,6 +614,7 @@ def list_users() -> list[dict]:
             "created_at": (user or {}).get("created_at"),
             "updated_at": (user or {}).get("updated_at"),
             "can_bulk_confirm": _can_bulk_confirm(user),
+            "disabled": bool((user or {}).get("disabled")),
         }
         for username, user in sorted(users.items())
         if isinstance(user, dict)
@@ -523,6 +628,8 @@ def check_password(password: str, *, username: str | None = None) -> str | None:
         raise _auth_state_unavailable() from exc
     subject = _resolve_login_username(auth, username)
     user = _users(auth).get(subject) or {}
+    if user.get("disabled"):
+        return None
     stored = user.get("password_hash", "")
     if not stored:
         return None
@@ -599,9 +706,21 @@ async def require_auth(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> str | None:
-    """Require a valid JWT when auth is enabled."""
+    """Require a valid JWT (or X-API-Key service credential) when auth is enabled."""
     if not settings.AUTH_ENABLED:
         return "anonymous"
+
+    # M2M：X-API-Key（R1-5）。readonly scope 只放行安全方法。
+    api_key_header = request.headers.get("x-api-key")
+    if api_key_header:
+        from app.core.api_keys import verify_api_key
+
+        identity = verify_api_key(api_key_header)
+        if identity is None:
+            raise HTTPException(status_code=401, detail="API key is invalid, expired or revoked.")
+        if identity["scope"] == "readonly" and request.method not in ("GET", "HEAD", "OPTIONS"):
+            raise HTTPException(status_code=403, detail="This API key is read-only.")
+        return identity["subject"]
 
     token: str | None = None
     if credentials is not None:
@@ -614,7 +733,13 @@ async def require_auth(
         raise HTTPException(status_code=401, detail="Authentication is required.")
 
     payload = decode_token(token)
-    return payload.get("sub", "unknown")
+    subject = payload.get("sub", "unknown")
+    # 被禁用的账号：即使 JWT 仍在有效期也立即失效（每请求查一次，
+    # _load_auth 有 mtime 缓存；非本地用户记录如 service 主体不受影响）
+    user = get_user(subject)
+    if isinstance(user, dict) and user.get("disabled"):
+        raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员。")
+    return subject
 
 
 async def require_super_admin(

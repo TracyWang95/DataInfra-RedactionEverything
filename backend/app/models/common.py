@@ -17,6 +17,11 @@ __all__ = [
     "PasswordRequest",
     "UserCreateRequest",
     "UserPermissionsRequest",
+    "UserStatusRequest",
+    "ApiKeyCreateRequest",
+    "ImportInboxRequest",
+    "SftpSourceRequest",
+    "SftpPullRequest",
     "ConcurrencySettingsRequest",
     "ConcurrencySettingsResponse",
     "ChangePasswordRequest",
@@ -126,6 +131,7 @@ class HealthResponse(BaseModel):
     status: str = "healthy"
     version: str
     timestamp: datetime = Field(default_factory=datetime.now)
+    license: dict | None = None  # {state, expires_at, days_left}，见 app/core/license.py
 
 
 class ToggleResponse(BaseModel):
@@ -153,6 +159,39 @@ class UserCreateRequest(BaseModel):
 
 class UserPermissionsRequest(BaseModel):
     bulk_confirm: bool
+
+
+class UserStatusRequest(BaseModel):
+    disabled: bool
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+    scope: str = "readonly"
+    expires_at: str | None = None
+
+
+class ImportInboxRequest(BaseModel):
+    filenames: list[str]
+    job_id: str | None = None
+    batch_group_id: str | None = None
+
+
+class SftpSourceRequest(BaseModel):
+    name: str
+    host: str
+    port: int = 22
+    username: str
+    password: str | None = None
+    private_key: str | None = None
+    root_path: str = "/"
+
+
+class SftpPullRequest(BaseModel):
+    source_id: str
+    names: list[str]
+    path: str = ""
+    job_id: str | None = None
 
 
 class ConcurrencySettingsRequest(BaseModel):

@@ -26,7 +26,18 @@ _MAX_JOB_CONCURRENCY = 16
 _ERROR_MSG_MAX_LEN = 500
 _WORKER_ERROR_MSG_MAX_LEN = 200
 # GPU memory ratio at/above which the queue treats the device as saturated.
+# Fallback default; the effective value comes from settings.GPU_SATURATION_RATIO
+# (multi-service cards with high static residency need a higher threshold).
 _GPU_SATURATION_RATIO = 0.90
+
+
+def _gpu_saturation_ratio() -> float:
+    try:
+        from app.core.config import settings
+
+        return float(settings.GPU_SATURATION_RATIO)
+    except Exception:
+        return _GPU_SATURATION_RATIO
 # File-size bucket (bytes) used to order small-vs-large files in the queue.
 _FILE_SIZE_BUCKET_BYTES = 16_384
 
@@ -153,7 +164,7 @@ def _effective_vision_page_concurrency(
     pages = max(1, int(pages))
     configured = max(1, int(configured))
     gpu_ratio = _gpu_memory_ratio(gpu_memory)
-    if gpu_ratio is not None and gpu_ratio >= _GPU_SATURATION_RATIO:
+    if gpu_ratio is not None and gpu_ratio >= _gpu_saturation_ratio():
         return 1
     return min(configured, pages)
 
@@ -165,7 +176,7 @@ def _vision_page_concurrency_reason(
     gpu_memory: dict[str, Any] | None,
 ) -> str:
     gpu_ratio = _gpu_memory_ratio(gpu_memory)
-    if effective == 1 and gpu_ratio is not None and gpu_ratio >= _GPU_SATURATION_RATIO:
+    if effective == 1 and gpu_ratio is not None and gpu_ratio >= _gpu_saturation_ratio():
         return "gpu_memory_high"
     if effective < max(1, int(configured)):
         return "page_count"
@@ -996,17 +1007,28 @@ class SimpleTaskQueue:
 
         try:
             if pages > 1 and visual_feature_types != []:
+                # Merge-pass concurrency: default 1 = historical serial behaviour;
+                # capped by the effective page concurrency so the GPU-saturation
+                # downgrade above also applies here.
+                visual_merge_concurrency = max(
+                    1,
+                    min(
+                        int(settings.BATCH_VISUAL_MERGE_PAGE_CONCURRENCY),
+                        page_concurrency,
+                    ),
+                )
                 logger.info(
-                    "[queue] item=%s vision multi-page scheduling: OCR first (concurrency=%d), then visual features merge pass (concurrency=1)",
+                    "[queue] item=%s vision multi-page scheduling: OCR first (concurrency=%d), then visual features merge pass (concurrency=%d)",
                     task.item_id[:8],
                     page_concurrency,
+                    visual_merge_concurrency,
                 )
                 await run_page_stage(
                     selected_ocr_types=ocr_types,
                     selected_visual_feature_types=[],
                     stage_label="OCR+HaS识别",
                 )
-                page_sem = asyncio.Semaphore(1)
+                page_sem = asyncio.Semaphore(visual_merge_concurrency)
                 await run_page_stage(
                     selected_ocr_types=[],
                     selected_visual_feature_types=visual_feature_types,
@@ -1230,6 +1252,7 @@ class SimpleTaskQueue:
                 image_redaction_method=cfg.get("image_redaction_method"),
                 image_redaction_strength=int(cfg.get("image_redaction_strength") or 75),
                 image_fill_color=str(cfg.get("image_fill_color") or "#000000"),
+                watermark_text=(str(cfg.get("watermark_text") or "").strip() or None),
             )
             await execute_redaction_request(task.file_id, entities, boxes, config)
             self._record_item_performance(

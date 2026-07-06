@@ -19,9 +19,10 @@ import shutil
 import time
 import uuid
 import zipfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from app.core.config import settings
 
@@ -211,8 +212,10 @@ class ExportTaskManager:
             task.progress["stage"] = "running"
             self._persist(task)
 
-            def _progress(current: int = 0, total: int = 0, stage: str = "running") -> None:
-                task.progress.update({"stage": stage, "current": current, "total": total})
+            def _progress(
+                current: int = 0, total: int = 0, stage: str = "running", *, _task=task
+            ) -> None:
+                _task.progress.update({"stage": stage, "current": current, "total": total})
 
             try:
                 task.volumes = await task.runner(task, _progress)
