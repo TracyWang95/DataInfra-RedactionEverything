@@ -343,25 +343,40 @@ class LocateAnythingGroundingService:
             # full-frame VLM misses faint / edge / photocopy-fragmented COLORED
             # stamps on salience (page_04's binding seal is invisible to it at
             # every zoom), but they are strong colored ink: propose colored-ink
-            # regions (red/blue/purple; clustering fragments), confirm each on a
-            # tight crop with the VLM (which rejects colored text / rules), and
-            # redact the ink extent. The tight crop makes the faint stamp
-            # salient enough for the VLM to confirm what it could not see on the
-            # page. Black-on-white photocopy seals have no chroma and are out of
-            # reach here.
+            # regions (red/blue/purple; clustering fragments) and run the VLM
+            # on a tight crop of each — the crop makes the faint stamp salient
+            # enough to detect, and colored text / rules get no box. What gets
+            # redacted depends on whether the cluster is figure or ground:
+            # a minority-of-page cluster is ink, and its connected extent is
+            # the stamp impression (redact it all); a cluster flooding the
+            # majority of the page means chroma failed to separate ink from a
+            # colored scene background (a document photographed on a wooden
+            # desk), so only the VLM's boxes inside the crop carry location —
+            # inheriting the flooded extent painted that whole page as one
+            # giant seal. Black-on-white photocopy seals have no chroma and
+            # are out of reach here.
             cascade_start = time.perf_counter()
             proposals = propose_colored_seal_regions(image_data)
             existing_seals = [b for b in boxes if b.type == "official_seal"]
 
-            def _covered(px: float, py: float, pw: float, ph: float) -> bool:
-                # already found by the full frame -> skip the confirm call
-                return any(
-                    px < s.x + s.width and s.x < px + pw
-                    and py < s.y + s.height and s.y < py + ph
+            def _overlapping_seals(px: float, py: float, pw: float, ph: float) -> int:
+                return sum(
+                    1
                     for s in existing_seals
+                    if px < s.x + s.width and s.x < px + pw
+                    and py < s.y + s.height and s.y < py + ph
                 )
 
-            to_confirm = [p for p in proposals if not _covered(*p)]
+            # Confirm a proposal when the full frame found nothing on it (the
+            # recall path: faint/edge stamps), and ALSO when the full frame
+            # left >=2 seal boxes on it (the shard path: GLM flakily segments
+            # page_02's binding-seal column into a stack of fragments; the
+            # color connected-component is physical evidence they are one
+            # impression, and the VLM's box on the tall crop is the covering
+            # box the fragments then fold into at the seal-shard merge).
+            # Exactly one overlapping seal means the stamp is already found
+            # and there is nothing to unify — skip the call.
+            to_confirm = [p for p in proposals if _overlapping_seals(*p) != 1]
             try:
                 image = ImageOps.exif_transpose(
                     Image.open(io.BytesIO(image_data))
@@ -372,29 +387,49 @@ class LocateAnythingGroundingService:
                 )
             except Exception:
                 logger.warning("Seal color cascade failed", exc_info=True)
-                results = [False] * len(to_confirm)
+                results = []
             added = 0
-            for (px, py, pw, ph), ok in zip(to_confirm, results, strict=False):
-                if ok is not True:
+            for (px, py, pw, ph), confirmed in zip(to_confirm, results, strict=False):
+                if isinstance(confirmed, BaseException) or not confirmed:
                     continue
-                clamped = _clamp_box(px, py, pw, ph)
-                if clamped is None:
-                    continue
-                x, y, width_n, height_n = clamped
-                boxes.append(BoundingBox(
-                    id=f"seal_color_{uuid.uuid4().hex[:8]}",
-                    x=x, y=y, width=width_n, height=height_n,
-                    type="official_seal",
-                    text=SLUG_TO_NAME_ZH.get("official_seal", "official_seal"),
-                    page=page,
-                    confidence=_DEFAULT_DETECT_CONFIDENCE,
-                    source="visual_features",
-                    source_detail="seal_color_cascade",
-                    evidence_source="visual_feature_model",
-                ))
-                added += 1
+                if pw * ph < 0.5 and len(confirmed) == 1:
+                    # Figure cluster holding ONE impression (minority-of-page
+                    # ink, and the VLM sees exactly one stamp in the crop):
+                    # the connected ink extent IS the stamp — redact all of
+                    # it. (The VLM's own box under-covers tall/fragmented
+                    # ink: it boxed only the middle of page_02's binding-seal
+                    # column.)
+                    keep = [(px, py, pw, ph)]
+                else:
+                    # Otherwise the cluster extent is not one stamp's ink:
+                    # either chroma flooded a majority of the page (colored
+                    # scene background — a document photographed on a wooden
+                    # desk — where the extent is the scene), or fragment
+                    # bridging connected several adjacent stamps into one
+                    # cluster (img2's stacked pair) and painting the extent
+                    # would fuse them. The color channel knows connectivity,
+                    # the VLM knows cardinality — its boxes carry the
+                    # per-stamp locations.
+                    keep = confirmed
+                for bx, by, bw, bh in keep:
+                    clamped = _clamp_box(bx, by, bw, bh)
+                    if clamped is None:
+                        continue
+                    x, y, width_n, height_n = clamped
+                    boxes.append(BoundingBox(
+                        id=f"seal_color_{uuid.uuid4().hex[:8]}",
+                        x=x, y=y, width=width_n, height=height_n,
+                        type="official_seal",
+                        text=SLUG_TO_NAME_ZH.get("official_seal", "official_seal"),
+                        page=page,
+                        confidence=_DEFAULT_DETECT_CONFIDENCE,
+                        source="visual_features",
+                        source_detail="seal_color_cascade",
+                        evidence_source="visual_feature_model",
+                    ))
+                    added += 1
             logger.info(
-                "Seal color cascade: %d/%d proposals confirmed in %dms",
+                "Seal color cascade: %d box(es) from %d proposals in %dms",
                 added, len(to_confirm), _elapsed_ms(cascade_start),
             )
         elif (
@@ -576,12 +611,17 @@ class LocateAnythingGroundingService:
             )
         return boxes
 
-    async def _confirm_seal_crop(self, image: "Image.Image", region: tuple[float, float, float, float]) -> bool:
-        """Ask the VLM whether a tight crop around a red-ink region is a seal.
+    async def _confirm_seal_crop(
+        self, image: Image.Image, region: tuple[float, float, float, float]
+    ) -> list[tuple[float, float, float, float]]:
+        """Run seal detection on a tight crop around a colored-ink region and
+        return the VLM's boxes mapped to page coordinates (empty = rejected).
 
-        The crop makes a faint/edge/fragmented stamp salient enough to confirm
-        (or rejects red text / rules). Yes/no gate only — the caller redacts
-        the red extent, not the VLM's box.
+        The crop makes a faint/edge/fragmented stamp salient enough to detect,
+        while colored text / rules get no box. The VLM's box — not the
+        proposal extent — is what the caller redacts: the proposal only says
+        where to look, so an over-wide proposal (colored scene background
+        flooding the chroma mask) cannot itself become a page-sized seal box.
         """
         px, py, pw, ph = region
         width, height = image.size
@@ -591,14 +631,39 @@ class LocateAnythingGroundingService:
         x1 = min(width, int((px + pw) * width) + pad)
         y1 = min(height, int((py + ph) * height) + pad)
         if x1 <= x0 or y1 <= y0:
-            return False
+            return []
+        crop_w, crop_h = x1 - x0, y1 - y0
         buf = io.BytesIO()
         image.crop((x0, y0, x1, y1)).save(buf, format="JPEG", quality=_JPEG_QUALITY)
         try:
-            boxes = await self._post_detect(buf.getvalue(), ["official_seal"])
+            raw_boxes = await self._post_detect(buf.getvalue(), ["official_seal"])
         except Exception:
-            return False
-        return len(boxes) > 0
+            return []
+        mapped: list[tuple[float, float, float, float]] = []
+        for raw in raw_boxes:
+            if normalize_visual_slug(str(raw.get("category", ""))) != "official_seal":
+                continue
+            try:
+                normalized = _clamp_box(
+                    float(raw.get("x") or 0),
+                    float(raw.get("y") or 0),
+                    float(raw.get("width") or 0),
+                    float(raw.get("height") or 0),
+                )
+            except (TypeError, ValueError):
+                continue
+            if normalized is None:
+                continue
+            bx, by, bw, bh = normalized
+            page_box = _clamp_box(
+                (x0 + bx * crop_w) / width,
+                (y0 + by * crop_h) / height,
+                bw * crop_w / width,
+                bh * crop_h / height,
+            )
+            if page_box is not None:
+                mapped.append(page_box)
+        return mapped
 
     async def _detect_on_tiles(
         self,
