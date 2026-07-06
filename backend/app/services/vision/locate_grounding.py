@@ -25,7 +25,7 @@ from app.core.visual_feature_categories import (
 )
 from app.models.schemas import BoundingBox
 from app.services import model_config_service
-from app.services.vision.seal_color_cascade import propose_red_seal_regions
+from app.services.vision.seal_color_cascade import propose_colored_seal_regions
 
 logger = logging.getLogger(__name__)
 
@@ -340,15 +340,17 @@ class LocateAnythingGroundingService:
             and "official_seal" in model_slugs
         ):
             # Color->VLM seal cascade (supersedes the margin refine). The
-            # full-frame VLM misses faint / edge / photocopy-fragmented RED
+            # full-frame VLM misses faint / edge / photocopy-fragmented COLORED
             # stamps on salience (page_04's binding seal is invisible to it at
-            # every zoom), but they are strong red ink: propose red-ink regions
-            # (clustering fragments), confirm each on a tight crop with the VLM
-            # (which rejects red text / rules), and redact the red extent. The
-            # tight crop makes the faint stamp salient enough for the VLM to
-            # confirm what it could not see on the page.
+            # every zoom), but they are strong colored ink: propose colored-ink
+            # regions (red/blue/purple; clustering fragments), confirm each on a
+            # tight crop with the VLM (which rejects colored text / rules), and
+            # redact the ink extent. The tight crop makes the faint stamp
+            # salient enough for the VLM to confirm what it could not see on the
+            # page. Black-on-white photocopy seals have no chroma and are out of
+            # reach here.
             cascade_start = time.perf_counter()
-            proposals = propose_red_seal_regions(image_data)
+            proposals = propose_colored_seal_regions(image_data)
             existing_seals = [b for b in boxes if b.type == "official_seal"]
 
             def _covered(px: float, py: float, pw: float, ph: float) -> bool:
