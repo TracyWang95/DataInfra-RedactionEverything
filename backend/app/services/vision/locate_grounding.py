@@ -338,62 +338,60 @@ class LocateAnythingGroundingService:
             and model_slugs
             and "official_seal" in model_slugs
         ):
-            # Margin (binding) seals: at page scale GLM is unstable on the
-            # thin edge slivers (a page_02 binding column flaps between one
-            # tall box and a hallucinated 7-box column across calls) and the
-            # box it does return crops the serial digits at the bottom.
-            # Re-detect on the affected side's FULL-HEIGHT margin strip: the
-            # whole binding column in one native-resolution crop is far more
-            # stable (3/3 runs agree) and reaches the serial. Results fold
-            # into the originals grow-only.
-            refine_sides = set()
-            for b in boxes:
-                if b.type != "official_seal":
-                    continue
-                center_x = b.x + b.width / 2.0
-                if center_x <= 1.0 / 3.0:
-                    refine_sides.add("left")
-                elif center_x >= 2.0 / 3.0:
-                    refine_sides.add("right")
-            if refine_sides:
-                refine_start = time.perf_counter()
+            # Binding (margin) seals: GLM's FULL-FRAME seal recall on thin edge
+            # slivers is unreliable AND non-monotonic in the requested category
+            # count — page_02's right binding column is found with 4 categories,
+            # missed entirely with 7 (what the medical/full preset sends, the
+            # user-reported miss), and hallucinated as a 7-box column with 1.
+            # So gating a margin re-detect on "a full-frame seal already exists
+            # on this edge" rides that same flaky signal. Instead, whenever
+            # official_seal is requested, always probe BOTH full-height
+            # outer-third margin strips (single-category detect, which is
+            # stable: page_02 right 5/5 hit, seal-less edges 0/0) and union the
+            # result with the full-frame seals.
+            refine_start = time.perf_counter()
 
-                def _side_tiles(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
-                    # Full-height outer-third strip per active side (same W/3
-                    # width as _margin_tiles, but the whole column at once).
-                    strip = max(1, width // 3)
-                    tiles = []
-                    if "left" in refine_sides:
-                        tiles.append((0, 0, strip, height))
-                    if "right" in refine_sides:
-                        tiles.append((width - strip, 0, width, height))
-                    return tiles
+            def _both_margins(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
+                strip = max(1, width // 3)
+                return [(0, 0, strip, height), (width - strip, 0, width, height)]
 
-                refine_boxes = await self._detect_on_tiles(
-                    image_data,
-                    page,
-                    ["official_seal"],
-                    tiles_for=_side_tiles,
-                    source_detail="locate_anything:edge_refine",
+            refine_boxes = await self._detect_on_tiles(
+                image_data,
+                page,
+                ["official_seal"],
+                tiles_for=_both_margins,
+                source_detail="locate_anything:edge_refine",
+            )
+            # GLM reads a barcode/QR in the margin as a seal (med's top
+            # barcode). Drop any margin-seal box overlapping a machine-code
+            # box — the code is already covered by its own detection. Same
+            # cross-detector arbitration as _prefer_yolo_machine_codes.
+            code_boxes = [b for b in boxes if b.type in ("qr_code", "barcode")]
+
+            def _overlaps_code(rb: BoundingBox) -> bool:
+                return any(
+                    rb.x < c.x + c.width and c.x < rb.x + rb.width
+                    and rb.y < c.y + c.height and c.y < rb.y + rb.height
+                    for c in code_boxes
                 )
-                # Fold each refine box into the nearest same-column original
-                # (grow-only hull). "Same column" = x-spans overlap: this lets
-                # a refine box grow its own edge seal vertically while dropping
-                # a mid-page seal fragment the full-height strip happens to
-                # clip (contract's center stamp at the strip's inner edge),
-                # which must not bulge a right-edge seal leftward. Pure
-                # topological overlap, no threshold; coverage only grows.
-                originals = [
-                    (i, b) for i, b in enumerate(boxes) if b.type == "official_seal"
+
+            refine_boxes = [rb for rb in refine_boxes if not _overlaps_code(rb)]
+            # Merge: fold each margin box into the nearest SAME-COLUMN full-frame
+            # seal (x-spans overlap) as a grow-only hull — this both extends an
+            # edge seal the full-frame clipped and keeps a center stamp the
+            # strip clips (contract 0.557) from bulging a different seal. A
+            # margin box with no same-column seal is a binding seal the
+            # full-frame missed entirely (page_02) -> add it. Coverage only grows.
+            originals = [
+                (i, b) for i, b in enumerate(boxes) if b.type == "official_seal"
+            ]
+            folded = added = 0
+            for rb in refine_boxes:
+                same_col = [
+                    item for item in originals
+                    if item[1].x < rb.x + rb.width and rb.x < item[1].x + item[1].width
                 ]
-                folded = 0
-                for rb in refine_boxes:
-                    same_col = [
-                        item for item in originals
-                        if item[1].x < rb.x + rb.width and rb.x < item[1].x + item[1].width
-                    ]
-                    if not same_col:
-                        continue
+                if same_col:
                     rb_cy = rb.y + rb.height / 2.0
                     idx, target = min(
                         same_col,
@@ -403,20 +401,21 @@ class LocateAnythingGroundingService:
                     y1 = min(target.y, rb.y)
                     x2 = max(target.x + target.width, rb.x + rb.width)
                     y2 = max(target.y + target.height, rb.y + rb.height)
-                    grown = target.model_copy(update={
+                    boxes[idx] = target.model_copy(update={
                         "x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1,
                     })
-                    boxes[idx] = grown
                     originals = [
                         (i, boxes[i] if i == idx else b) for i, b in originals
                     ]
                     folded += 1
-                logger.info(
-                    "Edge-seal refine (%s): %d box(es) folded into edge seals in %dms",
-                    "/".join(sorted(refine_sides)),
-                    folded,
-                    _elapsed_ms(refine_start),
-                )
+                else:
+                    boxes.append(rb)
+                    originals.append((len(boxes) - 1, rb))
+                    added += 1
+            logger.info(
+                "Edge-seal margin probe: %d folded, %d added, in %dms",
+                folded, added, _elapsed_ms(refine_start),
+            )
 
         retry_slugs = [
             slug
