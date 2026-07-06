@@ -44,3 +44,29 @@ def test_counts_recover_after_decrement(monkeypatch):
 
 def test_requires_env(monkeypatch):
     assert os.path.exists(LB_PATH)
+
+
+def test_cooled_down_upstream_is_skipped(monkeypatch):
+    lb = _load_lb(monkeypatch)
+    import time
+    lb._cooldown_until["http://a"] = time.monotonic() + 100
+    picks = {lb._pick() for _ in range(6)}
+    assert "http://a" not in picks
+    assert picks == {"http://b", "http://c"}
+
+
+def test_all_cooled_down_falls_back_to_full_set(monkeypatch):
+    lb = _load_lb(monkeypatch)
+    import time
+    future = time.monotonic() + 100
+    for u in ("http://a", "http://b", "http://c"):
+        lb._cooldown_until[u] = future
+    # every upstream down -> still return one (half-open probe), never crash
+    assert lb._pick() in ("http://a", "http://b", "http://c")
+
+
+def test_expired_cooldown_rejoins_rotation(monkeypatch):
+    lb = _load_lb(monkeypatch)
+    import time
+    lb._cooldown_until["http://a"] = time.monotonic() - 1  # already expired
+    assert "http://a" in {lb._pick() for _ in range(6)}
