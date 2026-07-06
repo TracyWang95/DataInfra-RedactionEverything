@@ -216,6 +216,21 @@ class Settings(BaseSettings):
     VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
     VISUAL_FEATURES_TIMEOUT: float = 240.0
     VISUAL_FEATURES_CONF: float = 0.25
+    # GLM-backed visual grounding: one multi-category prompt per page (GLM has
+    # no multi-category recall collapse, unlike LocateAnything), and its
+    # full-frame recall is scale-immune, making the zero-recall tile retry
+    # redundant cost — disable it when this backend is active.
+    VISUAL_SINGLE_CALL: bool = False
+    VISUAL_TILE_RETRY: bool = True
+    # HaS-Image YOLO supplement service (empty = disabled). Runs every page
+    # alongside the grounding model: native-resolution small-object recall
+    # (stacked seal halves, watermark QR codes) at ~100ms.
+    HAS_IMAGE_URL: str = ""
+    # Fold signature boxes centered inside a seal into the seal hull. Needed
+    # for LocateAnything (it misreads stamp content as phantom signatures);
+    # must be OFF for the GLM backend, which has no phantom class and whose
+    # real stamped-over signatures would be swallowed.
+    ABSORB_SIGNATURES_IN_SEALS: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280

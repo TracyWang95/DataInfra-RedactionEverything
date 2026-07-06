@@ -266,7 +266,10 @@ class LocateAnythingGroundingService:
         # Each LA call then does exactly one MoonViT encode + one generation, so
         # the default {signature, official_seal} pair finishes in ~one category's
         # time (~2s) instead of two sequential passes (~4s) on a single card.
-        if model_slugs is not None and len(model_slugs) > 1:
+        # VISUAL_SINGLE_CALL (GLM backend): multi-category recall does NOT
+        # collapse there, so one prompt covers every category in one call.
+        single_call = bool(getattr(settings, "VISUAL_SINGLE_CALL", False))
+        if model_slugs is not None and len(model_slugs) > 1 and not single_call:
             results = await asyncio.gather(
                 *[self._post_detect(image_data, [slug]) for slug in model_slugs],
                 return_exceptions=True,
@@ -315,12 +318,29 @@ class LocateAnythingGroundingService:
                     evidence_source="visual_feature_model",
                 )
             )
+        has_image_url = str(getattr(settings, "HAS_IMAGE_URL", "") or "").strip()
+        if has_image_url and model_slugs:
+            supplement_start = time.perf_counter()
+            try:
+                yolo_boxes = await self._detect_has_image(has_image_url, image_data, page, model_slugs)
+            except Exception as exc:
+                yolo_boxes = []
+                logger.warning("HaS-Image supplement failed: %s", exc)
+            boxes.extend(yolo_boxes)
+            logger.info(
+                "HaS-Image supplement added %d box(es) in %dms",
+                len(yolo_boxes),
+                _elapsed_ms(supplement_start),
+            )
+
         retry_slugs = [
             slug
             for slug in (model_slugs or [])
             if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS
             and not any(b.type == slug for b in boxes)
         ]
+        if retry_slugs and not bool(getattr(settings, "VISUAL_TILE_RETRY", True)):
+            retry_slugs = []
         if retry_slugs:
             retry_start = time.perf_counter()
             tile_boxes = await self._detect_on_tiles(image_data, page, retry_slugs)
@@ -349,6 +369,64 @@ class LocateAnythingGroundingService:
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
+
+    async def _detect_has_image(
+        self,
+        base_url: str,
+        image_data: bytes,
+        page: int,
+        slugs: list[str],
+    ) -> list[BoundingBox]:
+        """HaS-Image YOLO supplement: one ~100ms native-resolution pass.
+
+        The YOLO detector auto-scales to any input size, so the small page
+        artifacts the grounding model loses to downscaling (stacked seal
+        halves, watermark QR codes) come back from here. The service ignores
+        slugs outside its 21 fixed classes; duplicates of grounding boxes
+        collapse in the merge layer (seal hull merge / IoU dedup).
+        """
+        body = {
+            "image_base64": base64.b64encode(image_data).decode("utf-8"),
+            "conf": settings.VISUAL_FEATURES_CONF,
+            "categories": [str(slug) for slug in slugs],
+        }
+        async with httpx.AsyncClient(timeout=settings.VISUAL_FEATURES_TIMEOUT, trust_env=False) as client:
+            response = await client.post(f"{base_url.rstrip('/')}/detect", json=body)
+            response.raise_for_status()
+        boxes: list[BoundingBox] = []
+        for raw in response.json().get("boxes") or []:
+            slug = normalize_visual_slug(str(raw.get("category", "")))
+            if slug not in set(slugs):
+                continue
+            try:
+                normalized = _clamp_box(
+                    float(raw.get("x") or 0),
+                    float(raw.get("y") or 0),
+                    float(raw.get("width") or 0),
+                    float(raw.get("height") or 0),
+                )
+            except (TypeError, ValueError):
+                normalized = None
+            if normalized is None:
+                continue
+            x, y, width, height = normalized
+            boxes.append(
+                BoundingBox(
+                    id=f"has_image_{uuid.uuid4().hex[:8]}",
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
+                    type=slug,
+                    text=SLUG_TO_NAME_ZH.get(slug, slug),
+                    page=page,
+                    confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                    source="visual_features",
+                    source_detail="has_image:yolo",
+                    evidence_source="visual_feature_model",
+                )
+            )
+        return boxes
 
     async def _detect_on_tiles(
         self,

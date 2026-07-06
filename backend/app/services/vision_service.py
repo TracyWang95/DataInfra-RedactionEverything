@@ -676,7 +676,13 @@ class VisionService:
         all_boxes = self._suppress_text_in_signature(all_boxes)
         all_boxes = self._prefer_vl_seals(all_boxes)
         all_boxes = self._merge_seal_shards(all_boxes)
-        all_boxes = self._absorb_signatures_in_seals(all_boxes)
+        # LocateAnything misread stamp content (seal script, inked dates) as
+        # phantom "signatures", which this absorb pass folded into the seal
+        # hull. The GLM grounding backend does not produce that phantom class,
+        # and absorbing there swallows REAL signatures stamped over a seal
+        # (签字盖章重叠) — so the pass is config-gated per visual backend.
+        if bool(getattr(settings, "ABSORB_SIGNATURES_IN_SEALS", True)):
+            all_boxes = self._absorb_signatures_in_seals(all_boxes)
         all_boxes = self._deduplicate_boxes(all_boxes)
         all_boxes = self._expand_signature_boxes(all_boxes)
         all_boxes = self._present_seals_as_visual(all_boxes)
