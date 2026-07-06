@@ -46,7 +46,6 @@ from app.services.vision.ocr_artifact_filter import (
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
 )
-from app.services.vision.seal_detector import detect_red_seal_regions
 
 VISUAL_TYPE_LABELS_ZH = {
     **SLUG_TO_NAME_ZH,
@@ -300,7 +299,6 @@ class VisionService:
         self.visual_grounding = LocateAnythingGroundingService()
         self.last_visual_feature_stage_duration_ms: dict[str, int] = {}
         self.last_warnings: list[str] = []
-        self._ocr_text_line_bboxes: list[tuple[float, float, float, float]] = []
 
     async def detect_sensitive_regions(
         self,
@@ -677,8 +675,8 @@ class VisionService:
 
         all_boxes = self._suppress_text_in_signature(all_boxes)
         all_boxes = self._prefer_vl_seals(all_boxes)
-        all_boxes = self._drop_seal_fallbacks_on_red_print(all_boxes)
         all_boxes = self._merge_seal_shards(all_boxes)
+        all_boxes = self._absorb_signatures_in_seals(all_boxes)
         all_boxes = self._deduplicate_boxes(all_boxes)
         all_boxes = self._expand_signature_boxes(all_boxes)
         all_boxes = self._present_seals_as_visual(all_boxes)
@@ -824,75 +822,14 @@ class VisionService:
             logger.info("Dropped %d LA seal box(es) superseded by VL seals", dropped)
         return kept
 
-    def _drop_seal_fallbacks_on_red_print(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """Drop cv2 red-fallback seal candidates that are really red PRINT.
-
-        The red-ink detector cannot tell a stamp from a line of red printed
-        text (e.g. a report footer disclaimer). OCR structure is the arbiter:
-        if a fallback candidate lies entirely inside the union bbox of the
-        OCR text lines it overlaps, the red thing IS machine-read text, not a
-        stamp - a physical stamp always rises beyond the lines it covers.
-        Only ``seal_detector:*`` candidates are eligible; model-detected seals
-        are never dropped. Residual risk: a stamp missed by BOTH models and
-        sitting fully inside a dense read paragraph would be dropped with it -
-        accepted, because the fallback exists for page-edge binding-seal
-        slivers where no such paragraph exists.
-        """
-        lines = getattr(self, "_ocr_text_line_bboxes", None) or []
-        if not lines:
-            return boxes
-        model_seals = [
-            b for b in boxes
-            if b.type == "official_seal" and not str(
-                getattr(b, "source_detail", "") or ""
-            ).startswith("seal_detector:")
-        ]
-        kept: list[BoundingBox] = []
-        dropped = 0
-        for b in boxes:
-            if b.type == "official_seal" and str(
-                getattr(b, "source_detail", "") or ""
-            ).startswith("seal_detector:"):
-                bx1, by1 = b.x, b.y
-                bx2, by2 = b.x + b.width, b.y + b.height
-                # A candidate touching a model-detected seal is stamp mass,
-                # not print: leave it for _merge_seal_shards to hull.
-                if any(
-                    s.x < bx2 and bx1 < s.x + s.width
-                    and s.y < by2 and by1 < s.y + s.height
-                    for s in model_seals
-                ):
-                    kept.append(b)
-                    continue
-                touched = [
-                    line
-                    for line in lines
-                    if line[0] < bx2 and bx1 < line[2] and line[1] < by2 and by1 < line[3]
-                ]
-                if touched:
-                    ux1 = min(line[0] for line in touched)
-                    uy1 = min(line[1] for line in touched)
-                    ux2 = max(line[2] for line in touched)
-                    uy2 = max(line[3] for line in touched)
-                    if ux1 <= bx1 and uy1 <= by1 and bx2 <= ux2 and by2 <= uy2:
-                        dropped += 1
-                        continue
-            kept.append(b)
-        if dropped:
-            logger.info(
-                "Dropped %d red-print seal fallback box(es) contained in OCR text lines",
-                dropped,
-            )
-        return kept
-
     def _merge_seal_shards(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """One physical stamp, one box.
 
-        The model channels and the cv2 red fallback can each contribute a
-        partial box for the SAME stamp (offset bands on tilted camera photos
-        slip past the IoU/containment dedup thresholds). Two seal boxes are
-        shards of one stamp when either box's center lies inside the other -
-        the same center-anchoring test used across this merge layer; distinct
+        Detection channels can each contribute a partial box for the SAME
+        stamp (offset shards on tilted camera photos slip past the
+        IoU/containment dedup thresholds). Two seal boxes are shards of one
+        stamp when either box's center lies inside the other - the same
+        center-anchoring test used across this merge layer; distinct
         side-by-side stamps never contain each other's centers, so real
         multi-seal pages are untouched. Shards fold into their bounding hull
         to a fixpoint, keeping the identity of the largest box.
@@ -940,6 +877,42 @@ class VisionService:
                 result.append(hull_by_id.pop(b.id))
         result.extend(hull_by_id.values())
         return result
+
+    def _absorb_signatures_in_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """A 'signature' centered inside an official_seal box is the stamp's
+        own content (seal script, inked date) misread by the model, not an
+        independent signature. Absorb it: expand the seal box to the hull of
+        both and drop the signature box. Coverage can only grow - a genuine
+        signature overlapping the stamp keeps every pixel masked, only the
+        redundant box disappears.
+        """
+        seal_indexes = [i for i, b in enumerate(boxes) if b.type == "official_seal"]
+        if not seal_indexes:
+            return boxes
+        out = list(boxes)
+        absorbed: set[int] = set()
+        for j, b in enumerate(boxes):
+            if b.type != "signature":
+                continue
+            for i in seal_indexes:
+                seal = out[i]
+                if self._center_inside(b, seal):
+                    x1 = min(seal.x, b.x)
+                    y1 = min(seal.y, b.y)
+                    x2 = max(seal.x + seal.width, b.x + b.width)
+                    y2 = max(seal.y + seal.height, b.y + b.height)
+                    out[i] = seal.model_copy(update={
+                        "x": x1,
+                        "y": y1,
+                        "width": x2 - x1,
+                        "height": y2 - y1,
+                    })
+                    absorbed.add(j)
+                    break
+        if not absorbed:
+            return boxes
+        logger.info("Absorbed %d signature box(es) into seal hulls", len(absorbed))
+        return [b for j, b in enumerate(out) if j not in absorbed]
 
     @staticmethod
     def _present_seals_as_visual(boxes: list[BoundingBox]) -> list[BoundingBox]:
@@ -1061,16 +1034,6 @@ class VisionService:
 
         img = Image.open(io.BytesIO(image_data))
         img = ImageOps.exif_transpose(img)
-
-        # Text-line evidence for the merge layer's red-print arbitration
-        # (_drop_seal_fallbacks_on_red_print). Read right after the await with
-        # no yield point in between, so the singleton's last_ocr_blocks still
-        # belongs to THIS call even under JOB_CONCURRENCY.
-        _w, _h = img.size
-        self._ocr_text_line_bboxes = [
-            (blk.bbox[0] / _w, blk.bbox[1] / _h, blk.bbox[2] / _w, blk.bbox[3] / _h)
-            for blk in (getattr(self.ocr_has_service, "last_ocr_blocks", None) or [])
-        ]
 
         # 像素级过滤/收紧是纯 CPU 工作，放 worker 线程避免阻塞事件循环。
         bounding_boxes = await asyncio.to_thread(
@@ -1292,66 +1255,6 @@ class VisionService:
         y2 = min(page_height, int(top + region_height) + pad_y)
         return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
 
-    def _supplement_seals(
-        self,
-        image_data: bytes,
-        page: int,
-        existing_boxes: list[BoundingBox],
-    ) -> list[BoundingBox]:
-        """Add cv2 seal boxes only where LocateAnything missed one.
-
-        LA recall is borderline on thin 骑缝章 (binding-seal) fragments at the page
-        edge: the same seal is caught on some pages but dropped on others. This
-        image-analysis fallback recovers those red-stamp misses. It is a pure
-        SUPPLEMENT — it only appends seal boxes that do NOT overlap an already-known
-        seal, uses the detector's tight boxes with no geometric expansion, and never
-        drops OCR text. Both prior fallback regressions (an expanded box covering a
-        company name; dropping OCR text inside seal regions) are therefore
-        structurally avoided. (A dark/photocopied-seal detector was removed: it
-        false-positived on dark printed boxes such as a customs 审结 stamp frame.)
-        """
-        try:
-            img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
-            detections = [("red", detect_red_seal_regions(img))]
-        except Exception:
-            logger.warning("cv2 seal fallback failed on page %d", page, exc_info=True)
-            return []
-        # Red marks LA already identified as fingerprints are also "known": the
-        # color detector cannot tell a red inked fingerprint from a red stamp, so
-        # without this a transcript page's fingerprints get double-boxed as seals.
-        known_seals = [
-            b for b in existing_boxes if normalize_visual_slug(b.type) in {"official_seal", "fingerprint"}
-        ]
-        extra: list[BoundingBox] = []
-        for kind, regions in detections:
-            for index, region in enumerate(regions):
-                candidate = BoundingBox(
-                    id=f"seal_cv2_{kind}_{page}_{index}_{uuid.uuid4().hex[:8]}",
-                    x=region.x,
-                    y=region.y,
-                    width=region.width,
-                    height=region.height,
-                    type="official_seal",
-                    text=SLUG_TO_NAME_ZH.get("official_seal", "official_seal"),
-                    page=page,
-                    confidence=float(region.confidence),
-                    source="visual_features",
-                    source_detail=f"seal_detector:{kind}_fallback",
-                    evidence_source="visual_feature_model",
-                )
-                # Skip if it overlaps an LA seal or a cv2 seal already accepted this
-                # page (so one seal is never double-boxed).
-                if any(
-                    self._calculate_smaller_overlap(candidate, seal) >= _DEDUP_CONTAINMENT
-                    or self._calculate_iou(candidate, seal) > _DEDUP_IOU
-                    for seal in (*known_seals, *extra)
-                ):
-                    continue
-                extra.append(candidate)
-        if extra:
-            logger.info("cv2 seal fallback added %d seal box(es) LA missed on page %d", len(extra), page)
-        return extra
-
     def _supplement_machine_codes(
         self,
         image_data: bytes,
@@ -1363,7 +1266,7 @@ class VisionService:
 
         cv2 only reports a machine code once its payload actually decodes, which
         is a deterministic format proof — zero false positives, no thresholds.
-        Like ``_supplement_seals`` this is a pure SUPPLEMENT: it only appends
+        A pure SUPPLEMENT: it only appends
         boxes that do NOT overlap an already-known box of the same category,
         using the shared merge-layer overlap constants.
         """
@@ -1438,12 +1341,6 @@ class VisionService:
                 logger.warning("LocateAnything checklist stage failed on page %d: %s", page, e)
                 self.last_warnings.append(f"visual checklist failed on page {page}: {e}")
         boxes = [*locate_boxes, *checklist_boxes]
-        if self._visual_slug_requested(pipeline_types, "official_seal"):
-            # cv2 形态学是同步 CPU 工作，放 worker 线程避免阻塞事件循环。
-            supplemental = await asyncio.to_thread(
-                self._supplement_seals, image_data, page, boxes
-            )
-            boxes = [*boxes, *supplemental]
         machine_code_slugs = [
             slug for slug in (QR_CODE_SLUG, BARCODE_SLUG) if self._visual_slug_requested(pipeline_types, slug)
         ]

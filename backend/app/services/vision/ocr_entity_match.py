@@ -332,11 +332,35 @@ def _entity_char_box_x_span(
     if search_glyphs == chars_glyphs:
         box_by_glyph = list(glyph_boxes)
     else:
-        for search_pos, chars_pos, size in SequenceMatcher(
+        matching_blocks = SequenceMatcher(
             None, search_glyphs, chars_glyphs, autojunk=False
-        ).get_matching_blocks():
+        ).get_matching_blocks()
+        for search_pos, chars_pos, size in matching_blocks:
             for offset in range(size):
                 box_by_glyph[search_pos + offset] = glyph_boxes[chars_pos + offset]
+        if None in box_by_glyph:
+            # The word engine can emit boxes out of reading order (e.g.
+            # ['岁', '27'] for "27岁"), which the monotone alignment above
+            # cannot cross-match. Pair each still-unmatched search glyph
+            # with an unconsumed char box by glyph identity, only when that
+            # glyph is unique among the unmatched on both sides - identity
+            # plus uniqueness keeps the correspondence proven, still no
+            # estimation and no thresholds.
+            consumed: set[int] = set()
+            for _search_pos, chars_pos, size in matching_blocks:
+                consumed.update(range(chars_pos, chars_pos + size))
+            unmatched_search: dict[str, list[int]] = {}
+            for index, glyph in enumerate(search_glyphs):
+                if box_by_glyph[index] is None:
+                    unmatched_search.setdefault(glyph, []).append(index)
+            unmatched_chars: dict[str, list[int]] = {}
+            for index, glyph in enumerate(chars_glyphs):
+                if index not in consumed:
+                    unmatched_chars.setdefault(glyph, []).append(index)
+            for glyph, search_positions in unmatched_search.items():
+                char_positions = unmatched_chars.get(glyph) or []
+                if len(search_positions) == 1 and len(char_positions) == 1:
+                    box_by_glyph[search_positions[0]] = glyph_boxes[char_positions[0]]
 
     span_boxes = box_by_glyph[span_glyph_start:span_glyph_end]
     if not span_boxes or span_boxes[0] is None or span_boxes[-1] is None:
