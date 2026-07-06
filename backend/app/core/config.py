@@ -652,6 +652,12 @@ class Settings(BaseSettings):
     # 必须命中列表中的精确主机名或 IP / CIDR 网段，否则拒绝建立连接。
     STRUCTURED_DB_HOST_ALLOWLIST: list[str] | None = None
 
+    # 文本 NER 后端（llama-server）地址主机白名单（SSRF 纵深防御）。该配置端点
+    # 现已限 super_admin，此为二道防线：None = 不限制（默认，保持本地/内网自建
+    # NER 服务的正当功能）；设置后，llamacpp_base_url 的 host 必须命中列表中的
+    # 精确主机名或 IP / CIDR 网段，否则拒绝保存/测试。
+    NER_BACKEND_HOST_ALLOWLIST: list[str] | None = None
+
     # 结构化日志（默认生产 JSON，DEBUG 文本）
     LOG_JSON: bool = True
 

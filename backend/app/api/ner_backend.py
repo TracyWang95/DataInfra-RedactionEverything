@@ -4,9 +4,11 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
+from urllib.parse import urlparse
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.core.config import get_settings
 from app.core.llamacpp_probe import probe_llamacpp
@@ -14,6 +16,45 @@ from app.core.ner_runtime import NerBackendRuntime, load_ner_runtime, save_ner_r
 
 router = APIRouter(prefix="/ner-backend", tags=["文本NER后端"])
 logger = logging.getLogger(__name__)
+
+
+def _validate_base_url(base_url: str) -> None:
+    """SSRF guard for the NER backend URL (defense-in-depth behind super_admin).
+
+    Requires an http(s) URL with no embedded credentials. When
+    NER_BACKEND_HOST_ALLOWLIST is set, the host must match an exact hostname
+    or IP/CIDR entry — same shape as the structured-DB host allowlist. None
+    (default) keeps the local/intranet self-hosted NER use case working.
+    """
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=422, detail="NER 后端地址必须是 http(s):// URL")
+    if parsed.username or parsed.password:
+        raise HTTPException(status_code=422, detail="NER 后端地址不得包含账号密码")
+    allowlist = get_settings().NER_BACKEND_HOST_ALLOWLIST
+    if allowlist is None:
+        return
+    host = parsed.hostname
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        addr = None
+    for raw_entry in allowlist:
+        entry = str(raw_entry).strip()
+        if not entry:
+            continue
+        if host == entry:
+            return
+        if addr is not None:
+            try:
+                if addr in ipaddress.ip_network(entry, strict=False):
+                    return
+            except ValueError:
+                continue
+    raise HTTPException(
+        status_code=422,
+        detail=f"NER 后端主机 '{host}' 不在 NER_BACKEND_HOST_ALLOWLIST 白名单内",
+    )
 
 
 def _with_hint(msg: str, hint: str | None) -> str:
@@ -51,6 +92,7 @@ async def get_ner_backend():
 @router.put("", response_model=NerBackendRuntime)
 async def put_ner_backend(body: NerBackendRuntime):
     """保存 NER 配置（立即生效，无需重启）。"""
+    _validate_base_url(body.llamacpp_base_url)
     save_ner_runtime(body)
     return body
 
@@ -73,6 +115,7 @@ async def test_ner_backend(body: NerBackendRuntime):
     连通性测试（使用请求体中的配置，无需先保存）。
     依次探测 /v1/models、models、health 等（不同 llama-server 构建路径不一）。
     """
+    _validate_base_url(body.llamacpp_base_url)
     hint = _saved_vs_form_hint(body)
     try:
         ok, _probe_message, _used_url, strict = probe_llamacpp(body.llamacpp_base_url, timeout=8.0)

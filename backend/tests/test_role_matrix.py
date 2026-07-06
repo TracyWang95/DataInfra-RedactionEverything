@@ -92,3 +92,15 @@ def test_commit_all_still_requires_bulk_permission_for_reviewer():
     resp = client.post("/api/v1/jobs/j1/review/commit-all", headers=_headers("reviewer"))
     # reviewer passes the role middleware but lacks the bulk_confirm grant
     assert resp.status_code == 403
+
+
+def test_ner_backend_config_requires_super_admin():
+    # Rewriting the global NER backend URL steers every tenant's text through
+    # the configured host (SSRF + cross-tenant leak + silent under-redaction),
+    # so it must be super_admin only — same gate as model_config.
+    body = {"backend": "llamacpp", "llamacpp_base_url": "http://127.0.0.1:8080/v1"}
+    for role in ("user", "operator", "reviewer"):
+        resp = client.put("/api/v1/ner-backend", headers=_headers(role), json=body)
+        assert resp.status_code == 403, f"{role} PUT ner-backend: {resp.status_code}"
+    resp = client.put("/api/v1/ner-backend", headers=_headers("super_admin"), json=body)
+    assert resp.status_code != 403, f"super_admin wrongly denied: {resp.text[:120]}"
