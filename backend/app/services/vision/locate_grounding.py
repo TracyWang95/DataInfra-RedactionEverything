@@ -338,13 +338,14 @@ class LocateAnythingGroundingService:
             and model_slugs
             and "official_seal" in model_slugs
         ):
-            # Margin (binding) seals: at page scale the model boxes only the
-            # most stamp-like part of an edge sliver, dropping the serial
-            # digits below it. Re-detect on the affected side's margin
-            # windows (native resolution restores the full extent) and let
-            # _merge_seal_shards hull the results with the originals —
-            # coverage can only grow. Sides use the same outer-third
-            # geometry as _margin_tiles.
+            # Margin (binding) seals: at page scale GLM is unstable on the
+            # thin edge slivers (a page_02 binding column flaps between one
+            # tall box and a hallucinated 7-box column across calls) and the
+            # box it does return crops the serial digits at the bottom.
+            # Re-detect on the affected side's FULL-HEIGHT margin strip: the
+            # whole binding column in one native-resolution crop is far more
+            # stable (3/3 runs agree) and reaches the serial. Results fold
+            # into the originals grow-only.
             refine_sides = set()
             for b in boxes:
                 if b.type != "official_seal":
@@ -358,11 +359,15 @@ class LocateAnythingGroundingService:
                 refine_start = time.perf_counter()
 
                 def _side_tiles(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
-                    return [
-                        t for t in _margin_tiles(width, height)
-                        if ("left" in refine_sides and t[0] == 0)
-                        or ("right" in refine_sides and t[0] != 0)
-                    ]
+                    # Full-height outer-third strip per active side (same W/3
+                    # width as _margin_tiles, but the whole column at once).
+                    strip = max(1, width // 3)
+                    tiles = []
+                    if "left" in refine_sides:
+                        tiles.append((0, 0, strip, height))
+                    if "right" in refine_sides:
+                        tiles.append((width - strip, 0, width, height))
+                    return tiles
 
                 refine_boxes = await self._detect_on_tiles(
                     image_data,
@@ -371,22 +376,27 @@ class LocateAnythingGroundingService:
                     tiles_for=_side_tiles,
                     source_detail="locate_anything:edge_refine",
                 )
-                # A refine box exists because of a specific full-frame edge
-                # seal, so fold it into the nearest one (argmin on y-center
-                # distance, no threshold) as a grow-only hull. Refine boxes
-                # never merge originals with each other, so two distinct
-                # stamps in the same margin column stay separate.
+                # Fold each refine box into the nearest same-column original
+                # (grow-only hull). "Same column" = x-spans overlap: this lets
+                # a refine box grow its own edge seal vertically while dropping
+                # a mid-page seal fragment the full-height strip happens to
+                # clip (contract's center stamp at the strip's inner edge),
+                # which must not bulge a right-edge seal leftward. Pure
+                # topological overlap, no threshold; coverage only grows.
                 originals = [
                     (i, b) for i, b in enumerate(boxes) if b.type == "official_seal"
                 ]
                 folded = 0
                 for rb in refine_boxes:
-                    if not originals:
-                        boxes.append(rb)
+                    same_col = [
+                        item for item in originals
+                        if item[1].x < rb.x + rb.width and rb.x < item[1].x + item[1].width
+                    ]
+                    if not same_col:
                         continue
                     rb_cy = rb.y + rb.height / 2.0
                     idx, target = min(
-                        originals,
+                        same_col,
                         key=lambda item: abs(item[1].y + item[1].height / 2.0 - rb_cy),
                     )
                     x1 = min(target.x, rb.x)
@@ -402,10 +412,9 @@ class LocateAnythingGroundingService:
                     ]
                     folded += 1
                 logger.info(
-                    "Edge-seal refine (%s): %d box(es) folded into %d edge seal(s) in %dms",
+                    "Edge-seal refine (%s): %d box(es) folded into edge seals in %dms",
                     "/".join(sorted(refine_sides)),
                     folded,
-                    len({i for i, _ in originals}),
                     _elapsed_ms(refine_start),
                 )
 
