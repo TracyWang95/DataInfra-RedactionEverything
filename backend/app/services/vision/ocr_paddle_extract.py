@@ -36,7 +36,6 @@ from app.services.vision.ocr_cache import (
     _wait_for_ocr_output_inflight,
 )
 from app.services.vision.ocr_image_prep import _is_effectively_blank_page
-from app.services.vision.ocr_seal_split import _split_merged_seal_region
 from app.services.vision.ocr_tuning import (
     _COARSE_MULTILINE_HEIGHT_MULT,
     _COARSE_MULTILINE_MIN_COMPACT_LEN,
@@ -342,7 +341,7 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
                 confidence=float(getattr(item, "confidence", _DEFAULT_OCR_ITEM_CONFIDENCE) or _DEFAULT_OCR_ITEM_CONFIDENCE),
                 source="ocr_seal",
             )
-            visual_regions.extend(_split_merged_seal_region(image, region))
+            visual_regions.append(region)
             continue
         if not text:
             continue
@@ -494,15 +493,13 @@ def _run_ocr_service(
                     source="paddleocr_vl",
                     color=_SEAL_REGION_COLOR,
                 )
-                split_regions = _split_merged_seal_region(image, region)
-                visual_regions.extend(split_regions)
+                visual_regions.append(region)
                 logger.info(
-                    "Found SEAL @ (%d, %d, %d, %d), split=%d",
+                    "Found SEAL @ (%d, %d, %d, %d)",
                     left,
                     top,
                     right - left,
                     bottom - top,
-                    len(split_regions),
                 )
                 continue
 
