@@ -675,6 +675,7 @@ class VisionService:
 
         all_boxes = self._suppress_text_in_signature(all_boxes)
         all_boxes = self._prefer_vl_seals(all_boxes)
+        all_boxes = self._prefer_yolo_machine_codes(all_boxes)
         all_boxes = self._merge_seal_shards(all_boxes)
         # LocateAnything misread stamp content (seal script, inked dates) as
         # phantom "signatures", which this absorb pass folded into the seal
@@ -826,6 +827,41 @@ class VisionService:
             kept.append(b)
         if dropped:
             logger.info("Dropped %d LA seal box(es) superseded by VL seals", dropped)
+        return kept
+
+    def _prefer_yolo_machine_codes(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """For qr_code/barcode, prefer the HaS-Image YOLO box over the VLM's.
+
+        The specialist detector boxes machine codes at pixel accuracy; the
+        grounding model's 0-1000 quantized boxes run visibly loose (its QR box
+        swallows the serial number printed below the code). Where both detect
+        the same code (centers mutually contained, the merge layer's standard
+        identity test), keep the tight specialist box. VLM codes with no YOLO
+        counterpart are kept — this only resolves duplicates, never recall.
+        """
+        code_types = {"qr_code", "barcode"}
+        yolo_codes = [
+            b for b in boxes
+            if b.type in code_types and str(getattr(b, "source_detail", "") or "").startswith("has_image:")
+        ]
+        if not yolo_codes:
+            return boxes
+        kept: list[BoundingBox] = []
+        dropped = 0
+        for b in boxes:
+            if (
+                b.type in code_types
+                and not str(getattr(b, "source_detail", "") or "").startswith("has_image:")
+                and any(
+                    y.type == b.type and (self._center_inside(y, b) or self._center_inside(b, y))
+                    for y in yolo_codes
+                )
+            ):
+                dropped += 1
+                continue
+            kept.append(b)
+        if dropped:
+            logger.info("Dropped %d loose VLM machine-code box(es) superseded by YOLO", dropped)
         return kept
 
     def _merge_seal_shards(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
