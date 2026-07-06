@@ -49,6 +49,54 @@ _DEFAULT_TOP_P = 0.6
 _DEFAULT_DETECT_CONFIDENCE = 0.8
 _DEFAULT_CHECKLIST_CONFIDENCE = 0.82
 
+# Zero-recall tile retry: LA's input is downscaled to its max side, so small
+# page artifacts (binding-seal slivers on the margins, watermark QR codes at
+# the page foot) can vanish at full-page scale while detecting reliably on a
+# native-resolution crop. When a requested category yields nothing on the
+# full frame, re-run just that category on a validated tile set. Window
+# geometry is start/center/end anchoring with half-size windows: any object
+# smaller than half a window lies fully inside at least one tile, so nothing
+# that size can be lost to a tile seam. Tile hits are pure gap-filling: any
+# tile box intersecting a full-frame box is discarded (the full frame
+# outranks the zoom - a zoomed handwritten signature must not come back as a
+# phantom "seal" on top of the signature the full frame already found).
+_TILE_RETRY_MARGIN_SLUGS = frozenset({"official_seal"})
+_TILE_RETRY_BOTTOM_SLUGS = frozenset({"qr_code"})
+# LA reads degraded machine codes as either sibling; both mask identically.
+_MACHINE_CODE_SIBLINGS = frozenset({"qr_code", "barcode"})
+
+
+def _axis_positions(total: int, window: int) -> list[int]:
+    """start / center / end anchor offsets for a sliding window."""
+    last = max(0, total - window)
+    return sorted({0, last // 2, last})
+
+
+def _margin_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """L/R margin strips: binding seals sit on page edges by definition.
+    Strip width W//3 - validated on real binding-seal pages: narrower strips
+    starve the model of page context and edge slivers stop being recognised
+    as stamps."""
+    strip = max(1, width // 3)
+    window = max(1, height // 2)
+    tiles = []
+    for x0 in (0, width - strip):
+        for y0 in _axis_positions(height, window):
+            tiles.append((x0, y0, x0 + strip, min(height, y0 + window)))
+    return tiles
+
+
+def _bottom_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """Bottom H//4 row in three overlapped half-width windows: scanner
+    watermark QR codes live at the page foot; QR codes elsewhere are
+    body-scale and the full frame sees them."""
+    row_top = height - max(1, height // 4)
+    window = max(1, width // 2)
+    return [
+        (x0, row_top, min(width, x0 + window), height)
+        for x0 in _axis_positions(width, window)
+    ]
+
 
 @dataclass
 class LocateGroundingTimings:
@@ -267,9 +315,125 @@ class LocateAnythingGroundingService:
                     evidence_source="visual_feature_model",
                 )
             )
+        retry_slugs = [
+            slug
+            for slug in (model_slugs or [])
+            if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS
+            and not any(b.type == slug for b in boxes)
+        ]
+        if retry_slugs:
+            retry_start = time.perf_counter()
+            tile_boxes = await self._detect_on_tiles(image_data, page, retry_slugs)
+            # Gap-filling only: a tile hit that touches anything the full
+            # frame already found is the zoom second-guessing the page-scale
+            # call - discard it.
+            tile_boxes = [
+                t
+                for t in tile_boxes
+                if not any(
+                    t.x < b.x + b.width
+                    and b.x < t.x + t.width
+                    and t.y < b.y + b.height
+                    and b.y < t.y + t.height
+                    for b in boxes
+                )
+            ]
+            boxes.extend(tile_boxes)
+            logger.info(
+                "LocateAnything tile retry for %s kept %d box(es) in %dms",
+                retry_slugs,
+                len(tile_boxes),
+                _elapsed_ms(retry_start),
+            )
+
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
+
+    async def _detect_on_tiles(
+        self,
+        image_data: bytes,
+        page: int,
+        slugs: list[str],
+    ) -> list[BoundingBox]:
+        """Re-run zero-recall categories on native-resolution tiles.
+
+        Margin strips for binding seals, a bottom row for watermark QR
+        codes. Hits are mapped back to page-normalized coordinates;
+        duplicates from overlapping tiles collapse in the merge layer
+        (seal hull merge / IoU dedup).
+        """
+        try:
+            image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+        except Exception:
+            logger.warning("tile retry: could not decode page image", exc_info=True)
+            return []
+        width, height = image.size
+        if width < 2 or height < 2:
+            return []
+        tasks = []
+        metas = []
+        for slug in slugs:
+            tiles = (
+                _margin_tiles(width, height)
+                if slug in _TILE_RETRY_MARGIN_SLUGS
+                else _bottom_tiles(width, height)
+            )
+            for x0, y0, x1, y1 in tiles:
+                encoded = io.BytesIO()
+                image.crop((x0, y0, x1, y1)).save(encoded, format="JPEG", quality=_JPEG_QUALITY)
+                tasks.append(self._post_detect(encoded.getvalue(), [slug]))
+                metas.append((slug, x0, y0, x1 - x0, y1 - y0))
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        boxes: list[BoundingBox] = []
+        for (slug, x0, y0, tile_w, tile_h), result in zip(metas, results, strict=False):
+            if isinstance(result, BaseException):
+                logger.warning("tile retry %s failed on one tile: %s", slug, result)
+                continue
+            for raw in result:
+                raw_slug = normalize_visual_slug(str(raw.get("category", "")))
+                if raw_slug != slug and not (
+                    slug in _MACHINE_CODE_SIBLINGS and raw_slug in _MACHINE_CODE_SIBLINGS
+                ):
+                    continue
+                try:
+                    normalized = _clamp_box(
+                        float(raw.get("x") or 0),
+                        float(raw.get("y") or 0),
+                        float(raw.get("width") or 0),
+                        float(raw.get("height") or 0),
+                    )
+                except (TypeError, ValueError):
+                    normalized = None
+                if normalized is None:
+                    continue
+                tile_x, tile_y, tile_box_w, tile_box_h = normalized
+                mapped = _clamp_box(
+                    (x0 + tile_x * tile_w) / width,
+                    (y0 + tile_y * tile_h) / height,
+                    tile_box_w * tile_w / width,
+                    tile_box_h * tile_h / height,
+                )
+                if mapped is None:
+                    continue
+                x, y, box_w, box_h = mapped
+                boxes.append(
+                    BoundingBox(
+                        id=f"locate_tile_{uuid.uuid4().hex[:8]}",
+                        x=x,
+                        y=y,
+                        width=box_w,
+                        height=box_h,
+                        type=slug,
+                        text=SLUG_TO_NAME_ZH.get(slug, slug),
+                        page=page,
+                        confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                        source="visual_features",
+                        source_detail="locate_anything:tile_retry",
+                        evidence_source="visual_feature_model",
+                    )
+                )
+        return boxes
 
     async def detect_checklist(
         self,
