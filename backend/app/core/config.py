@@ -237,6 +237,13 @@ class Settings(BaseSettings):
     # returns the full extent. Re-detect on the affected side's margin
     # windows and let the seal hull merge grow the box — coverage only grows.
     VISUAL_EDGE_SEAL_REFINE: bool = True
+    # Color->VLM seal cascade: propose red-ink regions (clustering photocopy
+    # fragments), confirm each with the VLM on a tight crop, redact the red
+    # extent. Recovers faint / edge / fragmented RED stamps the full-frame VLM
+    # misses (page_04 is invisible to it at every zoom). Supersedes the margin
+    # refine when on. Does NOT cover black-on-white photocopy seals (no red
+    # signal) — that tier needs a trained detector.
+    VISUAL_SEAL_COLOR_CASCADE: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280

@@ -25,6 +25,7 @@ from app.core.visual_feature_categories import (
 )
 from app.models.schemas import BoundingBox
 from app.services import model_config_service
+from app.services.vision.seal_color_cascade import propose_red_seal_regions
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +335,67 @@ class LocateAnythingGroundingService:
             )
 
         if (
+            bool(getattr(settings, "VISUAL_SEAL_COLOR_CASCADE", True))
+            and model_slugs
+            and "official_seal" in model_slugs
+        ):
+            # Color->VLM seal cascade (supersedes the margin refine). The
+            # full-frame VLM misses faint / edge / photocopy-fragmented RED
+            # stamps on salience (page_04's binding seal is invisible to it at
+            # every zoom), but they are strong red ink: propose red-ink regions
+            # (clustering fragments), confirm each on a tight crop with the VLM
+            # (which rejects red text / rules), and redact the red extent. The
+            # tight crop makes the faint stamp salient enough for the VLM to
+            # confirm what it could not see on the page.
+            cascade_start = time.perf_counter()
+            proposals = propose_red_seal_regions(image_data)
+            existing_seals = [b for b in boxes if b.type == "official_seal"]
+
+            def _covered(px: float, py: float, pw: float, ph: float) -> bool:
+                # already found by the full frame -> skip the confirm call
+                return any(
+                    px < s.x + s.width and s.x < px + pw
+                    and py < s.y + s.height and s.y < py + ph
+                    for s in existing_seals
+                )
+
+            to_confirm = [p for p in proposals if not _covered(*p)]
+            try:
+                image = ImageOps.exif_transpose(
+                    Image.open(io.BytesIO(image_data))
+                ).convert("RGB")
+                results = await asyncio.gather(
+                    *[self._confirm_seal_crop(image, p) for p in to_confirm],
+                    return_exceptions=True,
+                )
+            except Exception:
+                logger.warning("Seal color cascade failed", exc_info=True)
+                results = [False] * len(to_confirm)
+            added = 0
+            for (px, py, pw, ph), ok in zip(to_confirm, results, strict=False):
+                if ok is not True:
+                    continue
+                clamped = _clamp_box(px, py, pw, ph)
+                if clamped is None:
+                    continue
+                x, y, width_n, height_n = clamped
+                boxes.append(BoundingBox(
+                    id=f"seal_color_{uuid.uuid4().hex[:8]}",
+                    x=x, y=y, width=width_n, height=height_n,
+                    type="official_seal",
+                    text=SLUG_TO_NAME_ZH.get("official_seal", "official_seal"),
+                    page=page,
+                    confidence=_DEFAULT_DETECT_CONFIDENCE,
+                    source="visual_features",
+                    source_detail="seal_color_cascade",
+                    evidence_source="visual_feature_model",
+                ))
+                added += 1
+            logger.info(
+                "Seal color cascade: %d/%d proposals confirmed in %dms",
+                added, len(to_confirm), _elapsed_ms(cascade_start),
+            )
+        elif (
             bool(getattr(settings, "VISUAL_EDGE_SEAL_REFINE", True))
             and model_slugs
             and "official_seal" in model_slugs
@@ -511,6 +573,30 @@ class LocateAnythingGroundingService:
                 )
             )
         return boxes
+
+    async def _confirm_seal_crop(self, image: "Image.Image", region: tuple[float, float, float, float]) -> bool:
+        """Ask the VLM whether a tight crop around a red-ink region is a seal.
+
+        The crop makes a faint/edge/fragmented stamp salient enough to confirm
+        (or rejects red text / rules). Yes/no gate only — the caller redacts
+        the red extent, not the VLM's box.
+        """
+        px, py, pw, ph = region
+        width, height = image.size
+        pad = int(0.02 * max(width, height))
+        x0 = max(0, int(px * width) - pad)
+        y0 = max(0, int(py * height) - pad)
+        x1 = min(width, int((px + pw) * width) + pad)
+        y1 = min(height, int((py + ph) * height) + pad)
+        if x1 <= x0 or y1 <= y0:
+            return False
+        buf = io.BytesIO()
+        image.crop((x0, y0, x1, y1)).save(buf, format="JPEG", quality=_JPEG_QUALITY)
+        try:
+            boxes = await self._post_detect(buf.getvalue(), ["official_seal"])
+        except Exception:
+            return False
+        return len(boxes) > 0
 
     async def _detect_on_tiles(
         self,
