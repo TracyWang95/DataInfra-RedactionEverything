@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any
 
@@ -56,6 +57,35 @@ logger = logging.getLogger(__name__)
 # date). Reordering/chunking to recover it reintroduces the force-fit, because this
 # model classifies sequentially — order and recall are coupled. So a date-format
 # backstop (below) catches those dropped dates — see _STANDALONE_DATE_RE.
+#
+# A date is a closed grammar, not a judgment call: recall it structurally in
+# BOTH digit systems. The 1980 typewritten judgment's "一九五八年九月十日"
+# surfaced in one HaS run and vanished in the next (sampling-dependent recall);
+# the backstop makes 年月日 forms deterministic. Whitespace between tokens is
+# tolerant (\s*) so a date wrapped across OCR blocks still matches on the
+# joined text.
+_CJK_DIGITS = "〇○零一二三四五六七八九"
+_STANDALONE_DATE_RE = re.compile(
+    rf"(?:[0-9０-９]{{2,4}}|[{_CJK_DIGITS}]{{2,4}})\s*年\s*"
+    rf"(?:[0-9０-９]{{1,2}}|十[一二]|[{_CJK_DIGITS}]|十|元)\s*月\s*"
+    rf"(?:[0-9０-９]{{1,3}}|[一二三]?十[{_CJK_DIGITS}]?|[{_CJK_DIGITS}])\s*日"
+)
+
+
+def _recall_format_dates(ocr_blocks: list[OCRTextBlock]) -> list[dict[str, str]]:
+    """Deterministic 年月日 recall over per-block and joined text."""
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+    texts = [str(getattr(block, "text", "") or "") for block in ocr_blocks]
+    for scan_text in [*texts, "\n".join(texts)]:
+        for match in _STANDALONE_DATE_RE.finditer(scan_text):
+            value = match.group(0)
+            key = re.sub(r"\s+", "", value)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"type": "DATE", "text": value})
+    return out
 
 async def run_has_text_analysis(
     ocr_blocks: list[OCRTextBlock],
@@ -124,7 +154,21 @@ async def run_has_text_analysis(
     _record_has_text_metric(
         stage_status, "has_text_form_document_entities", len(form_document_entities)
     )
-    structural_entities = [*table_amount_entities, *form_document_entities]
+    # Date-format backstop: same contract as the AMOUNT/DOCUMENT_NUMBER
+    # recalls — no model needed, surfaced even when NER is skipped or fails.
+    date_in_schema = vision_types is None or any(
+        _canonical_image_text_type(getattr(vt, "id", "")) == "DATE" for vt in vision_types
+    )
+    format_date_entities = _recall_format_dates(ocr_blocks) if date_in_schema else []
+    if format_date_entities:
+        logger.info(
+            "Date-format backstop recall: %s",
+            [entity["text"] for entity in format_date_entities],
+        )
+    _record_has_text_metric(
+        stage_status, "has_text_format_date_entities", len(format_date_entities)
+    )
+    structural_entities = [*table_amount_entities, *form_document_entities, *format_date_entities]
 
     # Lazy re-init if client was not available at startup
     if not has_client:
@@ -410,6 +454,20 @@ async def run_has_text_analysis(
 
         # Form-field document numbers the NER did not already return.
         entities = _merge_form_field_document_entities(entities, form_document_entities)
+
+        # Format-recalled dates the NER did not already return (whitespace-
+        # insensitive value dedupe: HaS echoes the date without the OCR line
+        # break the joined-text scan may carry).
+        known_dates = {
+            re.sub(r"\s+", "", str(entity.get("text", "")))
+            for entity in entities
+            if str(entity.get("type", "")).upper() in ("DATE", "BIRTH_DATE")
+        }
+        for entity in format_date_entities:
+            key = re.sub(r"\s+", "", entity["text"])
+            if not any(key in known or known in key for known in known_dates if known):
+                entities.append(entity)
+                known_dates.add(key)
 
         # Boxes come from matching these values back to OCR blocks; mIoU is the
         # only merge step.
