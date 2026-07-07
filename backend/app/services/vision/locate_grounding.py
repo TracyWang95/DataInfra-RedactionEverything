@@ -25,7 +25,10 @@ from app.core.visual_feature_categories import (
 )
 from app.models.schemas import BoundingBox
 from app.services import model_config_service
-from app.services.vision.seal_color_cascade import propose_colored_seal_regions
+from app.services.vision.seal_color_cascade import (
+    propose_colored_seal_regions,
+    raw_colored_component_bboxes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -368,14 +371,38 @@ class LocateAnythingGroundingService:
                 ]
 
             # Route each proposal by how many found seals sit on it:
-            # - exactly one, figure-sized: the stamp is found but the ink
-            #   cluster is free evidence of the impression's FULL reach
-            #   (page_03's numbering arc sits below the detected box) — grow
-            #   the found box to the union, grow-only, no extra call. Flooded
-            #   clusters (colored scene background) must not grow anything.
+            # - exactly one, figure-sized: the stamp is found, and the
+            #   cluster's ink may extend past the found box (page_03's
+            #   numbering arc below it) — grow the box over the cluster's
+            #   ACTUAL ink components (not the bridged extent: the Yueyang
+            #   photo bridged three red underlines into the seal's cluster
+            #   and the raw extent painted a page-wide box). Flooded clusters
+            #   (colored scene background) must not grow anything.
             # - none, or >=2 (the shard path: GLM flakily segments page_02's
             #   binding-seal column; the color connected-component says they
             #   are one impression): send to the confirm crop.
+            try:
+                image = ImageOps.exif_transpose(
+                    Image.open(io.BytesIO(image_data))
+                ).convert("RGB")
+            except Exception:
+                logger.warning("Seal color cascade: image decode failed", exc_info=True)
+                image = None
+            raw_comps: list[tuple[float, float, float, float]] | None = None
+
+            def _cluster_ink(proposal: tuple[float, float, float, float]) -> list[tuple[float, float, float, float]]:
+                nonlocal raw_comps
+                if raw_comps is None:
+                    try:
+                        raw_comps = raw_colored_component_bboxes(image_data)
+                    except Exception:
+                        raw_comps = []
+                px, py, pw, ph = proposal
+                return [
+                    c for c in raw_comps
+                    if px <= c[0] + c[2] / 2 <= px + pw and py <= c[1] + c[3] / 2 <= py + ph
+                ]
+
             grown = 0
             to_confirm = []
             for p in proposals:
@@ -387,28 +414,27 @@ class LocateAnythingGroundingService:
                 if pw * ph >= 0.5:
                     continue
                 s = on_it[0]
-                x1, y1 = min(s.x, px), min(s.y, py)
-                x2 = max(s.x + s.width, px + pw)
-                y2 = max(s.y + s.height, py + ph)
-                if (x2 - x1) * (y2 - y1) > s.width * s.height:
+                gx, gy, gw, gh = self._grow_seal_over_cluster_ink(
+                    (s.x, s.y, s.width, s.height), _cluster_ink(p)
+                )
+                if gw * gh > s.width * s.height:
+                    clamped = _clamp_box(gx, gy, gw, gh)
+                    if clamped is None:
+                        continue
                     for i, b in enumerate(boxes):
                         if b is s:
                             boxes[i] = s.model_copy(update={
-                                "x": x1, "y": y1,
-                                "width": x2 - x1, "height": y2 - y1,
+                                "x": clamped[0], "y": clamped[1],
+                                "width": clamped[2], "height": clamped[3],
                             })
                             grown += 1
                             break
-            try:
-                image = ImageOps.exif_transpose(
-                    Image.open(io.BytesIO(image_data))
-                ).convert("RGB")
+            if image is not None:
                 results = await asyncio.gather(
                     *[self._confirm_seal_crop(image, p) for p in to_confirm],
                     return_exceptions=True,
                 )
-            except Exception:
-                logger.warning("Seal color cascade failed", exc_info=True)
+            else:
                 results = []
             code_boxes = [b for b in boxes if b.type in ("qr_code", "barcode")]
             added = 0
@@ -438,11 +464,14 @@ class LocateAnythingGroundingService:
                 elif pw * ph < 0.5 and len(confirmed) == 1:
                     # Figure cluster holding ONE impression (minority-of-page
                     # ink, and the VLM sees exactly one stamp in the crop):
-                    # the connected ink extent IS the stamp — redact all of
-                    # it. (The VLM's own box under-covers tall/fragmented
-                    # ink: it boxed only the middle of page_02's binding-seal
-                    # column.)
-                    keep = [(px, py, pw, ph)]
+                    # grow the VLM's box over the cluster's actual ink — the
+                    # VLM box under-covers tall/fragmented ink (page_02's
+                    # column), while the bridged extent over-covers when
+                    # non-seal ink got pulled into the cluster (the Yueyang
+                    # underlines). Component-wise growth takes both sides.
+                    keep = [self._grow_seal_over_cluster_ink(
+                        confirmed[0], _cluster_ink((px, py, pw, ph))
+                    )]
                 else:
                     # Otherwise the cluster extent is not one stamp's ink:
                     # either chroma flooded a majority of the page (colored
@@ -720,7 +749,6 @@ class LocateAnythingGroundingService:
         "如果墨迹是水平直线排列的（如日期、编号、文字行、logo图标），它不是圆章残迹，输出 否。\n"
         "只输出一个字：是 或 否"
     )
-
     async def _confirm_seal_fragment(
         self, image: Image.Image, region: tuple[float, float, float, float]
     ) -> bool:
@@ -767,6 +795,63 @@ class LocateAnythingGroundingService:
             logger.warning("Seal fragment confirm failed", exc_info=True)
             return False
         return "是" in content
+
+    def _grow_seal_over_cluster_ink(
+        self,
+        anchor: tuple[float, float, float, float],
+        ink_comps: list[tuple[float, float, float, float]],
+    ) -> tuple[float, float, float, float]:
+        """Grow a confirmed seal box over its cluster's actual ink, grow-only.
+
+        Components TOUCHING the anchor are the stamp's own ink — free union,
+        to a fixpoint (fragments chain outward). DETACHED components join only
+        from within the stamp's footprint shadow (span containment): page_03's
+        numbering arc sits inside the stamp's x-span and joins; the Yueyang
+        photo's red text underlines (bridged into the seal's cluster) extend
+        far beyond the stamp's footprint and stay out — inheriting the whole
+        bridged extent there painted a page-wide box.
+        """
+        grown = anchor
+
+        def _union(a: tuple[float, float, float, float], b: tuple[float, float, float, float]):
+            x1, y1 = min(a[0], b[0]), min(a[1], b[1])
+            x2 = max(a[0] + a[2], b[0] + b[2])
+            y2 = max(a[1] + a[3], b[1] + b[3])
+            return (x1, y1, x2 - x1, y2 - y1)
+
+        def _touches(c: tuple[float, float, float, float], box: tuple[float, float, float, float]) -> bool:
+            return (
+                c[0] < box[0] + box[2] and box[0] < c[0] + c[2]
+                and c[1] < box[1] + box[3] and box[1] < c[1] + c[3]
+            )
+
+        pending = list(ink_comps)
+        changed = True
+        while changed:
+            changed = False
+            rest = []
+            for c in pending:
+                if _touches(c, grown):
+                    grown = _union(grown, c)
+                    changed = True
+                else:
+                    rest.append(c)
+            pending = rest
+        for c in pending:
+            # A stamp's own detached remnants (numbering row, rim fragments)
+            # sit within the stamp's FOOTPRINT SHADOW: their x-span (or
+            # y-span) is contained in the anchor's. Page-furniture ink that
+            # bridging pulled into the cluster (the Yueyang text underlines)
+            # extends beyond the stamp's footprint and stays out. Topological
+            # containment — no model call, no thresholds. (The rubric cannot
+            # arbitrate here: a numbering row and an underline are both
+            # near-straight strips, and every marked/unmarked window variant
+            # judged them alike.)
+            x_within = c[0] >= anchor[0] and c[0] + c[2] <= anchor[0] + anchor[2]
+            y_within = c[1] >= anchor[1] and c[1] + c[3] <= anchor[1] + anchor[3]
+            if x_within or y_within:
+                grown = _union(grown, c)
+        return grown
 
     async def _detect_on_tiles(
         self,

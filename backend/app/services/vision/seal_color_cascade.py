@@ -65,3 +65,32 @@ def propose_colored_seal_regions(image_data: bytes) -> list[tuple[float, float, 
         y0, y1 = int(ys.min()), int(ys.max())
         regions.append((x0 / width, y0 / height, (x1 - x0) / width, (y1 - y0) / height))
     return regions
+
+
+def raw_colored_component_bboxes(image_data: bytes) -> list[tuple[float, float, float, float]]:
+    """Normalized bboxes of UNDILATED colored-ink components (>= speck floor).
+
+    Fragment bridging can pull non-seal ink into a stamp's cluster — on the
+    Yueyang photo three red underlines bridged into the seal's cluster, and
+    inheriting the whole cluster extent painted a page-wide box. The raw
+    (undilated) components let the caller grow a confirmed seal box over the
+    stamp's OWN ink piece by piece: components touching the confirmed box are
+    its ink; detached ones get judged individually.
+    """
+    image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+    width, height = image.size
+    arr = np.asarray(image).astype(np.int16)
+    mask = (arr.max(axis=2) - arr.min(axis=2)) > _CHROMA_FLOOR
+    if not mask.any():
+        return []
+    labels, count = ndi.label(mask)
+    area_floor = width * height * _AREA_FLOOR_FRAC
+    out: list[tuple[float, float, float, float]] = []
+    for index in range(1, count + 1):
+        ys, xs = np.where(labels == index)
+        if len(xs) < area_floor:
+            continue
+        x0, x1 = int(xs.min()), int(xs.max())
+        y0, y1 = int(ys.min()), int(ys.max())
+        out.append((x0 / width, y0 / height, (x1 - x0) / width, (y1 - y0) / height))
+    return out
