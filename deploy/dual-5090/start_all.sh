@@ -31,14 +31,22 @@ launch glm_vis_g0 8130 ~/glm_vis_g0.sh
 launch glm_vis_g1 8131 ~/glm_vis_g1.sh
 launch yolo_g0 8140 ~/yolo_g0.sh
 launch yolo_g1 8141 ~/yolo_g1.sh
+# LocateAnything-3B signature supplement (g1, 1024px). GLM has a hard ceiling
+# on faint handwritten signatures; LA (task-trained) recovers them. Single
+# instance on g1 — its ~10GB working set is why OCR runs g0-only below and
+# has_g1 is trimmed to util 0.11. backend env: LA_SIGNATURE_URL=:8091.
+launch la_sig 8091 ~/la_sig.sh
 # OCR warmup POSTs to the VL recognition server (:8118); wait until it is ready
 # before launching OCR, otherwise ocr init warmup fails and the service exits.
 echo "  [wait] VL servers :8118 + :8119 ready before OCR ..."
 for i in $(seq 1 60); do curl -sf -m3 localhost:8118/v1/models >/dev/null 2>&1 && curl -sf -m3 localhost:8119/v1/models >/dev/null 2>&1 && { echo "  [ok] :8118+:8119 ready"; break; }; sleep 3; done
 launch ocr_g0 8082 ~/ocr_g0.sh
-launch ocr_g1 8083 ~/ocr_g1.sh
 launch ocr_g0b 8084 ~/ocr_g0b.sh
-launch ocr_g1b 8085 ~/ocr_g1b.sh
+# OCR (PaddleOCR-VL + PP-Structure) runs g0-only: g1 is given to LocateAnything.
+# lb_ocr keeps all four upstreams; its health check routes around the absent
+# g1 instances. Re-enable these two for dual-card OCR if LA is removed.
+#launch ocr_g1 8083 ~/ocr_g1.sh
+#launch ocr_g1b 8085 ~/ocr_g1b.sh
 
 echo "=== load balancers (round-robin across GPU0/GPU1) ==="
 launch lb_has 9080 ~/lb_has.sh
