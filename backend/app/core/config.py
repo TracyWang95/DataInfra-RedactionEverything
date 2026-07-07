@@ -212,8 +212,8 @@ class Settings(BaseSettings):
     ]
 
     # LocateAnything visual feature service
-    VISUAL_FEATURES_BASE_URL: str = "http://127.0.0.1:8090"
-    VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
+    VISUAL_FEATURES_BASE_URL: str = "http://127.0.0.1:9090"
+    VISUAL_FEATURES_MODEL_NAME: str = "GLM-4.6V-Flash-FP8"
     VISUAL_FEATURES_TIMEOUT: float = 240.0
     VISUAL_FEATURES_CONF: float = 0.25
     # GLM-backed visual grounding: one multi-category prompt per page (GLM has

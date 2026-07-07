@@ -537,7 +537,7 @@ async def services_health():
             None,
             lambda: check_service_health_sync(
                 f"{visual_base}/health",
-                "LocateAnything Visual Features",
+                "GLM-4.6V-Flash Visual Features",
                 service_kind="visual_features",
             ),
         ),
@@ -595,7 +595,7 @@ async def services_health():
         elif key in visual_detect_detail:
             visual_detail[key] = visual_detect_detail[key]
     services["visual_features"] = {
-        "name": "LocateAnything Visual Features",
+        "name": "GLM-4.6V-Flash Visual Features",
         "status": combine_visual_status(
             str(visual_detect_payload.get("status") or "offline"),
             str(visual_chat_payload.get("status") or "offline"),
