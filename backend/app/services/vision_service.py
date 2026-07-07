@@ -490,24 +490,6 @@ class VisionService:
                 SimpleNamespace(id="SEAL", name=SLUG_TO_NAME_ZH.get("official_seal", "公章"))
             )
 
-        # Route signature into the OCR+HaS path (same idiom as SEAL above) so
-        # its structural label-anchored recall can run: the VLM signature
-        # channel is unstable on faint handwriting, but a signature follows a
-        # printed label the OCR reads reliably. Both channels' boxes union in
-        # the merge.
-        signature_requested_via_visual_features = (
-            self._visual_slug_requested(visual_feature_items, "signature")
-            if visual_feature_types
-            else False
-        )
-        if signature_requested_via_visual_features and not any(
-            str(getattr(item, "id", item) or "").strip().upper() == "SIGNATURE"
-            for item in effective_ocr_has_types
-        ):
-            effective_ocr_has_types.append(
-                SimpleNamespace(id="SIGNATURE", name=SLUG_TO_NAME_ZH.get("signature", "签字"))
-            )
-
         effective_visual_feature_types: list | None = None
         if visual_feature_types:
             effective_visual_feature_types = [
