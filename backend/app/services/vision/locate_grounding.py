@@ -337,6 +337,27 @@ class LocateAnythingGroundingService:
                 _elapsed_ms(supplement_start),
             )
 
+        la_sig_url = str(getattr(settings, "LA_SIGNATURE_URL", "") or "").strip()
+        if la_sig_url and model_slugs and "signature" in model_slugs:
+            # LocateAnything signature supplement. GLM cannot ground faint
+            # handwritten signatures (proven: a full prompt/temperature/
+            # self-consistency sweep never recovered the court-form 办案人
+            # signature); the task-trained LA model does. Scoped to signature
+            # so the validated seal/code behavior is untouched; LA's boxes
+            # union with GLM's in the merge layer (IoU dedup).
+            la_start = time.perf_counter()
+            try:
+                la_boxes = await self._detect_la_signature(la_sig_url, image_data, page)
+            except Exception as exc:
+                la_boxes = []
+                logger.warning("LocateAnything signature supplement failed: %s", exc)
+            boxes.extend(la_boxes)
+            logger.info(
+                "LocateAnything signature supplement added %d box(es) in %dms",
+                len(la_boxes),
+                _elapsed_ms(la_start),
+            )
+
         if (
             bool(getattr(settings, "VISUAL_SEAL_COLOR_CASCADE", True))
             and model_slugs
@@ -678,6 +699,56 @@ class LocateAnythingGroundingService:
                     confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
                     source="visual_features",
                     source_detail="has_image:yolo",
+                    evidence_source="visual_feature_model",
+                )
+            )
+        return boxes
+
+    async def _detect_la_signature(
+        self,
+        base_url: str,
+        image_data: bytes,
+        page: int,
+    ) -> list[BoundingBox]:
+        """LocateAnything signature-only pass. Same /detect contract as the GLM
+        adapter; we request just signature so nothing else changes."""
+        body = {
+            "image_base64": base64.b64encode(image_data).decode("utf-8"),
+            "conf": settings.VISUAL_FEATURES_CONF,
+            "categories": ["signature"],
+        }
+        async with httpx.AsyncClient(timeout=settings.VISUAL_FEATURES_TIMEOUT, trust_env=False) as client:
+            response = await client.post(f"{base_url.rstrip('/')}/detect", json=body)
+            response.raise_for_status()
+        boxes: list[BoundingBox] = []
+        for raw in response.json().get("boxes") or []:
+            if normalize_visual_slug(str(raw.get("category", ""))) != "signature":
+                continue
+            try:
+                normalized = _clamp_box(
+                    float(raw.get("x") or 0),
+                    float(raw.get("y") or 0),
+                    float(raw.get("width") or 0),
+                    float(raw.get("height") or 0),
+                )
+            except (TypeError, ValueError):
+                normalized = None
+            if normalized is None:
+                continue
+            x, y, width, height = normalized
+            boxes.append(
+                BoundingBox(
+                    id=f"la_sig_{uuid.uuid4().hex[:8]}",
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
+                    type="signature",
+                    text=SLUG_TO_NAME_ZH.get("signature", "signature"),
+                    page=page,
+                    confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                    source="visual_features",
+                    source_detail="locate_anything:signature",
                     evidence_source="visual_feature_model",
                 )
             )

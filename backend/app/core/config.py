@@ -226,6 +226,11 @@ class Settings(BaseSettings):
     # alongside the grounding model: native-resolution small-object recall
     # (stacked seal halves, watermark QR codes) at ~100ms.
     HAS_IMAGE_URL: str = ""
+    # LocateAnything-3B signature supplement. The GLM VLM has a hard ceiling on
+    # faint handwritten signatures (a full temperature/top_p/self-consistency
+    # sweep never recovered them); the task-trained LA grounding model does.
+    # Scoped to signature only — seals/codes stay with GLM+YOLO. Empty = off.
+    LA_SIGNATURE_URL: str = ""
     # Fold signature boxes centered inside a seal into the seal hull. Needed
     # for LocateAnything (it misreads stamp content as phantom signatures);
     # must be OFF for the GLM backend, which has no phantom class and whose
