@@ -441,6 +441,30 @@ def _entity_char_box_line_rects(
     if current is not None:
         rects.append(current)
     rects = [r for r in rects if r[2] > r[0] and r[3] > r[1]]
+    if not rects:
+        return None
+    # The word engine's char boxes on tilted photos collapse vertically:
+    # every char in a line carries the same sliver y-band (2-10px of a ~26px
+    # line) while x stays correct, and a mosaic drawn from that band leaves
+    # the glyphs readable (the court-judgment photo: 44 boxes all rendered,
+    # names still legible). Height is structural, not evidential: a block is
+    # len(rects) uniform text rows, so each line rect gets at least its row's
+    # share of the block height, centered on the chars' own y-center (which
+    # stays correct even when the band collapses). Grow-only, clamped to the
+    # block polygon.
+    polygon = getattr(block, "polygon", None) or []
+    ys = [int(pt[1]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+    if ys:
+        block_top, block_bottom = min(ys), max(ys)
+        row_h = (block_bottom - block_top) / len(rects)
+        if row_h > 0:
+            grown: list[tuple[int, int, int, int]] = []
+            for x1r, y1r, x2r, y2r in rects:
+                cy = (y1r + y2r) / 2
+                y1g = min(y1r, int(cy - row_h / 2))
+                y2g = max(y2r, int(cy + row_h / 2))
+                grown.append((x1r, max(block_top, y1g), x2r, min(block_bottom, y2g)))
+            rects = [r for r in grown if r[2] > r[0] and r[3] > r[1]]
     return rects or None
 
 
