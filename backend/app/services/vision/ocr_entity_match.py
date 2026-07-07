@@ -714,6 +714,71 @@ def _narrow_charsless_block_to_lines(
     return int(left), int(best_line.top), int(right - left), int(best_line.height)
 
 
+def _match_cross_block_entity(
+    entity_text: str,
+    entity_type: str,
+    prepared_blocks: list[tuple[OCRTextBlock, str, bool]],
+) -> list[SensitiveRegion]:
+    """Anchor a newline-carrying entity value across adjacent OCR blocks.
+
+    The value's own line break marks the wrap point: segment 0 must be the
+    SUFFIX of some block, middle segments must be whole blocks, and the last
+    segment the PREFIX of the following block. Matching is positional — the
+    single-char tail of '刘中\\n琦' is only accepted as the prefix of the
+    block that follows the block ending with '刘中', never anywhere else on
+    the page. One region per segment (a wrapped value is physically several
+    line pieces); x narrows to proven char boxes when available, y keeps the
+    block's line height.
+    """
+    segments = [seg.strip() for seg in entity_text.split("\n") if seg.strip()]
+    if len(segments) < 2:
+        return []
+    direct = [
+        (block, block_text)
+        for block, block_text, is_table_virtual in prepared_blocks
+        if not is_table_virtual and not block_text.startswith("<table")
+    ]
+    out: list[SensitiveRegion] = []
+    for i in range(len(direct) - len(segments) + 1):
+        _, first_text = direct[i]
+        if not first_text.endswith(segments[0]):
+            continue
+        if any(
+            _compact_text(direct[i + k][1]) != _compact_text(segments[k])
+            for k in range(1, len(segments) - 1)
+        ):
+            continue
+        _, last_text = direct[i + len(segments) - 1]
+        if not last_text.startswith(segments[-1]):
+            continue
+        for k, segment in enumerate(segments):
+            block, block_text = direct[i + k]
+            if k == 0:
+                start = len(block_text) - len(segment)
+            elif k == len(segments) - 1:
+                start = 0
+            else:
+                start = max(0, block_text.find(segment))
+            rl, rt, rw, rh = block.left, block.top, block.width, block.height
+            line_rects = _entity_char_box_line_rects(
+                block, block_text, start, start + len(segment)
+            )
+            if line_rects is not None and len(line_rects) == 1:
+                lx1, _ly1, lx2, _ly2 = line_rects[0]
+                rl, rw = lx1, lx2 - lx1
+            out.append(SensitiveRegion(
+                text=segment,
+                entity_type=entity_type,
+                left=rl,
+                top=rt,
+                width=rw,
+                height=rh,
+                confidence=1.0,
+                source="text_match",
+            ))
+    return out
+
+
 def match_entities_to_ocr(
     ocr_blocks: list[OCRTextBlock],
     entities: list[dict[str, str]],
@@ -775,6 +840,17 @@ def match_entities_to_ocr(
 
         matched = False
         strict_value = _is_strict_match_entity(normalized_type, entity_text)
+
+        if "\n" in entity_text:
+            # A value that wraps across OCR blocks arrives with the line break
+            # inside it (HaS tags '刘中\n琦' from the joined page text; the
+            # date backstop scans the joined text the same way). No single
+            # block contains that string — anchor it as consecutive
+            # suffix/whole/prefix runs over adjacent blocks instead.
+            cross_regions = _match_cross_block_entity(entity_text, normalized_type, prepared_blocks)
+            if cross_regions:
+                regions.extend(cross_regions)
+                continue
 
         direct_amount_signatures: set[str] = set()
         # This entity's matches, with the evidence they carry: whether the
