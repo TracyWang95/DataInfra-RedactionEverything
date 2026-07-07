@@ -8,6 +8,7 @@ table fallbacks, and spatial region dedupe.
 from __future__ import annotations
 
 import logging
+import re
 import unicodedata
 from difflib import SequenceMatcher
 
@@ -777,6 +778,98 @@ def _match_cross_block_entity(
                 source="text_match",
             ))
     return out
+
+
+# Printed labels a handwritten signature immediately follows. OCR reads the
+# label reliably (it is printed) and captures the handwritten name in the SAME
+# block, garbled — so the signature is structurally located even when neither
+# the VLM signature channel nor NER can read the ink. Longest-first so the
+# iterative strip removes the longest matching label.
+_SIGNATURE_LABELS = tuple(sorted((
+    "办案人", "经办人", "承办人", "制表人", "填表人", "复核人", "记录人", "制作人",
+    "被告知人", "送达人", "受送达人", "审判员", "代审判员", "审判长", "陪审员",
+    "人民陪审员", "书记员", "报案人", "控告人", "举报人", "扭送人",
+    "委托代理人", "法定代理人", "代理人", "签名", "签字",
+), key=len, reverse=True))
+_SIG_SEPARATORS = " 　\t:：、,，;；"
+# A trailing date/number is not part of the name.
+_SIG_DATE_TAIL_RE = re.compile(r"[\s　]*[0-9０-９〇○零一二三四五六七八九十年月日时点分:：.／/\-]+$")
+# A signature is a personal name — 2-4 chars for a Chinese name; OCR garbling of
+# handwriting adds a few. A longer tail is a sentence, not a signature.
+_SIG_NAME_MAX = 6
+
+
+def recall_signature_after_label(ocr_blocks: list[OCRTextBlock]) -> list[SensitiveRegion]:
+    """Structurally recover handwritten signatures: a block starting with a
+    printed signature label, the name after the label is the signature region.
+
+    The VLM signature channel is unstable on faint handwriting (elaborated
+    prompts, temperature sweeps and self-consistency all failed to recover the
+    lian 办案人 signature), but the printed label the signature follows is
+    OCR-reliable and pins the location. Iterative label stripping handles
+    chained labels (报案人、控告人、X -> X) and rejects label-only lines
+    (举报人、扭送人： -> empty). Only fires when signature is selected (caller
+    gates on the schema).
+    """
+    regions: list[SensitiveRegion] = []
+    for block in ocr_blocks:
+        text = str(getattr(block, "text", "") or "")
+        pos = len(text) - len(text.lstrip(" 　\t（("))
+        found = False
+        while True:
+            for label in _SIGNATURE_LABELS:
+                if text.startswith(label, pos):
+                    pos += len(label)
+                    while pos < len(text) and text[pos] in _SIG_SEPARATORS:
+                        pos += 1
+                    found = True
+                    break
+            else:
+                break
+        if not found:
+            continue
+        tail = text[pos:]
+        core = _SIG_DATE_TAIL_RE.sub("", tail)
+        name = core.strip(_SIG_SEPARATORS + " 　")
+        if not name or not any("一" <= c <= "鿿" for c in name):
+            continue  # label-only line, or no CJK name after the label
+        if len(name) > _SIG_NAME_MAX:
+            continue  # a sentence, not a name
+        name_start = pos + (len(core) - len(core.lstrip(_SIG_SEPARATORS + " 　")))
+        name_end = name_start + len(name)
+        poly = getattr(block, "polygon", None) or []
+        pxs = [p[0] for p in poly]
+        pys = [p[1] for p in poly]
+        if not pxs:
+            continue
+        bx1, by1, bx2, by2 = int(min(pxs)), int(min(pys)), int(max(pxs)), int(max(pys))
+        name_boxes = [b for b in (_entity_span_char_boxes(block, text, name_start, name_end) or []) if b]
+        if name_boxes:
+            # Tight: the handwriting produced char boxes.
+            x1 = int(min(b["x1"] for b in name_boxes))
+            y1 = int(min(b["y1"] for b in name_boxes))
+            x2 = int(max(b["x2"] for b in name_boxes))
+            y2 = int(max(b["y2"] for b in name_boxes))
+        else:
+            # Garbled handwriting often yields no char boxes (lian 古小萌杨).
+            # The PRINTED label's char boxes are reliable — the signature is
+            # the block from the label's right edge to the block's right edge.
+            label_boxes = [b for b in (_entity_span_char_boxes(block, text, 0, name_start) or []) if b]
+            x1 = int(max(b["x2"] for b in label_boxes)) if label_boxes else bx1
+            y1, y2, x2 = by1, by2, bx2
+        if x2 <= x1 or y2 <= y1:
+            continue
+        regions.append(SensitiveRegion(
+            text=name,
+            entity_type="signature",
+            left=x1,
+            top=y1,
+            width=x2 - x1,
+            height=y2 - y1,
+            confidence=1.0,
+            source="signature_label",
+        ))
+    return regions
 
 
 def match_entities_to_ocr(

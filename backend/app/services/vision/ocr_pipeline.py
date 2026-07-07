@@ -102,6 +102,7 @@ from app.services.vision.ocr_entity_match import (
     _visual_match_span_for_entity,
     _visual_match_text_for_entity,
     match_entities_to_ocr,
+    recall_signature_after_label,
 )
 from app.services.vision.ocr_image_prep import (
     _is_effectively_blank_page,
@@ -420,6 +421,7 @@ __all__ = [
     "np",
     "prepare_image",
     "recall_form_field_document_numbers",
+    "recall_signature_after_label",
     "recall_table_amount_entities",
     "reconstruct_visual_line_blocks",
     "run_has_text_analysis",

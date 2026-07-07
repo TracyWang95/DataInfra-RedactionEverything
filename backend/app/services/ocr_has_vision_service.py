@@ -505,6 +505,15 @@ class OcrHasVisionService:
         if ocr_blocks:
             all_regions.extend(self._apply_regex_fallback(ocr_blocks, width, height))
 
+        # 手写签名结构兜底：签名紧跟印刷标签（办案人/审判员/报案人…），标签 OCR
+        # 可靠、手写名在同块。仅在选了签名视觉类时触发（视觉通道对淡手写不稳）。
+        if ocr_blocks and "SIGNATURE" in visual_entity_type_ids:
+            from app.services.vision.ocr_pipeline import recall_signature_after_label
+            sig_regions = recall_signature_after_label(ocr_blocks)
+            if sig_regions:
+                all_regions.extend(sig_regions)
+                logger.info("Signature-label structural recall added %d region(s)", len(sig_regions))
+
         logger.info("Final detected %d sensitive regions", len(all_regions))
 
         # 5. 绘制结果
