@@ -111,7 +111,7 @@ export function VisionModelDialog({
                 onChange={(e) => onUpdateForm({ model_name: e.target.value })}
                 className="font-mono text-sm"
                 placeholder={
-                  form.provider === 'local' ? 'LocateAnything-3B' : 'gpt-4-vision-preview'
+                  form.provider === 'local' ? 'GLM-4.6V-Flash' : 'gpt-4-vision-preview'
                 }
                 data-testid="vision-model-model-name"
               />

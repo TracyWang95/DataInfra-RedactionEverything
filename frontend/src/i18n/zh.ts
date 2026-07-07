@@ -848,7 +848,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.step4.qualityIssueSeamSeal': '骑缝章',
   'batchWizard.step4.qualityIssueWarning': '识别警告',
   'batchWizard.step4.qualityIssueLowConfidenceTitle': '模型置信度较低，请确认后再保留该区域。',
-  'batchWizard.step4.qualityIssueFallbackTitle': '由兜底证据检出，不属于 LocateAnything 模型命中。',
+  'batchWizard.step4.qualityIssueFallbackTitle': '由兜底证据检出，不属于 GLM-4.6V 模型命中。',
   'batchWizard.step4.qualityIssueTableStructureTitle':
     '来自表格结构推断，请检查表格边界和合并单元格。',
   'batchWizard.step4.qualityIssueCoarseMarkupTitle': 'OCR 文本包含粗粒度标记，请确认区域边界。',
@@ -859,7 +859,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.step4.confidence': '置信度',
   'batchWizard.step4.source': '来源',
   'batchWizard.step4.sourceVisualFeatureModel': '视觉特征模型',
-  'batchWizard.step4.sourceVisualFeatureModelTitle': '由 LocateAnything 视觉特征管线检出。',
+  'batchWizard.step4.sourceVisualFeatureModelTitle': '由 GLM-4.6V 视觉特征管线检出。',
   'batchWizard.step4.sourceOcrHas': 'OCR+HaS',
   'batchWizard.step4.sourceOcrHasTitle': '由 OCR 文本和 HaS 实体匹配检出。',
   'batchWizard.step4.sourceTable': '表格',
@@ -1024,7 +1024,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.previewJobLabel': '预览任务',
 
   'error.visionTimeout':
-    '图像识别超时（超过 3 分钟）。可换更小图片，或检查视觉特征服务（LocateAnything/vLLM）是否正常、显存是否充足。',
+    '图像识别超时（超过 3 分钟）。可换更小图片，或检查视觉特征服务（GLM-4.6V/vLLM）是否正常、显存是否充足。',
   'error.visionDetectionFailed': '图像识别失败',
   'error.reRecognizeFailed': '重新识别失败',
 };
@@ -1321,10 +1321,10 @@ const zhOverrides: Record<string, string> = {
   'playground.clear': '清空',
   'playground.selectRecommended': '选择推荐项',
   'playground.visualFeatureTypesHint':
-    'LocateAnything 固定视觉特征包含 22 类，纸张和签字会作为普通预设项一起启用。',
+    'GLM-4.6V 固定视觉特征包含 22 类，纸张和签字会作为普通预设项一起启用。',
   'playground.visualDetailsSummary': '视觉标签细节',
   'playground.paperOptInBadge': '需开启',
-  'playground.paperOptInAria': '纸张，属于 LocateAnything 固定视觉特征预设。',
+  'playground.paperOptInAria': '纸张，属于 GLM-4.6V 固定视觉特征预设。',
   'playground.group.regex': '固定格式',
   'playground.group.llm': 'AI 语义',
   'playground.group.semantic': '语义识别',
@@ -1484,7 +1484,7 @@ const zhOverrides: Record<string, string> = {
   'settings.pipelineDisplayName.ocr': '文字检测路径',
   'settings.pipelineDisplayName.image': '图像特征路径',
   'settings.pipelineDescription.image':
-    '使用 LocateAnything 固定视觉类识别人脸、印章、证件、二维码、票据等视觉敏感区域。',
+    '使用 GLM-4.6V 固定视觉类识别人脸、印章、证件、二维码、票据等视觉敏感区域。',
   'settings.textModel.infoTitle': '文本 NER 服务',
   'settings.textModel.infoDesc':
     '在这里配置产品使用的文本识别接口。保存后立即生效，也可以先用当前地址做连通性测试。',
@@ -1527,9 +1527,9 @@ const zhOverrides: Record<string, string> = {
   'settings.visionModel.dialog.editTitle': '编辑推理后端',
   'settings.visionModel.dialog.desc': '设置这个视觉推理后端的连接信息。',
   'settings.visionModel.nameLabel': '显示名称',
-  'settings.visionModel.namePlaceholder': '例如：LocateAnything 本机 8090',
+  'settings.visionModel.namePlaceholder': '例如：GLM-4.6V 本机 9090',
   'settings.visionModel.providerLabel': '服务类型',
-  'settings.visionModel.provider.local': '本地 HTTP（LocateAnything /health）',
+  'settings.visionModel.provider.local': '本地 HTTP（GLM-4.6V /health）',
   'settings.visionModel.provider.openai': 'OpenAI 兼容（/v1/models）',
   'settings.visionModel.provider.custom': '自定义 HTTP',
   'settings.visionModel.modelLabel': '模型标识',
@@ -1577,9 +1577,9 @@ const zhOverrides: Record<string, string> = {
   'settings.redaction.ocrGroup': '图像文字识别项（OCR + HaS）',
   'settings.redaction.imageGroup': '视觉特征识别项（固定类）',
   'settings.redaction.imageGroupHint':
-    '固定视觉类由 LocateAnything 定位，包含原 21 类加签字共 22 类；纸张和签字会作为普通预设项启用。',
+    '固定视觉类由 GLM-4.6V 定位，包含原 21 类加签字共 22 类；纸张和签字会作为普通预设项启用。',
   'settings.redaction.paperOptInBadge': '需开启',
-  'settings.redaction.paperOptInAria': '纸张，属于 LocateAnything 固定视觉特征预设。',
+  'settings.redaction.paperOptInAria': '纸张，属于 GLM-4.6V 固定视觉特征预设。',
   'settings.redaction.defaultNameText': '默认文本配置清单',
   'settings.redaction.defaultNameVision': '默认图像配置清单',
   'settings.redaction.defaultShort': '默认',
@@ -1737,9 +1737,9 @@ Object.assign(zhOverrides, {
   'settings.redaction.visualFeatureGroup': '视觉特征识别项（自定义清单）',
   'settings.pipelineDisplayName.visualFeature': '视觉特征清单',
   'settings.pipelineDescription.visualFeature':
-    '用本地LocateAnything按规则清单识别签字等自定义视觉特征。',
+    '用本地GLM-4.6V按规则清单识别签字等自定义视觉特征。',
   'settings.pipelineTypeDescVisualFeature':
-    '用规则清单描述需要 LocateAnything 框出的视觉特征。当前默认配置签字，适合固定视觉类无法覆盖的签署区域。',
+    '用规则清单描述需要 GLM-4.6V 框出的视觉特征。当前默认配置签字，适合固定视觉类无法覆盖的签署区域。',
   'settings.visualFeatureRulesLabel': '检测规则清单',
   'settings.visualFeatureRulesPlaceholder':
     '每行一条，例如：\n识别手写签字笔迹\n只框住实际笔迹，不框空白签署栏',
@@ -1980,12 +1980,12 @@ Object.assign(zhOverrides, {
   'settings.redaction.regexGroup': '自定义兜底',
   'settings.redaction.semanticGroup': 'HaS 文本识别',
   'settings.redaction.dialogDesc':
-    '配置清单默认使用 HaS 文本识别、OCR+HaS 和 LocateAnything 视觉特征。自定义兜底只在 bad case 需要时出现。',
+    '配置清单默认使用 HaS 文本识别、OCR+HaS 和 GLM-4.6V 视觉特征。自定义兜底只在 bad case 需要时出现。',
   'settings.pipelineDisplayName.ocr': 'OCR+HaS',
   'settings.pipelineDescription.ocr':
     'OCR 提取文字和坐标，HaS 负责语义识别；图像管道不使用兜底表达式。',
   'settings.pipelineDisplayName.image': '视觉特征',
-  'settings.pipelineDescription.image': 'LocateAnything 识别固定视觉特征。',
+  'settings.pipelineDescription.image': 'GLM-4.6V 识别固定视觉特征。',
   'playground.group.regex': '自定义兜底',
   'playground.group.semantic': 'HaS 文本识别',
 });
@@ -2091,7 +2091,7 @@ Object.assign(zhOverrides, {
   'settings.pipelineDescription.ocr':
     '提取图像中的文字和坐标，并结合上下文完成语义识别；图像管道不使用兜底表达式。',
   'settings.pipelineDisplayName.image': '视觉区域识别',
-  'settings.pipelineDescription.image': 'LocateAnything 识别固定视觉特征，例如人脸、证件、印章和二维码。',
+  'settings.pipelineDescription.image': 'GLM-4.6V 识别固定视觉特征，例如人脸、证件、印章和二维码。',
   'settings.redaction.presetName.industry_general_document_sharing': '通用文档',
   'settings.redaction.presetName.industry_contract_legal_disclosure': '法律行业',
   'settings.redaction.presetName.industry_medical_record_release': '医疗行业',
@@ -2254,7 +2254,7 @@ Object.assign(zhOverrides, {
   'playground.visualFeatureShort': '视觉特征',
   'playground.visualFeatureRange': '视觉特征',
   'playground.visualFeatureTypesHint':
-    'LocateAnything 视觉特征包含固定预设和自定义标签，纸张和签字会作为普通预设项一起启用。',
+    'GLM-4.6V 视觉特征包含固定预设和自定义标签，纸张和签字会作为普通预设项一起启用。',
   'playground.sourceImage': '视觉特征',
   'playground.sourceVisualFeature': '视觉特征',
   'job.statusDesc.vision': '正在识别视觉特征。',
@@ -2262,19 +2262,19 @@ Object.assign(zhOverrides, {
   'history.previewImageRegion': '视觉特征',
   'entityGroup.visual': '视觉特征',
   'batchWizard.step4.sourceVisualFeatureModel': '视觉特征模型',
-  'batchWizard.step4.sourceVisualFeatureModelTitle': '由 LocateAnything 视觉特征管线检出。',
+  'batchWizard.step4.sourceVisualFeatureModelTitle': '由 GLM-4.6V 视觉特征管线检出。',
   'batchWizard.step4.pipelineVisualFeature': '视觉特征',
   'batchWizard.step5.visualSourceVisualFeature': '视觉特征模型',
   'batchHub.mode.image.summaryValue': 'OCR 与视觉特征复核',
   'settings.pipelineDisplayName.image': '视觉特征',
   'settings.pipelineDisplayName.visualFeature': '视觉特征',
   'settings.pipelineDescription.image':
-    'LocateAnything 识别固定预设和自定义视觉特征，例如人脸、证件、印章、二维码、纸张和签字。',
-  'settings.pipelineDescription.visualFeature': 'LocateAnything 按自定义规则清单补充视觉特征。',
+    'GLM-4.6V 识别固定预设和自定义视觉特征，例如人脸、证件、印章、二维码、纸张和签字。',
+  'settings.pipelineDescription.visualFeature': 'GLM-4.6V 按自定义规则清单补充视觉特征。',
   'settings.pipelineTypeDescImg':
-    '用规则清单描述需要 LocateAnything 框出的视觉特征；新增项会和固定预设一起进入视觉特征管道。',
+    '用规则清单描述需要 GLM-4.6V 框出的视觉特征；新增项会和固定预设一起进入视觉特征管道。',
   'settings.pipelineTypeDescVisualFeature':
-    '用规则清单描述需要 LocateAnything 框出的视觉特征；旧清单仍兼容，但新增请放到视觉特征管道。',
+    '用规则清单描述需要 GLM-4.6V 框出的视觉特征；旧清单仍兼容，但新增请放到视觉特征管道。',
   'settings.redaction.imageGroup': '视觉特征',
   'settings.redaction.visualFeatureGroup': '视觉特征',
   'settings.redaction.imageGroupHint':

@@ -247,7 +247,7 @@ export const previewPipelines: PipelineCfg[] = [
   {
     mode: 'visual_features',
     name: '视觉特征',
-    description: 'LocateAnything 视觉特征通道',
+    description: 'GLM-4.6V 视觉特征通道',
     enabled: true,
     types: Array.from({ length: 12 }, (_, index) => ({
       id: `image_type_${index + 1}`,

@@ -1010,7 +1010,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step4.confidence': 'Confidence',
   'batchWizard.step4.source': 'Source',
   'batchWizard.step4.sourceVisualFeatureModel': 'Visual element model',
-  'batchWizard.step4.sourceVisualFeatureModelTitle': 'Detected by the LocateAnything visual element pipeline.',
+  'batchWizard.step4.sourceVisualFeatureModelTitle': 'Detected by the GLM-4.6V visual element pipeline.',
   'batchWizard.step4.sourceOcrHas': 'OCR+HaS',
   'batchWizard.step4.sourceOcrHasTitle': 'Detected from OCR text and HaS entity matching.',
   'batchWizard.step4.sourceTable': 'Table',
@@ -1180,7 +1180,7 @@ const enBase: Record<string, string> = {
   'safety.autoDelete.desc': 'Automatically remove uploaded source files once redaction completes',
 
   'error.visionTimeout':
-    'Vision detection timed out (over 3 min). Try a smaller image, or check that the vision service (LocateAnything/vLLM) is healthy and has enough free GPU memory.',
+    'Vision detection timed out (over 3 min). Try a smaller image, or check that the vision service (GLM-4.6V/vLLM) is healthy and has enough free GPU memory.',
   'error.visionDetectionFailed': 'Vision detection failed',
   'error.reRecognizeFailed': 'Re-recognition failed',
 };
@@ -1502,10 +1502,10 @@ const enOverrides: Record<string, string> = {
   'playground.clear': 'Clear',
   'playground.selectRecommended': 'Select Recommended',
   'playground.visualFeatureTypesHint':
-    'LocateAnything provides 22 fixed visual element presets, with paper and signature enabled like the other preset items.',
+    'GLM-4.6V provides 22 fixed visual element presets, with paper and signature enabled like the other preset items.',
   'playground.visualDetailsSummary': 'Visual label details',
   'playground.paperOptInBadge': 'Enabled',
-  'playground.paperOptInAria': 'Paper is part of the LocateAnything fixed visual element preset.',
+  'playground.paperOptInAria': 'Paper is part of the GLM-4.6V fixed visual element preset.',
   'playground.group.regex': 'Fixed format',
   'playground.group.llm': 'AI Semantic',
   'playground.group.semantic': 'Semantic recognition',
@@ -1681,7 +1681,7 @@ const enOverrides: Record<string, string> = {
   'settings.pipelineDisplayName.ocr': 'OCR + HaS',
   'settings.pipelineDisplayName.image': 'Visual elements',
   'settings.pipelineDescription.image':
-    'Use LocateAnything fixed visual element presets to detect faces, seals, documents, QR codes, receipts, signatures, paper, and related visual regions.',
+    'Use GLM-4.6V fixed visual element presets to detect faces, seals, documents, QR codes, receipts, signatures, paper, and related visual regions.',
   'settings.textModel.infoTitle': 'Text NER service',
   'settings.textModel.infoDesc':
     'Configure the text recognition endpoint used by the product. Save to apply immediately, or test first with the current address.',
@@ -1730,9 +1730,9 @@ const enOverrides: Record<string, string> = {
   'settings.visionModel.dialog.desc':
     'Set the connection details for this vision inference backend.',
   'settings.visionModel.nameLabel': 'Display name',
-  'settings.visionModel.namePlaceholder': 'For example: LocateAnything local 8090',
+  'settings.visionModel.namePlaceholder': 'For example: GLM-4.6V local 9090',
   'settings.visionModel.providerLabel': 'Provider',
-  'settings.visionModel.provider.local': 'Local HTTP (LocateAnything /health)',
+  'settings.visionModel.provider.local': 'Local HTTP (GLM-4.6V /health)',
   'settings.visionModel.provider.openai': 'OpenAI-compatible (/v1/models)',
   'settings.visionModel.provider.custom': 'Custom HTTP',
   'settings.visionModel.modelLabel': 'Model identifier',
@@ -1781,10 +1781,10 @@ const enOverrides: Record<string, string> = {
   'settings.redaction.ocrGroup': 'Image text recognition items (OCR + HaS)',
   'settings.redaction.imageGroup': 'Visual elements (fixed classes)',
   'settings.redaction.imageGroupHint':
-    'LocateAnything locates the fixed visual preset group: the original 21 classes plus signature, for 22 enabled visual elements.',
+    'GLM-4.6V locates the fixed visual preset group: the original 21 classes plus signature, for 22 enabled visual elements.',
   'settings.redaction.paperOptInBadge': 'Enabled',
   'settings.redaction.paperOptInAria':
-    'Paper is part of the LocateAnything fixed visual element preset.',
+    'Paper is part of the GLM-4.6V fixed visual element preset.',
   'settings.redaction.defaultNameText': 'Default text recognition list',
   'settings.redaction.defaultNameVision': 'Default image recognition list',
   'settings.redaction.defaultShort': 'Default',
@@ -2102,12 +2102,12 @@ Object.assign(enOverrides, {
   'settings.redaction.regexGroup': 'Custom fallback',
   'settings.redaction.semanticGroup': 'HaS text recognition',
   'settings.redaction.dialogDesc':
-    'Recognition lists default to HaS text, OCR+HaS, and LocateAnything visual elements. Custom fallbacks appear only when bad cases need them.',
+    'Recognition lists default to HaS text, OCR+HaS, and GLM-4.6V visual elements. Custom fallbacks appear only when bad cases need them.',
   'settings.pipelineDisplayName.ocr': 'OCR+HaS',
   'settings.pipelineDescription.ocr':
     'OCR extracts text and coordinates; HaS handles semantic recognition. The image pipeline does not use fallback expressions.',
   'settings.pipelineDisplayName.image': 'Visual elements',
-  'settings.pipelineDescription.image': 'LocateAnything detects fixed visual elements.',
+  'settings.pipelineDescription.image': 'GLM-4.6V detects fixed visual elements.',
   'playground.group.regex': 'Custom fallback',
   'playground.group.semantic': 'HaS text recognition',
   'playground.customFallbackEmpty':
