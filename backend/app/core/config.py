@@ -212,10 +212,38 @@ class Settings(BaseSettings):
     ]
 
     # LocateAnything visual feature service
-    VISUAL_FEATURES_BASE_URL: str = "http://127.0.0.1:8090"
-    VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
+    VISUAL_FEATURES_BASE_URL: str = "http://127.0.0.1:9090"
+    VISUAL_FEATURES_MODEL_NAME: str = "GLM-4.6V-Flash-FP8"
     VISUAL_FEATURES_TIMEOUT: float = 240.0
     VISUAL_FEATURES_CONF: float = 0.25
+    # GLM-backed visual grounding: one multi-category prompt per page (GLM has
+    # no multi-category recall collapse, unlike LocateAnything), and its
+    # full-frame recall is scale-immune, making the zero-recall tile retry
+    # redundant cost — disable it when this backend is active.
+    VISUAL_SINGLE_CALL: bool = False
+    VISUAL_TILE_RETRY: bool = True
+    # HaS-Image YOLO supplement service (empty = disabled). Runs every page
+    # alongside the grounding model: native-resolution small-object recall
+    # (stacked seal halves, watermark QR codes) at ~100ms.
+    HAS_IMAGE_URL: str = ""
+    # Fold signature boxes centered inside a seal into the seal hull. Needed
+    # for LocateAnything (it misreads stamp content as phantom signatures);
+    # must be OFF for the GLM backend, which has no phantom class and whose
+    # real stamped-over signatures would be swallowed.
+    ABSORB_SIGNATURES_IN_SEALS: bool = True
+    # Zoom pass for margin (binding) seals: at page scale the grounding model
+    # boxes only the most stamp-like part of an edge sliver (star/characters,
+    # dropping the serial digits below); on a tall margin-strip crop it
+    # returns the full extent. Re-detect on the affected side's margin
+    # windows and let the seal hull merge grow the box — coverage only grows.
+    VISUAL_EDGE_SEAL_REFINE: bool = True
+    # Color->VLM seal cascade: propose red-ink regions (clustering photocopy
+    # fragments), confirm each with the VLM on a tight crop, redact the red
+    # extent. Recovers faint / edge / fragmented RED stamps the full-frame VLM
+    # misses (page_04 is invisible to it at every zoom). Supersedes the margin
+    # refine when on. Does NOT cover black-on-white photocopy seals (no red
+    # signal) — that tier needs a trained detector.
+    VISUAL_SEAL_COLOR_CASCADE: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
@@ -630,6 +658,12 @@ class Settings(BaseSettings):
     # 本地工具连接用户自有数据库的正当功能）；设置后，非 sqlite 连接的 host
     # 必须命中列表中的精确主机名或 IP / CIDR 网段，否则拒绝建立连接。
     STRUCTURED_DB_HOST_ALLOWLIST: list[str] | None = None
+
+    # 文本 NER 后端（llama-server）地址主机白名单（SSRF 纵深防御）。该配置端点
+    # 现已限 super_admin，此为二道防线：None = 不限制（默认，保持本地/内网自建
+    # NER 服务的正当功能）；设置后，llamacpp_base_url 的 host 必须命中列表中的
+    # 精确主机名或 IP / CIDR 网段，否则拒绝保存/测试。
+    NER_BACKEND_HOST_ALLOWLIST: list[str] | None = None
 
     # 结构化日志（默认生产 JSON，DEBUG 文本）
     LOG_JSON: bool = True

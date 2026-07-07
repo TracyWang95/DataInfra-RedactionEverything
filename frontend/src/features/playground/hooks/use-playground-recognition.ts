@@ -146,6 +146,8 @@ export function usePlaygroundRecognition() {
   const [replacementMode, setReplacementMode] = useState<'structured' | 'smart' | 'mask'>(
     'structured',
   );
+  // 成品水印文案（W2-1）：只作用于最终执行输出，预览不加
+  const [watermarkText, setWatermarkText] = useState('');
   const [playgroundPresets, setPlaygroundPresets] = useState<RecognitionPreset[]>([]);
   const [playgroundPresetTextId, setPlaygroundPresetTextId] = useState<string | null>(null);
   const [playgroundPresetVisionId, setPlaygroundPresetVisionId] = useState<string | null>(null);
@@ -607,6 +609,8 @@ export function usePlaygroundRecognition() {
     setTypeTab,
     replacementMode,
     setReplacementMode,
+    watermarkText,
+    setWatermarkText,
     textPresetsPg,
     visionPresetsPg,
     playgroundPresetTextId,

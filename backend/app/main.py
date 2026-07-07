@@ -444,7 +444,7 @@ app.include_router(redaction.router, prefix=settings.API_PREFIX, tags=["redactio
 app.include_router(entity_types.router, prefix=settings.API_PREFIX, tags=["文本识别类型管理"], dependencies=[Depends(require_auth)])
 app.include_router(vision_pipeline.router, prefix=settings.API_PREFIX, tags=["图像识别Pipeline管理"], dependencies=[Depends(require_auth)])
 app.include_router(model_config.router, prefix=settings.API_PREFIX, tags=["推理模型配置"], dependencies=[Depends(require_super_admin)])
-app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本NER后端"], dependencies=[Depends(require_auth)])
+app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本NER后端"], dependencies=[Depends(require_super_admin)])
 app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["识别配置预设"], dependencies=[Depends(require_auth)])
 app.include_router(jobs.router, prefix=settings.API_PREFIX, tags=["批量任务"], dependencies=[Depends(require_auth)])
 app.include_router(structured.router, prefix=settings.API_PREFIX, tags=["structured"], dependencies=[Depends(require_auth)])
@@ -537,7 +537,7 @@ async def services_health():
             None,
             lambda: check_service_health_sync(
                 f"{visual_base}/health",
-                "LocateAnything Visual Features",
+                "GLM-4.6V-Flash Visual Features",
                 service_kind="visual_features",
             ),
         ),
@@ -595,7 +595,7 @@ async def services_health():
         elif key in visual_detect_detail:
             visual_detail[key] = visual_detect_detail[key]
     services["visual_features"] = {
-        "name": "LocateAnything Visual Features",
+        "name": "GLM-4.6V-Flash Visual Features",
         "status": combine_visual_status(
             str(visual_detect_payload.get("status") or "offline"),
             str(visual_chat_payload.get("status") or "offline"),

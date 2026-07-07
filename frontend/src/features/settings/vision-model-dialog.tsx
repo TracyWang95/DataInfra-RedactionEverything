@@ -59,6 +59,14 @@ export function VisionModelDialog({
           <DialogDescription>{t('settings.visionModel.dialog.desc')}</DialogDescription>
         </DialogHeader>
 
+        <form
+          className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!form.name || !form.model_name) return;
+            onSave();
+          }}
+        >
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-1 pr-1">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
@@ -221,6 +229,7 @@ export function VisionModelDialog({
 
         <DialogFooter className="border-t pt-3">
           <Button
+            type="button"
             variant="outline"
             size="sm"
             className="h-8"
@@ -230,15 +239,16 @@ export function VisionModelDialog({
             {t('settings.cancel')}
           </Button>
           <Button
+            type="submit"
             size="sm"
             className="h-8"
             disabled={!form.name || !form.model_name}
-            onClick={onSave}
             data-testid="vision-model-save"
           >
             {editingId ? t('settings.save') : t('settings.create')}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

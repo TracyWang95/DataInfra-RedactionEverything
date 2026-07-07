@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import type { FC } from 'react';
 import type { KeyboardEvent, MouseEvent } from 'react';
@@ -99,7 +99,7 @@ export const PlaygroundUploadDropzone: FC<PlaygroundUploadDropzoneProps> = ({
                 isDragActive && 'scale-110 animate-pulse',
               )}
             >
-              <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="size-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -122,7 +122,7 @@ export const PlaygroundUploadDropzone: FC<PlaygroundUploadDropzoneProps> = ({
               </div>
             )}
             <Button type="button" variant="outline" size="sm" onClick={handleOpenClick} disabled={disabled}>
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="size-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"

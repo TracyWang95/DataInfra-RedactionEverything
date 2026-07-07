@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PaginationRail } from '@/components/PaginationRail';
 import { getSelectionToneClasses, type SelectionTone } from '@/ui/selectionPalette';
+import { getEntityTypeName } from '@/config/entityTypes';
 import type { EntityTypeConfig } from '../hooks/use-entity-types';
 
 const RECOGNITION_PAGE_SIZE = 9;
@@ -133,11 +134,11 @@ export function EntityTypeList({
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <span className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">
-                          {type.name}
+                          {systemManaged ? getEntityTypeName(type.id) : type.name}
                         </span>
                         {systemManaged && (
                           <span className="mt-1 inline-flex rounded-md border border-border/70 bg-muted/40 px-1.5 py-0.5 text-xs text-muted-foreground">
-                            系统配置
+                            {t('settings.entityList.systemManaged')}
                           </span>
                         )}
                       </div>

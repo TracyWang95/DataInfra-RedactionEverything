@@ -89,6 +89,14 @@ export function RedactionPresetDialog({
           <DialogDescription>{t('settings.redaction.dialogDesc')}</DialogDescription>
         </DialogHeader>
 
+        <form
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (saving) return;
+            void saveModal();
+          }}
+        >
         <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="space-y-4 py-1">
             <div className="max-w-sm space-y-1.5">
@@ -169,10 +177,15 @@ export function RedactionPresetDialog({
         </div>
 
         <DialogFooter className="border-t pt-3">
-          <Button variant="outline" onClick={() => setModalOpen(false)} data-testid="preset-cancel">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setModalOpen(false)}
+            data-testid="preset-cancel"
+          >
             {t('settings.cancel')}
           </Button>
-          <Button disabled={saving} onClick={() => void saveModal()} data-testid="preset-save">
+          <Button type="submit" disabled={saving} data-testid="preset-save">
             {saving
               ? t('settings.redaction.processing')
               : editingPresetId
@@ -180,6 +193,7 @@ export function RedactionPresetDialog({
                 : t('settings.create')}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

@@ -1,6 +1,6 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import { memo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 
 import { Link } from 'react-router-dom';
 import { X } from 'lucide-react';
@@ -10,10 +10,14 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { PaginationRail } from '@/components/PaginationRail';
+import { ImportInboxDialog } from './import-inbox-dialog';
 
 import type { BatchWizardMode } from '@/services/batchPipeline';
 import { isPreviewBatchJobId } from '../lib/batch-preview-fixtures';
 import type { BatchRow, BatchUploadIssue, BatchUploadProgress, Step } from '../types';
+
+const QUEUE_PAGE_SIZE = 100;
 
 function formatFileSize(bytes: number | undefined): string {
   const value = Number(bytes);
@@ -34,9 +38,13 @@ interface BatchStep2UploadProps {
   uploadIssues: BatchUploadIssue[];
   uploadProgress?: BatchUploadProgress | null;
   clearUploadIssues: () => void;
+  failedUploadCount?: number;
+  retryFailedUploads?: () => void;
   goStep: (s: Step) => void;
   removeRow: (fileId: string) => Promise<void>;
   clearRows: () => Promise<void>;
+  /** 内网落地目录导入完成后的 rows 刷新回调（缺省不显示导入入口） */
+  onInboxImported?: () => void;
 }
 
 function BatchStep2UploadInner({
@@ -50,15 +58,29 @@ function BatchStep2UploadInner({
   uploadIssues,
   uploadProgress,
   clearUploadIssues,
+  failedUploadCount = 0,
+  retryFailedUploads,
   goStep,
   removeRow,
   clearRows,
+  onInboxImported,
 }: BatchStep2UploadProps) {
   const t = useT();
   const previewJob = activeJobId ? isPreviewBatchJobId(activeJobId) : false;
   const jobLabel = previewJob ? t('batchWizard.previewJobLabel') : activeJobId;
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  // 万级队列不能无界渲染（6720 文件 ≈ 4 万 DOM 节点且每个进度 tick 全量重渲）
+  // —— 复用 PaginationRail 分页展示，上传/删除逻辑不变。
+  const [queuePage, setQueuePage] = useState(1);
+  const queueTotalPages = Math.max(1, Math.ceil(rows.length / QUEUE_PAGE_SIZE));
+  useEffect(() => {
+    setQueuePage((prev) => Math.min(Math.max(1, prev), queueTotalPages));
+  }, [queueTotalPages]);
+  const pagedRows = useMemo(
+    () => rows.slice((queuePage - 1) * QUEUE_PAGE_SIZE, queuePage * QUEUE_PAGE_SIZE),
+    [rows, queuePage],
+  );
 
   const handleRemove = async (fileId: string) => {
     setPendingRemoveId(fileId);
@@ -134,15 +156,32 @@ function BatchStep2UploadInner({
                     String(uploadIssues.length),
                   )}
                 </CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  onClick={clearUploadIssues}
-                  data-testid="upload-issues-dismiss"
-                >
-                  {t('batchWizard.step2.dismissIssues')}
-                </Button>
+                <div className="flex items-center gap-1">
+                  {failedUploadCount > 0 && retryFailedUploads && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      disabled={loading}
+                      onClick={retryFailedUploads}
+                      data-testid="retry-failed-uploads"
+                    >
+                      {t('batchWizard.step2.retryFailed').replace(
+                        '{count}',
+                        String(failedUploadCount),
+                      )}
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={clearUploadIssues}
+                    data-testid="upload-issues-dismiss"
+                  >
+                    {t('batchWizard.step2.dismissIssues')}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="max-h-28 space-y-1.5 overflow-y-auto px-3 pb-3 pt-0">
                 {uploadIssues.slice(0, 5).map((issue) => (
@@ -266,18 +305,23 @@ function BatchStep2UploadInner({
                 {t('batchWizard.step2.queueCount').replace('{count}', String(rows.length))}
               </p>
             </div>
-            {rows.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 shrink-0 whitespace-nowrap text-xs text-muted-foreground hover:text-destructive"
-                onClick={handleClear}
-                disabled={clearing || loading}
-                data-testid="step2-clear-all"
-              >
-                {clearing ? t('batchWizard.step2.clearing') : t('batchWizard.step2.clearAll')}
-              </Button>
-            )}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {!previewJob && onInboxImported && (
+                <ImportInboxDialog jobId={activeJobId} onImported={onInboxImported} />
+              )}
+              {rows.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 whitespace-nowrap text-xs text-muted-foreground hover:text-destructive"
+                  onClick={handleClear}
+                  disabled={clearing || loading}
+                  data-testid="step2-clear-all"
+                >
+                  {clearing ? t('batchWizard.step2.clearing') : t('batchWizard.step2.clearAll')}
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="min-h-0 flex-1 overflow-y-auto divide-y p-0">
             {rows.length === 0 ? (
@@ -285,7 +329,7 @@ function BatchStep2UploadInner({
                 {t('batchWizard.step2.noFiles')}
               </p>
             ) : (
-              rows.map((r) => (
+              pagedRows.map((r) => (
                 <div
                   key={r.file_id}
                   className="grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_5rem_4.5rem_1.75rem] sm:py-1.5"
@@ -312,12 +356,25 @@ function BatchStep2UploadInner({
                     title={t('batchWizard.step2.removeFile')}
                     data-testid={`step2-remove-${r.file_id}`}
                   >
-                    <X className="h-4 w-4" />
+                    <X className="size-4" />
                   </Button>
                 </div>
               ))
             )}
           </CardContent>
+          {rows.length > QUEUE_PAGE_SIZE && (
+            <div className="border-t border-border/70 px-3 py-1.5">
+              <PaginationRail
+                page={queuePage}
+                pageSize={QUEUE_PAGE_SIZE}
+                totalItems={rows.length}
+                totalPages={queueTotalPages}
+                onPageChange={setQueuePage}
+                compact
+                testIdPrefix="step2-queue"
+              />
+            </div>
+          )}
         </Card>
       </div>
     </div>

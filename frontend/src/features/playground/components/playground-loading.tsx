@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { type FC, memo, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -49,7 +49,7 @@ export const PlaygroundLoading: FC<PlaygroundLoadingProps> = memo(
           className="w-full max-w-md animate-scale-in cursor-default rounded-[20px] border border-border/70 bg-[var(--surface-overlay)] px-4 py-3.5 text-left shadow-[var(--shadow-floating)] outline-none"
         >
           <div className="mb-3 flex items-start gap-3">
-            <div className="mt-0.5 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+            <div className="mt-0.5 size-5 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-foreground">
                 {loadingMessage || t('playground.processing')}

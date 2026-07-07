@@ -1,0 +1,70 @@
+{
+  "_comment": "医疗行业包真值。identity=通用PII(必须100%)；standard=机构/地址(≥85%)；domain=病案号/住院号/门诊号等行业专项(独立门槛，观察基线后再收紧)。",
+  "_entity_type_ids": ["PERSON", "ID_CARD", "PHONE", "ADDRESS", "INSTITUTION_NAME", "MED_RECORD_ID", "INPATIENT_NO", "REGISTRATION_NO", "AGE", "GENDER", "DATE", "EMAIL", "BANK_CARD", "BIRTH_DATE", "TIME", "PASSPORT", "SOCIAL_SECURITY"],
+  "_domain_min_recall": 0.6,
+  "record_01.txt": {
+    "identity": [
+      {"text": "周建军", "type": "PERSON"},
+      {"text": "欧阳文静", "type": "PERSON"},
+      {"text": "110108196803124512", "type": "ID_CARD"},
+      {"text": "13612347890", "type": "PHONE"}
+    ],
+    "standard": [
+      {"text": "北京仁和堂医院", "type": "INSTITUTION_NAME"},
+      {"text": "北京市丰台区方庄芳城园一区7号楼402室", "type": "ADDRESS"}
+    ],
+    "domain": [
+      {"text": "BA20260012345", "type": "MED_RECORD_ID"},
+      {"text": "ZY2026003456", "type": "INPATIENT_NO"}
+    ]
+  },
+  "record_02.txt": {
+    "identity": [
+      {"text": "吴秀兰", "type": "PERSON"},
+      {"text": "吴海涛", "type": "PERSON"},
+      {"text": "范志强", "type": "PERSON"},
+      {"text": "310110195502283344", "type": "ID_CARD"},
+      {"text": "15866553322", "type": "PHONE"},
+      {"text": "13777884455", "type": "PHONE"}
+    ],
+    "standard": [
+      {"text": "上海浦江人民医院", "type": "INSTITUTION_NAME"},
+      {"text": "上海市浦东新区张杨路620弄15号1102室", "type": "ADDRESS"}
+    ],
+    "domain": [
+      {"text": "BA20260067890", "type": "MED_RECORD_ID"},
+      {"text": "ZY2026008812", "type": "INPATIENT_NO"}
+    ]
+  },
+  "record_03.txt": {
+    "identity": [
+      {"text": "林祖辉", "type": "PERSON"},
+      {"text": "区丽敏", "type": "PERSON"},
+      {"text": "440104199203057788", "type": "ID_CARD"},
+      {"text": "13299887766", "type": "PHONE"}
+    ],
+    "standard": [
+      {"text": "广州越秀中心医院", "type": "INSTITUTION_NAME"}
+    ],
+    "domain": [
+      {"text": "MZ20260078901", "type": "REGISTRATION_NO"}
+    ]
+  },
+  "record_04.txt": {
+    "identity": [
+      {"text": "唐雪梅", "type": "PERSON"},
+      {"text": "白孟宇", "type": "PERSON"},
+      {"text": "田汉青", "type": "PERSON"},
+      {"text": "510107198101152233", "type": "ID_CARD"},
+      {"text": "18933332211", "type": "PHONE"}
+    ],
+    "standard": [
+      {"text": "成都华西坝检验中心", "type": "INSTITUTION_NAME"},
+      {"text": "四川省成都市武侯区科华北路62号2栋803室", "type": "ADDRESS"}
+    ],
+    "domain": [
+      {"text": "DJ20260045678", "type": "REGISTRATION_NO"},
+      {"text": "BA20260033221", "type": "MED_RECORD_ID"}
+    ]
+  }
+}

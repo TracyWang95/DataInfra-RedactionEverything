@@ -169,7 +169,8 @@
       "GENDER",
       "MED_RECORD_ID",
       "REGISTRATION_NO",
-      "INPATIENT_NO"
+      "INPATIENT_NO",
+      "DEVICE_ID"
     ],
     "ocrHasTypes": [
       "PERSON",
@@ -188,7 +189,8 @@
       "GENDER",
       "MED_RECORD_ID",
       "REGISTRATION_NO",
-      "INPATIENT_NO"
+      "INPATIENT_NO",
+      "DEVICE_ID"
     ],
     "visualFeatureTypes": [
       "face",
@@ -201,10 +203,11 @@
     ],
     "replacementMode": "structured",
     "created_at": "2026-05-09T00:00:00+00:00",
-    "updated_at": "2026-06-18T00:00:00+00:00",
+    "updated_at": "2026-07-06T00:00:00+00:00",
     "dataDomains": [
       "account_transaction",
       "address_location",
+      "credential_access",
       "document_record",
       "organization_subject",
       "pii",
@@ -215,6 +218,7 @@
       "GEN_ADDRESS_LOCATION",
       "GEN_ATTRIBUTE_STATUS",
       "GEN_CONTACT",
+      "GEN_CREDENTIAL_ACCESS",
       "GEN_DATE_TIME",
       "GEN_NUMBER_CODE",
       "GEN_ORGANIZATION_SUBJECT",

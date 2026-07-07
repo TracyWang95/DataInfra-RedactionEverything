@@ -1,0 +1,83 @@
+{
+  "_comment": "法律行业包黄金语料真值。categories: identity=漏检不可接受(目标100%), standard=常规(计入总召回)。match=返回实体文本与真值互相包含即命中(类型不计入召回门槛,单独报告)。",
+  "contract_01.txt": {
+    "identity": [
+      {"text": "张建国", "type": "PERSON"},
+      {"text": "王丽娜", "type": "PERSON"},
+      {"text": "李文博", "type": "PERSON"},
+      {"text": "陈晓东", "type": "PERSON"},
+      {"text": "13811112222", "type": "PHONE"},
+      {"text": "13922223333", "type": "PHONE"},
+      {"text": "310101198803124567", "type": "ID_CARD"},
+      {"text": "6222021001112223334", "type": "BANK_CARD"}
+    ],
+    "standard": [
+      {"text": "wanglina@shulian.com", "type": "EMAIL"},
+      {"text": "北京市海淀区中关村大街27号3层301室", "type": "ADDRESS"},
+      {"text": "北京数联智能科技有限公司", "type": "INSTITUTION_NAME"},
+      {"text": "上海云图信息技术有限公司", "type": "INSTITUTION_NAME"}
+    ]
+  },
+  "contract_02.txt": {
+    "identity": [
+      {"text": "赵德柱", "type": "PERSON"},
+      {"text": "孙美玲", "type": "PERSON"},
+      {"text": "110105196512087890", "type": "ID_CARD"},
+      {"text": "320102199207156789", "type": "ID_CARD"},
+      {"text": "13633334444", "type": "PHONE"},
+      {"text": "15755556666", "type": "PHONE"},
+      {"text": "6225881234567890", "type": "BANK_CARD"}
+    ],
+    "standard": [
+      {"text": "sunmeiling@example.com", "type": "EMAIL"},
+      {"text": "北京市朝阳区望京西路48号院6号楼2单元501室", "type": "ADDRESS"},
+      {"text": "北京市朝阳区阜通东大街6号院2号楼1803室", "type": "ADDRESS"}
+    ]
+  },
+  "contract_03.txt": {
+    "identity": [
+      {"text": "钱勇", "type": "PERSON"},
+      {"text": "周婷婷", "type": "PERSON"},
+      {"text": "吴国强", "type": "PERSON"},
+      {"text": "13877778888", "type": "PHONE"},
+      {"text": "6217001234509876543", "type": "BANK_CARD"}
+    ],
+    "standard": [
+      {"text": "zhoutt@qifei.cn", "type": "EMAIL"},
+      {"text": "杭州齐飞电子商务有限公司", "type": "INSTITUTION_NAME"},
+      {"text": "浙江正衡律师事务所", "type": "INSTITUTION_NAME"},
+      {"text": "深圳市蓝海供应链管理有限公司", "type": "INSTITUTION_NAME"},
+      {"text": "浙江省杭州市西湖区文三路90号东部软件园A座12层", "type": "ADDRESS"}
+    ]
+  },
+  "contract_04.txt": {
+    "identity": [
+      {"text": "刘洪波", "type": "PERSON"},
+      {"text": "郑雅琴", "type": "PERSON"},
+      {"text": "18099990000", "type": "PHONE"},
+      {"text": "17311112222", "type": "PHONE"},
+      {"text": "510104199511230012", "type": "ID_CARD"}
+    ],
+    "standard": [
+      {"text": "zhengyq95@example.com", "type": "EMAIL"},
+      {"text": "成都锦官城餐饮管理有限公司", "type": "INSTITUTION_NAME"},
+      {"text": "四川省成都市锦江区春熙路南段8号", "type": "ADDRESS"}
+    ]
+  },
+  "contract_05.txt": {
+    "identity": [
+      {"text": "马春生", "type": "PERSON"},
+      {"text": "黄志远", "type": "PERSON"},
+      {"text": "440301197809034455", "type": "ID_CARD"},
+      {"text": "445281199402281123", "type": "ID_CARD"},
+      {"text": "13566667777", "type": "PHONE"},
+      {"text": "18244445555", "type": "PHONE"},
+      {"text": "6228480123456789012", "type": "BANK_CARD"}
+    ],
+    "standard": [
+      {"text": "huangzy94@example.com", "type": "EMAIL"},
+      {"text": "广东省深圳市福田区华强北路1002号", "type": "ADDRESS"},
+      {"text": "广东省汕头市金平区金砂路77号", "type": "ADDRESS"}
+    ]
+  }
+}

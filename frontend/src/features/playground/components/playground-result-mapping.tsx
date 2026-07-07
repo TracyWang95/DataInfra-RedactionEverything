@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import type { Dispatch, FC, SetStateAction } from 'react';
 import { Button } from '@/components/ui/button';
@@ -125,7 +125,7 @@ export const MappingColumn: FC<MappingColumnProps> = ({
                 {versionHistory.length}
               </span>
               <svg
-                className={cn('h-3 w-3 transition-transform', versionHistoryOpen && 'rotate-180')}
+                className={cn('size-3 transition-transform', versionHistoryOpen && 'rotate-180')}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"

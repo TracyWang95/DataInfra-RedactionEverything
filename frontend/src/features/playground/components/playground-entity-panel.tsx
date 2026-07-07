@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import {
   type FC,
@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
@@ -36,6 +38,8 @@ export interface PlaygroundEntityPanelProps {
   displayStats?: Record<string, { total: number; selected: number }>;
   replacementMode: 'structured' | 'smart' | 'mask';
   setReplacementMode: (mode: 'structured' | 'smart' | 'mask') => void;
+  watermarkText: string;
+  setWatermarkText: (text: string) => void;
   clearPlaygroundTextPresetTracking: () => void;
   onRerunNer: () => void;
   onRedact: () => void;
@@ -61,6 +65,8 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
     displayStats,
     replacementMode,
     setReplacementMode,
+    watermarkText,
+    setWatermarkText,
     clearPlaygroundTextPresetTracking,
     onRerunNer,
     onRedact,
@@ -178,6 +184,24 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
                 }}
               />
             )}
+
+            <div className="space-y-1">
+              <Label
+                htmlFor="playground-watermark"
+                className="text-xs text-muted-foreground"
+              >
+                {t('playground.watermarkLabel')}
+              </Label>
+              <Input
+                id="playground-watermark"
+                value={watermarkText}
+                maxLength={64}
+                onChange={(event) => setWatermarkText(event.target.value)}
+                placeholder={t('playground.watermarkPlaceholder')}
+                className="h-8 text-xs"
+                data-testid="playground-watermark-input"
+              />
+            </div>
 
             {!isImageMode && Object.keys(stats).length > 0 && (
               <div className="max-h-32 space-y-2 overflow-y-auto pr-1">
@@ -401,7 +425,7 @@ const BoxList: FC<{
             <Checkbox
               checked={box.selected}
               onCheckedChange={() => onToggle(box.id)}
-              className="h-4 w-4"
+              className="size-4"
             />
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex flex-wrap items-center gap-1.5">
@@ -467,7 +491,7 @@ const EntityRow: FC<{
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 shrink-0 rounded-xl text-muted-foreground hover:text-destructive"
+        className="size-8 shrink-0 rounded-xl text-muted-foreground hover:text-destructive"
         onClick={(event) => {
           event.stopPropagation();
           onRemove(entity.id);
@@ -475,7 +499,7 @@ const EntityRow: FC<{
         aria-label={t('playground.removeAnnotation')}
       >
         <svg
-          className="h-3.5 w-3.5"
+          className="size-3.5"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"

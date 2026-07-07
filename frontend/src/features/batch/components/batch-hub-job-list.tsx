@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AsyncListShell } from '@/components/shared/AsyncListShell';
 import { formatAggregateJobStatus } from '@/utils/jobStatusLabels';
 import {
   buildJobPrimaryNavigationLabels,
@@ -60,70 +61,60 @@ export function BatchHubJobList({
       </CardHeader>
 
       <CardContent className="flex min-h-0 flex-col p-0">
-        {hardLoading ? (
-          <div
-            className={`flex ${RECENT_JOBS_FRAME_CLASS} flex-col divide-y px-4 pb-4`}
-            data-testid="recent-jobs-loading-skeleton"
-          >
-            {Array.from({ length: MAX_VISIBLE_JOBS }, (_, index) => (
-              <div
-                key={index}
-                className="grid min-h-12 grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 py-1.5"
-                data-testid="recent-jobs-loading-row"
-              >
-                <div className="min-w-0 space-y-2">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-3 w-1/2" />
+        <AsyncListShell
+          hardLoading={hardLoading}
+          isEmpty={jobs.length === 0}
+          refreshing={shouldTableLoad}
+          refreshingLabel={t('jobs.refreshing')}
+          className={RECENT_JOBS_FRAME_CLASS}
+          testId="recent-jobs-list-frame"
+          skeleton={
+            <div
+              className={`flex ${RECENT_JOBS_FRAME_CLASS} flex-col divide-y px-4 pb-4`}
+              data-testid="recent-jobs-loading-skeleton"
+            >
+              {Array.from({ length: MAX_VISIBLE_JOBS }, (_, index) => (
+                <div
+                  key={index}
+                  className="grid min-h-12 grid-cols-[minmax(0,1fr)_4.5rem] items-center gap-3 py-1.5"
+                  data-testid="recent-jobs-loading-row"
+                >
+                  <div className="min-w-0 space-y-2">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
+                  </div>
+                  <Skeleton className="h-7 w-full rounded-lg" />
                 </div>
-                <Skeleton className="h-7 w-full rounded-lg" />
-              </div>
-            ))}
-          </div>
-        ) : jobs.length === 0 ? (
-          <div
-            className={`flex ${RECENT_JOBS_FRAME_CLASS} items-start gap-3 px-4 pb-4 pt-1 text-sm text-muted-foreground`}
-          >
-            <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-border bg-muted">
-              <Clock3 className="size-4" />
-            </span>
-            <div className="flex min-w-0 flex-col gap-1">
-              <span className="truncate font-medium text-foreground">
-                {t('batchHub.noActiveJobs')}
-              </span>
-              <span className="truncate text-xs leading-5">{t('batchHub.noActiveJobsDesc')}</span>
-            </div>
-          </div>
-        ) : (
-          <div
-            className={`relative flex ${RECENT_JOBS_FRAME_CLASS} min-h-0 flex-col`}
-            aria-busy={shouldTableLoad}
-            data-testid="recent-jobs-list-frame"
-          >
-            {shouldTableLoad ? (
-              <div
-                className="table-refresh-overlay pointer-events-none !right-3 !top-2"
-                role="status"
-                aria-label={t('jobs.refreshing')}
-                data-testid="recent-jobs-refresh-overlay"
-              >
-                <span className="table-refresh-pill !px-2.5 !py-1 !text-xs shadow-sm">
-                  <span className="size-3.5 rounded-full border-2 border-border border-t-primary animate-spin" />
-                  {t('jobs.refreshing')}
-                </span>
-              </div>
-            ) : null}
-            <ul className="flex min-h-0 flex-col divide-y" data-testid="recent-jobs-list">
-              {visibleJobs.map((job) => (
-                <JobRow key={job.id} job={job} onContinue={onContinue} t={t} />
               ))}
-            </ul>
-            {hiddenCount > 0 ? (
-              <div className="truncate border-t border-border/70 px-4 py-2 text-xs text-muted-foreground">
-                {t('batchHub.moreActiveJobs').replace('{n}', String(hiddenCount))}
+            </div>
+          }
+          emptyContent={
+            <div
+              className={`flex ${RECENT_JOBS_FRAME_CLASS} items-start gap-3 px-4 pb-4 pt-1 text-sm text-muted-foreground`}
+            >
+              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-border bg-muted">
+                <Clock3 className="size-4" />
+              </span>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="truncate font-medium text-foreground">
+                  {t('batchHub.noActiveJobs')}
+                </span>
+                <span className="truncate text-xs leading-5">{t('batchHub.noActiveJobsDesc')}</span>
               </div>
-            ) : null}
-          </div>
-        )}
+            </div>
+          }
+        >
+          <ul className="flex min-h-0 flex-col divide-y" data-testid="recent-jobs-list">
+            {visibleJobs.map((job) => (
+              <JobRow key={job.id} job={job} onContinue={onContinue} t={t} />
+            ))}
+          </ul>
+          {hiddenCount > 0 ? (
+            <div className="truncate border-t border-border/70 px-4 py-2 text-xs text-muted-foreground">
+              {t('batchHub.moreActiveJobs').replace('{n}', String(hiddenCount))}
+            </div>
+          ) : null}
+        </AsyncListShell>
       </CardContent>
     </Card>
   );

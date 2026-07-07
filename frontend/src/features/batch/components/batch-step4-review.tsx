@@ -1,10 +1,13 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useAuth } from '@/features/auth/auth-context';
 import { tonePanelClass } from '@/utils/toneClasses';
 
 import { useBatchWizardContext } from '../batch-wizard-context';
@@ -154,6 +157,9 @@ function ReviewQueueStatus({
 export function BatchStep4Review() {
   const t = useT();
   const w = useBatchWizardContext();
+  const { status } = useAuth();
+  const canBulkConfirm = status?.can_bulk_confirm === true;
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
 
   const {
     doneRows,
@@ -177,10 +183,63 @@ export function BatchStep4Review() {
     canAdvanceToExport,
     confirmCurrentReview,
     advanceToExportStep,
+    bulkConfirmAll,
+    bulkConfirmLoading,
+    pendingReviewCount,
     loadReviewData,
     rerunCurrentItemRecognition: onRerunRecognition,
     rerunRecognitionLoading,
   } = w;
+
+  // 批量确认后成品在后台逐份生成（万级要几分钟）：给「进入导出」灰态一个
+  // 看得见的解释，否则用户以为按钮坏了（PM 5188 份实战反馈）。
+  const settlingCount = rows.filter(
+    (row) => row.analyzeStatus === 'review_approved' || row.analyzeStatus === 'redacting',
+  ).length;
+  const completedOutputCount = rows.filter((row) => row.analyzeStatus === 'completed').length;
+
+  // 审阅键盘流（审核员批量作业刚需）：← / → 上一份/下一份，Ctrl+Enter 确认当前份。
+  // 输入控件聚焦时不响应；门禁与按钮完全一致（不越过必读页/只读态）。
+  const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
+  keyHandlerRef.current = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    if (!reviewFile || reviewLoading || reviewExecuteLoading) return;
+
+    if (event.key === 'ArrowLeft' && reviewIndex > 0) {
+      event.preventDefault();
+      void navigateReviewIndex(reviewIndex - 1);
+      return;
+    }
+    if (event.key === 'ArrowRight') {
+      const next = getNextReviewIndex(doneRows, reviewIndex, reviewFile.file_id);
+      const blockedByCurrent = reviewFile.reviewConfirmed !== true && !reviewFileReadOnly;
+      if (next !== null && !blockedByCurrent) {
+        event.preventDefault();
+        void navigateReviewIndex(next);
+      }
+      return;
+    }
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      if (!reviewDraftSaving && !reviewFileReadOnly && reviewRequiredPagesVisited) {
+        event.preventDefault();
+        void confirmCurrentReview();
+      }
+    }
+  };
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => keyHandlerRef.current(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
 
   if (!doneRows.length) {
     return (
@@ -462,9 +521,26 @@ export function BatchStep4Review() {
               )}
             </div>
           )}
+          <span
+            className="hidden shrink-0 whitespace-nowrap text-[11px] text-muted-foreground/70 lg:inline"
+            title={t('batchWizard.step4.keyboardHint')}
+          >
+            {t('batchWizard.step4.keyboardHint')}
+          </span>
           <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
             {t('batchWizard.step4.confirmed')} {reviewedOutputCount}/{rows.length}
           </span>
+          {settlingCount > 0 && (
+            <span
+              className="shrink-0 whitespace-nowrap text-xs font-medium text-[var(--warning-foreground)] tabular-nums"
+              data-testid="review-settling-progress"
+              title={t('batchWizard.step4.settlingHint')}
+            >
+              {t('batchWizard.step4.settlingProgress')
+                .replace('{done}', String(completedOutputCount))
+                .replace('{total}', String(rows.length))}
+            </span>
+          )}
           {reviewTotalPages > 1 &&
             !reviewFileReadOnly &&
             !reviewRequiredPagesVisited &&
@@ -481,6 +557,35 @@ export function BatchStep4Review() {
                 {t('batchWizard.step4.nextUnvisitedPage')}
               </Button>
             )}
+          {pendingReviewCount > 0 && (
+            <span
+              className="shrink-0"
+              title={!canBulkConfirm ? t('batchWizard.step4.bulkConfirmNoPermission') : undefined}
+            >
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="whitespace-nowrap"
+                disabled={
+                  !canBulkConfirm ||
+                  reviewLoading ||
+                  reviewDraftSaving ||
+                  reviewExecuteLoading ||
+                  bulkConfirmLoading
+                }
+                onClick={() => setBulkConfirmOpen(true)}
+                data-testid="bulk-confirm-all"
+              >
+                {bulkConfirmLoading
+                  ? t('batchWizard.step4.bulkConfirming')
+                  : t('batchWizard.step4.bulkConfirmAll').replace(
+                      '{count}',
+                      String(pendingReviewCount),
+                    )}
+              </Button>
+            </span>
+          )}
           <Button
             size="sm"
             className="shrink-0 whitespace-nowrap"
@@ -512,9 +617,11 @@ export function BatchStep4Review() {
               !canAdvanceToExport || reviewLoading || reviewDraftSaving || reviewExecuteLoading
             }
             title={
-              waitingForBackgroundRecognition && !canAdvanceToExport
-                ? t('batchWizard.step4.backgroundRecognitionHint')
-                : undefined
+              !canAdvanceToExport && settlingCount > 0
+                ? t('batchWizard.step4.settlingHint')
+                : waitingForBackgroundRecognition && !canAdvanceToExport
+                  ? t('batchWizard.step4.backgroundRecognitionHint')
+                  : undefined
             }
             onClick={() => void advanceToExportStep()}
             className={cn(
@@ -527,6 +634,21 @@ export function BatchStep4Review() {
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={bulkConfirmOpen}
+        title={t('batchWizard.step4.bulkConfirmTitle')}
+        message={t('batchWizard.step4.bulkConfirmMessage').replace(
+          '{count}',
+          String(pendingReviewCount),
+        )}
+        confirmText={t('batchWizard.step4.bulkConfirmConfirm')}
+        onConfirm={() => {
+          setBulkConfirmOpen(false);
+          void bulkConfirmAll();
+        }}
+        onCancel={() => setBulkConfirmOpen(false)}
+      />
     </Card>
   );
 }

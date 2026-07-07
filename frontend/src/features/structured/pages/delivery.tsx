@@ -130,14 +130,22 @@ export function StructuredDelivery() {
         ? t('structured.delivery.modeBatch').replace('{count}', String(selectedDatasets.length))
         : t('structured.delivery.modeSingle');
   const canCreateJob = selectedDatasets.length > 0 && !notice.busy;
-  const createButtonLabel = jobCompleted
-    ? t('structured.delivery.createRerun')
-    : selectedDatasets.length === 0
-      ? t('structured.delivery.createSelectFirst')
-      : selectedDatasets.length > 1
-        ? t('structured.delivery.createBatch').replace('{count}', String(selectedDatasets.length))
-        : t('structured.delivery.createSingle');
-  const downloadButtonLabel = jobCompleted ? t('structured.delivery.downloadZip') : t('structured.delivery.downloadResult');
+  const createButtonLabel =
+    notice.busy === 'job'
+      ? t('structured.delivery.creating')
+      : jobCompleted
+        ? t('structured.delivery.createRerun')
+        : selectedDatasets.length === 0
+          ? t('structured.delivery.createSelectFirst')
+          : selectedDatasets.length > 1
+            ? t('structured.delivery.createBatch').replace('{count}', String(selectedDatasets.length))
+            : t('structured.delivery.createSingle');
+  const downloadButtonLabel =
+    notice.busy === 'download'
+      ? t('common.downloading')
+      : jobCompleted
+        ? t('structured.delivery.downloadZip')
+        : t('structured.delivery.downloadResult');
 
   React.useEffect(() => {
     if (requestedSelectionIds.length === 0) return;
@@ -366,7 +374,7 @@ export function StructuredDelivery() {
                 {t('structured.delivery.settings.formatHint')}
               </p>
               {exportFormat === 'xlsx' && (
-                <p className="text-xs leading-4 text-amber-700">
+                <p className="text-xs leading-4 text-[var(--warning-foreground)]">
                   {t('structured.delivery.settings.xlsxPartHint')}
                 </p>
               )}

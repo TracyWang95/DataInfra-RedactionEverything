@@ -8,6 +8,7 @@ table fallbacks, and spatial region dedupe.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from difflib import SequenceMatcher
 
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
@@ -280,34 +281,45 @@ _HAS_ENTITY_TYPE_MAPPING = {
 }
 
 
-def _entity_char_box_x_span(
+def _fold_glyph(glyph: str) -> str:
+    """Width-fold one glyph (NFKC), kept only when it stays a single glyph."""
+    folded = unicodedata.normalize("NFKC", glyph)
+    return folded if len(folded) == 1 else glyph
+
+
+def _entity_span_char_boxes(
     block: OCRTextBlock,
     search_text: str,
     span_start: int,
     span_end: int,
-) -> tuple[int, int] | None:
-    """X-range of the char boxes proven to render search_text[span_start:span_end).
+) -> list[dict | None] | None:
+    """Char boxes proven to render search_text[span_start:span_end).
 
     No proportional estimation and no thresholds: glyph correspondence comes
     from the monotone alignment (difflib matching blocks) of the two
     whitespace-stripped glyph sequences, which absorbs whitespace differences,
-    same-glyph misreads (帐/账) and dropped char boxes alike. A crop is
+    same-glyph misreads (帐/账) and dropped char boxes alike. Boxes are
     returned only when the span's first and last glyphs each have a
-    corresponding box — char boxes run left-to-right, so that union also
-    covers interior glyphs whose own box was dropped. Anything unprovable
-    returns None and the caller masks the whole block.
+    corresponding box — char boxes run in reading order, so their union also
+    covers interior glyphs whose own box was dropped (interior entries may be
+    None). Anything unprovable returns None and the caller masks the whole
+    block.
     """
     chars = getattr(block, "chars", None) or []
     if not chars:
         return None
 
     # One entry per non-whitespace glyph; multi-char tokens ("2024-05-14")
-    # contribute their box once per glyph.
+    # contribute their box once per glyph. Glyphs are width-folded (NFKC,
+    # kept only when it stays a single glyph) so fullwidth／halfwidth
+    # punctuation variants（） vs () — NER text and OCR chars routinely
+    # disagree on these — still align; a mismatched span EDGE glyph would
+    # otherwise fail the first/last-proven guard and drop the whole crop.
     glyph_boxes: list[dict] = []
     chars_glyph_list: list[str] = []
     for char_box in chars:
         for glyph in _compact_text(str(char_box.get("c", ""))):
-            chars_glyph_list.append(glyph)
+            chars_glyph_list.append(_fold_glyph(glyph))
             glyph_boxes.append(char_box)
     if not glyph_boxes:
         return None
@@ -323,7 +335,7 @@ def _entity_char_box_x_span(
             span_glyph_start += 1
         if index < span_end:
             span_glyph_end += 1
-        search_glyph_list.append(ch)
+        search_glyph_list.append(_fold_glyph(ch))
     if span_glyph_end <= span_glyph_start:
         return None
     search_glyphs = "".join(search_glyph_list)
@@ -332,20 +344,104 @@ def _entity_char_box_x_span(
     if search_glyphs == chars_glyphs:
         box_by_glyph = list(glyph_boxes)
     else:
-        for search_pos, chars_pos, size in SequenceMatcher(
+        matching_blocks = SequenceMatcher(
             None, search_glyphs, chars_glyphs, autojunk=False
-        ).get_matching_blocks():
+        ).get_matching_blocks()
+        for search_pos, chars_pos, size in matching_blocks:
             for offset in range(size):
                 box_by_glyph[search_pos + offset] = glyph_boxes[chars_pos + offset]
+        if None in box_by_glyph:
+            # The word engine can emit boxes out of reading order (e.g.
+            # ['岁', '27'] for "27岁"), which the monotone alignment above
+            # cannot cross-match. Pair each still-unmatched search glyph
+            # with an unconsumed char box by glyph identity, only when that
+            # glyph is unique among the unmatched on both sides - identity
+            # plus uniqueness keeps the correspondence proven, still no
+            # estimation and no thresholds.
+            consumed: set[int] = set()
+            for _search_pos, chars_pos, size in matching_blocks:
+                consumed.update(range(chars_pos, chars_pos + size))
+            unmatched_search: dict[str, list[int]] = {}
+            for index, glyph in enumerate(search_glyphs):
+                if box_by_glyph[index] is None:
+                    unmatched_search.setdefault(glyph, []).append(index)
+            unmatched_chars: dict[str, list[int]] = {}
+            for index, glyph in enumerate(chars_glyphs):
+                if index not in consumed:
+                    unmatched_chars.setdefault(glyph, []).append(index)
+            for glyph, search_positions in unmatched_search.items():
+                char_positions = unmatched_chars.get(glyph) or []
+                if len(search_positions) == 1 and len(char_positions) == 1:
+                    box_by_glyph[search_positions[0]] = glyph_boxes[char_positions[0]]
 
     span_boxes = box_by_glyph[span_glyph_start:span_glyph_end]
     if not span_boxes or span_boxes[0] is None or span_boxes[-1] is None:
+        return None
+    return span_boxes
+
+
+def _entity_char_box_x_span(
+    block: OCRTextBlock,
+    search_text: str,
+    span_start: int,
+    span_end: int,
+) -> tuple[int, int] | None:
+    """X-range union of the proven char boxes (see _entity_span_char_boxes)."""
+    span_boxes = _entity_span_char_boxes(block, search_text, span_start, span_end)
+    if not span_boxes:
         return None
     left = int(min(box["x1"] for box in span_boxes if box is not None))
     right = int(max(box["x2"] for box in span_boxes if box is not None))
     if right <= left:
         return None
     return left, right
+
+
+def _entity_char_box_line_rects(
+    block: OCRTextBlock,
+    search_text: str,
+    span_start: int,
+    span_end: int,
+) -> list[tuple[int, int, int, int]] | None:
+    """Per-text-line rects of the proven char boxes.
+
+    Merged multi-line blocks make a cross-line entity's x-span union cover
+    the block's full width and height ("地点：门诊三楼 / 北走廊东侧" boxed as
+    one slab). Char boxes arrive in reading order, so a line break is where
+    reading order resets leftward — the next box STARTS left of where the
+    previous box started. That identity holds on tilted photos where the two
+    lines' y-ranges overlap and a y test would fuse them. One tight rect per
+    line, no thresholds.
+    """
+    span_boxes = _entity_span_char_boxes(block, search_text, span_start, span_end)
+    if not span_boxes:
+        return None
+    rects: list[tuple[int, int, int, int]] = []
+    current: tuple[int, int, int, int] | None = None
+    previous_x1: float | None = None
+    for box in span_boxes:
+        if box is None:
+            continue
+        x1, y1 = float(box["x1"]), float(box["y1"])
+        x2, y2 = float(box["x2"]), float(box["y2"])
+        if current is not None and previous_x1 is not None and x1 < previous_x1:
+            rects.append(current)
+            current = None
+        current = (
+            (int(x1), int(y1), int(x2), int(y2))
+            if current is None
+            else (
+                min(current[0], int(x1)),
+                min(current[1], int(y1)),
+                max(current[2], int(x2)),
+                max(current[3], int(y2)),
+            )
+        )
+        previous_x1 = x1
+    if current is not None:
+        rects.append(current)
+    rects = [r for r in rects if r[2] > r[0] and r[3] > r[1]]
+    return rects or None
 
 
 def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
@@ -417,6 +513,113 @@ def _is_same_amount_value_block(entity_text: str, block_text: str) -> bool:
     if not _is_standalone_amount_ocr_block(candidate):
         return False
     return _amount_value_signature(_compact_amount_candidate(candidate)) == entity_signature
+
+
+class _SynthCharsBlock:
+    """Minimal shim: a chars list under the attribute the span alignment reads."""
+
+    __slots__ = ("chars",)
+
+    def __init__(self, chars: list) -> None:
+        self.chars = chars
+
+
+def _charsless_block_line_rects(
+    block: OCRTextBlock,
+    block_text: str,
+    occurrence_start: int,
+    occurrence_text: str,
+    prepared_blocks: list,
+) -> list[tuple[int, int, int, int]] | None:
+    """Per-line rects for a value matched on a chars-less merged block.
+
+    Chars are synthesized from the char-boxed line blocks geometrically
+    inside the merged block (the same containment discovery as
+    _narrow_charsless_block_to_lines), then the proven-span alignment and
+    the reading-order line split are reused as-is. A cross-line value
+    (「地点：门诊三楼 / 北走廊东侧」) gets one tight rect per line instead
+    of the whole-paragraph slab. Alignment failure returns None and the
+    caller falls back to the argmax single-line narrow, then to the safe
+    whole-block mask.
+    """
+    if getattr(block, "chars", None):
+        return None
+    bl, bt, bw, bh = block.left, block.top, block.width, block.height
+    lines = []
+    for cand, _cand_text, _is_tv in prepared_blocks:
+        if cand is block or not getattr(cand, "chars", None):
+            continue
+        ccx = cand.left + cand.width / 2.0
+        ccy = cand.top + cand.height / 2.0
+        if bt <= ccy <= bt + bh and bl <= ccx <= bl + bw:
+            lines.append(cand)
+    if len(lines) < 2:
+        return None
+    lines.sort(key=lambda c: (round(c.top), c.left))
+    synthesized: list = []
+    for cand in lines:
+        synthesized.extend(getattr(cand, "chars", None) or [])
+    if not synthesized:
+        return None
+    return _entity_char_box_line_rects(
+        _SynthCharsBlock(synthesized),
+        block_text,
+        occurrence_start,
+        occurrence_start + len(occurrence_text),
+    )
+
+
+def split_regions_across_lines(
+    regions: list[SensitiveRegion],
+    ocr_blocks: list[OCRTextBlock],
+) -> list[SensitiveRegion]:
+    """Split text regions that slab across several text lines into per-line rects.
+
+    Whatever match path produced the region (exact occurrence, compact/fuzzy
+    match, virtual union block), a region whose box geometrically contains two
+    or more char-boxed line blocks and whose text provably aligns onto those
+    lines' glyphs is a cross-line value — mask each line tightly instead of
+    the full-width slab (「地点：门诊三楼 / 北走廊东侧」). Alignment reuses
+    the proven-span machinery: unprovable regions are left untouched, so a
+    region is never shrunk on a guess.
+    """
+    line_blocks = [b for b in ocr_blocks if getattr(b, "chars", None)]
+    if not line_blocks:
+        return regions
+    out: list[SensitiveRegion] = []
+    for region in regions:
+        rl, rt = region.left, region.top
+        rr, rb = region.left + region.width, region.top + region.height
+        contained = [
+            b for b in line_blocks
+            if rl <= b.left + b.width / 2.0 <= rr and rt <= b.top + b.height / 2.0 <= rb
+        ]
+        if len(contained) < 2:
+            out.append(region)
+            continue
+        contained.sort(key=lambda b: (round(b.top), b.left))
+        synthesized: list = []
+        for cand in contained:
+            synthesized.extend(getattr(cand, "chars", None) or [])
+        text = str(region.text or "")
+        rects = _entity_char_box_line_rects(
+            _SynthCharsBlock(synthesized), text, 0, len(text)
+        )
+        if not rects or len(rects) < 2:
+            out.append(region)
+            continue
+        for lx1, ly1, lx2, ly2 in rects:
+            out.append(region.__class__(
+                text=text,
+                entity_type=region.entity_type,
+                left=lx1,
+                top=ly1,
+                width=lx2 - lx1,
+                height=ly2 - ly1,
+                confidence=region.confidence,
+                source=region.source,
+            ))
+    return out
 
 
 def _narrow_charsless_block_to_lines(
@@ -605,50 +808,95 @@ def match_entities_to_ocr(
                     # OCR block keeps its full vertical extent so the mask
                     # always covers the glyphs).
                     rl, rt, rw, rh = block.left, block.top, block.width, block.height
-                    crop_span = _entity_char_box_x_span(
+                    line_rects = _entity_char_box_line_rects(
                         block,
                         block_text,
                         visual_occurrence_start,
                         visual_occurrence_start + len(visual_text),
                     )
-                    if crop_span is not None:
-                        rl, rw = crop_span[0], crop_span[1] - crop_span[0]
+                    crop_span = None
+                    if line_rects is not None:
+                        crop_span = (
+                            min(r[0] for r in line_rects),
+                            max(r[2] for r in line_rects),
+                        )
+                        if len(line_rects) == 1:
+                            # Single line: x narrows to the proven chars; y/height
+                            # stay the block's full line height (705318c contract).
+                            rl, rw = crop_span[0], crop_span[1] - crop_span[0]
                     else:
-                        narrowed_box = _narrow_charsless_block_to_lines(
+                        line_rects = _charsless_block_line_rects(
                             block, block_text, visual_occurrence_start, visual_text, prepared_blocks
                         )
-                        if narrowed_box is not None:
-                            rl, rt, rw, rh = narrowed_box
-                            crop_span = (rl, rl + rw)
+                        if line_rects is not None:
+                            crop_span = (
+                                min(r[0] for r in line_rects),
+                                max(r[2] for r in line_rects),
+                            )
+                            if len(line_rects) == 1:
+                                lx1, ly1, lx2, ly2 = line_rects[0]
+                                rl, rt, rw, rh = lx1, ly1, lx2 - lx1, ly2 - ly1
+                        else:
+                            narrowed_box = _narrow_charsless_block_to_lines(
+                                block, block_text, visual_occurrence_start, visual_text, prepared_blocks
+                            )
+                            if narrowed_box is not None:
+                                rl, rt, rw, rh = narrowed_box
+                                crop_span = (rl, rl + rw)
                     has_position_evidence = (
                         crop_span is not None
                         or _compact_text(block_text) == _compact_text(visual_text)
                     )
-                    entity_regions.append((
-                        SensitiveRegion(
-                            text=visual_text,
-                            entity_type=contextual_type,
-                            left=rl,
-                            top=rt,
-                            width=rw,
-                            height=rh,
-                            confidence=1.0,
-                            source=(
-                                entity_source
-                                if entity_source in {"table_semantic", "form_field_ocr"}
-                                else
-                                "table_cell_match"
-                                if is_table_virtual
-                                else "text_match"
-                            ),
-                        ),
-                        has_position_evidence,
-                        not has_position_evidence,
-                    ))
-                    logger.debug(
-                        "MATCH '%s' in '%s...' @ (%d, %d, %d, %d)",
-                        entity_text, block_text[:20], rl, rt, rw, rh,
+                    region_source = (
+                        entity_source
+                        if entity_source in {"table_semantic", "form_field_ocr"}
+                        else
+                        "table_cell_match"
+                        if is_table_virtual
+                        else "text_match"
                     )
+                    if line_rects is not None and len(line_rects) > 1:
+                        # Cross-line entity in a merged multi-line block: the
+                        # x-span union would cover the block's full width and
+                        # height, so emit one tight region per text line.
+                        for lx1, ly1, lx2, ly2 in line_rects:
+                            entity_regions.append((
+                                SensitiveRegion(
+                                    text=visual_text,
+                                    entity_type=contextual_type,
+                                    left=lx1,
+                                    top=ly1,
+                                    width=lx2 - lx1,
+                                    height=ly2 - ly1,
+                                    confidence=1.0,
+                                    source=region_source,
+                                ),
+                                has_position_evidence,
+                                not has_position_evidence,
+                            ))
+                        logger.debug(
+                            "MATCH '%s' in '%s...' across %d lines",
+                            entity_text, block_text[:20], len(line_rects),
+                        )
+                    else:
+                        entity_regions.append((
+                            SensitiveRegion(
+                                text=visual_text,
+                                entity_type=contextual_type,
+                                left=rl,
+                                top=rt,
+                                width=rw,
+                                height=rh,
+                                confidence=1.0,
+                                source=region_source,
+                            ),
+                            has_position_evidence,
+                            not has_position_evidence,
+                        ))
+                        logger.debug(
+                            "MATCH '%s' in '%s...' @ (%d, %d, %d, %d)",
+                            entity_text, block_text[:20], rl, rt, rw, rh,
+                        )
                     search_from = occurrence_start + max(1, len(entity_text))
                 matched = True
                 continue

@@ -1,0 +1,78 @@
+# 前后端服务器 - 只部署 backend + frontend（无 GPU）
+# 启动命令: docker compose -f docker-compose.app.yml up -d
+#
+# 重要: 模型服务地址指向 A100 服务器内网 IP，
+# 通过 .env 文件中的 OCR_BASE_URL / HAS_TEXT_VLLM_BASE_URL / VISUAL_FEATURES_BASE_URL 配置
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - path: ${BACKEND_ENV_FILE:-.env}
+        required: false
+    environment:
+      - DEBUG=${DEBUG:-false}
+      - DATA_DIR=/app/data
+      - UPLOAD_DIR=/app/uploads
+      - OUTPUT_DIR=/app/outputs
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - VIRUS_SCAN_ENABLED=${VIRUS_SCAN_ENABLED:-false}
+      - OCR_REQUIRE_GPU=false
+      - JOB_CONCURRENCY=${JOB_CONCURRENCY:-3}
+      - BATCH_RECOGNITION_PAGE_CONCURRENCY=${BATCH_RECOGNITION_PAGE_CONCURRENCY:-1}
+      - HAS_NER_MAX_PARALLEL_REQUESTS=${HAS_NER_MAX_PARALLEL_REQUESTS:-1}
+      - VISUAL_FEATURES_CONCURRENCY=${VISUAL_FEATURES_CONCURRENCY:-1}
+      - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-false}
+      # ---- 模型服务地址：指向 A100 服务器内网 IP ----
+      - OCR_BASE_URL=${OCR_BASE_URL:-http://192.168.1.100:8082}
+      - HAS_TEXT_RUNTIME=${HAS_TEXT_RUNTIME:-vllm}
+      - HAS_TEXT_VLLM_BASE_URL=${HAS_TEXT_VLLM_BASE_URL:-http://192.168.1.100:8080/v1}
+      - HAS_TEXT_MODEL_NAME=${HAS_TEXT_MODEL_NAME:-HaS_Text_0209_0.6B}
+      - VISUAL_FEATURES_BASE_URL=${VISUAL_FEATURES_BASE_URL:-http://192.168.1.100:8090}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
+    volumes:
+      - backend-data:/app/data
+      - backend-uploads:/app/uploads
+      - backend-outputs:/app/outputs
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-uploads:
+  backend-outputs:
+
+networks:
+  app-net:
+    driver: bridge

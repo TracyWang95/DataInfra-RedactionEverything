@@ -3,58 +3,8 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #fbfbf8;
-  --background-secondary: #f4f4ef;
-  --background-tertiary: #ecece5;
-  --foreground: #171717;
-  --foreground-secondary: #262626;
-  --foreground-muted: #6b7280;
-  --foreground-subtle: #9ca3af;
-  --border: rgba(23, 23, 23, 0.1);
-  --border-light: rgba(23, 23, 23, 0.06);
-  --input: rgba(23, 23, 23, 0.12);
-  --ring: rgba(16, 163, 127, 0.18);
-  --card: rgba(255, 255, 255, 0.84);
-  --card-foreground: #171717;
-  --popover: rgba(255, 255, 255, 0.96);
-  --popover-foreground: #171717;
-  --primary: #10a37f;
-  --primary-foreground: #ffffff;
-  --secondary: #f1f1ea;
-  --secondary-foreground: #1f2937;
-  --muted: rgba(23, 23, 23, 0.045);
-  --muted-foreground: #6b7280;
-  --accent: #edf2f7;
-  --accent-foreground: #171717;
-  --destructive: #dc2626;
-  --destructive-foreground: #ffffff;
-  --accent-light: rgba(16, 163, 127, 0.07);
-  --accent-hover: #0d8a6b;
-  --panel: rgba(255, 255, 255, 0.72);
-  --panel-strong: rgba(255, 255, 255, 0.92);
-
-  --select-regex: #7288ad;
-  --select-ner: #10a37f;
-  --select-yolo: #6d7c93;
-
-  --success: #10a37f;
-  --warning: #d97706;
-  --error: #dc2626;
-  --info: #7288ad;
-
-  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 24px -18px rgba(15, 23, 42, 0.12);
-  --shadow-md: 0 18px 40px -28px rgba(15, 23, 42, 0.18);
-  --shadow-lg: 0 28px 80px -32px rgba(15, 23, 42, 0.22);
-  --shadow-glow: 0 0 0 1px rgba(16, 163, 127, 0.08), 0 18px 38px -28px rgba(16, 163, 127, 0.18);
-
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 20px;
-  --radius-2xl: 24px;
-}
+/* token 体系单一事实源在下方唯一 :root（W1-2 前曾有两套竞争的 :root，
+   前一套大半被遮蔽、个别 token 却仍独家生效——已合并清理）。 */
 
 * {
   -webkit-font-smoothing: antialiased;
@@ -436,23 +386,23 @@ textarea {
 }
 
 .tag-success {
-  background: rgba(34, 197, 94, 0.1);
-  color: var(--success);
+  background: var(--success-surface);
+  color: var(--success-foreground);
 }
 
 .tag-warning {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--warning);
+  background: var(--warning-surface);
+  color: var(--warning-foreground);
 }
 
 .tag-error {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--error);
+  background: var(--error-surface);
+  color: var(--error-foreground);
 }
 
 .tag-info {
-  background: rgba(59, 130, 246, 0.1);
-  color: var(--info);
+  background: var(--info-surface);
+  color: var(--info-foreground);
 }
 
 .tag-accent {
@@ -869,6 +819,28 @@ input[type='checkbox']:focus-visible {
 }
 
 :root {
+  /* 白标单点：换品牌主色只改这一处（--primary/--success/语义选区 accent 均引用它） */
+  --brand: #10a37f;
+  --primary: var(--brand);
+  --primary-foreground: #ffffff;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --accent-light: rgba(16, 163, 127, 0.07);
+  --accent-hover: #0d8a6b;
+  --select-regex: #7288ad;
+  --select-ner: var(--brand);
+  --select-yolo: #6d7c93;
+  --success: var(--brand);
+  --warning: #d97706;
+  --error: #dc2626;
+  --info: #7288ad;
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-glow: 0 0 0 1px rgba(16, 163, 127, 0.08), 0 18px 38px -28px rgba(16, 163, 127, 0.18);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
   --page-shell-offset: 4.75rem;
   color-scheme: light;
   --background: #ffffff;
@@ -933,20 +905,13 @@ input[type='checkbox']:focus-visible {
   --selection-regex-text: #38506d;
   --selection-regex-muted: rgba(56, 80, 109, 0.82);
   --selection-regex-ring: rgba(111, 134, 167, 0.28);
-  --selection-semantic-accent: #10a37f;
+  --selection-semantic-accent: var(--brand);
   --selection-semantic-border: rgba(16, 163, 127, 0.22);
   --selection-semantic-soft: rgba(16, 163, 127, 0.08);
   --selection-semantic-surface: rgba(16, 163, 127, 0.12);
   --selection-semantic-text: #0f6c55;
   --selection-semantic-muted: rgba(15, 108, 85, 0.82);
   --selection-semantic-ring: rgba(16, 163, 127, 0.28);
-  --selection-ner-accent: var(--selection-semantic-accent);
-  --selection-ner-border: var(--selection-semantic-border);
-  --selection-ner-soft: var(--selection-semantic-soft);
-  --selection-ner-surface: var(--selection-semantic-surface);
-  --selection-ner-text: var(--selection-semantic-text);
-  --selection-ner-muted: var(--selection-semantic-muted);
-  --selection-ner-ring: var(--selection-semantic-ring);
   --selection-visual-accent: #7c6f9c;
   --selection-visual-border: rgba(124, 111, 156, 0.24);
   --selection-visual-soft: rgba(124, 111, 156, 0.08);
@@ -954,13 +919,6 @@ input[type='checkbox']:focus-visible {
   --selection-visual-text: #4a4168;
   --selection-visual-muted: rgba(74, 65, 104, 0.82);
   --selection-visual-ring: rgba(124, 111, 156, 0.28);
-  --selection-yolo-accent: var(--selection-visual-accent);
-  --selection-yolo-border: var(--selection-visual-border);
-  --selection-yolo-soft: var(--selection-visual-soft);
-  --selection-yolo-surface: var(--selection-visual-surface);
-  --selection-yolo-text: var(--selection-visual-text);
-  --selection-yolo-muted: var(--selection-visual-muted);
-  --selection-yolo-ring: var(--selection-visual-ring);
 }
 
 body {

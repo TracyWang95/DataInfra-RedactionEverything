@@ -229,8 +229,13 @@ class OcrHasVisionService:
         ocr_blocks: list[OCRTextBlock],
         entities: list[dict],
     ) -> list[SensitiveRegion]:
+        from app.services.vision.ocr_entity_match import split_regions_across_lines
         from app.services.vision.ocr_pipeline import match_entities_to_ocr
-        return match_entities_to_ocr(ocr_blocks, entities)
+        regions = match_entities_to_ocr(ocr_blocks, entities)
+        # Cross-line values slab over every line they span whichever match
+        # path produced them; split them into per-line tight rects here, the
+        # single choke point both detect paths share.
+        return split_regions_across_lines(regions, ocr_blocks)
 
     def _apply_regex_fallback(
         self,

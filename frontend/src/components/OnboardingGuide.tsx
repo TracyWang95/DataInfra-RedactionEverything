@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -47,7 +47,7 @@ export function OnboardingGuide() {
     >
       <div className="flex items-start gap-2.5">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-foreground text-background">
-          <Upload className="h-3.5 w-3.5" />
+          <Upload className="size-3.5" />
         </div>
         <div className="min-w-0 flex-1 space-y-2.5">
           <div className="flex items-start justify-between gap-2">
@@ -63,14 +63,14 @@ export function OnboardingGuide() {
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               aria-label={t('onboarding.skip')}
             >
-              <X className="h-4 w-4" />
+              <X className="size-4" />
             </button>
           </div>
 
           <p className="text-sm leading-5 text-muted-foreground">{t('onboarding.step2.desc')}</p>
 
           <div className="flex items-start gap-2 rounded-xl bg-muted/60 p-2.5 text-sm leading-5 text-muted-foreground">
-            <Layers3 className="h-4 w-4 shrink-0 text-foreground" />
+            <Layers3 className="size-4 shrink-0 text-foreground" />
             <span>{t('onboarding.step5.desc')}</span>
           </div>
 
@@ -79,7 +79,7 @@ export function OnboardingGuide() {
               <Button asChild size="sm" onClick={finish}>
                 <Link to="/single">
                   {t('start.entry.playground.cta')}
-                  <ArrowRight className="h-4 w-4" />
+                  <ArrowRight className="size-4" />
                 </Link>
               </Button>
             )}

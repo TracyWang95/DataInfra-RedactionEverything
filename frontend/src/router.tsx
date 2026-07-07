@@ -7,13 +7,15 @@ import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useT } from './i18n';
 import { SUSPENSE_SPINNER_DELAY_MS, ROUTE_PREFETCH_DELAY_MS } from './constants/timing';
-import { AuthPage } from './features/auth/auth-page';
 import {
   isRegisterAuthSearch,
   resolveAuthNext,
 } from './features/auth/auth-routing';
 import { useAuth } from './features/auth/auth-context';
 
+const AuthPage = React.lazy(() =>
+  import('./features/auth/auth-page').then((m) => ({ default: m.AuthPage })),
+);
 const Playground = React.lazy(() =>
   import('./features/playground').then((m) => ({ default: m.Playground })),
 );
@@ -187,7 +189,9 @@ function AuthRoute() {
 
   return (
     <ErrorBoundary>
-      <AuthPage />
+      <React.Suspense fallback={<FullPageSpinner />}>
+        <AuthPage />
+      </React.Suspense>
     </ErrorBoundary>
   );
 }

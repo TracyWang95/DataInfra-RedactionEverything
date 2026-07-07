@@ -1,0 +1,59 @@
+{
+  "_comment": "金融行业包真值。domain=客户号/商户号/交易流水号/风险评级等金融专项。",
+  "_entity_type_ids": ["PERSON", "ID_CARD", "PHONE", "EMAIL", "ADDRESS", "INSTITUTION_NAME", "BANK_NAME", "BANK_CARD", "BANK_ACCOUNT", "AMOUNT", "DATE", "FIN_CUSTOMER_ID", "FIN_MERCHANT_ID", "FIN_TRANSACTION_ID", "FIN_RISK_RATING", "PASSPORT"],
+  "_domain_min_recall": 0.6,
+  "doc_01.txt": {
+    "identity": [
+      {"text": "贺国平", "type": "PERSON"},
+      {"text": "柳明月", "type": "PERSON"},
+      {"text": "420106197704155566", "type": "ID_CARD"},
+      {"text": "13488990011", "type": "PHONE"},
+      {"text": "6216610200012345678", "type": "BANK_ACCOUNT"}
+    ],
+    "standard": [
+      {"text": "heguoping@example.com", "type": "EMAIL"},
+      {"text": "湖北省武汉市武昌区中南路99号银海雅苑3栋1201室", "type": "ADDRESS"},
+      {"text": "武汉长江装备制造有限公司", "type": "INSTITUTION_NAME"}
+    ],
+    "domain": [
+      {"text": "KH2026071234", "type": "FIN_CUSTOMER_ID"}
+    ]
+  },
+  "doc_02.txt": {
+    "identity": [
+      {"text": "宋雨桐", "type": "PERSON"},
+      {"text": "金一鸣", "type": "PERSON"},
+      {"text": "330106199009087721", "type": "ID_CARD"},
+      {"text": "18655667788", "type": "PHONE"},
+      {"text": "6225760088990011", "type": "BANK_CARD"},
+      {"text": "6222020200098765432", "type": "BANK_ACCOUNT"}
+    ],
+    "standard": [
+      {"text": "临安瑞丰贸易有限公司", "type": "INSTITUTION_NAME"},
+      {"text": "宁波海川进出口有限公司", "type": "INSTITUTION_NAME"}
+    ],
+    "domain": [
+      {"text": "TX20260506092301", "type": "FIN_TRANSACTION_ID"},
+      {"text": "TX20260519154702", "type": "FIN_TRANSACTION_ID"},
+      {"text": "TX20260528210503", "type": "FIN_TRANSACTION_ID"}
+    ]
+  },
+  "doc_03.txt": {
+    "identity": [
+      {"text": "阮伟成", "type": "PERSON"},
+      {"text": "龚晓霞", "type": "PERSON"},
+      {"text": "庄子墨", "type": "PERSON"},
+      {"text": "320505198207193344", "type": "ID_CARD"},
+      {"text": "13915556677", "type": "PHONE"},
+      {"text": "17766554433", "type": "PHONE"}
+    ],
+    "standard": [
+      {"text": "gongxx@xingqiao.com.cn", "type": "EMAIL"},
+      {"text": "江苏省苏州市工业园区星湖街328号创意产业园9栋502", "type": "ADDRESS"},
+      {"text": "苏州星桥精密仪器有限公司", "type": "INSTITUTION_NAME"}
+    ],
+    "domain": [
+      {"text": "SH2026094521", "type": "FIN_MERCHANT_ID"}
+    ]
+  }
+}

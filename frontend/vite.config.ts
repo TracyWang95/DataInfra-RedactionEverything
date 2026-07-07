@@ -25,6 +25,10 @@ const backendProxy = {
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.0.0'),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -34,7 +38,12 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined;
+          if (!id.includes('node_modules')) {
+            // zh stays statically imported (sync, modulepreloaded — no flicker)
+            // but lives in its own file so the entry chunk stays small.
+            if (id.replace(/\\/g, '/').includes('/src/i18n/zh')) return 'locale-zh';
+            return undefined;
+          }
           if (
             id.includes('react-router-dom') ||
             id.includes('react-router') ||
@@ -55,7 +64,9 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: 'jsdom',
+    // Pure-logic tests only for now; switch to jsdom (and install it) when
+    // component tests arrive.
+    environment: 'node',
     setupFiles: [],
   },
   server: {

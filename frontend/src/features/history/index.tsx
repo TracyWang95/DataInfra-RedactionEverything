@@ -16,6 +16,7 @@ import { InteractionLockOverlay } from '@/components/InteractionLockOverlay';
 import { PaginationRail } from '@/components/PaginationRail';
 import { useHistory } from './hooks/use-history';
 import { HistoryFilterMenu, HistoryFilters } from './components/history-filters';
+import { TrashRecycleDialog } from './components/trash-dialog';
 import { HistoryTable } from './components/history-table';
 import { PAGE_SIZE_OPTIONS } from './hooks/use-history';
 
@@ -62,10 +63,11 @@ export function History() {
         <Card className="page-surface flex min-h-0 flex-1 overflow-visible rounded-[20px] border-border/70 bg-card/95 shadow-[var(--shadow-md)]">
           <CardContent className="flex min-h-0 flex-1 flex-col overflow-visible p-0">
             <div className="flex shrink-0 flex-nowrap items-center justify-between gap-3 border-b border-border/70 px-3 py-2.5 sm:px-4">
-              <div className="page-section-heading min-w-0">
+              <div className="page-section-heading flex min-w-0 items-center gap-2">
                 <h3 className="truncate text-sm font-semibold tracking-[-0.02em]">
                   {t('page.history.title')}
                 </h3>
+                <TrashRecycleDialog onChanged={() => s.load(true, s.page, s.pageSize)} />
               </div>
               <HistoryFilterMenu
                 sourceTab={s.sourceTab}

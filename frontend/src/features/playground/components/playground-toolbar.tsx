@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { type FC, memo } from 'react';
 import { ArrowUpRight, FileText, Redo2, RotateCcw, Undo2 } from 'lucide-react';
@@ -28,7 +28,7 @@ export const PlaygroundToolbar: FC<PlaygroundToolbarProps> = memo(
       >
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-2xl border border-border/70 bg-muted/60 text-foreground">
-            <FileText className="h-4 w-4" />
+            <FileText className="size-4" />
           </div>
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold tracking-[-0.01em] text-foreground">

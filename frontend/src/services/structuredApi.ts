@@ -201,6 +201,12 @@ export function deleteStructuredConnection(
   return del(`/structured/connections/${connectionId}`);
 }
 
+export function deleteStructuredDataset(
+  datasetId: string,
+): Promise<{ id: string; deleted: boolean }> {
+  return del(`/structured/datasets/${encodeURIComponent(datasetId)}`);
+}
+
 export function discoverStructuredConnectionDatasets(
   connectionId: string,
 ): Promise<{ datasets: StructuredDataset[] }> {

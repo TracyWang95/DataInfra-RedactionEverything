@@ -1,8 +1,8 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LockKeyhole, ShieldCheck } from 'lucide-react';
+import { BRAND, brandName, brandTagline } from '@/config/brand';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,6 +23,27 @@ export function AuthPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // License 到期/失效横幅（/license/status 是公开端点，登录前即可读）
+  const [licenseNotice, setLicenseNotice] = useState<string | null>(null);
+  useEffect(() => {
+    fetch('/api/v1/license/status')
+      .then(async (res) => {
+        if (!res.ok) return;
+        const s = (await res.json()) as { state?: string; days_left?: number | null };
+        const key =
+          s.state === 'expiring_soon'
+            ? 'auth.license.expiringSoon'
+            : s.state === 'grace_readonly'
+              ? 'auth.license.graceReadonly'
+              : s.state === 'blocked' || s.state === 'invalid'
+                ? 'auth.license.blocked'
+                : null;
+        if (key) setLicenseNotice(t(key).replace('{days}', String(s.days_left ?? '')));
+      })
+      .catch(() => {
+        /* 拉不到状态就不显示横幅 */
+      });
+  }, [t]);
 
   const needsSetup = status?.password_set === false;
   const isRegister = !needsSetup && mode === 'register';
@@ -72,9 +93,21 @@ export function AuthPage() {
     <div className="relative flex min-h-dvh items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.18),_transparent_42%),linear-gradient(160deg,#f4f7f4_0%,#eef2ef_45%,#dde6df_100%)] px-6 py-10">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(135deg,rgba(15,23,42,0.04)_0%,transparent_38%,rgba(15,23,42,0.03)_100%)]" />
       <Card className="relative z-10 w-full max-w-md border-border/70 bg-background/92">
+        {licenseNotice && (
+          <div
+            className="rounded-t-[var(--radius-xl)] border-b border-[var(--warning-border)] bg-[var(--warning-surface)] px-6 py-2 text-xs text-[var(--warning-foreground)]"
+            data-testid="license-banner"
+          >
+            {licenseNotice}
+          </div>
+        )}
         <CardHeader className="space-y-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-foreground text-background shadow-[var(--shadow-md)]">
-            {needsSetup ? <ShieldCheck className="h-5 w-5" /> : <LockKeyhole className="h-5 w-5" />}
+          <div className="flex items-center gap-3">
+            <img src={BRAND.logoUrl} alt="" className="size-12 rounded-2xl shadow-[var(--shadow-md)]" />
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold tracking-tight">{brandName(t)}</div>
+              <div className="truncate text-xs text-muted-foreground">{brandTagline(t)}</div>
+            </div>
           </div>
           <div className="space-y-2">
             <CardTitle className="text-2xl tracking-[-0.04em]">

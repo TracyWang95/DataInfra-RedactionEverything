@@ -29,17 +29,20 @@ export function useNerBackend() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [nerLive, setNerLive] = useState<'online' | 'offline' | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { health } = useServiceHealth();
 
   const fetchNerBackend = useCallback(async () => {
     try {
       setNerLoading(true);
+      setLoadError(null);
       const res = await fetchWithTimeout('/api/v1/ner-backend', { timeoutMs: 25000 });
       if (!res.ok) throw new Error('fetch failed');
       const data = await res.json().catch(() => ({}));
       setLlamacppBaseUrl(normalizeNerBackendUrl(data));
     } catch (e) {
       if (import.meta.env.DEV) console.error('fetch NER config failed', e);
+      setLoadError(t('settings.loadFailed'));
     } finally {
       setNerLoading(false);
     }
@@ -139,9 +142,12 @@ export function useNerBackend() {
       if (res.ok) {
         await fetchNerBackend();
         setTestResult({ success: true, message: t('settings.textModel.resetSuccess') });
+      } else {
+        setTestResult({ success: false, message: t('settings.textModel.resetFailed') });
       }
     } catch (e) {
       if (import.meta.env.DEV) console.error(e);
+      setTestResult({ success: false, message: t('settings.textModel.resetFailed') });
     }
   }, [fetchNerBackend]);
 
@@ -153,6 +159,8 @@ export function useNerBackend() {
     testing,
     testResult,
     nerLive,
+    loadError,
+    fetchNerBackend,
     saveNerBackend,
     testConnection,
     clearNerOverride,
@@ -203,11 +211,13 @@ export function useVisionModelConfig() {
   const [testingModelId, setTestingModelId] = useState<string | null>(null);
   const [settingActiveModelId, setSettingActiveModelId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { health } = useServiceHealth();
 
   const fetchModelConfigs = useCallback(async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const res = await fetchWithTimeout('/api/v1/model-config', { timeoutMs: 25000 });
       if (!res.ok) throw new Error('fetch failed');
       const data = await res.json().catch(() => ({}));
@@ -223,6 +233,7 @@ export function useVisionModelConfig() {
       });
     } catch (err) {
       if (import.meta.env.DEV) console.error('fetch model configs failed', err);
+      setLoadError(t('settings.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -367,6 +378,8 @@ export function useVisionModelConfig() {
     testingModelId,
     settingActiveModelId,
     testResult,
+    loadError,
+    fetchModelConfigs,
     saveModelConfig,
     deleteModelConfig,
     testModelConfig,

@@ -1,12 +1,14 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import { Globe, LogOut } from 'lucide-react';
+import { useState } from 'react';
+import { Globe, KeyRound, LogOut } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useI18n, useT } from '@/i18n';
 import { useServiceHealth } from '@/hooks/use-service-health';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { SidebarTrigger } from '@/components/ui/sidebar';
+import { ChangePasswordDialog } from '@/components/ChangePasswordDialog';
 import { useAuth } from '@/features/auth/auth-context';
 
 export function AppHeader() {
@@ -15,6 +17,7 @@ export function AppHeader() {
   const { locale, setLocale } = useI18n();
   const { health, checking } = useServiceHealth();
   const { status, logout } = useAuth();
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   const { title, sub } = getPageHeader(location.pathname, t);
   const hasBusyService = Boolean(
@@ -59,7 +62,7 @@ export function AppHeader() {
           role="status"
           aria-label={healthLabel}
           title={healthLabel}
-          className="grid h-8 w-8 place-items-center rounded-full"
+          className="grid size-8 place-items-center rounded-full"
           data-testid="health-indicator"
         >
           <span
@@ -82,25 +85,42 @@ export function AppHeader() {
           aria-label={t('layout.languageSwitch')}
           data-testid="lang-toggle"
         >
-          <Globe className="h-3.5 w-3.5" />
+          <Globe className="size-3.5" />
           <span className="hidden sm:inline">
             {locale === 'zh' ? t('layout.switchToEnglish') : t('layout.switchToChinese')}
           </span>
         </Button>
 
         {status?.auth_enabled && status.authenticated && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => void logout()}
-            aria-label={t('auth.logout')}
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{t('auth.logout')}</span>
-          </Button>
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => setChangePasswordOpen(true)}
+              aria-label={t('auth.changePassword')}
+              data-testid="change-password-btn"
+            >
+              <KeyRound className="size-3.5" />
+              <span className="hidden sm:inline">{t('auth.changePassword')}</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-full px-2.5 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => void logout()}
+              aria-label={t('auth.logout')}
+            >
+              <LogOut className="size-3.5" />
+              <span className="hidden sm:inline">{t('auth.logout')}</span>
+            </Button>
+          </>
         )}
       </nav>
+      <ChangePasswordDialog
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
     </header>
   );
 }

@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import React from 'react';
 import { AlertTriangle } from 'lucide-react';
@@ -42,7 +42,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
             className="flex min-h-[320px] flex-col items-center justify-center gap-4 rounded-2xl border border-border/70 bg-[var(--surface-control)] px-6 py-12 text-center shadow-[var(--shadow-md)]"
           >
             <div className="flex size-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
-              <AlertTriangle className="h-5 w-5" />
+              <AlertTriangle className="size-5" />
             </div>
             <div className="space-y-2">
               <p className="text-base font-semibold text-foreground">{t('errorBoundary.title')}</p>

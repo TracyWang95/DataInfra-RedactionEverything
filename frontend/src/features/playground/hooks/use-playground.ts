@@ -242,6 +242,7 @@ export function usePlayground() {
             replacement_mode: recognition.replacementMode,
             entity_types: [],
             custom_replacements: {},
+            watermark_text: recognition.watermarkText.trim() || undefined,
           },
         }),
         signal,
@@ -399,7 +400,8 @@ export function usePlayground() {
 
   const handleDownload = useCallback(() => {
     if (!fileCtx.fileInfo) return;
-    downloadFile(
+    // Returns the promise so callers can show a busy state while fetching.
+    return downloadFile(
       `/api/v1/files/${fileCtx.fileInfo.file_id}/download?redacted=true`,
       `redacted_${fileCtx.fileInfo.filename}`,
     ).catch((err) => {

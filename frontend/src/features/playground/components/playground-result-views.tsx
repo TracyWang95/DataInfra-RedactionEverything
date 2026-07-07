@@ -84,6 +84,7 @@ export const TextResultView: FC<{
             mobileTab === 'redacted' ? '' : 'hidden',
             'md:flex',
           )}
+          data-testid="playground-redacted-pane"
         >
           <div className="flex h-10 flex-shrink-0 items-center border-b border-border/60 bg-muted/30 px-4">
             <span className="truncate text-xs font-semibold">{t('playground.redactedResult')}</span>

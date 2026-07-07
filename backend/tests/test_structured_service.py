@@ -1023,3 +1023,67 @@ def test_structured_api_discovers_sqlite_connection_datasets(tmp_path, monkeypat
             assert datasets[0]["column_count"] == 7
     finally:
         test_app.dependency_overrides.clear()
+
+
+def test_delete_dataset_cascades_and_isolates_owner(tmp_path):
+    """PM 需求：文件表逐数据集删除。级联策略/画像、越权 404、幂等。"""
+    store = StructuredStore(str(tmp_path / "structured.sqlite3"))
+    csv_path = tmp_path / "demo_customers.csv"
+    _write_demo_customer_csv(csv_path)
+    result = structured_service.register_file_source(
+        owner_id="admin",
+        filename="demo_customers.csv",
+        file_path=str(csv_path),
+        kind="csv",
+        store=store,
+    )
+    dataset_id = result["datasets"][0]["id"]
+    structured_service.profile_dataset(dataset_id, owner_id="admin", store=store)
+
+    # 他人无法删除，数据仍在
+    assert store.delete_dataset(dataset_id, owner_id="intruder") is False
+    assert any(d["id"] == dataset_id for d in store.list_datasets(owner_id="admin"))
+
+    # 本主删除成功，列表消失，重复删除幂等返回 False
+    assert store.delete_dataset(dataset_id, owner_id="admin") is True
+    assert all(d["id"] != dataset_id for d in store.list_datasets(owner_id="admin"))
+    assert store.delete_dataset(dataset_id, owner_id="admin") is False
+
+
+def test_pure_chinese_filename_keeps_extension(tmp_path, monkeypatch):
+    """线上 500 根因回归：safe_filename("项目概算.xlsx")→"_.xlsx"→strip("._")
+    连点剥掉→存盘名无扩展名→openpyxl InvalidFileException。修复=显式补回扩展名。"""
+    import io
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
+    path, kind = structured_service.save_structured_upload_stream(
+        owner_id="admin", filename="项目概算.xlsx", fileobj=io.BytesIO(b"stub")
+    )
+    assert kind == "xlsx"
+    assert path.lower().endswith(".xlsx"), path
+    # 常规名不受影响、不重复加后缀
+    path2, _ = structured_service.save_structured_upload_stream(
+        owner_id="admin", filename="report-2026.xlsx", fileobj=io.BytesIO(b"stub")
+    )
+    assert path2.lower().endswith(".xlsx") and not path2.lower().endswith(".xlsx.xlsx")
+
+
+def test_register_broken_file_raises_clean_value_error(tmp_path, monkeypatch):
+    """解析器炸掉时应转干净 ValueError（API 层=400），而不是裸 500。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
+    store = StructuredStore(str(tmp_path / "structured.sqlite3"))
+    bad = tmp_path / "broken.xlsx"
+    bad.write_bytes(b"this is not an xlsx at all")
+    with pytest.raises(ValueError) as exc_info:
+        structured_service.register_file_source(
+            owner_id="admin",
+            filename="broken.xlsx",
+            file_path=str(bad),
+            kind="xlsx",
+            store=store,
+        )
+    assert "broken.xlsx" in str(exc_info.value)

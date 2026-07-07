@@ -1,0 +1,113 @@
+# A100 模型服务器 - 只部署 GPU 模型服务
+# 启动命令: docker compose -f docker-compose.model.yml up -d
+
+services:
+  ocr:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ocr
+    ports:
+      - "8082:8082"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - model-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8082/health').raise_for_status()"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  ner:
+    image: vllm/vllm-openai:v0.19.1
+    ipc: host
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/models:/models
+    command:
+      - --model
+      - /models/has/HaS_Text_0209_0.6B
+      - --served-model-name
+      - HaS_Text_0209_0.6B
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --trust-remote-code
+      - --dtype
+      - bfloat16
+      - --max-model-len
+      - "4096"
+      - --max-num-batched-tokens
+      - "4096"
+      - --gpu-memory-utilization
+      - "0.18"
+      - --kv-cache-memory-bytes
+      - "671088640"
+      - --no-enable-prefix-caching
+      - --enforce-eager
+      - --default-chat-template-kwargs
+      - '{"enable_thinking":false}'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - model-net
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+  visual-features:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.locateanything
+    ports:
+      - "8090:8090"
+    environment:
+      - LOCATE_ANYTHING_MODEL=/models/locateanything/LocateAnything-3B-HF
+      - LOCATE_ANYTHING_BACKEND=hf
+      - LOCATE_ANYTHING_DTYPE=bfloat16
+      - LOCATE_ANYTHING_PORT=8090
+      - LOCATE_ANYTHING_MAX_IMAGE_SIDE=1280
+      - LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE=1280
+      - LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE=1280
+      - LOCATE_ANYTHING_MAX_NEW_TOKENS=8192
+      - LOCATE_ANYTHING_GENERATION_MODE=hybrid
+    volumes:
+      - ./backend/models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - model-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8090/health').raise_for_status()"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    restart: unless-stopped
+
+networks:
+  model-net:
+    driver: bridge

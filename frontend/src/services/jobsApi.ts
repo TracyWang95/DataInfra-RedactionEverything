@@ -553,8 +553,14 @@ export async function listJobs(params: {
   };
 }
 
-export function getJob(jobId: string): Promise<JobDetail> {
-  return get(`/jobs/${encodeURIComponent(jobId)}`).then(normalizeJobDetail);
+export function getJob(
+  jobId: string,
+  options?: { performance?: boolean },
+): Promise<JobDetail> {
+  // performance:false = 轻量模式。万级任务的全量详情（含每文件性能数据）
+  // 可达 38MB；向导恢复与轮询只需要 items 的状态字段。
+  const suffix = options?.performance === false ? '?performance=false' : '';
+  return get(`/jobs/${encodeURIComponent(jobId)}${suffix}`).then(normalizeJobDetail);
 }
 
 export function getJobExportReport(
@@ -647,5 +653,22 @@ export function commitItemReview(
   return post<JobItemRow>(
     `/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/review/commit`,
     body,
+  );
+}
+
+export type CommitAllReviewsResult = {
+  job_id: string;
+  total_awaiting: number;
+  confirmed: number;
+  failed: Array<{ item_id: string; error: string }>;
+  /** 万级 job 后台执行：true = 已受理，进度靠轮询 已确认 计数 */
+  started?: boolean;
+};
+
+/** Batch one-click confirm: approve every awaiting-review item in a job at once. */
+export function commitAllReviews(jobId: string): Promise<CommitAllReviewsResult> {
+  return post<CommitAllReviewsResult>(
+    `/jobs/${encodeURIComponent(jobId)}/review/commit-all`,
+    {},
   );
 }

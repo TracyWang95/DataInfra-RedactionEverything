@@ -1,6 +1,6 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import type { FC } from 'react';
+import { useState, type FC } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { getEntityTypeName } from '@/config/entityTypes';
@@ -15,7 +15,7 @@ export interface PlaygroundResultActionBarProps {
   canDownload?: boolean;
   onBackToEdit: () => void;
   onReset: () => void;
-  onDownload: () => void;
+  onDownload: () => void | Promise<void>;
 }
 
 export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
@@ -30,6 +30,13 @@ export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
   const t = useT();
   const locale = useI18n((state) => state.locale);
   const flowCopy = resultActionFlowCopy(locale, redactedCount);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadClick = () => {
+    if (downloading) return;
+    setDownloading(true);
+    void Promise.resolve(onDownload()).finally(() => setDownloading(false));
+  };
 
   return (
     <div className="mb-3 flex-shrink-0">
@@ -37,7 +44,7 @@ export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
         <CardContent className="flex items-center justify-between gap-3 px-4 py-3.5 sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-background/10 backdrop-blur-sm">
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="size-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -57,7 +64,7 @@ export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
                     key={step}
                     className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-background/35 px-2 py-0.5 text-[11px] font-medium"
                   >
-                    <span className="grid h-4 w-4 place-items-center rounded-full bg-background/20 text-[10px]">
+                    <span className="grid size-4 place-items-center rounded-full bg-background/20 text-[10px]">
                       {index + 1}
                     </span>
                     <span>{step}</span>
@@ -92,11 +99,12 @@ export const PlaygroundResultActionBar: FC<PlaygroundResultActionBarProps> = ({
               <Button
                 size="sm"
                 variant="default"
-                onClick={onDownload}
+                onClick={handleDownloadClick}
+                disabled={downloading}
                 data-testid="playground-download"
                 className="h-9 whitespace-nowrap px-3"
               >
-                {t('playground.downloadFile')}
+                {downloading ? t('common.downloading') : t('playground.downloadFile')}
               </Button>
             )}
           </div>
@@ -136,7 +144,7 @@ export const RedactionReportSection: FC<{
       >
         <span className="truncate text-xs font-semibold">{t('playground.qualityReport')}</span>
         <svg
-          className={cn('h-4 w-4 shrink-0 transition-transform', open && 'rotate-180')}
+          className={cn('size-4 shrink-0 transition-transform', open && 'rotate-180')}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"

@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import { useT } from '@/i18n';
@@ -34,7 +34,7 @@ export function JobsFilters({
       <div className="flex min-w-0 flex-col gap-1">
         <div className="flex min-w-0 flex-nowrap items-center gap-x-2">
           <span className="saas-kicker inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap !px-2 !py-1">
-            <Sparkles className="h-3.5 w-3.5" />
+            <Sparkles className="size-3.5" />
             {t('jobs.filters.kicker')}
           </span>
           <h2 className="page-title truncate text-base">{t('jobs.filters.title')}</h2>

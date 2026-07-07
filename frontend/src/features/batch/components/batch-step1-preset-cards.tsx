@@ -1,4 +1,4 @@
-// Copyright 2026 DataInfra-RedactionEverything Contributors
+﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { memo, useMemo } from 'react';
 
@@ -103,7 +103,7 @@ function BatchStep1PresetCardsInner({
           <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] sm:items-center">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--success)]" />
                 <span className="truncate text-sm font-semibold">
                   {t('batchWizard.step1.industryPreset')}
                 </span>
@@ -240,7 +240,7 @@ function BatchStep1PresetCardsInner({
           >
             <CardContent className="flex h-full flex-col gap-1.5 p-2.5">
               <div className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--selection-yolo-accent)]" />
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--selection-visual-accent)]" />
                 <span className="truncate text-sm font-semibold">
                   {t('batchWizard.step1.imagePreset')}
                 </span>
@@ -274,7 +274,7 @@ function BatchStep1PresetCardsInner({
                 <div className="rounded-lg border border-border/70 !bg-white px-2.5 py-1.5 text-[11px] leading-4 text-muted-foreground">
                   <p>{defaultVisionSummary}</p>
                   {defaultVisionExcludedSummary ? (
-                    <p className="mt-1 text-amber-700">{defaultVisionExcludedSummary}</p>
+                    <p className="mt-1 text-[var(--warning-foreground)]">{defaultVisionExcludedSummary}</p>
                   ) : null}
                 </div>
               )}
@@ -329,7 +329,7 @@ function BatchStep1PresetCardsInner({
                               imageFillColor: event.target.value,
                             }))
                           }
-                          className="h-6 w-6 rounded-md border-0 bg-transparent p-0"
+                          className="size-6 rounded-md border-0 bg-transparent p-0"
                           data-testid="image-redaction-color"
                         />
                         <span className="text-xs font-medium text-foreground">
@@ -376,6 +376,23 @@ function BatchStep1PresetCardsInner({
                     />
                   </div>
                 )}
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    {t('batchWizard.step1.watermarkLabel')}
+                  </p>
+                  <input
+                    type="text"
+                    maxLength={64}
+                    value={cfg.watermarkText ?? ''}
+                    disabled={disabled}
+                    placeholder={t('batchWizard.step1.watermarkPlaceholder')}
+                    onChange={(event) =>
+                      setCfg((current) => ({ ...current, watermarkText: event.target.value }))
+                    }
+                    className="h-8 w-full rounded-lg border border-border/70 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                    data-testid="batch-watermark-input"
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
