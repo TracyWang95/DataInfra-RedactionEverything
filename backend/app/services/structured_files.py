@@ -39,13 +39,6 @@ def extension_kind(filename: str) -> str:
     return kind
 
 
-def save_structured_upload(*, owner_id: str, filename: str, content: bytes) -> tuple[str, str]:
-    kind = extension_kind(filename)
-    stored = f"{uuid.uuid4().hex}_{safe_filename(filename)}"
-    path = os.path.join(get_upload_dir(owner_id), stored)
-    with open(path, "wb") as fh:
-        fh.write(content)
-    return path, kind
 
 
 def save_structured_upload_stream(*, owner_id: str, filename: str, fileobj) -> tuple[str, str]:

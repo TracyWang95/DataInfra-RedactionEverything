@@ -216,9 +216,6 @@ class OcrHasVisionService:
             return await func(ocr_blocks, vision_types, stage_status=stage_status)
         return await func(ocr_blocks, vision_types)
 
-    def _extract_table_cells(self, table_html: str, block: OCRTextBlock) -> list[OCRTextBlock]:
-        from app.services.vision.ocr_pipeline import extract_table_cells
-        return extract_table_cells(table_html, block)
 
     def _expand_table_blocks(self, ocr_blocks: list[OCRTextBlock]) -> list[OCRTextBlock]:
         from app.services.vision.ocr_pipeline import expand_table_blocks

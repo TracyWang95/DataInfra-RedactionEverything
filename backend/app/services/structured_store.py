@@ -264,35 +264,6 @@ class StructuredStore:
             out["credential"] = credential or {}
         return out
 
-    def update_connection_test_status(
-        self,
-        connection_id: str,
-        *,
-        owner_id: str,
-        status: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        now = _utc_iso()
-        with self._connect() as conn:
-            if metadata is None:
-                conn.execute(
-                    """
-                    UPDATE structured_connections
-                    SET last_test_status = ?, last_tested_at = ?, updated_at = ?
-                    WHERE id = ? AND owner_id = ?
-                    """,
-                    (status, now, now, connection_id, owner_id),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE structured_connections
-                    SET last_test_status = ?, last_tested_at = ?, metadata_json = ?, updated_at = ?
-                    WHERE id = ? AND owner_id = ?
-                    """,
-                    (status, now, _json_dumps(metadata), now, connection_id, owner_id),
-                )
-            conn.commit()
 
     def delete_connection(self, connection_id: str, *, owner_id: str) -> bool:
         with self._connect() as conn:

@@ -9,7 +9,7 @@ from __future__ import annotations
 import weakref
 from dataclasses import dataclass
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 try:
     import cv2
@@ -231,117 +231,8 @@ def _remember_prepared_image(image: Image.Image, size: tuple[int, int], arr, red
     del _PREPARED_IMAGE_CACHE[:-2]
 
 
-def _cached_prepared_image(image: Image.Image, size: tuple[int, int]):
-    for image_ref, cached_size, arr, red_exclusion_mask in reversed(_PREPARED_IMAGE_CACHE):
-        if image_ref() is image and cached_size == size:
-            return arr, red_exclusion_mask
-    return None
 
 
-def detect_red_seal_regions(image: Image.Image, *, max_regions: int = 8) -> list[SealRegion]:
-    """Detect red stamp-like regions using color and connected components.
-
-    The detector is intentionally generic: it looks for clusters of saturated
-    red ink, including partial clusters at page edges. It does not read text or
-    rely on document-specific keywords.
-    """
-    deps = _vision_deps()
-    if deps is None:
-        return []
-    cv2, np = deps
-
-    img = ImageOps.exif_transpose(image).convert("RGB")
-    original_w, original_h = img.size
-    if original_w <= 0 or original_h <= 0:
-        return []
-    if _is_extreme_aspect_page(original_w, original_h):
-        return []
-
-    max_side = max(original_w, original_h)
-    scale = 1.0
-    if max_side > _RED_WORK_MAX_SIDE:
-        scale = _RED_WORK_MAX_SIDE / max_side
-        img = img.resize((max(1, int(original_w * scale)), max(1, int(original_h * scale))))
-
-    arr = np.array(img)
-    h, w = arr.shape[:2]
-    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
-    red_hue = (hsv[:, :, 0] <= _RED_HUE_LOW_MAX) | (hsv[:, :, 0] >= _RED_HUE_HIGH_MIN)
-    saturated = hsv[:, :, 1] >= _RED_SAT_MIN
-    bright = hsv[:, :, 2] >= _RED_VAL_MIN
-    rgb_red = (
-        (arr[:, :, 0] >= _RED_RGB_R_MIN)
-        & (arr[:, :, 0] >= arr[:, :, 1] * _RED_RGB_R_OVER_G)
-        & (arr[:, :, 0] >= arr[:, :, 2] * _RED_RGB_R_OVER_B)
-    )
-    mask = (red_hue & saturated & bright & rgb_red).astype("uint8") * 255
-    red_exclusion_mask = (red_hue & (hsv[:, :, 1] >= _RED_EXCLUSION_SAT_MIN) & bright).astype("uint8") * 255
-    _remember_prepared_image(image, (w, h), arr, red_exclusion_mask)
-
-    if int(mask.sum()) == 0:
-        return []
-    raw_mask = mask.copy()
-
-    kernel_size = max(_RED_KERNEL_MIN, int(round(min(w, h) / _RED_KERNEL_SIDE_DIVISOR)))
-    if kernel_size % 2 == 0:
-        kernel_size += 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    mask = cv2.dilate(mask, kernel, iterations=_RED_DILATE_ITERATIONS)
-
-    num_labels, _labels, stats, _centroids = cv2.connectedComponentsWithStats(mask, 8)
-    page_area = float(w * h)
-    min_red_area = max(_RED_MIN_AREA_FLOOR, int(page_area * _RED_MIN_AREA_RATIO))
-    max_box_area = page_area * _RED_MAX_BOX_AREA_RATIO
-    candidates: list[tuple[float, tuple[int, int, int, int]]] = []
-
-    for label in range(1, num_labels):
-        x, y, bw, bh, area = [int(v) for v in stats[label]]
-        if area < min_red_area or bw <= 0 or bh <= 0:
-            continue
-        box_area = bw * bh
-        if box_area > max_box_area:
-            continue
-        density = area / max(1, box_area)
-        aspect = bw / max(1, bh)
-        near_edge = x <= w * _EDGE_MARGIN_RATIO or y <= h * _EDGE_MARGIN_RATIO or x + bw >= w * _EDGE_FAR_RATIO or y + bh >= h * _EDGE_FAR_RATIO
-        large_enough = max(bw, bh) >= min(w, h) * _RED_LARGE_SIDE_RATIO and min(bw, bh) >= max(_RED_MIN_SIDE_FLOOR, min(w, h) * _RED_MIN_SIDE_RATIO)
-        stamp_like_density = _RED_DENSITY_MIN <= density <= _RED_DENSITY_MAX
-        stamp_like_aspect = _RED_ASPECT_MIN <= aspect <= _RED_ASPECT_MAX
-        seam_like_aspect = near_edge and (_RED_SEAM_ASPECT_LOW <= aspect < _RED_ASPECT_MIN or _RED_ASPECT_MAX < aspect <= _RED_SEAM_ASPECT_HIGH)
-        seam_large_enough = max(bw, bh) >= min(w, h) * _RED_SEAM_LARGE_SIDE_RATIO and min(bw, bh) >= max(_RED_SEAM_MIN_SIDE_FLOOR, min(w, h) * _RED_SEAM_MIN_SIDE_RATIO)
-        if seam_like_aspect and not _has_curved_seam_fragment(mask[y:y + bh, x:x + bw], vertical=aspect < 1.0):
-            continue
-        if not (
-            stamp_like_density
-            and (stamp_like_aspect or (seam_like_aspect and seam_large_enough))
-            and (large_enough or near_edge)
-        ):
-            continue
-        score = density + min(area / page_area * _RED_SCORE_AREA_COEFF, _RED_SCORE_AREA_CAP) + (_RED_SCORE_SEAM_BONUS if seam_like_aspect else _RED_SCORE_EDGE_BONUS if near_edge else 0.0)
-        candidates.append((score, (x, y, bw, bh)))
-
-    merged = _merge_nearby_boxes([box for _score, box in sorted(candidates, reverse=True)], w, h)
-    refined: list[tuple[int, int, int, int]] = []
-    for box in merged:
-        for tight_box in _split_red_seal_box_by_gutter(raw_mask, box, w, h):
-            for split_box in _split_stacked_red_seal_box(raw_mask, tight_box, w, h):
-                refined.append(_tighten_red_seal_box(raw_mask, split_box, w, h))
-    merged = sorted(refined, key=lambda b: b[2] * b[3], reverse=True)
-    regions: list[SealRegion] = []
-    for x, y, bw, bh in merged[:max_regions]:
-        pad = max(_REGION_PAD_FLOOR, int(round(min(w, h) * _RED_REGION_PAD_RATIO)))
-        x1 = max(0, x - pad)
-        y1 = max(0, y - pad)
-        x2 = min(w, x + bw + pad)
-        y2 = min(h, y + bh + pad)
-        regions.append(SealRegion(
-            x=x1 / w,
-            y=y1 / h,
-            width=max(1, x2 - x1) / w,
-            height=max(1, y2 - y1) / h,
-        ))
-    return regions
 
 
 def _tighten_red_seal_box(

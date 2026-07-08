@@ -520,18 +520,6 @@ class HybridNERService:
             score += 2
         return score
 
-    def _semantic_line_score(self, line: str) -> int:
-        score = 0
-        if any(hint in line for hint in self.SEMANTIC_LINE_HINTS):
-            score += 2
-        score += self._semantic_structure_score(line)
-        # Plain boilerplate often mentions dates, amounts and duties but has no
-        # semantic identifier. Keep it out of the small HaS context.
-        if score == 0:
-            return 0
-        if len(line) > self.MAX_HAS_LINE_CHARS and "：" not in line and ":" not in line:
-            score -= 1
-        return score
 
     def _cross_validate(
         self,

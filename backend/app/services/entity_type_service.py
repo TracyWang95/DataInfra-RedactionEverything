@@ -395,10 +395,6 @@ def _db_for_owner(owner_id: str | None = None) -> dict[str, EntityTypeConfig]:
     return entity_types_db if owner_id is None else _load_entity_types(owner_id)
 
 
-def get_enabled_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
-    """获取所有启用的实体类型"""
-    db = _db_for_owner(owner_id)
-    return [t for t in db.values() if t.enabled]
 
 
 def get_default_generic_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
@@ -416,10 +412,6 @@ def get_regex_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
     return [t for t in db.values() if t.enabled and t.regex_pattern]
 
 
-def get_llm_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
-    """获取使用LLM识别的类型"""
-    db = _db_for_owner(owner_id)
-    return [t for t in db.values() if t.enabled and t.use_llm]
 
 
 def resolve_requested_entity_types(
@@ -636,6 +628,3 @@ def test_regex(pattern: str, test_text: str) -> RegexTestResult:
 # so other layers don't couple to the module-level mutable dict.
 # ---------------------------------------------------------------------------
 
-def get_entity_types_db(owner_id: str | None = None) -> dict[str, EntityTypeConfig]:
-    """Return the in-memory entity-types dictionary."""
-    return _db_for_owner(owner_id)

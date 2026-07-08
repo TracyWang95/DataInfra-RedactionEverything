@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 import fitz  # PyMuPDF
 from docx import Document
-from PIL import Image
 
 from app.core.config import settings
 from app.core.file_validation import safe_path_in_dir
@@ -412,22 +411,6 @@ class FileParser:
             is_scanned=True,
         )
 
-    async def pdf_to_images(self, file_path: str, dpi: int = 150) -> list[bytes]:
-        """将 PDF 转换为图片列表"""
-        _validate_path(file_path)
-        doc = fitz.open(file_path)
-        images = []
-
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            zoom = dpi / 72
-            matrix = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=matrix)
-            img_data = pix.tobytes("png")
-            images.append(img_data)
-
-        doc.close()
-        return images
 
     async def get_pdf_page_image(self, file_path: str, page: int, dpi: int = 150) -> bytes:
         """获取 PDF 指定页的图片"""
@@ -573,8 +556,3 @@ class FileParser:
         with open(file_path, "rb") as f:
             return f.read()
 
-    async def get_image_size(self, file_path: str) -> tuple[int, int]:
-        """获取图片尺寸"""
-        _validate_path(file_path)
-        with Image.open(file_path) as img:
-            return img.size

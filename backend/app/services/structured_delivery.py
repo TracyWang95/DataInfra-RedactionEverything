@@ -284,46 +284,12 @@ def export_dataset(
     return record
 
 
-def write_csv(path: str, columns: list[str], rows: list[dict[str, Any]]) -> None:
-    with open(path, "w", encoding="utf-8-sig", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
 
 
-def write_xlsx(path: str, columns: list[str], rows: list[dict[str, Any]]) -> None:
-    from openpyxl import Workbook
-
-    wb = Workbook(write_only=True)
-    ws = wb.create_sheet("redacted")
-    ws.append(columns)
-    for row in rows:
-        ws.append([row.get(col) for col in columns])
-    wb.save(path)
 
 
-def write_sqlite(path: str, *, table_name: str, columns: list[str], rows: list[dict[str, Any]]) -> None:
-    if os.path.exists(path):
-        os.remove(path)
-    with sqlite3.connect(path) as conn:
-        cols = ", ".join(f"{quote_sqlite_ident(col)} TEXT" for col in columns)
-        conn.execute(f"CREATE TABLE {quote_sqlite_ident(table_name)} ({cols})")
-        placeholders = ", ".join("?" for _ in columns)
-        col_names = ", ".join(quote_sqlite_ident(col) for col in columns)
-        conn.executemany(
-            f"INSERT INTO {quote_sqlite_ident(table_name)} ({col_names}) VALUES ({placeholders})",
-            [[normalize_value(row.get(col)) for col in columns] for row in rows],
-        )
-        conn.commit()
 
 
-def write_sql(path: str, *, table_name: str, columns: list[str], rows: list[dict[str, Any]]) -> None:
-    with open(path, "w", encoding="utf-8") as fh:
-        cols = ", ".join(quote_sqlite_ident(col) for col in columns)
-        fh.write(f"-- Redacted export generated at {utc_iso()}\n")
-        for row in rows:
-            values = ", ".join(sql_literal(row.get(col)) for col in columns)
-            fh.write(f"INSERT INTO {quote_sqlite_ident(table_name)} ({cols}) VALUES ({values});\n")
 
 
 def sql_literal(value: Any) -> str:

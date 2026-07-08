@@ -580,37 +580,6 @@ def group_boxes_by_page(boxes: list[BoundingBox]) -> dict[int, list[dict[str, An
     return grouped
 
 
-def resolve_committed_output_path(
-    file_info: dict[str, Any],
-    result: Any,
-    stored_info: dict[str, Any],
-) -> str | None:
-    candidates: list[str] = []
-
-    for raw in (getattr(result, "output_path", None), stored_info.get("output_path")):
-        if isinstance(raw, str) and raw.strip():
-            candidates.append(raw.strip())
-
-    output_file_id = getattr(result, "output_file_id", None)
-    if isinstance(output_file_id, str) and output_file_id.strip():
-        source_path = str(file_info.get("file_path") or "")
-        ext = os.path.splitext(source_path)[1]
-        raw_file_type = getattr(file_info.get("file_type"), "value", file_info.get("file_type"))
-        if raw_file_type == "doc":
-            ext = ".docx"
-        if ext:
-            candidates.append(os.path.join(settings.OUTPUT_DIR, f"{output_file_id}{ext}"))
-
-    seen: set[str] = set()
-    for candidate in candidates:
-        real = os.path.realpath(candidate)
-        if real in seen:
-            continue
-        seen.add(real)
-        if os.path.exists(real):
-            return real
-
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -826,8 +795,6 @@ def _review_confirmed(item: dict[str, Any], has_output: bool, skip_item_review: 
     return status in (JobItemStatus.REVIEW_APPROVED.value, JobItemStatus.REDACTING.value)
 
 
-def _redacted_export_skip_reason(info: dict[str, Any] | None) -> str | None:
-    return _redacted_output_state(info)[1]
 
 
 def _delivery_blocking_reasons(

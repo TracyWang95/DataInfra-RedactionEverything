@@ -135,20 +135,6 @@ def normalize_file_type(value: Any) -> Any:
 # Entity / recognition counting helpers
 # ---------------------------------------------------------------------------
 
-def bounding_box_total(info: dict) -> int:
-    """图像/视觉链：bounding_boxes 为 {page: [BoundingBox, ...]} 或列表。"""
-    raw = info.get("bounding_boxes")
-    if not raw:
-        return 0
-    if isinstance(raw, list):
-        return len(raw)
-    if isinstance(raw, dict):
-        n = 0
-        for v in raw.values():
-            if isinstance(v, list):
-                n += len(v)
-        return n
-    return 0
 
 
 def _stored_item_selected(item: Any) -> bool:

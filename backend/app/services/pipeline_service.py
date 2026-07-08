@@ -144,8 +144,6 @@ def _canonical_pipeline_mode(mode: str) -> str:
     return str(mode)
 
 
-def _is_visual_feature_mode(mode: str) -> bool:
-    return _canonical_pipeline_mode(mode) == "visual_features"
 
 
 def _canonicalize_pipeline_type_for_mode(

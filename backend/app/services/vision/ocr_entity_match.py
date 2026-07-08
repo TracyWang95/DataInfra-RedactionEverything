@@ -404,21 +404,6 @@ def _entity_span_char_boxes(
     return span_boxes
 
 
-def _entity_char_box_x_span(
-    block: OCRTextBlock,
-    search_text: str,
-    span_start: int,
-    span_end: int,
-) -> tuple[int, int] | None:
-    """X-range union of the proven char boxes (see _entity_span_char_boxes)."""
-    span_boxes = _entity_span_char_boxes(block, search_text, span_start, span_end)
-    if not span_boxes:
-        return None
-    left = int(min(box["x1"] for box in span_boxes if box is not None))
-    right = int(max(box["x2"] for box in span_boxes if box is not None))
-    if right <= left:
-        return None
-    return left, right
 
 
 def _entity_char_box_line_rects(
