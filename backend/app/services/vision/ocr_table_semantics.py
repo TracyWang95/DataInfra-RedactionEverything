@@ -22,12 +22,9 @@ from app.services.vision.has_text_payload import (
 from app.services.vision.ocr_tuning import (
     _AMOUNT_FORMAT_ALLOWED_CHARS,
     _AMOUNT_TRAILING_ZEROS_MIN_DIGITS,
-    _PAREN_CLOSE_CHARS,
-    _PAREN_OPEN_CHARS,
     _STANDALONE_AMOUNT_MAX_DIGITS,
     _STANDALONE_AMOUNT_MIN_DIGITS,
     _TABLE_CELL_CONFIDENCE_FACTOR,
-    AMOUNT_HEADER_LABELS,
 )
 from app.services.vision.ocr_visual_lines import _blocks_same_visual_line
 
@@ -85,149 +82,6 @@ def _is_standalone_amount_ocr_block(text: str) -> bool:
     return bool(_amount_value_signature(compact))
 
 
-def _is_amount_header_label(text: str) -> bool:
-    """Identity test: the text IS an amount column-header label.
-
-    A header label is a vocabulary term (AMOUNT_HEADER_LABELS) optionally
-    followed by one parenthesized unit suffix — 单价（元）, 合价(元), 金额（万元）.
-    Mixed full-/half-width parentheses (OCR artifacts) are accepted. Running
-    text that merely contains a vocabulary word (合同金额：...) never matches.
-    """
-    compact = _compact_text(text)
-    if compact and compact[-1] in _PAREN_CLOSE_CHARS:
-        open_index = max(compact.rfind(open_char) for open_char in _PAREN_OPEN_CHARS)
-        if open_index > 0:
-            compact = compact[:open_index]
-    return compact in AMOUNT_HEADER_LABELS
-
-
-def _amount_header_column_spans(
-    placements: list[tuple[str, int, int, int, int]],
-) -> list[tuple[int, int, int]]:
-    """(first_data_row, col_start, col_end) for every amount-label header cell."""
-    return [
-        (row + row_span, col, col + col_span)
-        for text, row, col, row_span, col_span in placements
-        if _is_amount_header_label(text)
-    ]
-
-
-def _is_amount_column_cell(
-    row: int,
-    col: int,
-    col_span: int,
-    header_spans: list[tuple[int, int, int]],
-) -> bool:
-    """The cell sits below an amount header and its HTML column span intersects it."""
-    return any(
-        row >= first_data_row and col < col_end and col + col_span > col_start
-        for first_data_row, col_start, col_end in header_spans
-    )
-
-
-def _amount_values_from_table_placements(
-    placements: list[tuple[str, int, int, int, int]],
-) -> list[str]:
-    """Amount-formatted data cells inside amount-labelled HTML columns."""
-    header_spans = _amount_header_column_spans(placements)
-    if not header_spans:
-        return []
-    return [
-        text
-        for text, row, col, _row_span, col_span in placements
-        if _is_amount_format_text(text) and _is_amount_column_cell(row, col, col_span, header_spans)
-    ]
-
-
-def _amount_values_from_header_spans(blocks: list[OCRTextBlock]) -> list[str]:
-    """Amount recall for flattened table layouts (per-cell boxes, no markup).
-
-    PP-StructureV3 often returns a wired table as independent cell text boxes
-    without `<table>` HTML. The header cell box itself then defines the column:
-    a value belongs to the column when its horizontal center lies inside the
-    header's own span and the cell sits below the header. Pure containment
-    against the table's own boxes — no padding, tolerance or clustering.
-    """
-    headers = [block for block in blocks if _is_amount_header_label(block.text)]
-    if not headers:
-        return []
-    values: list[str] = []
-    for block in blocks:
-        if not _is_amount_format_text(block.text):
-            continue
-        center_x = float(block.left) + float(block.width) / 2.0
-        for header in headers:
-            if (
-                float(header.left) <= center_x <= float(header.left + header.width)
-                and float(block.top) >= float(header.top + header.height)
-            ):
-                values.append(str(block.text))
-                break
-    return values
-
-
-def recall_table_amount_entities(ocr_blocks: list[OCRTextBlock]) -> list[dict[str, str]]:
-    """Structural AMOUNT recall from table semantics, independent of HaS NER.
-
-    The 0.6B HaS model does not tag context-free bare numbers; in a table the
-    amount semantics live in the column header. Recall uses only structure:
-    - `<table>` HTML blocks: amount-labelled header -> same HTML column index
-      span, rows below the header (_amount_values_from_table_placements).
-    - expanded virtual cells: the same column logic, precomputed per cell in
-      extract_table_cells from the real HTML indices.
-    - flattened layouts: header-box span containment (_amount_values_from_header_spans).
-    Regions come from match_entities_to_ocr (whole matched block + IoU dedupe).
-    """
-    values: list[str] = []
-    flat_blocks: list[OCRTextBlock] = []
-    for block in ocr_blocks:
-        text = str(block.text or "")
-        if text.lstrip().startswith("<table") and "</table>" in text:
-            values.extend(_amount_values_from_table_placements(_parse_table_placements(text)))
-        elif getattr(block, "_table_html_cell", False):
-            if getattr(block, "_table_amount_cell", False):
-                values.append(text)
-        else:
-            flat_blocks.append(block)
-    values.extend(_amount_values_from_header_spans(flat_blocks))
-
-    entities: list[dict[str, str]] = []
-    seen_signatures: set[str] = set()
-    for value in values:
-        text = _compact_text(value)
-        signature = _amount_value_signature(text)
-        if not text or not signature or signature in seen_signatures:
-            continue
-        seen_signatures.add(signature)
-        entities.append({"type": "AMOUNT", "text": text, "source": "table_semantic"})
-    return entities
-
-
-def _merge_table_amount_entities(
-    entities: list[dict[str, str]],
-    table_amount_entities: list[dict[str, str]],
-) -> list[dict[str, str]]:
-    """Append structural amount recalls not already covered by NER values."""
-    if not table_amount_entities:
-        return entities
-    seen_signatures = {
-        signature
-        for entity in entities
-        if _canonical_image_text_type(str(entity.get("type", ""))) == "AMOUNT"
-        for signature in [_amount_value_signature(str(entity.get("text", "")))]
-        if signature
-    }
-    merged = list(entities)
-    for entity in table_amount_entities:
-        signature = _amount_value_signature(entity["text"])
-        if signature and signature in seen_signatures:
-            continue
-        if signature:
-            seen_signatures.add(signature)
-        merged.append(dict(entity))
-    return merged
-
-
 # Semantic vocabulary (data, not tuning): field labels whose value IS a
 # document number. Derived from the DOCUMENT_NUMBER cn_terms in TYPE_REGISTRY,
 # the single source of truth for type vocabulary.
@@ -245,7 +99,7 @@ def _is_document_number_field_label(text: str) -> bool:
     A field label is a label phrase ending with a vocabulary term —
     合同协议号, 运输工具名称及航次号 — optionally with a trailing colon
     (form separator), which is stripped first. Only the compact label
-    phrase's own suffix is tested, mirroring _is_amount_header_label:
+    phrase's own suffix is tested — an identity test, not containment:
     values and running text never match.
     """
     compact = _compact_text(text)
@@ -279,15 +133,14 @@ def _is_document_number_format_text(text: str) -> bool:
 
 def recall_form_field_document_numbers(ocr_blocks: list[OCRTextBlock]) -> list[dict[str, str]]:
     """Structural DOCUMENT_NUMBER recall from form-field labels, independent of
-    HaS NER — the form-field generalization of recall_table_amount_entities.
+    HaS NER.
 
     Three label/value layouts, all identity/containment tests on existing
     geometry (no new tolerances):
     - one block `标签：值`: the part before the first colon is the field label.
     - label cell above its value (form grids such as customs declarations):
       the value's horizontal center lies inside the label cell's own span and
-      the value is the nearest block below — the same construction as
-      _amount_values_from_header_spans.
+      the value is the nearest block below (header-box span containment).
     - label block and value block on the same visual line: the nearest block to
       the right (existing _blocks_same_visual_line test).
     Only runs when DOCUMENT_NUMBER is selected (the caller gates on the schema).
@@ -479,8 +332,6 @@ def extract_table_cells(table_html: str, block: OCRTextBlock) -> list[OCRTextBlo
     if num_rows == 0 or num_cols == 0:
         return []
 
-    amount_header_spans = _amount_header_column_spans(placements)
-
     row_height = max(block.height / num_rows, 1.0)
     col_width = max(block.width / num_cols, 1.0)
 
@@ -502,10 +353,6 @@ def extract_table_cells(table_html: str, block: OCRTextBlock) -> list[OCRTextBlo
                 ],
                 confidence=block.confidence * _TABLE_CELL_CONFIDENCE_FACTOR,
             )
-            cell_block._table_html_cell = True
-            cell_block._table_amount_cell = bool(amount_header_spans) and _is_amount_format_text(
-                cell_text
-            ) and _is_amount_column_cell(r_idx, col_idx, col_span, amount_header_spans)
             virtual_blocks.append(cell_block)
 
     return virtual_blocks

@@ -120,21 +120,6 @@ _NER_MIN_LEN_BY_TYPE = {
 # Document-title visual suffix lookahead (chars) for PROPERTY entities.
 _PROPERTY_TITLE_TAIL_LOOKAHEAD_CHARS = 12
 
-# Semantic vocabulary (data, not tuning): a table cell whose text IS one of
-# these labels — optionally with a parenthesized unit suffix such as 单价（元）
-# — declares its column to contain amount values.
-AMOUNT_HEADER_LABELS = (
-    "金额",
-    "单价",
-    "合价",
-    "总价",
-    "价格",
-    "价款",
-    "费用",
-)
-# Full- and half-width parentheses accepted around a header unit suffix.
-_PAREN_OPEN_CHARS = "（("
-_PAREN_CLOSE_CHARS = "）)"
 # Characters allowed in an amount-formatted value (digits plus separators,
 # currency symbols and grouping decoration). Shared by the standalone-amount
 # block test and the table-cell amount-format test.

@@ -7,11 +7,8 @@ from app.services.vision.ocr_pipeline import (
     _clone_text_block,
     _dedupe_ocr_regions,
     _is_amount_format_text,
-    _is_amount_header_label,
     _merge_ocr_blocks,
-    expand_table_blocks,
     match_entities_to_ocr,
-    recall_table_amount_entities,
     reconstruct_visual_line_blocks,
     run_paddle_ocr,
 )
@@ -175,114 +172,12 @@ def test_compact_ocr_padding_is_geometry_capped() -> None:
     assert width <= 100
 
 
-_CONTRACT_TABLE_HTML = (
-    "<table>"
-    "<tr><td>序号</td><td>设备名称</td><td>数量</td><td>单价（元）</td><td>合价(元）</td></tr>"
-    "<tr><td>1</td><td>一体机</td><td>2</td><td>715700</td><td>1431400</td></tr>"
-    "<tr><td>2</td><td>集成服务</td><td>1</td><td>252600</td><td>252600</td></tr>"
-    '<tr><td colspan="5">总计：1684000元</td></tr>'
-    "</table>"
-)
-
-
-def _table_block() -> OCRTextBlock:
-    return OCRTextBlock(
-        text=_CONTRACT_TABLE_HTML,
-        polygon=[[100, 100], [900, 100], [900, 500], [100, 500]],
-        confidence=0.95,
-    )
-
-
 def _flat_block(text: str, left: int, top: int, width: int, height: int) -> OCRTextBlock:
     return OCRTextBlock(
         text=text,
         polygon=[[left, top], [left + width, top], [left + width, top + height], [left, top + height]],
         confidence=0.9,
     )
-
-
-def test_table_html_amount_recall_uses_column_index_semantics() -> None:
-    # Header labels 单价（元）/合价(元） mark their HTML columns as amount
-    # columns; numeric cells in those columns are recalled. Numeric cells in
-    # other columns (序号 1/2, 数量 2/1) and non-numeric cells (总计 row with
-    # 元 suffix) are not. Identical values (252600 twice) collapse to one
-    # entity; the matcher re-expands a value to every containing cell.
-    entities = recall_table_amount_entities(expand_table_blocks([_table_block()]))
-
-    assert [entity["text"] for entity in entities] == ["715700", "1431400", "252600"]
-    assert all(entity["type"] == "AMOUNT" for entity in entities)
-    assert all(entity["source"] == "table_semantic" for entity in entities)
-
-
-def test_table_html_amount_recall_works_on_raw_table_block() -> None:
-    # The same recall works when the <table> block was not expanded upstream.
-    entities = recall_table_amount_entities([_table_block()])
-
-    assert [entity["text"] for entity in entities] == ["715700", "1431400", "252600"]
-
-
-def test_table_without_amount_header_recalls_nothing() -> None:
-    html = (
-        "<table>"
-        "<tr><td>序号</td><td>名称</td><td>数量</td></tr>"
-        "<tr><td>1</td><td>一体机</td><td>715700</td></tr>"
-        "</table>"
-    )
-    block = OCRTextBlock(
-        text=html,
-        polygon=[[100, 100], [900, 100], [900, 300], [100, 300]],
-        confidence=0.95,
-    )
-
-    assert recall_table_amount_entities(expand_table_blocks([block])) == []
-
-
-def test_flat_table_layout_amount_recall_by_header_box_span() -> None:
-    # PP-StructureV3 returns this contract table as independent cell boxes
-    # without <table> markup (信创合同 p6). The header cell box itself defines
-    # the column: numeric blocks centered inside the header span and below it
-    # are recalled; numeric blocks in other columns (数量 2/1), above the
-    # header, or with non-numeric decoration (总计：1684000元) are not.
-    blocks = [
-        _flat_block("99", 790, 100, 20, 20),  # numeric but above the header
-        _flat_block("序号", 136, 177, 32, 28),
-        _flat_block("数量", 710, 177, 32, 28),
-        _flat_block("单价(元）", 764, 177, 62, 27),
-        _flat_block("合价（元）", 848, 178, 60, 25),
-        _flat_block("2", 720, 294, 13, 21),
-        _flat_block("715700", 777, 294, 43, 23),
-        _flat_block("1431400", 856, 294, 48, 22),
-        _flat_block("1", 720, 423, 11, 20),
-        _flat_block("252600", 777, 422, 42, 23),
-        _flat_block("252600", 859, 422, 42, 23),
-        _flat_block("总计：1684000元", 480, 489, 98, 22),
-    ]
-
-    entities = recall_table_amount_entities(blocks)
-
-    assert [entity["text"] for entity in entities] == ["715700", "1431400", "252600"]
-    assert all(entity["source"] == "table_semantic" for entity in entities)
-
-
-def test_recalled_amounts_match_back_to_whole_cell_blocks() -> None:
-    # The recalled value is matched back like any entity: whole matched block,
-    # IoU-only dedupe. A value appearing in two cells keeps both regions.
-    blocks = [
-        _flat_block("单价(元）", 764, 177, 62, 27),
-        _flat_block("合价（元）", 848, 178, 60, 25),
-        _flat_block("252600", 777, 422, 42, 23),
-        _flat_block("252600", 859, 422, 42, 23),
-    ]
-
-    regions = match_entities_to_ocr(blocks, recall_table_amount_entities(blocks))
-
-    assert len(regions) == 2
-    assert all(region.entity_type == "AMOUNT" for region in regions)
-    assert all(region.source == "table_semantic" for region in regions)
-    assert {(region.left, region.top, region.width, region.height) for region in regions} == {
-        (777, 422, 42, 23),
-        (859, 422, 42, 23),
-    }
 
 
 def test_amount_format_text_is_a_pure_format_judgement() -> None:
@@ -295,17 +190,6 @@ def test_amount_format_text_is_a_pure_format_judgement() -> None:
     assert not _is_amount_format_text("SZAI-300")
     assert not _is_amount_format_text("40%")
     assert not _is_amount_format_text("")
-
-
-def test_amount_header_label_is_identity_not_containment() -> None:
-    assert _is_amount_header_label("单价（元）")
-    assert _is_amount_header_label("单价(元）")  # mixed-width OCR parentheses
-    assert _is_amount_header_label("金额")
-    assert _is_amount_header_label("费用(万元)")
-
-    assert not _is_amount_header_label("总计：1684000元")
-    assert not _is_amount_header_label("合同金额")  # contains 金额 but is not a header label
-    assert not _is_amount_header_label("设备名称")
 
 
 def test_positionless_whole_block_claim_yields_to_dedicated_box() -> None:
@@ -720,10 +604,13 @@ def test_value_crop_covers_span_with_interior_char_gap() -> None:
     assert (regions[0].left, regions[0].width) == (180, 160)  # 农(180) .. 行(340)
 
 
-def test_value_crop_falls_back_when_span_edge_has_no_char_box() -> None:
-    # The service sometimes drops leading char boxes (chars 9000... under text
-    # 89000...). The span's first glyph has no corresponding box, so a union of
-    # the remaining boxes would leave it readable — mask the whole block.
+def test_value_crop_recovers_missing_span_edge_from_neighbour() -> None:
+    # The service sometimes drops a leading char box (chars 9000... under text
+    # 89000...). The span's first glyph 8 has no box, so a union of the remaining
+    # boxes (175..) would leave it readable. The neighbour just outside the span
+    # — the colon ending at x=150 — bounds the entity's left edge, so the crop
+    # starts at 150 and covers the unboxed 8 (150..175) without masking the
+    # whole block (the 帐号 label at 100..150 stays out).
     block = OCRTextBlock(
         text="帐号：89000123456",
         polygon=[[100, 0], [400, 0], [400, 20], [100, 20]],
@@ -740,7 +627,7 @@ def test_value_crop_falls_back_when_span_edge_has_no_char_box() -> None:
     )
 
     assert len(regions) == 1
-    assert (regions[0].left, regions[0].width) == (100, 300)  # whole block
+    assert (regions[0].left, regions[0].width) == (150, 250)  # colon edge .. block end
 
 
 def test_visual_region_fallback_keeps_structure_blocks_primary(monkeypatch) -> None:

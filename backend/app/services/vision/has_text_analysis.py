@@ -34,9 +34,7 @@ from app.services.vision.ocr_cache import (
 )
 from app.services.vision.ocr_table_semantics import (
     _merge_form_field_document_entities,
-    _merge_table_amount_entities,
     recall_form_field_document_numbers,
-    recall_table_amount_entities,
 )
 from app.services.vision.ocr_tuning import (
     _BRIDGE_PAYLOAD_MAX_CHARS,
@@ -120,22 +118,6 @@ async def run_has_text_analysis(
         )
         return []
 
-    # Structural AMOUNT recall from table semantics. Computed before any HaS
-    # availability checks: it needs no model, and table amounts must surface
-    # even when NER is skipped, fails, or returns nothing.
-    amount_in_schema = vision_types is None or any(
-        _canonical_image_text_type(getattr(vt, "id", "")) == "AMOUNT" for vt in vision_types
-    )
-    table_amount_entities = recall_table_amount_entities(ocr_blocks) if amount_in_schema else []
-    if table_amount_entities:
-        logger.info(
-            "Table semantic AMOUNT recall: %s",
-            [entity["text"] for entity in table_amount_entities],
-        )
-    _record_has_text_metric(
-        stage_status, "has_text_table_amount_entities", len(table_amount_entities)
-    )
-
     # Structural DOCUMENT_NUMBER recall from form-field labels (标签：值 and
     # label-cell layouts). Same contract as the table AMOUNT recall: computed
     # before any HaS availability checks and surfaced even when NER is skipped
@@ -168,7 +150,7 @@ async def run_has_text_analysis(
     _record_has_text_metric(
         stage_status, "has_text_format_date_entities", len(format_date_entities)
     )
-    structural_entities = [*table_amount_entities, *form_document_entities, *format_date_entities]
+    structural_entities = [*form_document_entities, *format_date_entities]
 
     # Lazy re-init if client was not available at startup
     if not has_client:
@@ -447,10 +429,6 @@ async def run_has_text_analysis(
                     "text": text,
                 })
                 logger.debug("HaS found entity: %s (%s)", text, normalized_type)
-
-        # Structural table amounts the NER did not already return (value-level
-        # dedupe via _amount_value_signature, same as the matcher uses).
-        entities = _merge_table_amount_entities(entities, table_amount_entities)
 
         # Form-field document numbers the NER did not already return.
         entities = _merge_form_field_document_entities(entities, form_document_entities)
