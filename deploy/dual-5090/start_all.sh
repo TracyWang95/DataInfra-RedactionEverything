@@ -21,32 +21,28 @@ launch vl_serve_g0 8118 ~/vl_serve_g0.sh
 launch vl_serve_g1 8119 ~/vl_serve_g1.sh
 launch has_g0 8080 ~/has_g0.sh
 launch has_g1 8081 ~/has_g1.sh
-# GLM-FP8 visual grounding (replaced LocateAnything 2026-07-06; rollback =
-# restore start_all.sh.bak-la-topology + lb_la upstreams 8090/8091 + backend env)
-launch glm_fp8_g0 8120 ~/glm_fp8_g0.sh
-launch glm_fp8_g1 8121 ~/glm_fp8_g1.sh
-echo "  [wait] GLM-FP8 :8120 + :8121 ready before adapters (fp8 conversion ~3min) ..."
-for i in $(seq 1 100); do curl -sf -m3 localhost:8120/v1/models >/dev/null 2>&1 && curl -sf -m3 localhost:8121/v1/models >/dev/null 2>&1 && { echo "  [ok] :8120+:8121 ready"; break; }; sleep 3; done
-launch glm_vis_g0 8130 ~/glm_vis_g0.sh
-launch glm_vis_g1 8131 ~/glm_vis_g1.sh
+# 2026-07-08 ROLLBACK to LocateAnything-primary: GLM-4.6V mis-boxed seals on
+# real photographed legal docs (报警回执: seal box shifted onto body text),
+# while LA localizes them tight. GLM won the 25-image GT set (25/25 vs 19/25)
+# but that set over-fit; real 法律文书 favor LA. GLM stack disabled; re-enable
+# glm_fp8_* + glm_vis_* and point lb_la back to 8130/8131 to revert.
+#launch glm_fp8_g0 8120 ~/glm_fp8_g0.sh
+#launch glm_fp8_g1 8121 ~/glm_fp8_g1.sh
+#launch glm_vis_g0 8130 ~/glm_vis_g0.sh
+#launch glm_vis_g1 8131 ~/glm_vis_g1.sh
 launch yolo_g0 8140 ~/yolo_g0.sh
 launch yolo_g1 8141 ~/yolo_g1.sh
-# LocateAnything-3B signature supplement (g1, 1024px). GLM has a hard ceiling
-# on faint handwritten signatures; LA (task-trained) recovers them. Single
-# instance on g1 — its ~10GB working set is why OCR runs g0-only below and
-# has_g1 is trimmed to util 0.11. backend env: LA_SIGNATURE_URL=:8091.
-launch la_sig 8091 ~/la_sig.sh
+# Dual LocateAnything-3B (pure HF, 1280px, no vLLM sidecar). lb_la -> 8090,8091.
+launch la_g0 8090 ~/la_g0.sh
+launch la_g1 8091 ~/la_g1.sh
 # OCR warmup POSTs to the VL recognition server (:8118); wait until it is ready
 # before launching OCR, otherwise ocr init warmup fails and the service exits.
 echo "  [wait] VL servers :8118 + :8119 ready before OCR ..."
 for i in $(seq 1 60); do curl -sf -m3 localhost:8118/v1/models >/dev/null 2>&1 && curl -sf -m3 localhost:8119/v1/models >/dev/null 2>&1 && { echo "  [ok] :8118+:8119 ready"; break; }; sleep 3; done
 launch ocr_g0 8082 ~/ocr_g0.sh
+#OCRg0only launch ocr_g1 8083 ~/ocr_g1.sh
 launch ocr_g0b 8084 ~/ocr_g0b.sh
-# OCR (PaddleOCR-VL + PP-Structure) runs g0-only: g1 is given to LocateAnything.
-# lb_ocr keeps all four upstreams; its health check routes around the absent
-# g1 instances. Re-enable these two for dual-card OCR if LA is removed.
-#launch ocr_g1 8083 ~/ocr_g1.sh
-#launch ocr_g1b 8085 ~/ocr_g1b.sh
+#OCRg0only launch ocr_g1b 8085 ~/ocr_g1b.sh
 
 echo "=== load balancers (round-robin across GPU0/GPU1) ==="
 launch lb_has 9080 ~/lb_has.sh
