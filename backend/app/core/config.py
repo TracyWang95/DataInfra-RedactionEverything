@@ -249,6 +249,12 @@ class Settings(BaseSettings):
     # refine when on. Does NOT cover black-on-white photocopy seals (no red
     # signal) — that tier needs a trained detector.
     VISUAL_SEAL_COLOR_CASCADE: bool = True
+    # Physical seal arbiter: a 公章 is a sparse ink impression (paper shows
+    # through; colored coverage ≤0.18 on real stamps), while a printed
+    # masthead/banner/logo is a solid colored fill (≥0.59). Drop official_seal
+    # boxes that are majority-colored — kills the 中国裁判文书网 banner the
+    # cascade grows a seed into, source-independent. Real stamps always pass.
+    VISUAL_SEAL_SOLID_FILL_REJECT: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280

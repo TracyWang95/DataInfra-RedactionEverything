@@ -642,6 +642,7 @@ class LocateAnythingGroundingService:
                 _elapsed_ms(retry_start),
             )
 
+        boxes = self._drop_solid_fill_seals(boxes, image_data)
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
@@ -866,6 +867,51 @@ class LocateAnythingGroundingService:
             logger.warning("Seal fragment confirm failed", exc_info=True)
             return False
         return "是" in content
+
+    def _drop_solid_fill_seals(
+        self, boxes: list[BoundingBox], image_data: bytes
+    ) -> list[BoundingBox]:
+        """Reject 'seals' that are solid colored fills, not stamp impressions.
+
+        A 公章 is a sparse ink OUTLINE — border ring, star, arced text — with
+        paper showing through: the colored-pixel coverage inside its box is low
+        (measured ≤0.18 on every real stamp across the GT set). A printed
+        masthead/banner/logo fill is majority-colored (中国裁判文书网 ribbon
+        0.59, court emblem 0.83). The gap is ~3x, so the impression-vs-fill cut
+        is insensitive to its exact position — a physical property of what a
+        stamp IS, not a tuned score. Source-independent: catches the banner the
+        color cascade grows a seed into, and any detector's solid-fill FP.
+        Real stamps (sparse) always pass.
+        """
+        if not bool(getattr(settings, "VISUAL_SEAL_SOLID_FILL_REJECT", True)):
+            return boxes
+        seals = [b for b in boxes if b.type == "official_seal"]
+        if not seals:
+            return boxes
+        try:
+            import numpy as np
+
+            img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+            arr = np.asarray(img).astype(np.int16)
+            chroma = arr.max(axis=2) - arr.min(axis=2)  # same chroma as the color cascade
+            height, width = chroma.shape[:2]
+        except Exception:
+            return boxes
+        drop_ids: set[str] = set()
+        for s in seals:
+            x0, y0 = int(s.x * width), int(s.y * height)
+            x1, y1 = int((s.x + s.width) * width), int((s.y + s.height) * height)
+            region = chroma[max(0, y0):min(height, y1), max(0, x0):min(width, x1)]
+            if region.size == 0:
+                continue
+            # majority of the box is colored ink -> a printed fill (banner/logo),
+            # never a stamp impression (which leaves most of its box as paper).
+            if float((region > 45).mean()) > 0.45:
+                drop_ids.add(s.id)
+        if drop_ids:
+            logger.info("Dropped %d solid-fill (banner/logo) seal box(es)", len(drop_ids))
+            return [b for b in boxes if b.id not in drop_ids]
+        return boxes
 
     def _grow_seal_over_cluster_ink(
         self,

@@ -43,6 +43,13 @@ _char_lock = asyncio.Lock()  # separate from _infer_lock: a peer-delegated /char
 MAX_SIDE = int(os.environ.get("OCR_MAX_IMAGE_SIDE", "1600"))
 SEAL_TEXT = "[公章]"
 
+
+def _vl_seal_enabled() -> bool:
+    # 公章 comes from PaddleOCR-VL's OWN layout detection (the 'seal' class),
+    # read off the same pipeline output that already produces text — no extra
+    # model, no seal-text recognition. PP-Structure never touches seals.
+    return os.environ.get("OCR_VL_SEAL_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+
 DEFAULT_CONFIDENCE = 0.9  # fallback confidence score when a box has none
 MAX_ITER_DEPTH = 8  # max recursion depth when walking nested OCR result objects
 NORMALIZED_COORD_MAX = 1.5  # if all coords <= this, treat them as already in [0,1] space
@@ -540,6 +547,35 @@ def _extract_vl_spotting_boxes(outputs: Any) -> list[dict]:
     return raw
 
 
+def _extract_vl_seal_boxes(outputs: Any) -> list[dict]:
+    """Pull 公章 boxes from the PaddleOCR-VL pipeline's own layout detection.
+
+    The VL pipeline already runs layout detection locally, and 'seal' is one of
+    its layout classes — this reads only those boxes off the same output that
+    produced the page text. No extra model is loaded and the seal-text
+    RECOGNITION path (de-warp pseudo-coordinate pathology) is never touched.
+    Validated: clean document-space bboxes matching LA/YOLO on real stamps,
+    and no false-positive on the 中国裁判文书网 masthead emblem.
+    """
+    raw: list[dict] = []
+    for item in _iter_dicts(outputs):
+        layout_boxes = _first_value(item, "boxes")
+        if not (isinstance(layout_boxes, list) and layout_boxes and all(isinstance(e, dict) for e in layout_boxes)):
+            continue
+        for box_info in layout_boxes:
+            if str(_first_value(box_info, "label", "block_label") or "").strip().lower() != "seal":
+                continue
+            coord = _first_value(box_info, "coordinate", "bbox", "box", "dt_polys", "rec_box")
+            _append_raw_box(
+                raw,
+                SEAL_TEXT,
+                coord,
+                "seal",
+                float(_first_value(box_info, "score", "confidence") or DEFAULT_CONFIDENCE),
+            )
+    return raw
+
+
 def extract_vl(
     image: Image.Image,
     max_new_tokens: int = 512,
@@ -580,6 +616,8 @@ def extract_vl(
             try:
                 outputs = _vl.predict(temp_path, max_new_tokens=max_new_tokens, **predict_kwargs)
                 raw_boxes = _extract_vl_parsing_boxes(outputs)
+                if _vl_seal_enabled():
+                    raw_boxes.extend(_extract_vl_seal_boxes(outputs))
                 print(f"[OCR] PaddleOCR-VL parser produced {len(raw_boxes)} boxes", flush=True)
             except Exception as exc:
                 print(f"[OCR] PaddleOCR-VL parser failed: {exc}", flush=True)
