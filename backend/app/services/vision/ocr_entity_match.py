@@ -375,6 +375,30 @@ def _entity_span_char_boxes(
                     box_by_glyph[search_positions[0]] = glyph_boxes[char_positions[0]]
 
     span_boxes = box_by_glyph[span_glyph_start:span_glyph_end]
+    # Recover a MISREAD span-edge glyph from the proven neighbour just OUTSIDE
+    # the span. The entity sits between the char before it and the char after
+    # it, both of which are usually common chars the recognizer got right — so
+    # a right-misread last glyph (洪棘颢 read as 洪棘题: 颢 unmatched, dropping
+    # the whole crop and masking the full line) is bounded on the right by the
+    # box of the char that FOLLOWS the entity (已 in …洪棘颢已缴纳), and a
+    # left-misread first glyph by the char that PRECEDES it. Real neighbour
+    # boxes, no estimation. Only fires when the entity keeps ≥1 proven interior
+    # box (so the recovered edge is still anchored to the entity, not a bare
+    # neighbour guess).
+    if span_boxes and any(box is not None for box in span_boxes):
+        span_boxes = list(span_boxes)
+        if span_boxes[0] is None and span_glyph_start > 0:
+            before = box_by_glyph[span_glyph_start - 1]
+            anchor = next((box for box in span_boxes if box is not None), None)
+            if before is not None and anchor is not None:
+                span_boxes[0] = {"x1": before["x2"], "x2": before["x2"],
+                                 "y1": anchor["y1"], "y2": anchor["y2"]}
+        if span_boxes[-1] is None and span_glyph_end < len(box_by_glyph):
+            after = box_by_glyph[span_glyph_end]
+            anchor = next((box for box in reversed(span_boxes) if box is not None), None)
+            if after is not None and anchor is not None:
+                span_boxes[-1] = {"x1": after["x1"], "x2": after["x1"],
+                                  "y1": anchor["y1"], "y2": anchor["y2"]}
     if not span_boxes or span_boxes[0] is None or span_boxes[-1] is None:
         return None
     return span_boxes
