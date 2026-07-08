@@ -558,12 +558,21 @@ def _is_same_amount_value_block(entity_text: str, block_text: str) -> bool:
 
 
 class _SynthCharsBlock:
-    """Minimal shim: a chars list under the attribute the span alignment reads."""
+    """Minimal shim: a chars list under the attribute the span alignment reads,
+    plus the polygon its char-box line rects grow their height into.
 
-    __slots__ = ("chars",)
+    Without a polygon, _entity_char_box_line_rects cannot recover a collapsed
+    (zero/sliver height) char y-band to its structural line height, so a
+    synthesized block MUST carry the real vertical extent of the blocks its
+    chars came from — otherwise a phone-photo's flattened char boxes yield
+    sliver-height crops that leave the glyphs readable.
+    """
 
-    def __init__(self, chars: list) -> None:
+    __slots__ = ("chars", "polygon")
+
+    def __init__(self, chars: list, polygon: list | None = None) -> None:
         self.chars = chars
+        self.polygon = polygon or []
 
 
 def _charsless_block_line_rects(
@@ -603,8 +612,14 @@ def _charsless_block_line_rects(
         synthesized.extend(getattr(cand, "chars", None) or [])
     if not synthesized:
         return None
+    poly = [
+        [min(c.left for c in lines), min(c.top for c in lines)],
+        [max(c.left + c.width for c in lines), min(c.top for c in lines)],
+        [max(c.left + c.width for c in lines), max(c.top + c.height for c in lines)],
+        [min(c.left for c in lines), max(c.top + c.height for c in lines)],
+    ]
     return _entity_char_box_line_rects(
-        _SynthCharsBlock(synthesized),
+        _SynthCharsBlock(synthesized, poly),
         block_text,
         occurrence_start,
         occurrence_start + len(occurrence_text),
@@ -644,8 +659,17 @@ def split_regions_across_lines(
         for cand in contained:
             synthesized.extend(getattr(cand, "chars", None) or [])
         text = str(region.text or "")
+        # Real vertical extent of the contained line blocks, so each split line
+        # rect grows to its structural row height instead of the collapsed char
+        # y-band (phone-photo lines flatten the char boxes but keep block height).
+        poly = [
+            [min(b.left for b in contained), min(b.top for b in contained)],
+            [max(b.left + b.width for b in contained), min(b.top for b in contained)],
+            [max(b.left + b.width for b in contained), max(b.top + b.height for b in contained)],
+            [min(b.left for b in contained), max(b.top + b.height for b in contained)],
+        ]
         rects = _entity_char_box_line_rects(
-            _SynthCharsBlock(synthesized), text, 0, len(text)
+            _SynthCharsBlock(synthesized, poly), text, 0, len(text)
         )
         if not rects or len(rects) < 2:
             out.append(region)

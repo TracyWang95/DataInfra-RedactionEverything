@@ -708,3 +708,37 @@ def test_ocr_ink_refinement_ignores_long_form_line() -> None:
     assert width < 90
     assert height < 50
 
+
+
+def test_cross_line_split_grows_collapsed_char_band_to_row_height() -> None:
+    # On a tilted phone photo the word engine flattens each line's char boxes to
+    # a near-zero y-band while the line BLOCK keeps its real height. A cross-line
+    # value split per line must take each line's structural row height, not the
+    # collapsed char band, or the crop is a readable sliver.
+    from app.services.vision.ocr_entity_match import split_regions_across_lines
+
+    def line_block(text: str, top: int, band_y: int) -> OCRTextBlock:
+        # real block height 30px; chars collapsed to a 2px band at band_y
+        return OCRTextBlock(
+            text=text,
+            polygon=[[100, top], [400, top], [400, top + 30], [100, top + 30]],
+            confidence=0.95,
+            chars=[
+                {"c": c, "x1": 100 + i * 30, "y1": band_y, "x2": 128 + i * 30, "y2": band_y + 2}
+                for i, c in enumerate(text)
+            ],
+        )
+
+    b1 = line_block("门诊三楼", 100, 114)
+    b2 = line_block("北走廊东侧", 140, 154)
+    region = SensitiveRegion(
+        text="门诊三楼北走廊东侧", entity_type="ADDRESS",
+        left=100, top=100, width=300, height=70, confidence=1.0, source="text_match",
+    )
+
+    out = split_regions_across_lines([region], [b1, b2])
+
+    assert len(out) == 2  # split into the two lines
+    for r in out:
+        # grown to ~row height (30), NOT the 2px collapsed char band
+        assert r.height >= 20, f"sliver crop leaks glyphs: height={r.height}"

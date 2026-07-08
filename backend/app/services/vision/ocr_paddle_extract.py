@@ -114,11 +114,19 @@ def run_paddle_ocr(
     needs_text_precision = adaptive_mode and bool(selected - OCR_VISUAL_ENTITY_TYPES)
 
     vl_disabled = not bool(getattr(settings, "OCR_VL_ENABLED", True))
+    # PP-StructureV3 is the ONLY source of per-char boxes, and those boxes are
+    # what narrows a redaction crop to the entity instead of masking the whole
+    # OCR line. So it must run whenever text precision is needed — even when
+    # visual regions are also requested (selecting a seal/signature set
+    # require_visual_regions without needing OCR-derived visual regions). Skipping
+    # it there left only VL's whole-line, char-box-less blocks, so every text
+    # entity boxed as a full-width slab (phone-photo judgment: 龙继临/和勃 full
+    # line, addresses collapsed flat).
     use_structure_primary = settings.OCR_STRUCTURE_ENABLED and (
         vl_disabled
         or (
             settings.OCR_STRUCTURE_PRIMARY
-            and (not require_visual_regions or needs_ocr_visual_regions)
+            and (not require_visual_regions or needs_ocr_visual_regions or needs_text_precision)
         )
     )
 
