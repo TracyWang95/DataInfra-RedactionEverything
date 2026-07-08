@@ -785,9 +785,20 @@ def _attach_chars(boxes: list[OCRBox], chars: list[dict[str, Any]]) -> None:
     for box in boxes:
         bx1, by1 = box.x, box.y
         bx2, by2 = box.x + box.width, box.y + box.height
+        # Attach a char when its center sits on the box's line (y) and within
+        # one of its OWN widths of the box's x-span. The x tolerance is the
+        # char's own width (self-scaling, not a fixed number), which recovers
+        # the edge-clamped trailing chars of a full-width line: the word engine
+        # clamps chars that run to the right margin onto the box's right edge,
+        # so their centers land just past bx2 and a strict center-inside test
+        # dropped them — leaving a full-width fallback box for a name that is
+        # actually at the line's right end (observed: 将被执行人洪频颢 clamped to
+        # the block edge; the name got the whole 0.96-wide line instead of a
+        # tight box).
         inside = [
             ch for ch in chars
-            if bx1 <= ch["x"] + ch["w"] / 2 <= bx2 and by1 <= ch["y"] + ch["h"] / 2 <= by2
+            if bx1 - ch["w"] <= ch["x"] + ch["w"] / 2 <= bx2 + ch["w"]
+            and by1 <= ch["y"] + ch["h"] / 2 <= by2
         ]
         inside.sort(key=lambda c: c["x"])
         box.chars = inside
@@ -796,6 +807,13 @@ def _attach_chars(boxes: list[OCRBox], chars: list[dict[str, Any]]) -> None:
 # Same-place gate for the red-suppressed supplement, mirroring the backend's
 # duplicate-IoU contract: above it two boxes are the same physical line.
 _SUPPRESSED_SAME_PLACE_IOU = 0.5
+
+
+def _red_suppress_enabled() -> bool:
+    # The red-suppressed supplement (a second word-engine pass over the
+    # seal-red-whitened image) is only worth its cost if it ADDS lines the main
+    # pass missed. Togglable so its contribution can be measured on a corpus.
+    return os.environ.get("OCR_RED_SUPPRESS", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _suppress_red_ink(image: Image.Image) -> Image.Image | None:
@@ -1157,7 +1175,7 @@ async def structure_extract(request: StructureRequest) -> OCRResponse:
             _attach_chars(mapped, chars)
             _tc = time.perf_counter()
             print(f"[OCR-prof] structure={_tb-_ta:.2f}s char={_tc-_tb:.2f}s peer={'y' if char_future else 'n'}", flush=True)
-            suppressed = await asyncio.to_thread(_suppress_red_ink, ocr_image)
+            suppressed = await asyncio.to_thread(_suppress_red_ink, ocr_image) if _red_suppress_enabled() else None
             if suppressed is not None:
                 sup_lines, sup_chars = await asyncio.to_thread(_extract_suppressed_lines, suppressed)
                 added = _merge_suppressed_supplement(mapped, sup_lines, sup_chars)
