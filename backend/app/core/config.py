@@ -248,7 +248,14 @@ class Settings(BaseSettings):
     # misses (page_04 is invisible to it at every zoom). Supersedes the margin
     # refine when on. Does NOT cover black-on-white photocopy seals (no red
     # signal) — that tier needs a trained detector.
-    VISUAL_SEAL_COLOR_CASCADE: bool = True
+    # Default OFF (2026-07-08): seals now come from PaddleOCR-VL-1.6 layout
+    # detection (document-aware, no red-text/banner FPs). The color cascade is a
+    # bare "any red region is a stamp candidate" heuristic that FPs on red
+    # hyperlink names (裁判文书网 洪赪颢 boxed as 公章) and over-grows LA boxes.
+    # Corpus A/B (21 imgs): cascade OFF keeps every real seal (VL-layout/LA) and
+    # only drops a red edge ANNOTATION on one page — net win. Kept as a flag for
+    # faint/photocopy red stamps VL-layout might miss; re-enable per deployment.
+    VISUAL_SEAL_COLOR_CASCADE: bool = False
     # Physical seal arbiter: a 公章 is a sparse ink impression (paper shows
     # through; colored coverage ≤0.18 on real stamps), while a printed
     # masthead/banner/logo is a solid colored fill (≥0.59). Drop official_seal
