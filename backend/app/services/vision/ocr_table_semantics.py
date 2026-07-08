@@ -13,10 +13,8 @@ import logging
 from difflib import SequenceMatcher
 from html.parser import HTMLParser
 
-from app.models.type_mapping import TYPE_CN_TO_ID
 from app.services.ocr_has_vision_service import OCRTextBlock
 from app.services.vision.has_text_payload import (
-    _canonical_image_text_type,
     _compact_text,
 )
 from app.services.vision.ocr_tuning import (
@@ -26,7 +24,6 @@ from app.services.vision.ocr_tuning import (
     _STANDALONE_AMOUNT_MIN_DIGITS,
     _TABLE_CELL_CONFIDENCE_FACTOR,
 )
-from app.services.vision.ocr_visual_lines import _blocks_same_visual_line
 
 logger = logging.getLogger(__name__)
 
@@ -80,157 +77,6 @@ def _is_standalone_amount_ocr_block(text: str) -> bool:
     if digits < _STANDALONE_AMOUNT_MIN_DIGITS or digits > _STANDALONE_AMOUNT_MAX_DIGITS:
         return False
     return bool(_amount_value_signature(compact))
-
-
-# Semantic vocabulary (data, not tuning): field labels whose value IS a
-# document number. Derived from the DOCUMENT_NUMBER cn_terms in TYPE_REGISTRY,
-# the single source of truth for type vocabulary.
-DOCUMENT_NUMBER_FIELD_LABEL_TERMS: tuple[str, ...] = tuple(
-    term for term, type_id in TYPE_CN_TO_ID.items() if type_id == "DOCUMENT_NUMBER"
-)
-
-# Full- and half-width colon accepted as the label/value separator in a form field.
-_FIELD_LABEL_COLON_CHARS = "：:"
-
-
-def _is_document_number_field_label(text: str) -> bool:
-    """Identity test: the text IS a document-number field label.
-
-    A field label is a label phrase ending with a vocabulary term —
-    合同协议号, 运输工具名称及航次号 — optionally with a trailing colon
-    (form separator), which is stripped first. Only the compact label
-    phrase's own suffix is tested — an identity test, not containment:
-    values and running text never match.
-    """
-    compact = _compact_text(text)
-    while compact and compact[-1] in _FIELD_LABEL_COLON_CHARS:
-        compact = compact[:-1]
-    if not compact:
-        return False
-    return any(compact.endswith(term) for term in DOCUMENT_NUMBER_FIELD_LABEL_TERMS)
-
-
-def _split_field_label_value(text: str) -> tuple[str, str] | None:
-    """Split a `标签：值` block at its first colon (full- or half-width)."""
-    indices = [text.find(ch) for ch in _FIELD_LABEL_COLON_CHARS]
-    indices = [index for index in indices if index >= 0]
-    if not indices:
-        return None
-    index = min(indices)
-    return text[:index], text[index + 1:]
-
-
-def _is_document_number_format_text(text: str) -> bool:
-    """Format test: a document number contains at least one digit.
-
-    The form-field counterpart of _is_amount_format_text: when the field next
-    to a document-number label is empty, the spatially nearest block is the
-    next preprinted label (货物存放地点) — pure text with no digits — and must
-    not be recalled as a value.
-    """
-    return any(ch.isdigit() for ch in _compact_text(text))
-
-
-def recall_form_field_document_numbers(ocr_blocks: list[OCRTextBlock]) -> list[dict[str, str]]:
-    """Structural DOCUMENT_NUMBER recall from form-field labels, independent of
-    HaS NER.
-
-    Three label/value layouts, all identity/containment tests on existing
-    geometry (no new tolerances):
-    - one block `标签：值`: the part before the first colon is the field label.
-    - label cell above its value (form grids such as customs declarations):
-      the value's horizontal center lies inside the label cell's own span and
-      the value is the nearest block below (header-box span containment).
-    - label block and value block on the same visual line: the nearest block to
-      the right (existing _blocks_same_visual_line test).
-    Only runs when DOCUMENT_NUMBER is selected (the caller gates on the schema).
-    """
-    prepared: list[tuple[OCRTextBlock, str]] = []
-    for block in ocr_blocks:
-        text = _block_search_text(block)
-        if not _compact_text(text) or text.lstrip().startswith("<table"):
-            continue
-        prepared.append((block, text))
-
-    values: list[str] = []
-
-    for _block, text in prepared:
-        split = _split_field_label_value(text)
-        if split is None:
-            continue
-        label_part, value_part = split
-        if (
-            _is_document_number_field_label(label_part)
-            and _compact_text(value_part)
-            and _is_document_number_format_text(value_part)
-        ):
-            values.append(value_part.strip())
-
-    label_blocks = [
-        (block, text) for block, text in prepared if _is_document_number_field_label(text)
-    ]
-    for label, _label_text in label_blocks:
-        candidates = [
-            (block, text)
-            for block, text in prepared
-            if block is not label and not _is_document_number_field_label(text)
-        ]
-        below = [
-            (block, text)
-            for block, text in candidates
-            if float(block.top) >= float(label.top + label.height)
-            and float(label.left)
-            <= float(block.left) + float(block.width) / 2.0
-            <= float(label.left + label.width)
-        ]
-        if below:
-            # The format test runs on the nearest block only: when the field is
-            # empty, the nearest block is the next preprinted label and the
-            # recall must yield nothing rather than leapfrog to farther text.
-            _value_block, value_text = min(below, key=lambda item: float(item[0].top))
-            if _is_document_number_format_text(value_text):
-                values.append(value_text.strip())
-            continue
-        right = [
-            (block, text)
-            for block, text in candidates
-            if block.left >= label.left + label.width and _blocks_same_visual_line(label, block)
-        ]
-        if right:
-            _value_block, value_text = min(right, key=lambda item: int(item[0].left))
-            if _is_document_number_format_text(value_text):
-                values.append(value_text.strip())
-
-    entities: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for value in values:
-        compact = _compact_text(value)
-        if not compact or compact in seen:
-            continue
-        seen.add(compact)
-        entities.append({"type": "DOCUMENT_NUMBER", "text": value, "source": "form_field_ocr"})
-    return entities
-
-
-def _merge_form_field_document_entities(
-    entities: list[dict[str, str]],
-    recalled: list[dict[str, str]],
-) -> list[dict[str, str]]:
-    """Append form-field document numbers HaS did not already return."""
-    if not recalled:
-        return entities
-    seen = {
-        _compact_text(str(entity.get("text", "")))
-        for entity in entities
-        if _canonical_image_text_type(str(entity.get("type", ""))) == "DOCUMENT_NUMBER"
-    }
-    merged = list(entities)
-    for entity in recalled:
-        compact = _compact_text(entity["text"])
-        if compact and compact not in seen:
-            seen.add(compact)
-            merged.append(dict(entity))
-    return merged
 
 
 def _parse_table_placements(table_html: str) -> list[tuple[str, int, int, int, int]]:

@@ -18,9 +18,7 @@ from app.services.ocr_has_vision_service import OCRTextBlock
 from app.services.pipeline_service import PRESET_OCR_HAS_TYPES
 from app.services.vision.has_text_payload import _build_has_text_type_names
 from app.services.vision.ocr_pipeline import (
-    DOCUMENT_NUMBER_FIELD_LABEL_TERMS,
     match_entities_to_ocr,
-    recall_form_field_document_numbers,
     run_has_text_analysis,
 )
 
@@ -246,82 +244,3 @@ def test_new_atomic_types_send_chinese_labels_to_has() -> None:
 # ---------------------------------------------------------------------------
 # Gap 4: DOCUMENT_NUMBER form-field label recall
 # ---------------------------------------------------------------------------
-
-def test_document_number_vocabulary_from_registry() -> None:
-    for term in ("航次号", "合同协议号", "提运单号", "备案号", "预录入编号", "海关编号"):
-        assert term in DOCUMENT_NUMBER_FIELD_LABEL_TERMS, term
-
-
-def test_form_field_recall_colon_in_block() -> None:
-    blocks = [_block("合同协议号：P020240315", 40, 350)]
-
-    entities = recall_form_field_document_numbers(blocks)
-
-    assert entities == [
-        {"type": "DOCUMENT_NUMBER", "text": "P020240315", "source": "form_field_ocr"}
-    ]
-
-
-def test_form_field_recall_label_above_value() -> None:
-    label = _block("运输工具名称及航次号", 610, 205, width=160, height=17)
-    value = _block("NH973/08APR2024", 612, 224, width=130)
-    unrelated = _block("境内收发货人", 40, 205)
-
-    entities = recall_form_field_document_numbers([label, value, unrelated])
-
-    assert [entity["text"] for entity in entities] == ["NH973/08APR2024"]
-
-
-def test_form_field_recall_label_and_value_on_same_line() -> None:
-    label = _block("提运单号", 40, 100, width=80)
-    value = _block("MAWB75212345678", 140, 100, width=150)
-
-    entities = recall_form_field_document_numbers([label, value])
-
-    assert [entity["text"] for entity in entities] == ["MAWB75212345678"]
-
-
-def test_form_field_recall_ignores_running_text() -> None:
-    blocks = [_block("本合同协议号相关条款按双方约定执行", 40, 100, width=320)]
-
-    assert recall_form_field_document_numbers(blocks) == []
-
-
-def test_form_field_recall_empty_field_recalls_nothing() -> None:
-    # 备案号 field left blank: the nearest block below is the next preprinted
-    # label, which has no digits and must not be recalled as a value.
-    label = _block("备案号", 700, 100, width=60, height=18)
-    next_label = _block("货物存放地点", 700, 140, width=100)
-
-    assert recall_form_field_document_numbers([label, next_label]) == []
-
-
-def test_form_field_recall_gated_by_schema_selection() -> None:
-    # A HaS stub with a recent negative health check makes run_has_text_analysis
-    # skip NER and return only the structural recalls.
-    stub = SimpleNamespace(_health_checked_at=time.monotonic(), _health_ready=False)
-    label = _block("合同协议号", 36, 350, width=74, height=18)
-    value = _block("P020240315", 35, 369, width=83)
-
-    selected = [SimpleNamespace(id="DOCUMENT_NUMBER", name="文书编号")]
-    entities = asyncio.run(run_has_text_analysis([label, value], stub, selected))
-    assert [entity["text"] for entity in entities] == ["P020240315"]
-    assert entities[0]["type"] == "DOCUMENT_NUMBER"
-
-    unselected = [SimpleNamespace(id="PERSON", name="姓名")]
-    assert asyncio.run(run_has_text_analysis([label, value], stub, unselected)) == []
-
-
-def test_form_field_recall_value_matches_back_to_value_block() -> None:
-    label = _block("合同协议号", 36, 350, width=74, height=18)
-    value = _block("P020240315", 35, 369, width=83)
-
-    regions = match_entities_to_ocr(
-        [label, value],
-        recall_form_field_document_numbers([label, value]),
-    )
-
-    assert len(regions) == 1
-    assert regions[0].entity_type == "DOCUMENT_NUMBER"
-    assert regions[0].source == "form_field_ocr"
-    assert regions[0].top == 369
