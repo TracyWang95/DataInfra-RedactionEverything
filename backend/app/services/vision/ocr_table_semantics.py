@@ -586,6 +586,15 @@ def _block_search_text(block: OCRTextBlock) -> str:
             None, compact_block, compact_chars, autojunk=False
         ).get_matching_blocks()
     )
-    if corresponding_glyphs == len(compact_chars):
+    # Most char glyphs align in order with the label -> SAME content, the char
+    # recognizer merely read a few glyphs differently (rare-char variance:
+    # label 洪棘颢 vs char boxes 洪棘题 / a dropped 颢). HaS matched the LABEL,
+    # so keep it; switching to the divergent char text drops the entity
+    # entirely (the name never gets a box). Only a WHOLESALE mismatch — the
+    # duplicated-box pathology, where the chars spell UNRELATED content and
+    # overlap is near zero — falls back to the char text. The two regimes sit
+    # far apart (same-content overlap ~1.0 vs pathology ~0), so this majority
+    # split is robust, not a tuned cut.
+    if corresponding_glyphs >= len(compact_chars) * 0.5:
         return block_text
     return chars_text
