@@ -778,6 +778,52 @@ def _extract_char_boxes(image: Image.Image) -> list[dict[str, Any]]:
     return chars
 
 
+def _reocr_wide_block_chars(mapped: list[OCRBox], ocr_image: Image.Image) -> int:
+    """Re-OCR char boxes for wide, long line blocks whose full-page word pass
+    misplaces trailing chars.
+
+    The det model drifts / clamps char boxes on full-width lines: on a
+    judgement body line "2023" was boxed at the 5月 position (whole line shifted
+    right) and the tail 洪频颢 was clamped onto the right edge — so an entity's
+    char-box crop landed on the wrong glyphs and the value got the whole line or
+    a shifted box. Re-running the word engine on the ISOLATED line crop (not
+    downscaled or competing with the rest of the page) recovers correct
+    positions. Scoped to wide (>0.7 page width) AND long (>=30 non-space glyph)
+    lines — the only case that drifts; short blocks are untouched (zero cost).
+    """
+    engine = get_word_engine()
+    if engine is None:
+        return 0
+    width, height = ocr_image.size
+    fixed = 0
+    for box in mapped:
+        if box.width < 0.7 or sum(1 for c in (box.text or "") if not c.isspace()) < 30:
+            continue
+        pad = max(2, int(0.004 * width))
+        x1 = max(0, int(box.x * width) - pad)
+        y1 = max(0, int(box.y * height) - pad)
+        x2 = min(width, int((box.x + box.width) * width) + pad)
+        y2 = min(height, int((box.y + box.height) * height) + pad)
+        if x2 - x1 < 4 or y2 - y1 < 4:
+            continue
+        crop_chars = _extract_char_boxes(ocr_image.crop((x1, y1, x2, y2)))
+        if not crop_chars:
+            continue
+        crop_w, crop_h = x2 - x1, y2 - y1
+        box.chars = [
+            {
+                "c": ch["c"],
+                "x": (x1 + ch["x"] * crop_w) / width,
+                "y": (y1 + ch["y"] * crop_h) / height,
+                "w": ch["w"] * crop_w / width,
+                "h": ch["h"] * crop_h / height,
+            }
+            for ch in crop_chars
+        ]
+        fixed += 1
+    return fixed
+
+
 def _attach_chars(boxes: list[OCRBox], chars: list[dict[str, Any]]) -> None:
     """Attach to each line box the char boxes whose center falls inside it,
     ordered left-to-right."""
@@ -1025,6 +1071,7 @@ async def structure_extract(request: StructureRequest) -> OCRResponse:
             else:
                 chars = await asyncio.to_thread(_extract_char_boxes, ocr_image)
             _attach_chars(mapped, chars)
+            await asyncio.to_thread(_reocr_wide_block_chars, mapped, ocr_image)
             _tc = time.perf_counter()
             print(f"[OCR-prof] structure={_tb-_ta:.2f}s char={_tc-_tb:.2f}s peer={'y' if char_future else 'n'}", flush=True)
             _drop_uncorroborated_overlaps(mapped)
