@@ -449,7 +449,13 @@ def _entity_char_box_line_rects(
         previous_x1 = x1
     if current is not None:
         rects.append(current)
-    rects = [r for r in rects if r[2] > r[0] and r[3] > r[1]]
+    # Width must be real (x is evidential). Height is NOT filtered here: on
+    # tilted photos the word engine collapses a line's char boxes to a
+    # zero-height y-band, and that rect is grown to its structural row height
+    # just below. Filtering zero-height here would drop the whole crop before
+    # the grow runs and fall back to masking the full block (the court-judgment
+    # photo's 被告付有才 line boxed as a full-width slab).
+    rects = [r for r in rects if r[2] > r[0]]
     if not rects:
         return None
     # The word engine's char boxes on tilted photos collapse vertically:
@@ -474,7 +480,10 @@ def _entity_char_box_line_rects(
                 y2g = max(y2r, int(cy + row_h / 2))
                 grown.append((x1r, max(block_top, y1g), x2r, min(block_bottom, y2g)))
             rects = [r for r in grown if r[2] > r[0] and r[3] > r[1]]
-    return rects or None
+    # Final guard: any rect the grow could not give real height (missing
+    # polygon) is dropped so the caller safely masks the whole block rather
+    # than emit a zero-height crop.
+    return [r for r in rects if r[3] > r[1]] or None
 
 
 def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
