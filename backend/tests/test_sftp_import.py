@@ -10,8 +10,8 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.config import settings
-from app.services import sftp_import
 from app.services import file_management_service as fms
+from app.services import sftp_import
 
 
 class FakeSftpClient:

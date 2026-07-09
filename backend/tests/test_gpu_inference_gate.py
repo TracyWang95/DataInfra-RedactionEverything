@@ -8,8 +8,8 @@ SERIALIZE_SHARED_GPU_MODELS=False 完全旁路。
 
 import asyncio
 
-from app.core.config import settings
 from app.core import gpu_inference_gate as gate
+from app.core.config import settings
 
 
 async def _measure_peak(workers: int, hold_sec: float = 0.02) -> int:

@@ -16,9 +16,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from app.core import auth
+from app.core import auth, license_pubkey
 from app.core import license as license_mod
-from app.core import license_pubkey
 from app.core.config import settings
 from app.core.license import canonical_payload_bytes
 from app.main import app

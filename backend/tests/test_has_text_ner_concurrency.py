@@ -11,9 +11,9 @@ import time
 
 from app.core.config import settings
 from app.models.schemas import Entity
+from app.services.hybrid_ner_service import HybridNERService
 from app.services.ocr_has_vision_service import OCRTextBlock
 from app.services.vision.ocr_pipeline import run_has_text_analysis
-from app.services.hybrid_ner_service import HybridNERService
 
 
 class _CountingHaSClient:

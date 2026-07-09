@@ -8,7 +8,6 @@
 """
 
 import csv
-import io
 
 import pytest
 
@@ -96,7 +95,7 @@ def test_write_csv_parts_splits_and_is_excel_friendly(tmp_path):
     assert parts[0]["name"] == "files-part001.csv"
     raw = (tmp_path / parts[0]["name"]).read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf")  # utf-8-sig BOM，Excel 直开
-    with io.open(tmp_path / parts[2]["name"], encoding="utf-8-sig") as f:
+    with open(tmp_path / parts[2]["name"], encoding="utf-8-sig") as f:
         got = list(csv.DictReader(f))
     assert len(got) == 50 and got[0]["a"] == "200"
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """端到端吞吐基准：上传语料 → 建识别 job → 提交 → 轮询完成 → 汇总性能数据。
 
 用法：
@@ -17,7 +16,6 @@ import concurrent.futures
 import json
 import mimetypes
 import os
-import statistics
 import time
 
 import httpx

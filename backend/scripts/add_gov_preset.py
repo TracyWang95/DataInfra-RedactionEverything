@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Add the government/xinchuang industry preset (Phase 2, 4th vertical).
 
 Aggregates (dataDomains/genericTargets/linkageGroups) are DERIVED from the

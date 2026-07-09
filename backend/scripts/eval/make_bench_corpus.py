@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """生成吞吐基准语料（固定内容，可复现）：
 
   20 个扫描风格 PDF（页面渲染成图片再嵌入，走视觉链路，3/5 页交替）
@@ -12,7 +11,6 @@
 """
 
 import argparse
-import io
 import os
 
 import fitz
@@ -102,7 +100,7 @@ def main() -> None:
             f.write(page_image_bytes(200 + i))
     for i in range(10):
         body = "\n".join("\n".join(doc_lines(300 + i * 3 + k)) for k in range(3))
-        with io.open(os.path.join(args.out, f"text_{i:02d}.txt"), "w", encoding="utf-8") as f:
+        with open(os.path.join(args.out, f"text_{i:02d}.txt"), "w", encoding="utf-8") as f:
             f.write(body)
 
     total = len(os.listdir(args.out))

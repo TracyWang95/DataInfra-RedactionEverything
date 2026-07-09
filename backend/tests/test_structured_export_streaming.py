@@ -20,7 +20,7 @@ from app.services.structured_store import StructuredStore
 
 
 def _write_rows_csv(path: Path, count: int) -> None:
-    with io.open(path, "w", encoding="utf-8", newline="") as fh:
+    with open(path, "w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(["customer_name", "mobile_phone", "note"])
         for i in range(count):
@@ -111,7 +111,7 @@ def test_csv_streaming_row_count_and_header(dataset_env):
     store, register = dataset_env
     dataset_id = register(250, name="plain.csv")
     export = _export(store, dataset_id, "csv")
-    with io.open(export["file_path"], encoding="utf-8-sig") as fh:
+    with open(export["file_path"], encoding="utf-8-sig") as fh:
         got = list(csv.DictReader(fh))
     assert len(got) == 250
     assert set(got[0].keys()) == {"customer_name", "mobile_phone", "note"}

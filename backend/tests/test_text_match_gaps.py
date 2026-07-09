@@ -6,8 +6,6 @@
 3. new atomic types OCCUPATION / POSTAL_CODE / CERT_NO / NATIVE_PLACE;
 4. DOCUMENT_NUMBER form-field label recall (标签：值 / label-cell layouts).
 """
-import asyncio
-import time
 from types import SimpleNamespace
 
 from app.models.type_mapping import (
@@ -19,7 +17,6 @@ from app.services.pipeline_service import PRESET_OCR_HAS_TYPES
 from app.services.vision.has_text_payload import _build_has_text_type_names
 from app.services.vision.ocr_pipeline import (
     match_entities_to_ocr,
-    run_has_text_analysis,
 )
 
 
