@@ -1,4 +1,4 @@
-"""LB least-inflight 调度（deploy/host-scripts/lb_proxy.py）。
+"""LB least-inflight 调度（deploy/dual-5090/lb_proxy.py）。
 
 lb_proxy 是部署产物不在 app 包里，按文件路径 import；只测 _pick 的调度语义。
 """
@@ -8,7 +8,7 @@ import importlib.util
 import os
 from pathlib import Path
 
-LB_PATH = Path(__file__).resolve().parents[2] / "deploy" / "host-scripts" / "lb_proxy.py"
+LB_PATH = Path(__file__).resolve().parents[2] / "deploy" / "dual-5090" / "lb_proxy.py"
 
 
 def _load_lb(monkeypatch):
