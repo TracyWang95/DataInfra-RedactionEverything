@@ -406,24 +406,26 @@ def _entity_span_char_boxes(
 
 
 
+# CJK body text is typeset at a line height of ~1.3x the glyph em (the standard
+# full-width line-height ratio). On a phone photo EVERY vertical char-box signal
+# is destroyed — the y-band collapses AND the centers pile into one line so the
+# height, the position and even the tilt are all unrecoverable; only the x-extent
+# survives. So the em (glyph width) is the one trustworthy size, and this ratio is
+# the single unavoidable constant that turns it into the row height that covers
+# the ink with its leading (the bare em alone leaves the feet poking out).
+_CJK_LINE_HEIGHT_RATIO = 1.3
+
+
 def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
-    """Uniform text-row height for the whole page, from two page-level bounds.
+    """Uniform text-row height for the whole page: the CJK glyph em scaled to the
+    typeset line height.
 
-    LOWER bound — the glyph em: median WIDTH of single CJK glyph boxes. The word
-    engine's x-extent stays correct when a phone-photo line's y-band collapses
-    and a CJK cell is ~square, so it is the bare ink em (narrow punctuation, thin
-    digits and multi-char token boxes are excluded so they cannot skew it). A
-    crop this tall leaves the taller characters' feet poking out.
-
-    UPPER bound — the line box: median HEIGHT of the page's horizontal text
-    blocks (glyph + leading). Per block this is tilt-inflated and, for a
-    multi-line block, the line PITCH not the glyph height — but the PAGE median
-    is robust to both.
-
-    The row that covers the ink with its natural leading is their midpoint. Being
-    one page-level value, it is immune to any single block's loose / tilted /
-    multi-line polygon (which is what made the wrapped 云A856Z8号 tower). Falls
-    back to whichever bound exists.
+    The em is the median WIDTH of single CJK glyph boxes — the word engine's
+    x-extent is the only char-box dimension that survives a phone photo (the whole
+    y-band collapses). Narrow punctuation, thin digits and multi-char token boxes
+    are excluded so they cannot skew it. One page-level value → every box is the
+    same height, immune to any single block's loose / tilted / multi-line polygon,
+    which is what made the wrapped 云A856Z8号 and 日 tower while 小空山7号 read flat.
     """
     em_widths: list[float] = []
     for block in blocks:
@@ -434,17 +436,10 @@ def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
             x1, x2 = char_box.get("x1"), char_box.get("x2")
             if x1 is not None and x2 is not None and x2 > x1:
                 em_widths.append(float(x2 - x1))
-    line_boxes = [
-        float(block.height)
-        for block in blocks
-        if block.height > 0 and block.width > block.height
-        and not str(block.text or "").lstrip().startswith("<table")
-    ]
-    em = sorted(em_widths)[len(em_widths) // 2] if em_widths else None
-    line = sorted(line_boxes)[len(line_boxes) // 2] if line_boxes else None
-    if em is not None and line is not None:
-        return (em + line) / 2
-    return em if em is not None else line
+    if not em_widths:
+        return None
+    em_widths.sort()
+    return em_widths[len(em_widths) // 2] * _CJK_LINE_HEIGHT_RATIO
 
 
 def _entity_char_box_line_rects(
@@ -515,42 +510,28 @@ def _entity_char_box_line_rects(
         block_top, block_bottom = min(ys), max(ys)
         if line_height is not None and line_height > 0:
             # Document line grid: one uniform text-row height for every box — the
-            # document's own median char WIDTH (the glyph em; the word engine's
-            # x-extent stays correct when the y-band collapses and CJK glyphs are
-            # ~square). A single block's polygon cannot state its row height
-            # reliably — it is loose, tilt-inflated, or (multi-line) the line
-            # PITCH not the glyph height — which is exactly why the wrapped
-            # 云A856Z8号 towered while 小空山7号 read flat. One document-level row
-            # height makes them consistent. Clamped to the block, never below the
-            # chars' own y-band.
+            # page's CJK glyph em cell (adjacent-glyph advance, see
+            # _document_line_height). A single block's polygon cannot state its row
+            # height reliably — loose, tilt-inflated, or (multi-line) the line
+            # PITCH not the glyph height — which is why the wrapped 云A856Z8号 and
+            # 日 towered while 小空山7号 read flat. Clamped to the block below.
             row_h = min(float(block_bottom - block_top), float(line_height))
         else:
-            # Fallback when no document row height is threaded in (e.g. unit
-            # tests): block span / the block's OWN text-line count (reading-order
-            # resets), reconciled toward the median char width.
-            block_lines = 1
-            previous_char_x: float | None = None
-            char_widths: list[float] = []
-            for char_box in (getattr(block, "chars", None) or []):
-                cx = char_box.get("x1")
-                if cx is None:
-                    continue
-                if previous_char_x is not None and cx < previous_char_x:
-                    block_lines += 1
-                previous_char_x = cx
-                cx2 = char_box.get("x2")
-                if cx2 is not None and cx2 > cx:
-                    char_widths.append(float(cx2 - cx))
-            row_h = (block_bottom - block_top) / max(len(rects), block_lines)
-            if char_widths:
-                char_widths.sort()
-                median_char_width = char_widths[len(char_widths) // 2]
-                if median_char_width < row_h:
-                    row_h = (row_h + median_char_width) / 2
+            # No page grid (degenerate page with no adjacent CJK pair — never the
+            # real pipeline, which always threads one in): full block polygon
+            # height, grown but never trimmed, so coverage is never cut on a guess.
+            row_h = float(block_bottom - block_top)
         if row_h > 0:
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
                 cy = (y1r + y2r) / 2
+                # Grow the (often y-collapsed) char band up to the row height about
+                # its center, but never shrink below the chars' own y-extent: a
+                # real photo's char boxes collapse well under the em cell so they
+                # all reach the uniform grid height, while a block with genuine
+                # full-height char boxes keeps them. The tall boxes were never
+                # from char heights (those collapse) — they came from an inflated
+                # row height, now the CJK em cell.
                 y1g = min(y1r, int(cy - row_h / 2))
                 y2g = max(y2r, int(cy + row_h / 2))
                 grown.append((x1r, max(block_top, y1g), x2r, min(block_bottom, y2g)))
