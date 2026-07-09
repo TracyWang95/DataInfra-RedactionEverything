@@ -471,7 +471,21 @@ def _entity_char_box_line_rects(
     ys = [int(pt[1]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
     if ys:
         block_top, block_bottom = min(ys), max(ys)
-        row_h = (block_bottom - block_top) / len(rects)
+        # Row height = block span / the BLOCK's own text-line count (reading-order
+        # resets across its full char list), not the entity's line count. A
+        # one-line value inside a multi-line block (a re-OCR'd charless VL
+        # paragraph) must grow to ONE row, not the whole paragraph — dividing by
+        # len(rects)=1 there stretched 龙继临 over the entire block.
+        block_lines = 1
+        previous_char_x: float | None = None
+        for char_box in (getattr(block, "chars", None) or []):
+            cx = char_box.get("x1")
+            if cx is None:
+                continue
+            if previous_char_x is not None and cx < previous_char_x:
+                block_lines += 1
+            previous_char_x = cx
+        row_h = (block_bottom - block_top) / max(len(rects), block_lines)
         if row_h > 0:
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
@@ -963,9 +977,16 @@ def match_entities_to_ocr(
                             max(r[2] for r in line_rects),
                         )
                         if len(line_rects) == 1:
-                            # Single line: x narrows to the proven chars; y/height
-                            # stay the block's full line height (705318c contract).
-                            rl, rw = crop_span[0], crop_span[1] - crop_span[0]
+                            # Single line: crop to the proven line rect — x from the
+                            # chars, y/height its grown ROW height. The row-height
+                            # grow already yields one text row even when the char
+                            # y-band collapsed, so a one-line value in a multi-line
+                            # block (a re-OCR'd charless paragraph) no longer inherits
+                            # the whole block's vertical extent. For a genuine
+                            # single-line block the row IS the block, so the old
+                            # full-height contract is unchanged.
+                            lx1, ly1, lx2, ly2 = line_rects[0]
+                            rl, rt, rw, rh = lx1, ly1, lx2 - lx1, ly2 - ly1
                     else:
                         line_rects = _charsless_block_line_rects(
                             block, block_text, visual_occurrence_start, visual_text, prepared_blocks

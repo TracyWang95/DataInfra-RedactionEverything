@@ -164,6 +164,7 @@ def run_paddle_ocr(
                 merged_blocks = _merge_ocr_blocks(
                     primary_structure_blocks, vl_blocks, prefer_extra_text=True
                 )
+                merged_blocks = _attach_chars_to_charless_blocks(merged_blocks, image, ocr_service)
                 logger.info(
                     "PP-StructureV3 primary OCR kept %d blocks; PaddleOCR-VL supplement merged %d VL blocks (%d -> %d)",
                     len(primary_structure_blocks),
@@ -189,6 +190,7 @@ def run_paddle_ocr(
                 merged_blocks = _merge_ocr_blocks(
                     primary_structure_blocks, vl_blocks, prefer_extra_text=True
                 )
+                merged_blocks = _attach_chars_to_charless_blocks(merged_blocks, image, ocr_service)
                 logger.info(
                     "PP-StructureV3 primary OCR found %d blocks but no visual regions; "
                     "PaddleOCR-VL supplied %d visual regions, merged %d VL blocks (%d -> %d)",
@@ -371,6 +373,50 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
             chars=char_boxes,
         ))
     return blocks, visual_regions
+
+
+def _attach_chars_to_charless_blocks(
+    blocks: list[OCRTextBlock],
+    image: Image.Image,
+    ocr_service: Any,
+) -> list[OCRTextBlock]:
+    """Recover per-char boxes for whole-line blocks that carry none.
+
+    A charless block is a PaddleOCR-VL paragraph for a line PP-StructureV3
+    skipped (faint phone-photo lines): with no char boxes, every text entity on
+    it is masked as a full-width slab. Its crop, re-OCR'd on its own, gives the
+    structure engine a clean single line to box per character; the recovered
+    boxes are mapped back to full-image pixels. Only charless blocks are touched
+    — a fully structure-covered page pays nothing (in the supplement path a
+    handful of lines at most). Recovery is best-effort AND text-preserving: the
+    re-OCR only contributes char boxes, never the block's authoritative text, so
+    a crop misread cannot drop the entity; an empty/failed re-OCR leaves the
+    block as a safe whole-block mask.
+    """
+    if not ocr_service or not hasattr(ocr_service, "extract_structure_boxes"):
+        return blocks
+    width, height = image.size
+    for block in blocks:
+        if getattr(block, "chars", None):
+            continue
+        left, top = max(0, int(block.left)), max(0, int(block.top))
+        right = min(width, int(block.left + block.width))
+        bottom = min(height, int(block.top + block.height))
+        if right - left < 4 or bottom - top < 4:
+            continue
+        try:
+            crop_blocks, _ = _run_structure_service_with_visuals(image.crop((left, top, right, bottom)), ocr_service)
+        except Exception as exc:
+            logger.info("charless-block re-OCR failed: %s", exc)
+            continue
+        recovered = [
+            {"c": ch["c"], "x1": left + ch["x1"], "y1": top + ch["y1"], "x2": left + ch["x2"], "y2": top + ch["y2"]}
+            for cb in crop_blocks
+            for ch in (getattr(cb, "chars", None) or [])
+        ]
+        if recovered:
+            block.chars = recovered
+    return blocks
 
 
 def _run_structure_service_with_visuals(
