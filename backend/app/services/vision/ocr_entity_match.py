@@ -406,11 +406,34 @@ def _entity_span_char_boxes(
 
 
 
+def _document_char_em(blocks: list[OCRTextBlock]) -> float | None:
+    """Median char-box WIDTH across the whole page — the document's glyph em.
+
+    The word engine's x-extent stays correct when a phone-photo line's y-band
+    collapses, and CJK glyphs are ~square, so the median width is the true glyph
+    height. One page-level value is the uniform text-row height every crop grows
+    to: no single block's loose / tilted / multi-line polygon can over- or
+    under-state its own row height. Multi-char token boxes are a small minority,
+    so the median is unaffected.
+    """
+    widths: list[float] = []
+    for block in blocks:
+        for char_box in (getattr(block, "chars", None) or []):
+            x1, x2 = char_box.get("x1"), char_box.get("x2")
+            if x1 is not None and x2 is not None and x2 > x1:
+                widths.append(float(x2 - x1))
+    if not widths:
+        return None
+    widths.sort()
+    return widths[len(widths) // 2]
+
+
 def _entity_char_box_line_rects(
     block: OCRTextBlock,
     search_text: str,
     span_start: int,
     span_end: int,
+    line_height: float | None = None,
 ) -> list[tuple[int, int, int, int]] | None:
     """Per-text-line rects of the proven char boxes.
 
@@ -471,39 +494,40 @@ def _entity_char_box_line_rects(
     ys = [int(pt[1]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
     if ys:
         block_top, block_bottom = min(ys), max(ys)
-        # Row height = block span / the BLOCK's own text-line count (reading-order
-        # resets across its full char list), not the entity's line count. A
-        # one-line value inside a multi-line block (a re-OCR'd charless VL
-        # paragraph) must grow to ONE row, not the whole paragraph — dividing by
-        # len(rects)=1 there stretched 龙继临 over the entire block.
-        block_lines = 1
-        previous_char_x: float | None = None
-        char_widths: list[float] = []
-        for char_box in (getattr(block, "chars", None) or []):
-            cx = char_box.get("x1")
-            if cx is None:
-                continue
-            if previous_char_x is not None and cx < previous_char_x:
-                block_lines += 1
-            previous_char_x = cx
-            cx2 = char_box.get("x2")
-            if cx2 is not None and cx2 > cx:
-                char_widths.append(float(cx2 - cx))
-        row_h = (block_bottom - block_top) / max(len(rects), block_lines)
-        # Reconcile two structural bounds on the row height. The block polygon /
-        # line count is an UPPER bound: a tilted phone-photo line's axis-aligned
-        # bbox = glyph height + line leading + tilt drift, so it towers over the
-        # text. The median char WIDTH is a LOWER bound: the word engine's x-extent
-        # stays correct when the y-band collapses and CJK glyphs are ~square, so
-        # it is the bare glyph em with no leading (a box hugging it reads as flat).
-        # The row that covers the ink with natural leading sits between them —
-        # take their midpoint. Grow stays clamped to the block polygon and never
-        # shrinks below the chars' own y-band.
-        if char_widths:
-            char_widths.sort()
-            median_char_width = char_widths[len(char_widths) // 2]
-            if median_char_width < row_h:
-                row_h = (row_h + median_char_width) / 2
+        if line_height is not None and line_height > 0:
+            # Document line grid: one uniform text-row height for every box — the
+            # document's own median char WIDTH (the glyph em; the word engine's
+            # x-extent stays correct when the y-band collapses and CJK glyphs are
+            # ~square). A single block's polygon cannot state its row height
+            # reliably — it is loose, tilt-inflated, or (multi-line) the line
+            # PITCH not the glyph height — which is exactly why the wrapped
+            # 云A856Z8号 towered while 小空山7号 read flat. One document-level row
+            # height makes them consistent. Clamped to the block, never below the
+            # chars' own y-band.
+            row_h = min(float(block_bottom - block_top), float(line_height))
+        else:
+            # Fallback when no document row height is threaded in (e.g. unit
+            # tests): block span / the block's OWN text-line count (reading-order
+            # resets), reconciled toward the median char width.
+            block_lines = 1
+            previous_char_x: float | None = None
+            char_widths: list[float] = []
+            for char_box in (getattr(block, "chars", None) or []):
+                cx = char_box.get("x1")
+                if cx is None:
+                    continue
+                if previous_char_x is not None and cx < previous_char_x:
+                    block_lines += 1
+                previous_char_x = cx
+                cx2 = char_box.get("x2")
+                if cx2 is not None and cx2 > cx:
+                    char_widths.append(float(cx2 - cx))
+            row_h = (block_bottom - block_top) / max(len(rects), block_lines)
+            if char_widths:
+                char_widths.sort()
+                median_char_width = char_widths[len(char_widths) // 2]
+                if median_char_width < row_h:
+                    row_h = (row_h + median_char_width) / 2
         if row_h > 0:
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
@@ -613,6 +637,7 @@ def _charsless_block_line_rects(
     occurrence_start: int,
     occurrence_text: str,
     prepared_blocks: list,
+    line_height: float | None = None,
 ) -> list[tuple[int, int, int, int]] | None:
     """Per-line rects for a value matched on a chars-less merged block.
 
@@ -655,6 +680,7 @@ def _charsless_block_line_rects(
         block_text,
         occurrence_start,
         occurrence_start + len(occurrence_text),
+        line_height,
     )
 
 
@@ -675,6 +701,7 @@ def split_regions_across_lines(
     line_blocks = [b for b in ocr_blocks if getattr(b, "chars", None)]
     if not line_blocks:
         return regions
+    document_line_height = _document_char_em(ocr_blocks)
     out: list[SensitiveRegion] = []
     for region in regions:
         rl, rt = region.left, region.top
@@ -701,7 +728,7 @@ def split_regions_across_lines(
             [min(b.left for b in contained), max(b.top + b.height for b in contained)],
         ]
         rects = _entity_char_box_line_rects(
-            _SynthCharsBlock(synthesized, poly), text, 0, len(text)
+            _SynthCharsBlock(synthesized, poly), text, 0, len(text), document_line_height
         )
         if not rects or len(rects) < 2:
             out.append(region)
@@ -792,6 +819,7 @@ def _match_cross_block_entity(
     entity_text: str,
     entity_type: str,
     prepared_blocks: list[tuple[OCRTextBlock, str, bool]],
+    line_height: float | None = None,
 ) -> list[SensitiveRegion]:
     """Anchor a newline-carrying entity value across adjacent OCR blocks.
 
@@ -835,7 +863,7 @@ def _match_cross_block_entity(
                 start = max(0, block_text.find(segment))
             rl, rt, rw, rh = block.left, block.top, block.width, block.height
             line_rects = _entity_char_box_line_rects(
-                block, block_text, start, start + len(segment)
+                block, block_text, start, start + len(segment), line_height
             )
             if line_rects is not None and len(line_rects) == 1:
                 lx1, _ly1, lx2, _ly2 = line_rects[0]
@@ -889,6 +917,7 @@ def match_entities_to_ocr(
         (block, _block_search_text(block), id(block) in table_virtual_block_ids)
         for block in ordered_blocks
     ]
+    document_line_height = _document_char_em([block for block, _text, _is_tv in prepared_blocks])
 
     standalone_amount_signatures = {
         signature
@@ -921,7 +950,9 @@ def match_entities_to_ocr(
             # date backstop scans the joined text the same way). No single
             # block contains that string — anchor it as consecutive
             # suffix/whole/prefix runs over adjacent blocks instead.
-            cross_regions = _match_cross_block_entity(entity_text, normalized_type, prepared_blocks)
+            cross_regions = _match_cross_block_entity(
+                entity_text, normalized_type, prepared_blocks, document_line_height
+            )
             if cross_regions:
                 regions.extend(cross_regions)
                 continue
@@ -987,6 +1018,7 @@ def match_entities_to_ocr(
                         block_text,
                         visual_occurrence_start,
                         visual_occurrence_start + len(visual_text),
+                        document_line_height,
                     )
                     crop_span = None
                     if line_rects is not None:
@@ -1007,7 +1039,7 @@ def match_entities_to_ocr(
                             rl, rt, rw, rh = lx1, ly1, lx2 - lx1, ly2 - ly1
                     else:
                         line_rects = _charsless_block_line_rects(
-                            block, block_text, visual_occurrence_start, visual_text, prepared_blocks
+                            block, block_text, visual_occurrence_start, visual_text, prepared_blocks, document_line_height
                         )
                         if line_rects is not None:
                             crop_span = (
