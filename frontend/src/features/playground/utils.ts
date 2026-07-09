@@ -47,15 +47,6 @@ export function getModePreview(mode: string, sampleEntity?: Entity) {
   }
 }
 
-export async function authBlobUrl(url: string, mime?: string): Promise<string> {
-  const res = await authFetch(url);
-  if (!res.ok) {
-    throw new Error(`Failed to load file: ${res.status}`);
-  }
-  const buf = await res.arrayBuffer();
-  const blob = mime ? new Blob([buf], { type: mime }) : new Blob([buf]);
-  return URL.createObjectURL(blob);
-}
 
 export const VISION_FETCH_TIMEOUT_MS = VISION_TIMEOUT;
 

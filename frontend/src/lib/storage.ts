@@ -48,7 +48,3 @@ export function removeStorageItem(key: string): void {
     // Silently fail
   }
 }
-
-export function removeScopedStorageItem(key: string, ownerId?: string | null): void {
-  removeStorageItem(scopedStorageKey(key, ownerId));
-}

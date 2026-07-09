@@ -6,10 +6,8 @@ import {
   Clock,
   ClipboardCheck,
   Home,
-  ListChecks,
   Settings,
   ServerCog,
-  Type,
 } from 'lucide-react';
 
 export {
@@ -18,8 +16,6 @@ export {
   Files as BatchIcon,
   Clock as HistoryIcon,
   ClipboardCheck as JobsCenterIcon,
-  ListChecks as ListIcon,
   Settings as RulesIcon,
   ServerCog as ModelIcon,
-  Type as TextModelNavIcon,
 };

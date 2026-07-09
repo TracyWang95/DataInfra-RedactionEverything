@@ -9,7 +9,6 @@ export interface ServiceInfo {
   detail?: ServiceDetail | null;
 }
 
-export type ServiceStatus = ServiceInfo['status'];
 export type ServiceRuntimeMode = 'gpu' | 'cpu' | 'unknown';
 
 export interface ServiceDetail {

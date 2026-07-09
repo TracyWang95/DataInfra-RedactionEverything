@@ -12,12 +12,6 @@ export const PAGE_SIZE_OPTIONS = [10, 20] as const;
 
 export type { SourceTab } from './use-history-data';
 export type { DateFilter, FileTypeFilter, StatusFilter } from './use-history-filters';
-export {
-  blobUrlFromFileDownload,
-  isBinaryPreviewRow,
-  previewMimeForRow,
-} from './use-history-compare';
-export type { HistoryPreviewItem } from './use-history-compare';
 
 export type HistoryGroup =
   | { kind: 'standalone'; row: FileListItem }

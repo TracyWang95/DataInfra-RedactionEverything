@@ -607,20 +607,6 @@ export function deleteJobItem(
   return del(`/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}`);
 }
 
-export function approveItemReview(jobId: string, itemId: string): Promise<JobItemRow> {
-  return post<JobItemRow>(
-    `/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/review/approve`,
-    {},
-  );
-}
-
-export function rejectItemReview(jobId: string, itemId: string): Promise<JobItemRow> {
-  return post<JobItemRow>(
-    `/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/review/reject`,
-    {},
-  );
-}
-
 export function getItemReviewDraft(jobId: string, itemId: string): Promise<JobItemReviewDraft> {
   return get<JobItemReviewDraft>(
     `/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/review-draft`,

@@ -204,19 +204,6 @@ function fixDraftEmptyBatchWorkbenchLink(input: {
   };
 }
 
-export function coerceDraftEmptyBatchPrimaryNav(input: {
-  jobId: string;
-  status: string;
-  jobType: JobTypeForNav;
-  itemCount: number;
-  jobConfig?: Record<string, unknown> | null;
-  navHints?: JobNavHints | null;
-  nav: PrimaryNavAction;
-  labels?: JobPrimaryNavigationLabels;
-}): PrimaryNavAction {
-  return fixDraftEmptyBatchWorkbenchLink(input);
-}
-
 export function resolveJobPrimaryNavigation(input: {
   jobId: string;
   status: string;

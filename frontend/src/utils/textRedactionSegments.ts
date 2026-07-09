@@ -36,45 +36,6 @@ export function countTextMapOccurrences(text: string, map: Record<string, string
   return buildTextSegments(text, map).reduce((sum, segment) => sum + (segment.isMatch ? 1 : 0), 0);
 }
 
-export function countEntityTextOccurrences(text: string, entities: EntityCoverageSource[]): number {
-  const coverageMap = buildEntityCoverageMap(entities);
-  const previewMap: Record<string, string> = {};
-  for (const key of coverageMap.keys()) {
-    previewMap[key] = key;
-  }
-  return countTextMapOccurrences(text, previewMap);
-}
-
-export function mergePreviewMapWithDocumentSlices(
-  content: string,
-  entities: Array<{
-    text: string;
-    start: number;
-    end: number;
-    selected: boolean;
-  }>,
-  apiMap: Record<string, string>,
-): Record<string, string> {
-  const out = { ...apiMap };
-  if (!content) return out;
-  for (const e of entities) {
-    if (
-      typeof e.start !== 'number' ||
-      typeof e.end !== 'number' ||
-      e.start < 0 ||
-      e.end > content.length
-    ) {
-      continue;
-    }
-    const slice = content.slice(e.start, e.end);
-    if (!slice) continue;
-    const repl = apiMap[e.text];
-    if (repl != null && slice !== e.text) {
-      out[slice] = repl;
-    }
-  }
-  return out;
-}
 
 export function buildFallbackPreviewEntityMap(
   entities: Array<{ text: string; type: string; selected?: boolean }>,
