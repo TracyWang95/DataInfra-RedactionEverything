@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.core.config import settings
 from app.core.persistence import load_json, save_json
-from app.core.safe_regex import RegexTimeoutError, safe_compile, safe_finditer
 from app.core.tenant_config import store_lock, tenant_store_path
 from app.models.type_mapping import TYPE_ID_ALIASES, canonical_type_id
 
@@ -109,17 +108,6 @@ class UpdateEntityTypeRequest(BaseModel):
     linkage_groups: list[str] | None = None
     coref_enabled: bool | None = None
     default_enabled: bool | None = None
-
-
-class RegexTestRequest(BaseModel):
-    pattern: str = Field(..., description="正则表达式")
-    test_text: str = Field(..., description="测试文本")
-
-
-class RegexTestResult(BaseModel):
-    valid: bool = Field(..., description="正则表达式是否有效")
-    matches: list[dict] = Field(default_factory=list, description="匹配结果列表")
-    error: str = Field(default="", description="错误信息")
 
 
 # ── 预置类型 ──────────────────────────────────────────────
@@ -599,29 +587,6 @@ def reset_types(owner_id: str | None = None) -> None:
             entity_types_db = db
         _persist_entity_types(db, owner_id)
 
-
-def test_regex(pattern: str, test_text: str) -> RegexTestResult:
-    try:
-        compiled = safe_compile(pattern, timeout=1.0)
-    except re.error:
-        return RegexTestResult(valid=False, matches=[], error="正则语法错误")
-    except RegexTimeoutError:
-        return RegexTestResult(valid=False, matches=[], error="正则执行超时，请简化表达式")
-
-    try:
-        found = safe_finditer(compiled, test_text, timeout=1.0)
-    except RegexTimeoutError:
-        return RegexTestResult(valid=False, matches=[], error="正则匹配超时，请简化表达式")
-
-    matches = []
-    for m in found:
-        matches.append({
-            "text": m.group(),
-            "start": m.start(),
-            "end": m.end(),
-            "groups": [],
-        })
-    return RegexTestResult(valid=True, matches=matches)
 
 # ---------------------------------------------------------------------------
 # Public accessor — use this instead of importing entity_types_db directly,

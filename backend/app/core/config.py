@@ -643,8 +643,8 @@ class Settings(BaseSettings):
     def _validate_pdf_page_text_block_cache_pages(cls, v: int) -> int:
         return max(0, min(512, v))
 
-    # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
-    VIRUS_SCAN_ENABLED: bool = False
+    # 病毒扫描：True 时对上传文件跑 ClamAV（daemon 不在线则优雅降级放行）；False 显式跳过。
+    VIRUS_SCAN_ENABLED: bool = True
 
     # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）。
     # 默认只信 loopback 与 172.16.0.0/12（docker compose 网桥网段，保证容器内

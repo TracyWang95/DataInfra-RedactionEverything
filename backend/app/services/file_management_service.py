@@ -465,14 +465,15 @@ async def process_upload(
         os.remove(file_path)
         raise ValueError(f"文件内容与扩展名 {file_ext} 不匹配，可能是伪造文件")
 
-    # 病毒扫描
-    from app.core.virus_scan import scan_file as _virus_scan
-    scan_result = _virus_scan(file_path)
-    if not scan_result.clean:
-        os.remove(file_path)
-        raise ValueError(f"文件包含恶意内容: {scan_result.virus_name}")
-    if scan_result.error:
-        logger.warning("Virus scan degraded for %s: %s", file_path, scan_result.error)
+    # 病毒扫描（VIRUS_SCAN_ENABLED 关闭时跳过；开启时 ClamAV 不在线会优雅降级放行）
+    if settings.VIRUS_SCAN_ENABLED:
+        from app.core.virus_scan import scan_file as _virus_scan
+        scan_result = _virus_scan(file_path)
+        if not scan_result.clean:
+            os.remove(file_path)
+            raise ValueError(f"文件包含恶意内容: {scan_result.virus_name}")
+        if scan_result.error:
+            logger.warning("Virus scan degraded for %s: %s", file_path, scan_result.error)
 
     ft = get_file_type(filename)
     if ft is None:

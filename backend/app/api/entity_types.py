@@ -12,19 +12,11 @@ from app.services.entity_type_service import (
     CreateEntityTypeRequest,
     EntityTypeConfig,
     EntityTypesResponse,
-    RegexTestRequest,
-    RegexTestResult,
     TextTaxonomyResponse,
     UpdateEntityTypeRequest,
 )
 
 router = APIRouter()
-
-
-@router.post("/custom-types/regex-test", response_model=RegexTestResult)
-async def test_regex(request: RegexTestRequest):
-    """测试正则表达式匹配效果"""
-    return entity_type_service.test_regex(request.pattern, request.test_text)
 
 
 @router.get("/custom-types", response_model=EntityTypesResponse)

@@ -5,44 +5,14 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import APIRouter, Depends
 
 from app.core.auth import require_auth
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/safety", tags=["数据安全"])
-
-@router.get("/storage-info")
-async def storage_info(owner_id: str = Depends(require_auth)):
-    """返回数据存储路径信息，便于用户了解文件存放位置。"""
-    from app.services.file_management_service import file_owner_id, get_file_store
-
-    upload_size = 0
-    output_size = 0
-    for _fid, info in get_file_store().project_fields(("owner_id", "file_path", "output_path")):
-        if file_owner_id(info) != owner_id:
-            continue
-        for key, expected_dir in (("file_path", settings.UPLOAD_DIR), ("output_path", settings.OUTPUT_DIR)):
-            path = info.get(key) if isinstance(info, dict) else None
-            if isinstance(path, str) and path and os.path.isfile(path):
-                real_path = os.path.realpath(path)
-                if os.path.commonpath([real_path, os.path.realpath(expected_dir)]) == os.path.realpath(expected_dir):
-                    if key == "file_path":
-                        upload_size += os.path.getsize(real_path)
-                    else:
-                        output_size += os.path.getsize(real_path)
-    return {
-        "upload_dir": os.path.realpath(settings.UPLOAD_DIR),
-        "output_dir": os.path.realpath(settings.OUTPUT_DIR),
-        "db_path": os.path.realpath(settings.JOB_DB_PATH),
-        "upload_size_bytes": upload_size,
-        "output_size_bytes": output_size,
-        "total_size_bytes": upload_size + output_size,
-    }
 
 
 @router.post("/cleanup")
