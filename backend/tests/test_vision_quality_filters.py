@@ -1,4 +1,4 @@
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from app.core.config import settings
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
@@ -12,7 +12,6 @@ from app.services.vision.ocr_pipeline import (
     reconstruct_visual_line_blocks,
     run_paddle_ocr,
 )
-from app.services.vision_service import VisionService
 
 
 def test_visual_line_reconstruction_joins_split_ocr_text_generically() -> None:
@@ -155,21 +154,6 @@ def test_compressed_multiline_ocr_block_keeps_full_line_height() -> None:
     assert len(regions) == 1
     assert regions[0].height >= 40
     assert (regions[0].left, regions[0].top, regions[0].width, regions[0].height) == (123, 491, 355, 46)
-
-
-def test_compact_ocr_padding_is_geometry_capped() -> None:
-    left, _top, width, _height = VisionService._expand_ocr_region(
-        left=500,
-        top=100,
-        region_width=80,
-        region_height=30,
-        page_width=2000,
-        page_height=3000,
-        entity_type="PERSON",
-    )
-
-    assert left >= 490
-    assert width <= 100
 
 
 def _flat_block(text: str, left: int, top: int, width: int, height: int) -> OCRTextBlock:
@@ -691,23 +675,6 @@ def test_uppercase_amount_entity_crops_to_its_glyphs() -> None:
     assert len(amount_regions) == 1
     # 壹 is the 9th glyph (index 8): crop starts at 100 + 8*20 = 260.
     assert (amount_regions[0].left, amount_regions[0].width) == (260, 200)
-
-
-def test_ocr_ink_refinement_ignores_long_form_line() -> None:
-    image = Image.new("RGB", (220, 90), "white")
-    draw = ImageDraw.Draw(image)
-    draw.line([(0, 45), (219, 45)], fill="black", width=2)
-    draw.line([(88, 25), (88, 62)], fill="black", width=4)
-    draw.line([(105, 25), (132, 62)], fill="black", width=4)
-    draw.line([(150, 25), (150, 62)], fill="black", width=4)
-
-    left, top, width, height = VisionService._refine_ocr_region_to_ink(image, 0, 0, 220, 90)
-
-    assert left > 70
-    assert top >= 20
-    assert width < 90
-    assert height < 50
-
 
 
 def test_cross_line_split_grows_collapsed_char_band_to_row_height() -> None:

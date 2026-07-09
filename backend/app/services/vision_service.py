@@ -15,8 +15,6 @@ from collections import OrderedDict
 from threading import Lock
 from types import SimpleNamespace
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
@@ -74,68 +72,6 @@ _PDF_TEXT_LAYER_PROBE_LOCKS_LOOP: asyncio.AbstractEventLoop | None = None
 _SPARSE_PROBE_STRONG_SIGNAL_DIVISOR = 4
 
 
-# --- OCR rule-line removal ----------------------------------------------------
-# Minimum run length (px floor, plus page-fraction) for a horizontal/vertical
-# stroke to be treated as a table rule line rather than ink.
-_RULE_LINE_RUN_MIN_PX = 24
-_RULE_LINE_ROW_RUN_RATIO = 0.38
-_RULE_LINE_COL_RUN_RATIO = 0.55
-
-# --- OCR region ink refinement ------------------------------------------------
-# Luminance weights (BT.601-style, /100) used to grayscale the crop.
-_LUMA_WEIGHT_R = 30
-_LUMA_WEIGHT_G = 59
-_LUMA_WEIGHT_B = 11
-_LUMA_WEIGHT_DENOM = 100
-# Red-ink (seal) detection: minimum red channel and its dominance over G/B.
-_RED_MARK_MIN = 120
-_RED_MARK_R_OVER_G = 1.18
-_RED_MARK_R_OVER_B = 1.12
-# Dark-ink mask: hard darkness cutoff, plus a softer cutoff for low-chroma pixels.
-_INK_GRAY_DARK_MAX = 122
-_INK_GRAY_SOFT_MAX = 168
-_INK_SOFT_SPAN_MAX = 55
-# Minimum ink-pixel count (absolute floor, plus crop-area fraction) to refine.
-_REFINE_MIN_INK_PIXELS = 8
-_REFINE_MIN_INK_AREA_RATIO = 0.002
-# Refinement padding: px floor/cap and fraction of the smaller region edge.
-_REFINE_PAD_MIN = 1
-_REFINE_PAD_MAX = 4
-_REFINE_PAD_RATIO = 0.04
-# Reject refinement that collapses width below this floor/fraction of region.
-_REFINE_MIN_WIDTH_PX = 6
-_REFINE_MIN_WIDTH_RATIO = 0.18
-# Crops at or below this smaller-side size are single-line value crops where
-# rule-line pruning is untrustworthy (its run thresholds degenerate); if
-# pruning removes most of their ink, keep the raw ink mask.
-_REFINE_RULE_TRUST_MIN_SIDE = 48
-
-# --- OCR region expansion -----------------------------------------------------
-# Per-entity horizontal pad as a fraction of page width (default for others).
-_OCR_REGION_HORIZONTAL_PAD_RATIO = {
-    "PHONE": 0.04,
-    "BANK_ACCOUNT": 0.045,
-    "ACCOUNT_NUMBER": 0.045,
-    "BANK_CARD": 0.045,
-    "ID_CARD": 0.014,
-    "AMOUNT": 0.008,
-    "PERSON": 0.02,
-    "NICKNAME": 0.02,
-    "PROPERTY": 0.04,
-    "ADDRESS": 0.008,
-    "ORG": 0.02,
-    "COMPANY": 0.02,
-    "DATE": 0.008,
-}
-_OCR_REGION_DEFAULT_PAD_RATIO = 0.006
-_OCR_REGION_PAD_X_MIN = 3
-_OCR_REGION_PAD_Y_MIN = 2
-# Apply tighter geometry-based padding only to short (non-wide) regions.
-_OCR_REGION_NARROW_HEIGHT_FACTOR = 5
-_OCR_REGION_NARROW_PAGE_WIDTH_RATIO = 0.12
-_OCR_REGION_GEOMETRY_PAD_WIDTH_RATIO = 0.10
-_OCR_REGION_GEOMETRY_PAD_HEIGHT_RATIO = 0.35
-_OCR_REGION_PAD_Y_RATIO = 0.25
 
 # --- Redaction effects --------------------------------------------------------
 # Redaction strength is a 1-100 slider.
@@ -1034,129 +970,6 @@ class VisionService:
     def _should_keep_ocr_has_region(entity_type: str, text: str | None) -> bool:
         """Keep non-empty HaS Text results; semantic filtering belongs to HaS."""
         return bool(str(text or "").strip())
-
-    @staticmethod
-    def _true_runs(values: np.ndarray) -> list[tuple[int, int]]:
-        active = np.flatnonzero(values)
-        if len(active) == 0:
-            return []
-        runs: list[tuple[int, int]] = []
-        start = prev = int(active[0])
-        for raw_index in active[1:]:
-            index = int(raw_index)
-            if index == prev + 1:
-                prev = index
-                continue
-            runs.append((start, prev))
-            start = prev = index
-        runs.append((start, prev))
-        return runs
-
-    @staticmethod
-    def _remove_ocr_rule_lines(mask: np.ndarray) -> np.ndarray:
-        if mask.ndim != 2 or mask.size == 0:
-            return mask
-
-        cleaned = mask.copy()
-        height, width = cleaned.shape
-        row_run_min = max(_RULE_LINE_RUN_MIN_PX, int(width * _RULE_LINE_ROW_RUN_RATIO))
-        col_run_min = max(_RULE_LINE_RUN_MIN_PX, int(height * _RULE_LINE_COL_RUN_RATIO))
-
-        for row in range(height):
-            for start, end in VisionService._true_runs(mask[row, :]):
-                if end - start + 1 >= row_run_min:
-                    cleaned[max(0, row - 1) : min(height, row + 2), start : end + 1] = False
-
-        column_source = cleaned.copy()
-        for col in range(width):
-            for start, end in VisionService._true_runs(column_source[:, col]):
-                if end - start + 1 >= col_run_min:
-                    cleaned[start : end + 1, max(0, col - 1) : min(width, col + 2)] = False
-        return cleaned
-
-    @staticmethod
-    def _refine_ocr_region_to_ink(
-        image: Image.Image,
-        left: int,
-        top: int,
-        region_width: int,
-        region_height: int,
-    ) -> tuple[int, int, int, int]:
-        page_width, page_height = image.size
-        x1 = max(0, min(page_width, int(left)))
-        y1 = max(0, min(page_height, int(top)))
-        x2 = max(x1 + 1, min(page_width, int(left + region_width)))
-        y2 = max(y1 + 1, min(page_height, int(top + region_height)))
-        crop = image.crop((x1, y1, x2, y2)).convert("RGB")
-        arr = np.asarray(crop).astype(np.int16, copy=False)
-        red = arr[:, :, 0]
-        green = arr[:, :, 1]
-        blue = arr[:, :, 2]
-        gray = (red * _LUMA_WEIGHT_R + green * _LUMA_WEIGHT_G + blue * _LUMA_WEIGHT_B) / _LUMA_WEIGHT_DENOM
-        span = arr.max(axis=2) - arr.min(axis=2)
-        red_mark = (red > _RED_MARK_MIN) & (red > green * _RED_MARK_R_OVER_G) & (red > blue * _RED_MARK_R_OVER_B)
-        mask = ((gray < _INK_GRAY_DARK_MAX) | ((gray < _INK_GRAY_SOFT_MAX) & (span < _INK_SOFT_SPAN_MAX))) & ~red_mark
-        cleaned = VisionService._remove_ocr_rule_lines(mask)
-        # Rule pruning targets long page structure; its run thresholds are
-        # relative to the crop size, so inside a single-line value crop dense
-        # blurred glyph rows read as "rules" and the text itself gets wiped
-        # (low-res photo report: K124016 ink 825→28px, the mask collapsed to a
-        # 4px sliver). When such a small crop loses the majority of its ink to
-        # pruning, the ink WAS the text — keep the raw mask: over-masking a
-        # stray line is harmless, under-masking a value leaks PII. Large crops
-        # keep full pruning (genuine form lines can dominate their ink).
-        is_value_sized_crop = min(crop.width, crop.height) <= _REFINE_RULE_TRUST_MIN_SIDE
-        if not (is_value_sized_crop and int(cleaned.sum()) * 2 < int(mask.sum())):
-            mask = cleaned
-
-        ys, xs = np.where(mask)
-        if len(xs) < max(_REFINE_MIN_INK_PIXELS, int(mask.size * _REFINE_MIN_INK_AREA_RATIO)):
-            return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
-
-        pad = max(_REFINE_PAD_MIN, min(_REFINE_PAD_MAX, int(min(region_width, region_height) * _REFINE_PAD_RATIO)))
-        nx1 = max(x1, x1 + int(xs.min()) - pad)
-        nx2 = min(x2, x1 + int(xs.max()) + 1 + pad)
-        ny1 = max(y1, y1 + int(ys.min()) - pad)
-        ny2 = min(y2, y1 + int(ys.max()) + 1 + pad)
-
-        if nx2 <= nx1 or ny2 <= ny1:
-            return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
-        if nx2 - nx1 < max(_REFINE_MIN_WIDTH_PX, min(region_width, region_height) * _REFINE_MIN_WIDTH_RATIO):
-            return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
-        return nx1, ny1, nx2 - nx1, ny2 - ny1
-
-    @staticmethod
-    def _expand_ocr_region(
-        left: int,
-        top: int,
-        region_width: int,
-        region_height: int,
-        page_width: int,
-        page_height: int,
-        entity_type: str,
-    ) -> tuple[int, int, int, int]:
-        horizontal_ratio = _OCR_REGION_HORIZONTAL_PAD_RATIO.get(
-            entity_type, _OCR_REGION_DEFAULT_PAD_RATIO
-        )
-        pad_x = max(_OCR_REGION_PAD_X_MIN, int(page_width * horizontal_ratio))
-        if region_width <= max(
-            region_height * _OCR_REGION_NARROW_HEIGHT_FACTOR,
-            page_width * _OCR_REGION_NARROW_PAGE_WIDTH_RATIO,
-        ):
-            geometry_pad = max(
-                _OCR_REGION_PAD_X_MIN,
-                min(
-                    int(region_width * _OCR_REGION_GEOMETRY_PAD_WIDTH_RATIO),
-                    int(region_height * _OCR_REGION_GEOMETRY_PAD_HEIGHT_RATIO),
-                ),
-            )
-            pad_x = min(pad_x, geometry_pad)
-        pad_y = max(_OCR_REGION_PAD_Y_MIN, int(region_height * _OCR_REGION_PAD_Y_RATIO))
-        x1 = max(0, int(left) - pad_x)
-        y1 = max(0, int(top) - pad_y)
-        x2 = min(page_width, int(left + region_width) + pad_x)
-        y2 = min(page_height, int(top + region_height) + pad_y)
-        return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
 
     def _supplement_machine_codes(
         self,
