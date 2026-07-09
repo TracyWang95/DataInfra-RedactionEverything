@@ -524,15 +524,11 @@ def _entity_char_box_line_rects(
         if row_h > 0:
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
-                # A char box's TOP edge is the glyph top for both a proper box and
-                # a phone-photo box collapsed to a sliver (the word engine pins the
-                # band to the top, never the middle). The glyph body hangs DOWN
-                # from there, so anchor the row at the char-band top and grow
-                # downward one row height. Centring on the band instead put the
-                # wrapped 日's box a half-row too high — it covered the line gap and
-                # only the top of 日. Clamped to the block polygon.
-                y1g = y1r
-                y2g = max(y2r, int(y1r + row_h))
+                # Grow the (often y-collapsed) char band up to the row height about
+                # its center, but never shrink below the chars' own y-extent.
+                cy = (y1r + y2r) / 2
+                y1g = min(y1r, int(cy - row_h / 2))
+                y2g = max(y2r, int(cy + row_h / 2))
                 grown.append((x1r, max(block_top, y1g), x2r, min(block_bottom, y2g)))
             rects = [r for r in grown if r[2] > r[0] and r[3] > r[1]]
     # A wrapped value fills each spanned line to the wrap margin: it broke onto
