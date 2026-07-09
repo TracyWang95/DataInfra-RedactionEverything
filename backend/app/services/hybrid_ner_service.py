@@ -48,13 +48,12 @@ class _HaSChunk:
     line_offsets: tuple[int, ...]
 
 
-_ORG_ALIAS_SUFFIX_RE = re.compile(
-    r"(?:有限责任公司|股份有限公司|有限公司|分公司|公司|集团|保险|银行|支行|人民法院|法院|医院|律师事务所)$"
-)
-_ORG_ALIAS_GENERIC_WORD_RE = re.compile(
-    r"(?:中国|中华|省|市|区|县|有限责任|股份|有限|公司|分公司|集团|控股|"
-    r"科技|技术|贸易|实业|资产|保险|银行|支行|人民|法院|医院|律师|事务所)"
-)
+# ORG alias coreference is a subsequence-COVERAGE decision, not a word-table
+# lookup: an alias links to a longer name when this fraction of the alias's
+# glyphs appear in order inside it, and only once the alias is long enough to be
+# distinctive evidence. Tunable structural bars, no enumerated org vocabulary.
+_ORG_ALIAS_MIN_LEN = 4
+_ORG_ALIAS_COVERAGE = 0.9
 
 
 class HybridNERService:
@@ -909,71 +908,39 @@ class HybridNERService:
 
         canonical_orgs = sorted(orgs, key=lambda entity: len(entity.text), reverse=True)
         for alias in sorted(orgs, key=lambda entity: len(entity.text)):
-            alias_key = self._org_alias_key(alias.text)
-            if not alias_key:
+            alias_compact = self._compact_org_name(alias.text)
+            if len(alias_compact) < _ORG_ALIAS_MIN_LEN:
                 continue
             for canonical in canonical_orgs:
                 if canonical is alias or len(canonical.text) <= len(alias.text):
                     continue
-                canonical_key = self._org_alias_key(canonical.text)
-                if not canonical_key:
-                    continue
-                if self._org_names_look_related(alias_key, canonical_key, alias.text, canonical.text):
+                if self._org_names_look_related(
+                    alias_compact, self._compact_org_name(canonical.text)
+                ):
                     shared_coref = canonical.coref_id or f"org_alias:{canonical.text}"
                     canonical.coref_id = shared_coref
                     alias.coref_id = shared_coref
                     break
 
-    @staticmethod
-    def _org_alias_key(text: str) -> str:
-        compact = re.sub(r"\s+", "", str(text or ""))
-        compact = compact.strip(" ，。；;、()（）[]【】")
-        return _ORG_ALIAS_SUFFIX_RE.sub("", compact)
-
     @classmethod
-    def _org_names_look_related(cls, alias_key: str, canonical_key: str, alias_text: str, canonical_text: str) -> bool:
-        alias_family = cls._org_suffix_family(alias_text)
-        canonical_family = cls._org_suffix_family(canonical_text)
-        if alias_family and canonical_family and alias_family != canonical_family:
-            return False
+    def _org_names_look_related(cls, alias_compact: str, canonical_compact: str) -> bool:
+        """Two organisations corefer iff the shorter compact name is a
+        high-coverage in-order SUBSEQUENCE of the longer one.
 
-        if len(alias_key) >= 4 and alias_key in cls._compact_org_name(canonical_text):
-            return True
-        if len(alias_key) >= 2 and alias_key in canonical_key:
-            return True
-
-        alias_compare = cls._org_compare_key(alias_key)
-        canonical_compare = cls._org_compare_key(canonical_key)
-        if len(alias_compare) < 2 or len(canonical_compare) < 2:
+        A short / registered form's glyphs all appear, in order, inside the full
+        name (深圳译科技公司 ⊂ 深圳译科技有限公司), so coverage is ~1.0. A differing
+        core (第一 vs 第二) or a different institution kind (医院 vs 保险) drops
+        distinctive glyphs and pushes coverage below the bar, so two orgs sharing
+        only a region prefix or a generic 公司 suffix never link. Pure structure —
+        no enumerated suffix / region / generic-word tables.
+        """
+        if len(alias_compact) < _ORG_ALIAS_MIN_LEN:
             return False
-        if alias_compare in canonical_compare:
-            return True
-        return cls._subsequence_ratio(alias_compare, canonical_compare) >= 0.8
+        return cls._subsequence_ratio(alias_compact, canonical_compact) >= _ORG_ALIAS_COVERAGE
 
     @staticmethod
     def _compact_org_name(text: str) -> str:
         return re.sub(r"\s+", "", str(text or "")).strip(" ，。；;、()（）[]【】")
-
-    @staticmethod
-    def _org_suffix_family(text: str) -> str | None:
-        compact = HybridNERService._compact_org_name(text)
-        if "法院" in compact or "检察院" in compact:
-            return "judicial"
-        if "医院" in compact:
-            return "medical"
-        if "律师事务所" in compact or compact.endswith("事务所"):
-            return "law_firm"
-        if "银行" in compact or "支行" in compact:
-            return "bank"
-        if "保险" in compact:
-            return "insurance"
-        if any(suffix in compact for suffix in ("公司", "集团", "有限", "股份")):
-            return "company"
-        return None
-
-    @staticmethod
-    def _org_compare_key(text: str) -> str:
-        return _ORG_ALIAS_GENERIC_WORD_RE.sub("", HybridNERService._compact_org_name(text))
 
     @staticmethod
     def _subsequence_ratio(short_text: str, long_text: str) -> float:
