@@ -5,10 +5,10 @@
 ## 1. 全新安装（从零）
 
 1. 前置：Ubuntu 22/24、NVIDIA 驱动、CUDA 12.8+、`~/anaconda3/envs/dataInfra`（python+node）、
-   `~/rvenv/vllm` 与 `~/rvenv/la` 两个 venv——按 `deploy/host-scripts/bootstrap.sh` 与
+   `~/rvenv/vllm` 与 `~/rvenv/la` 两个 venv——按 `deploy/dual-5090/bootstrap.sh` 与
    `build_*_venv.sh` 执行；模型经魔搭下载（`dl_models.sh`，HF 网络不可用时的默认路径）。
 2. 代码落位：`~/redaction-deploy/`（backend + frontend/dist）。
-3. 服务脚本落位：`deploy/host-scripts/*.sh` 拷到 `~/`（含 GPU 钉卡与显存配额，勿改数值）。
+3. 服务脚本落位：`deploy/dual-5090/*.sh` 拷到 `~/`（含 GPU 钉卡与显存配额，勿改数值）。
 4. `backend_g0.sh` 里设置 **JWT_SECRET_KEY**（必改）、AUTH_ENABLED=true、并发参数（见脚本内注释）。
 5. 启动：`bash ~/start_all.sh`（自愈式：只拉起 DOWN 的端口）。VL 服务就绪要 1-3 分钟。
 6. 验收：`curl localhost:8000/health/services` → `all_online: true`；跑 `e2e/` Tier-1 两条冒烟。

@@ -21,9 +21,9 @@ launch vl_serve_g0 8118 ~/vl_serve_g0.sh
 launch vl_serve_g1 8119 ~/vl_serve_g1.sh
 launch has_g0 8080 ~/has_g0.sh
 launch has_g1 8081 ~/has_g1.sh
+# restore start_all.sh.bak-la-topology + lb_la upstreams 8090/8091 + backend env)
 launch yolo_g0 8140 ~/yolo_g0.sh
 launch yolo_g1 8141 ~/yolo_g1.sh
-# Dual LocateAnything-3B (pure HF, 1280px, no vLLM sidecar). lb_la -> 8090,8091.
 launch la_g0 8090 ~/la_g0.sh
 launch la_g1 8091 ~/la_g1.sh
 # OCR warmup POSTs to the VL recognition server (:8118); wait until it is ready
@@ -31,9 +31,9 @@ launch la_g1 8091 ~/la_g1.sh
 echo "  [wait] VL servers :8118 + :8119 ready before OCR ..."
 for i in $(seq 1 60); do curl -sf -m3 localhost:8118/v1/models >/dev/null 2>&1 && curl -sf -m3 localhost:8119/v1/models >/dev/null 2>&1 && { echo "  [ok] :8118+:8119 ready"; break; }; sleep 3; done
 launch ocr_g0 8082 ~/ocr_g0.sh
-#OCRg0only launch ocr_g1 8083 ~/ocr_g1.sh
+launch ocr_g1 8083 ~/ocr_g1.sh
 launch ocr_g0b 8084 ~/ocr_g0b.sh
-#OCRg0only launch ocr_g1b 8085 ~/ocr_g1b.sh
+launch ocr_g1b 8085 ~/ocr_g1b.sh
 
 echo "=== load balancers (round-robin across GPU0/GPU1) ==="
 launch lb_has 9080 ~/lb_has.sh
