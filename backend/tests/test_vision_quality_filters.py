@@ -707,5 +707,7 @@ def test_cross_line_split_grows_collapsed_char_band_to_row_height() -> None:
 
     assert len(out) == 2  # split into the two lines
     for r in out:
-        # grown to ~row height (30), NOT the 2px collapsed char band
-        assert r.height >= 20, f"sliver crop leaks glyphs: height={r.height}"
+        # The collapsed char band pins to the glyph TOP; the row grows DOWN from
+        # there to the line baseline (block bottom), covering the glyph body — no
+        # longer the 2px sliver, and not the whole block (which would tower).
+        assert r.height >= 14, f"sliver crop leaks glyphs: height={r.height}"
