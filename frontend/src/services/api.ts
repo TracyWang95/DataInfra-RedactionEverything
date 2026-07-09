@@ -10,11 +10,9 @@ import {
 } from './api-client';
 import type {
   CompareData,
-  EntityTypeConfig,
   EntityTypeConfigSimple,
   FileInfo,
   FileListResponse,
-  NERResult,
   ParseResult,
   RedactionRequest,
   RedactionResult,
@@ -278,10 +276,6 @@ export const fileApi = {
   delete: async (fileId: string): Promise<void> => api.delete(`/files/${fileId}`),
 };
 
-export const nerApi = {
-  extractEntities: async (fileId: string): Promise<NERResult> => api.get(`/files/${fileId}/ner`),
-};
-
 export const redactionApi = {
   execute: async (request: RedactionRequest): Promise<RedactionResult> =>
     api.post('/redaction/execute', request),
@@ -303,26 +297,3 @@ export const redactionApi = {
     api.get('/redaction/replacement-modes'),
 };
 
-export const entityTypesApi = {
-  getAll: async (
-    enabledOnly = false,
-  ): Promise<{ custom_types: EntityTypeConfig[]; total: number }> =>
-    api.get(`/custom-types?enabled_only=${enabledOnly}`),
-
-  getById: async (typeId: string): Promise<EntityTypeConfig> => api.get(`/custom-types/${typeId}`),
-
-  create: async (data: Partial<EntityTypeConfig>): Promise<EntityTypeConfig> =>
-    api.post('/custom-types', data),
-
-  update: async (typeId: string, data: Partial<EntityTypeConfig>): Promise<EntityTypeConfig> =>
-    api.put(`/custom-types/${typeId}`, data),
-
-  delete: async (typeId: string): Promise<void> => api.delete(`/custom-types/${typeId}`),
-
-  toggle: async (typeId: string): Promise<{ enabled: boolean }> =>
-    api.post(`/custom-types/${typeId}/toggle`),
-
-  reset: async (): Promise<{ message: string }> => api.post('/custom-types/reset'),
-};
-
-export default api;

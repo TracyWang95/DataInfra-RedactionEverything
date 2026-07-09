@@ -11,7 +11,6 @@ import subprocess
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlparse, urlunparse
 
 from pydantic import field_validator, model_validator
@@ -260,11 +259,8 @@ class Settings(BaseSettings):
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
-    VISUAL_FEATURES_CONCURRENCY: int = 1
     LOCATE_ANYTHING_MAX_NEW_TOKENS: int = 8192
     LOCATE_ANYTHING_MAX_IMAGE_SIDE: int = 1408
-    LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
-    LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE: int = 1280
 
     # 本地持久化（空串 = 跟随 DATA_DIR 自动派生，见 model_validator）
     FILE_STORE_PATH: str = ""
@@ -328,7 +324,6 @@ class Settings(BaseSettings):
     OCR_STRUCTURE_TEXT_PRECISION_ENABLED: bool = False
     OCR_TEXT_BLOCK_CACHE_TTL_SEC: float = 300.0
     OCR_TEXT_BLOCK_CACHE_MAX_ITEMS: int = 128
-    OCR_REQUIRE_VL_FOR_VISUAL_REGIONS: bool = False
     # For born-digital PDFs, use the native text layer as OCR coordinates and
     # still let HaS Text decide semantics. Scanned PDFs automatically fall back
     # to the image OCR path when the text layer is too sparse.
@@ -388,7 +383,6 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
-    LOCAL_PASSWORD_HASH: str = ""  # PBKDF2 hash, set via setup endpoint
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
     # 企业目录（LDAP/AD）登录。默认关闭：登录行为与纯本地账号完全一致。
@@ -628,7 +622,6 @@ class Settings(BaseSettings):
         return max(1, min(10_000, v))
 
     # 后台工作循环 / 清理
-    WORKER_LOOP_INTERVAL_SEC: float = 2.0
     ORPHAN_CLEANUP_AGE_SEC: int = 3600
 
     REDACTION_PDF_JPEG_QUALITY: int = 88
@@ -649,9 +642,6 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_pdf_page_text_block_cache_pages(cls, v: int) -> int:
         return max(0, min(512, v))
-
-    # 匿名化配置
-    DEFAULT_REPLACEMENT_MODE: Literal["smart", "mask", "custom"] = "smart"
 
     # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
     VIRUS_SCAN_ENABLED: bool = False

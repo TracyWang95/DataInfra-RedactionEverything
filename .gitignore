@@ -105,6 +105,20 @@ frontend/playwright-report/
 # Temporary test scripts
 backend/test_*.py
 
+# One-off scratch scripts (backend root) — probes / manual NER & render pipelines
+backend/*_ph.py
+backend/*_pii.py
+backend/tmp_*.py
+backend/wb_render.py
+backend/deepseek_ner.py
+backend/run_ner.sh
+backend/run_render*.sh
+backend/run_wordbox.sh
+
+# Stale build backups and e2e run artifacts
+dist.bak*
+e2e/.artifacts/
+
 # Runtime data
 *.db
 *.db-journal
