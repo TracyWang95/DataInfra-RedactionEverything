@@ -536,6 +536,27 @@ def _entity_char_box_line_rects(
                 y2g = max(y2r, int(cy + row_h / 2))
                 grown.append((x1r, max(block_top, y1g), x2r, min(block_bottom, y2g)))
             rects = [r for r in grown if r[2] > r[0] and r[3] > r[1]]
+    # A wrapped value fills each spanned line to the wrap margin: it broke onto
+    # the next line BECAUSE line 1 reached the block's right edge, so line 1 runs
+    # from the value start to that right edge, the last line from the left edge
+    # to the value end, middle lines the full width. Extend every non-last line
+    # rect's right and every non-first line rect's left to the block's own
+    # x-range accordingly. This also covers a boundary glyph whose ink overruns
+    # its tight OCR char box — the wrapped 2016年1月7日 left its trailing 7 poking
+    # past the char-box right edge once the old blunt x-pad was gone.
+    if len(rects) > 1 and polygon:
+        xs = [int(pt[0]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+        if xs:
+            block_left_x, block_right_x = min(xs), max(xs)
+            rects = [
+                (
+                    block_left_x if idx > 0 else r[0],
+                    r[1],
+                    block_right_x if idx < len(rects) - 1 else r[2],
+                    r[3],
+                )
+                for idx, r in enumerate(rects)
+            ]
     # Final guard: any rect the grow could not give real height (missing
     # polygon) is dropped so the caller safely masks the whole block rather
     # than emit a zero-height crop.

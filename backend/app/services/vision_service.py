@@ -905,15 +905,10 @@ class VisionService:
             if not self._should_keep_ocr_has_region(region.entity_type, region.text):
                 logger.debug("Skipping PDF text-layer semantic false positive: %s %s", region.entity_type, region.text)
                 continue
-            left, top, box_width, box_height = self._expand_ocr_region(
-                region.left,
-                region.top,
-                region.width,
-                region.height,
-                width,
-                height,
-                region.entity_type,
-            )
+            left = max(0, int(region.left))
+            top = max(0, int(region.top))
+            box_width = max(1, int(region.width))
+            box_height = max(1, int(region.height))
             bbox = BoundingBox(
                 id=f"pdf_text_{index}_{uuid.uuid4().hex[:8]}",
                 x=left / width,
@@ -1006,22 +1001,17 @@ class VisionService:
                     )
                 )
                 continue
-            refined_left, refined_top, refined_width, refined_height = self._refine_ocr_region_to_ink(
-                img,
-                region.left,
-                region.top,
-                region.width,
-                region.height,
-            )
-            left, top, box_width, box_height = self._expand_ocr_region(
-                refined_left,
-                refined_top,
-                refined_width,
-                refined_height,
-                width,
-                height,
-                region.entity_type,
-            )
+            # Use the match/split geometry as-is: its X is the proven char-box
+            # span and its Y is the uniform document line grid. The old
+            # refine-to-ink then pad-by-ratio pair re-derived the box from each
+            # glyph's ink extent (digits read taller than CJK, so DATE rows
+            # towered) and then re-inflated it by a magic 0.25 height ratio,
+            # destroying the upstream uniformity. A charless slab that never got
+            # a tight char-box span stays a safe whole-block cover.
+            left = max(0, int(region.left))
+            top = max(0, int(region.top))
+            box_width = max(1, int(region.width))
+            box_height = max(1, int(region.height))
             bbox = BoundingBox(
                 id=f"ocr_{i}_{uuid.uuid4().hex[:8]}",
                 x=left / width,
