@@ -490,14 +490,20 @@ def _entity_char_box_line_rects(
             if cx2 is not None and cx2 > cx:
                 char_widths.append(float(cx2 - cx))
         row_h = (block_bottom - block_top) / max(len(rects), block_lines)
-        # Cap the row height by the median char WIDTH. The word engine's x-extent
-        # stays correct when the y-band collapses, and CJK glyphs are ~square, so
-        # the median width recovers the true glyph height — a tilted line's
-        # axis-aligned block polygon is far taller than the text (phone photo:
-        # the box towered over its one row). Never below the char band itself.
+        # Reconcile two structural bounds on the row height. The block polygon /
+        # line count is an UPPER bound: a tilted phone-photo line's axis-aligned
+        # bbox = glyph height + line leading + tilt drift, so it towers over the
+        # text. The median char WIDTH is a LOWER bound: the word engine's x-extent
+        # stays correct when the y-band collapses and CJK glyphs are ~square, so
+        # it is the bare glyph em with no leading (a box hugging it reads as flat).
+        # The row that covers the ink with natural leading sits between them —
+        # take their midpoint. Grow stays clamped to the block polygon and never
+        # shrinks below the chars' own y-band.
         if char_widths:
             char_widths.sort()
-            row_h = min(row_h, char_widths[len(char_widths) // 2])
+            median_char_width = char_widths[len(char_widths) // 2]
+            if median_char_width < row_h:
+                row_h = (row_h + median_char_width) / 2
         if row_h > 0:
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
