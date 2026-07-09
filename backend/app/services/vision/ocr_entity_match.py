@@ -703,6 +703,9 @@ def split_regions_across_lines(
         return regions
     document_line_height = _document_line_height(ocr_blocks)
     out: list[SensitiveRegion] = []
+    # Whether each `out` region is a single text row (safe to height-normalize) or
+    # a genuine multi-line slab that stays as-is (shrinking it would uncover ink).
+    single_row: list[bool] = []
     for region in regions:
         rl, rt = region.left, region.top
         rr, rb = region.left + region.width, region.top + region.height
@@ -712,6 +715,7 @@ def split_regions_across_lines(
         ]
         if len(contained) < 2:
             out.append(region)
+            single_row.append(True)
             continue
         contained.sort(key=lambda b: (round(b.top), b.left))
         synthesized: list = []
@@ -732,6 +736,7 @@ def split_regions_across_lines(
         )
         if not rects or len(rects) < 2:
             out.append(region)
+            single_row.append(False)  # unprovable multi-line slab: never trim
             continue
         for lx1, ly1, lx2, ly2 in rects:
             out.append(region.__class__(
@@ -744,6 +749,23 @@ def split_regions_across_lines(
                 confidence=region.confidence,
                 source=region.source,
             ))
+            single_row.append(True)
+    # Height has ONE source of truth: the page's OWN median single-row box height.
+    # It is self-calibrating (measured from the boxes we just produced, immune to
+    # the run-to-run wobble of the char-width em) and path-independent — whichever
+    # match/split produced a row, an over-tall outlier (a DATE's un-collapsed
+    # digit boxes, the wrapped 日 a grow-only step preserved) is trimmed to the
+    # same row so every text mask reads uniform. Only single rows, only downward:
+    # a real glyph is <= the row height so this never uncovers ink, and collapsed
+    # rows that grew UP stay put. Multi-line slabs are left whole.
+    row_heights = sorted(r.height for r, one in zip(out, single_row, strict=True) if one)
+    if row_heights:
+        median_row = row_heights[len(row_heights) // 2]
+        for region, one in zip(out, single_row, strict=True):
+            if one and region.height > median_row:
+                center_y = region.top + region.height / 2.0
+                region.top = int(center_y - median_row / 2.0)
+                region.height = int(median_row)
     return out
 
 
