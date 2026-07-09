@@ -406,26 +406,45 @@ def _entity_span_char_boxes(
 
 
 
-def _document_char_em(blocks: list[OCRTextBlock]) -> float | None:
-    """Median char-box WIDTH across the whole page — the document's glyph em.
+def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
+    """Uniform text-row height for the whole page, from two page-level bounds.
 
-    The word engine's x-extent stays correct when a phone-photo line's y-band
-    collapses, and CJK glyphs are ~square, so the median width is the true glyph
-    height. One page-level value is the uniform text-row height every crop grows
-    to: no single block's loose / tilted / multi-line polygon can over- or
-    under-state its own row height. Multi-char token boxes are a small minority,
-    so the median is unaffected.
+    LOWER bound — the glyph em: median WIDTH of single CJK glyph boxes. The word
+    engine's x-extent stays correct when a phone-photo line's y-band collapses
+    and a CJK cell is ~square, so it is the bare ink em (narrow punctuation, thin
+    digits and multi-char token boxes are excluded so they cannot skew it). A
+    crop this tall leaves the taller characters' feet poking out.
+
+    UPPER bound — the line box: median HEIGHT of the page's horizontal text
+    blocks (glyph + leading). Per block this is tilt-inflated and, for a
+    multi-line block, the line PITCH not the glyph height — but the PAGE median
+    is robust to both.
+
+    The row that covers the ink with its natural leading is their midpoint. Being
+    one page-level value, it is immune to any single block's loose / tilted /
+    multi-line polygon (which is what made the wrapped 云A856Z8号 tower). Falls
+    back to whichever bound exists.
     """
-    widths: list[float] = []
+    em_widths: list[float] = []
     for block in blocks:
         for char_box in (getattr(block, "chars", None) or []):
+            c = str(char_box.get("c", ""))
+            if not (len(c) == 1 and "一" <= c <= "鿿"):
+                continue
             x1, x2 = char_box.get("x1"), char_box.get("x2")
             if x1 is not None and x2 is not None and x2 > x1:
-                widths.append(float(x2 - x1))
-    if not widths:
-        return None
-    widths.sort()
-    return widths[len(widths) // 2]
+                em_widths.append(float(x2 - x1))
+    line_boxes = [
+        float(block.height)
+        for block in blocks
+        if block.height > 0 and block.width > block.height
+        and not str(block.text or "").lstrip().startswith("<table")
+    ]
+    em = sorted(em_widths)[len(em_widths) // 2] if em_widths else None
+    line = sorted(line_boxes)[len(line_boxes) // 2] if line_boxes else None
+    if em is not None and line is not None:
+        return (em + line) / 2
+    return em if em is not None else line
 
 
 def _entity_char_box_line_rects(
@@ -701,7 +720,7 @@ def split_regions_across_lines(
     line_blocks = [b for b in ocr_blocks if getattr(b, "chars", None)]
     if not line_blocks:
         return regions
-    document_line_height = _document_char_em(ocr_blocks)
+    document_line_height = _document_line_height(ocr_blocks)
     out: list[SensitiveRegion] = []
     for region in regions:
         rl, rt = region.left, region.top
@@ -917,7 +936,7 @@ def match_entities_to_ocr(
         (block, _block_search_text(block), id(block) in table_virtual_block_ids)
         for block in ordered_blocks
     ]
-    document_line_height = _document_char_em([block for block, _text, _is_tv in prepared_blocks])
+    document_line_height = _document_line_height([block for block, _text, _is_tv in prepared_blocks])
 
     standalone_amount_signatures = {
         signature
