@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from typing import Any
 
@@ -49,37 +48,12 @@ logger = logging.getLogger(__name__)
 # and leave 汉族 out — 找到就找到，找不到就没有。Tradeoff: the model dilutes recall on a
 # long page and may drop an entity near the very end (e.g. a standalone signature
 # date). Reordering/chunking to recover it reintroduces the force-fit, because this
-# model classifies sequentially — order and recall are coupled. So a date-format
-# backstop (below) catches those dropped dates — see _STANDALONE_DATE_RE.
-#
-# A date is a closed grammar, not a judgment call: recall it structurally in
-# BOTH digit systems. The 1980 typewritten judgment's "一九五八年九月十日"
-# surfaced in one HaS run and vanished in the next (sampling-dependent recall);
-# the backstop makes 年月日 forms deterministic. Whitespace between tokens is
-# tolerant (\s*) so a date wrapped across OCR blocks still matches on the
-# joined text.
-_CJK_DIGITS = "〇○零一二三四五六七八九"
-_STANDALONE_DATE_RE = re.compile(
-    rf"(?:[0-9０-９]{{2,4}}|[{_CJK_DIGITS}]{{2,4}})\s*年\s*"
-    rf"(?:[0-9０-９]{{1,2}}|十[一二]|[{_CJK_DIGITS}]|十|元)\s*月\s*"
-    rf"(?:[0-9０-９]{{1,3}}|[一二三]?十[{_CJK_DIGITS}]?|[{_CJK_DIGITS}])\s*日"
-)
+# model classifies sequentially — order and recall are coupled. Dates were once
+# force-recalled by a 年月日 regex backstop (both digit systems); a 5/5 reliability
+# probe — including the CJK-digit "一九五八年九月十日" the backstop was written for —
+# showed HaS now returns every date deterministically, so the regex was deleted.
+# The model judges what is a date; no hand-written pattern enumerates them.
 
-
-def _recall_format_dates(ocr_blocks: list[OCRTextBlock]) -> list[dict[str, str]]:
-    """Deterministic 年月日 recall over per-block and joined text."""
-    seen: set[str] = set()
-    out: list[dict[str, str]] = []
-    texts = [str(getattr(block, "text", "") or "") for block in ocr_blocks]
-    for scan_text in [*texts, "\n".join(texts)]:
-        for match in _STANDALONE_DATE_RE.finditer(scan_text):
-            value = match.group(0)
-            key = re.sub(r"\s+", "", value)
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append({"type": "DATE", "text": value})
-    return out
 
 async def run_has_text_analysis(
     ocr_blocks: list[OCRTextBlock],
@@ -114,21 +88,6 @@ async def run_has_text_analysis(
         )
         return []
 
-    # Date-format backstop: no model needed, surfaced even when NER is skipped
-    # or fails.
-    date_in_schema = vision_types is None or any(
-        _canonical_image_text_type(getattr(vt, "id", "")) == "DATE" for vt in vision_types
-    )
-    format_date_entities = _recall_format_dates(ocr_blocks) if date_in_schema else []
-    if format_date_entities:
-        logger.info(
-            "Date-format backstop recall: %s",
-            [entity["text"] for entity in format_date_entities],
-        )
-    _record_has_text_metric(
-        stage_status, "has_text_format_date_entities", len(format_date_entities)
-    )
-    structural_entities = [*format_date_entities]
 
     # Lazy re-init if client was not available at startup
     if not has_client:
@@ -143,7 +102,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
     if _has_recent_negative_health(has_client):
         logger.warning("HaS service recently reported unavailable, skipping NER")
@@ -153,7 +112,7 @@ async def run_has_text_analysis(
             "has_text_total_ms",
             round((time.perf_counter() - total_start) * 1000),
         )
-        return list(structural_entities)
+        return []
 
     try:
         prepare_start = time.perf_counter()
@@ -194,7 +153,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
         min_text_chars = int(settings.HAS_VISION_MIN_TEXT_CHARS_FOR_NER)
         compact_chars = len(_compact_text(text_content))
@@ -212,7 +171,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
         logger.info(
             (
@@ -244,7 +203,7 @@ async def run_has_text_analysis(
                     "has_text_total_ms",
                     round((time.perf_counter() - total_start) * 1000),
                 )
-                return list(structural_entities)
+                return []
             logger.info("HaS using types for NER: %s", chinese_types)
         else:
             chinese_types = _build_has_text_type_names()
@@ -302,13 +261,13 @@ async def run_has_text_analysis(
 
         if not ner_result or not isinstance(ner_result, dict):
             logger.info("HaS: no entities found by NER")
-            _record_has_text_metric(stage_status, "has_text_entity_count", len(structural_entities))
+            _record_has_text_metric(stage_status, "has_text_entity_count", 0)
             _record_has_text_metric(
                 stage_status,
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
         logger.info("HaS NER result: %s", ner_result)
 
@@ -408,21 +367,6 @@ async def run_has_text_analysis(
                 })
                 logger.debug("HaS found entity: %s (%s)", text, normalized_type)
 
-
-        # Format-recalled dates the NER did not already return (whitespace-
-        # insensitive value dedupe: HaS echoes the date without the OCR line
-        # break the joined-text scan may carry).
-        known_dates = {
-            re.sub(r"\s+", "", str(entity.get("text", "")))
-            for entity in entities
-            if str(entity.get("type", "")).upper() in ("DATE", "BIRTH_DATE")
-        }
-        for entity in format_date_entities:
-            key = re.sub(r"\s+", "", entity["text"])
-            if not any(key in known or known in key for known in known_dates if known):
-                entities.append(entity)
-                known_dates.add(key)
-
         # Boxes come from matching these values back to OCR blocks; mIoU is the
         # only merge step.
         logger.info("HaS total %d sensitive entities found", len(entities))
@@ -443,4 +387,4 @@ async def run_has_text_analysis(
             round((time.perf_counter() - total_start) * 1000),
         )
         # NER failed; structural table-amount / form-field recalls are still valid.
-        return list(structural_entities)
+        return []
