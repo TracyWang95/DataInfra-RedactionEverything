@@ -478,6 +478,7 @@ def _entity_char_box_line_rects(
         # len(rects)=1 there stretched 龙继临 over the entire block.
         block_lines = 1
         previous_char_x: float | None = None
+        char_widths: list[float] = []
         for char_box in (getattr(block, "chars", None) or []):
             cx = char_box.get("x1")
             if cx is None:
@@ -485,7 +486,18 @@ def _entity_char_box_line_rects(
             if previous_char_x is not None and cx < previous_char_x:
                 block_lines += 1
             previous_char_x = cx
+            cx2 = char_box.get("x2")
+            if cx2 is not None and cx2 > cx:
+                char_widths.append(float(cx2 - cx))
         row_h = (block_bottom - block_top) / max(len(rects), block_lines)
+        # Cap the row height by the median char WIDTH. The word engine's x-extent
+        # stays correct when the y-band collapses, and CJK glyphs are ~square, so
+        # the median width recovers the true glyph height — a tilted line's
+        # axis-aligned block polygon is far taller than the text (phone photo:
+        # the box towered over its one row). Never below the char band itself.
+        if char_widths:
+            char_widths.sort()
+            row_h = min(row_h, char_widths[len(char_widths) // 2])
         if row_h > 0:
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
