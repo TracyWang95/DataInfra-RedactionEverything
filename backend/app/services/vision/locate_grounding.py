@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 import logging
-import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -17,13 +15,36 @@ from PIL import Image, ImageOps
 from app.core.config import settings
 from app.core.retry import RETRYABLE_HTTPX, retry_async
 from app.core.visual_feature_categories import (
-    DEFAULT_VISUAL_FEATURE_SLUGS,
     SLUG_TO_NAME_ZH,
-    VISUAL_FEATURE_SLUGS,
     normalize_visual_slug,
 )
 from app.models.schemas import BoundingBox
 from app.services import model_config_service
+from app.services.vision.locate_payload import (
+    _COORD_MODE_TOLERANCE,  # noqa: F401  # re-exported for API stability
+    _JPEG_QUALITY,
+    _clamp_box,
+    _extract_json_payload,
+    _image_data_url,
+    _json_endpoint,
+    _normalize_box,
+    _prepare_jpeg,
+)
+from app.services.vision.locate_requests import (
+    _checklist_prompt,
+    _detect_requests,
+    _type_rules,  # noqa: F401  # re-exported for API stability
+)
+from app.services.vision.locate_tiles import (
+    _MACHINE_CODE_SIBLINGS,
+    _TILE_RETRY_BOTTOM_SLUGS,
+    _TILE_RETRY_GRID_SLUGS,
+    _TILE_RETRY_MARGIN_SLUGS,
+    _axis_positions,  # noqa: F401  # re-exported for API stability
+    _bottom_tiles,
+    _grid_tiles,
+    _margin_tiles,
+)
 from app.services.vision.seal_color_cascade import (
     propose_colored_seal_regions,
     raw_colored_component_bboxes,
@@ -31,14 +52,10 @@ from app.services.vision.seal_color_cascade import (
 
 logger = logging.getLogger(__name__)
 
-# JPEG encode quality for the image sent to the chat model
-_JPEG_QUALITY = 92
 # Smallest allowed longest-side (px) when downscaling the chat request image
 _MIN_IMAGE_SIDE = 256
 # Fallback longest-side cap (px) when no setting is configured
 _DEFAULT_MAX_IMAGE_SIDE = 2048
-# Slack multiplier deciding whether boxes are normalized (0..coord) vs absolute pixels
-_COORD_MODE_TOLERANCE = 1.05
 # Retry budget / base backoff (s) for the detect HTTP call
 _DETECT_MAX_RETRIES = 2
 _DETECT_BASE_DELAY = 1.0
@@ -51,87 +68,6 @@ _DEFAULT_TOP_P = 0.6
 # Default confidence when the model omits one
 _DEFAULT_DETECT_CONFIDENCE = 0.8
 _DEFAULT_CHECKLIST_CONFIDENCE = 0.82
-
-# Zero-recall tile retry: LA's input is downscaled to its max side, so small
-# page artifacts (binding-seal slivers on the margins, watermark QR codes at
-# the page foot) can vanish at full-page scale while detecting reliably on a
-# native-resolution crop. When a requested category yields nothing on the
-# full frame, re-run just that category on a validated tile set. Window
-# geometry is start/center/end anchoring with half-size windows: any object
-# smaller than half a window lies fully inside at least one tile, so nothing
-# that size can be lost to a tile seam. Tile hits are pure gap-filling: any
-# tile box intersecting a full-frame box is discarded (the full frame
-# outranks the zoom - a zoomed handwritten signature must not come back as a
-# phantom "seal" on top of the signature the full frame already found).
-_TILE_RETRY_MARGIN_SLUGS = frozenset({"official_seal"})
-_TILE_RETRY_BOTTOM_SLUGS = frozenset({"qr_code"})
-# Body-grid retry: a red thumbprint or a handwritten signature is a small,
-# faint, body-placed mark the full-frame pass loses to downscaling — proven on
-# the 受案回执 photo, invisible full-frame yet recalled at conf 0.82 inside a
-# lower-page crop. They are recovered by re-running on an overlapping grid that
-# covers the WHOLE page (not just margins/foot), gated on the full-frame miss.
-_TILE_RETRY_GRID_SLUGS = frozenset({"fingerprint", "signature"})
-# LA reads degraded machine codes as either sibling; both mask identically.
-_MACHINE_CODE_SIBLINGS = frozenset({"qr_code", "barcode"})
-
-
-def _axis_positions(total: int, window: int) -> list[int]:
-    """start / center / end anchor offsets for a sliding window."""
-    last = max(0, total - window)
-    return sorted({0, last // 2, last})
-
-
-def _margin_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
-    """L/R margin strips: binding seals sit on page edges by definition.
-    Strip width W//3 - validated on real binding-seal pages: narrower strips
-    starve the model of page context and edge slivers stop being recognised
-    as stamps."""
-    strip = max(1, width // 3)
-    window = max(1, height // 2)
-    tiles = []
-    for x0 in (0, width - strip):
-        for y0 in _axis_positions(height, window):
-            tiles.append((x0, y0, x0 + strip, min(height, y0 + window)))
-    return tiles
-
-
-def _bottom_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
-    """Bottom H//4 row in three overlapped half-width windows: scanner
-    watermark QR codes live at the page foot; QR codes elsewhere are
-    body-scale and the full frame sees them."""
-    row_top = height - max(1, height // 4)
-    window = max(1, width // 2)
-    return [
-        (x0, row_top, min(width, x0 + window), height)
-        for x0 in _axis_positions(width, window)
-    ]
-
-
-def _grid_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
-    """A 2x2 grid of overlapping three-fifths windows covering the WHOLE frame.
-
-    A faint, small, body-placed mark (thumbprint, handwritten signature) is lost
-    once the full page is downscaled to the model input, but salient inside a
-    three-fifths-scale window (empirically: the 受案回执 photo's prints AND the
-    stamped-over signature, invisible full-frame, all come back at conf 0.82 in
-    these tiles — larger two-thirds tiles already lose the faintest, the
-    signature, to less salience, so three-fifths is the floor that still recalls).
-
-    The windows overlap by a FIFTH of the page: a content-independent GUARANTEE
-    (not a lucky cut) that any mark up to a fifth of the page is whole inside at
-    least one tile wherever it sits, even across a nominal seam (see
-    test_grid_tiles). That covers the real marks with margin — measured
-    thumbprints/signatures run 9-11% of the page — and it is enough because the
-    retry only runs for objects the full frame MISSED, and the full frame only
-    misses small/faint marks (it already sees anything large enough to straddle
-    a fifth-of-page overlap)."""
-    win_w = max(1, width * 3 // 5)
-    win_h = max(1, height * 3 // 5)
-    return [
-        (x0, y0, min(width, x0 + win_w), min(height, y0 + win_h))
-        for y0 in (0, height - win_h)
-        for x0 in (0, width - win_w)
-    ]
 
 
 @dataclass
@@ -152,168 +88,6 @@ class LocateGroundingTimings:
 
 def _elapsed_ms(start: float) -> int:
     return max(0, round((time.perf_counter() - start) * 1000))
-
-
-def _json_endpoint(base_url: str, suffix: str) -> str:
-    base = (base_url or "").rstrip("/")
-    if base.endswith("/v1"):
-        return f"{base}/{suffix.lstrip('/')}"
-    return f"{base}/v1/{suffix.lstrip('/')}"
-
-
-def _extract_json_payload(text: str) -> dict[str, Any]:
-    raw = str(text or "").strip()
-    if not raw:
-        return {"objects": []}
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I)
-        raw = re.sub(r"\s*```$", "", raw)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"(\{.*\}|\[.*\])", raw, re.S)
-        if not match:
-            return {"objects": [], "raw_response": text}
-        try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            return {"objects": [], "raw_response": text}
-    if isinstance(data, list):
-        return {"objects": data}
-    if isinstance(data, dict) and isinstance(data.get("objects"), list):
-        return data
-    return {"objects": [], "raw_response": text}
-
-
-def _image_data_url(image_data: bytes) -> str:
-    return f"data:image/jpeg;base64,{base64.b64encode(image_data).decode('ascii')}"
-
-
-def _prepare_jpeg(image_data: bytes, max_side: int) -> tuple[bytes, tuple[int, int]]:
-    image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
-    if max(image.size) > max_side:
-        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-    encoded = io.BytesIO()
-    image.save(encoded, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
-    return encoded.getvalue(), image.size
-
-
-def _clamp_box(x: float, y: float, width: float, height: float) -> tuple[float, float, float, float] | None:
-    x = max(0.0, min(1.0, x))
-    y = max(0.0, min(1.0, y))
-    width = max(0.0, min(1.0 - x, width))
-    height = max(0.0, min(1.0 - y, height))
-    if width <= 0.0 or height <= 0.0:
-        return None
-    return x, y, width, height
-
-
-def _normalize_box(raw_box: Any, width: int, height: int) -> tuple[float, float, float, float] | None:
-    if not isinstance(raw_box, list | tuple) or len(raw_box) != 4:
-        return None
-    try:
-        x1, y1, x2, y2 = [float(value) for value in raw_box]
-    except (TypeError, ValueError):
-        return None
-    coord = max(1.0, float(settings.VISUAL_FEATURES_COORD_MODE))
-    if max(x1, y1, x2, y2) <= coord * _COORD_MODE_TOLERANCE:
-        x1, x2 = x1 / coord * width, x2 / coord * width
-        y1, y2 = y1 / coord * height, y2 / coord * height
-    x1, x2 = sorted((max(0.0, min(float(width), x1)), max(0.0, min(float(width), x2))))
-    y1, y2 = sorted((max(0.0, min(float(height), y1)), max(0.0, min(float(height), y2))))
-    if x2 <= x1 or y2 <= y1:
-        return None  # degenerate (non-positive area); trust LA for everything else
-    return x1 / width, y1 / height, (x2 - x1) / width, (y2 - y1) / height
-
-
-def _type_rules(type_config: Any) -> list[str]:
-    checklist = getattr(type_config, "checklist", None) or []
-    rules: list[str] = []
-    for item in checklist:
-        if isinstance(item, dict):
-            for key in ("rule", "positive_prompt"):
-                value = str(item.get(key) or "").strip()
-                if value:
-                    rules.append(value)
-        else:
-            for key in ("rule", "positive_prompt"):
-                value = str(getattr(item, key, "") or "").strip()
-                if value:
-                    rules.append(value)
-    if not rules:
-        rules = [str(rule).strip() for rule in (getattr(type_config, "rules", None) or []) if str(rule).strip()]
-    description = str(getattr(type_config, "description", "") or "").strip()
-    if description:
-        rules.append(description)
-    name = str(getattr(type_config, "name", "") or getattr(type_config, "id", "")).strip()
-    if name:
-        rules.append(name)
-    return list(dict.fromkeys(rules))
-
-
-def _checklist_prompt(type_configs: list[Any]) -> str:
-    lines = [
-        "Task: locate visual features in this document image.",
-        "Use actual visible visual evidence only; do not infer from labels, blank fields, table lines, or surrounding text.",
-        "Return JSON only.",
-        'Schema: {"objects":[{"type_id":"<allowed type_id>","label":"<label>","box_2d":[xmin,ymin,xmax,ymax],"confidence":0.8,"rule_matched":"<type_id>#<rule_index>","text":""}]}',
-        f"Coordinates are integers in 0..{settings.VISUAL_FEATURES_COORD_MODE}, origin top-left.",
-        "Use one tight box per visible instance.",
-        f"Allowed type_id: {', '.join(str(getattr(item, 'id', '')).strip() for item in type_configs)}",
-        "Configured visual checklist:",
-    ]
-    for item in type_configs:
-        type_id = str(getattr(item, "id", "")).strip()
-        name = str(getattr(item, "name", "") or type_id).strip()
-        lines.append(f"- type_id={type_id}; name={name}")
-        for index, rule in enumerate(_type_rules(item), start=1):
-            lines.append(f"  {index}. Check: {rule}")
-        negative = str(getattr(item, "negative_prompt", "") or "").strip()
-        if bool(getattr(item, "negative_prompt_enabled", False)) and negative:
-            lines.append(f"  Exclude: {negative}")
-    lines.append('If none, return {"objects":[]}.')
-    return "\n".join(lines)
-
-
-def _detect_requests(
-    pipeline_types: list[Any] | None,
-) -> tuple[list[tuple[str, str, str]], list[str]]:
-    """Detect targets + the fixed-slug subset.
-
-    Each target is (tag_to_send, result_type, result_text): a fixed visual
-    category is sent as its slug (LA has a curated prompt keyed by slug) and
-    tagged by that slug; a user-defined custom_visual_features_* label is sent as
-    its human name verbatim (LA grounds it via _detect_prompt's fallback) and
-    tagged by its own type_id. One uniform path — the box is tagged by the
-    REQUESTED target, never LA's echoed category, which a non-ASCII label would
-    not survive.
-
-    The fixed-slug subset drives the slug-specific supplements (YOLO / seal
-    cascade / signature / tile retry). pipeline_types is None -> every fixed
-    category (the default preset)."""
-    if pipeline_types is None:
-        fixed = list(DEFAULT_VISUAL_FEATURE_SLUGS)
-        return [(s, s, SLUG_TO_NAME_ZH.get(s, s)) for s in fixed], fixed
-    requests: list[tuple[str, str, str]] = []
-    fixed: list[str] = []
-    seen: set[str] = set()
-    for item in pipeline_types:
-        tid = str(getattr(item, "id", item) or "")
-        slug = normalize_visual_slug(tid)
-        if slug in VISUAL_FEATURE_SLUGS:
-            if slug in seen:
-                continue
-            seen.add(slug)
-            requests.append((slug, slug, SLUG_TO_NAME_ZH.get(slug, slug)))
-            fixed.append(slug)
-        elif tid.startswith("custom_visual_features_") and tid not in seen:
-            label = str(getattr(item, "name", "") or "").strip() or tid[
-                len("custom_visual_features_"):
-            ].replace("_", " ").strip()
-            if label:
-                seen.add(tid)
-                requests.append((label, tid, label))
-    return requests, fixed
 
 
 class LocateAnythingGroundingService:
