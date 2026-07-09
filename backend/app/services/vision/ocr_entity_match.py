@@ -413,7 +413,7 @@ def _entity_span_char_boxes(
 # survives. So the em (glyph width) is the one trustworthy size, and this ratio is
 # the single unavoidable constant that turns it into the row height that covers
 # the ink with its leading (the bare em alone leaves the feet poking out).
-_CJK_LINE_HEIGHT_RATIO = 1.3
+_CJK_LINE_HEIGHT_RATIO = 1.5
 
 
 def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
