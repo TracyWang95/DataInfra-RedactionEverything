@@ -5,11 +5,14 @@ export HAS_TEXT_VLLM_BASE_URL=http://127.0.0.1:9080/v1
 export HAS_TEXT_MODEL_NAME=HaS_Text_0209_0.6B
 export OCR_BASE_URL=http://127.0.0.1:9082
 export VISUAL_FEATURES_BASE_URL=http://127.0.0.1:9090
-export VISUAL_SINGLE_CALL=1
-export VISUAL_TILE_RETRY=0
+# VISUAL_TILE_RETRY=1: LocateAnything loses small/faint/edge marks (thumbprints,
+# handwritten signatures, binding-seal slivers) at downscale; the zero-recall tile
+# retry re-runs the missed category on zoomed tiles. (Was 0, a GLM-era leftover;
+# VISUAL_SINGLE_CALL, another GLM-only flag, is removed — LA always fans out per category.)
+export VISUAL_TILE_RETRY=1
 export HAS_IMAGE_URL=http://127.0.0.1:9140
-export ABSORB_SIGNATURES_IN_SEALS=0
-export VISUAL_FEATURES_MODEL_NAME=GLM-4.6V-Flash-FP8
+export ABSORB_SIGNATURES_IN_SEALS=1
+export VISUAL_FEATURES_MODEL_NAME=LocateAnything-3B
 export LOCATE_ANYTHING_ENABLED=1
 export OCR_STRUCTURE_ENABLED=true OCR_STRUCTURE_PRIMARY=true OCR_VL_ENABLED=1 VISION_DUAL_PIPELINE_PARALLEL=0 OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL=1 OCR_MAX_NEW_TOKENS=8192
 export AUTH_ENABLED=true

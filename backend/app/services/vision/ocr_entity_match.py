@@ -416,30 +416,41 @@ def _entity_span_char_boxes(
 _CJK_LINE_HEIGHT_RATIO = 1.5
 
 
+def _median_single_cjk_width(char_boxes) -> float | None:
+    """Median WIDTH of single-CJK glyph boxes — the one char-box dimension that
+    survives a phone photo (the whole y-band collapses, x stays). Narrow
+    punctuation, thin digits and multi-char token boxes are excluded so they
+    cannot skew it. None when the sequence carries no measurable CJK glyph (an
+    all-Latin value), which callers read as "keep the body grid, don't size by
+    width" — Latin glyphs are tall-narrow, so their width is never a height."""
+    widths: list[float] = []
+    for c in char_boxes:
+        if not c:
+            continue
+        ch = str(c.get("c", ""))
+        if not (len(ch) == 1 and "一" <= ch <= "鿿"):
+            continue
+        x1, x2 = c.get("x1"), c.get("x2")
+        if x1 is not None and x2 is not None and x2 > x1:
+            widths.append(float(x2 - x1))
+    if not widths:
+        return None
+    widths.sort()
+    return widths[len(widths) // 2]
+
+
 def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
     """Uniform text-row height for the whole page: the CJK glyph em scaled to the
     typeset line height.
 
-    The em is the median WIDTH of single CJK glyph boxes — the word engine's
-    x-extent is the only char-box dimension that survives a phone photo (the whole
-    y-band collapses). Narrow punctuation, thin digits and multi-char token boxes
-    are excluded so they cannot skew it. One page-level value → every box is the
-    same height, immune to any single block's loose / tilted / multi-line polygon,
+    The em is the median WIDTH of single CJK glyph boxes (see
+    _median_single_cjk_width). One page-level value → every box is the same
+    height, immune to any single block's loose / tilted / multi-line polygon,
     which is what made the wrapped 云A856Z8号 and 日 tower while 小空山7号 read flat.
     """
-    em_widths: list[float] = []
-    for block in blocks:
-        for char_box in (getattr(block, "chars", None) or []):
-            c = str(char_box.get("c", ""))
-            if not (len(c) == 1 and "一" <= c <= "鿿"):
-                continue
-            x1, x2 = char_box.get("x1"), char_box.get("x2")
-            if x1 is not None and x2 is not None and x2 > x1:
-                em_widths.append(float(x2 - x1))
-    if not em_widths:
-        return None
-    em_widths.sort()
-    return em_widths[len(em_widths) // 2] * _CJK_LINE_HEIGHT_RATIO
+    all_chars = [c for block in blocks for c in (getattr(block, "chars", None) or [])]
+    em = _median_single_cjk_width(all_chars)
+    return None if em is None else em * _CJK_LINE_HEIGHT_RATIO
 
 
 def _entity_char_box_line_rects(
@@ -508,14 +519,30 @@ def _entity_char_box_line_rects(
     ys = [int(pt[1]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
     if ys:
         block_top, block_bottom = min(ys), max(ys)
-        if line_height is not None and line_height > 0:
-            # Document line grid: one uniform text-row height for every box — the
-            # page's CJK glyph em cell (adjacent-glyph advance, see
-            # _document_line_height). A single block's polygon cannot state its row
+        # This entity's own glyph size, so a large-font header/title (court name
+        # 昆明市盘龙区人民法院, 民事判决书) is not flattened to the body line grid.
+        # The em is the median WIDTH of THIS entity's single-CJK char boxes — the
+        # same charless-safe signal as _document_line_height, just entity-local. A
+        # no-CJK value (bank account, all Latin) has no em here and keeps the body
+        # grid — byte-identical to before — which is what stops tall Latin glyphs
+        # leaking (per-char sized them by width, and Latin width << Latin height).
+        entity_em = _median_single_cjk_width(span_boxes)
+        row_line_height = line_height
+        if entity_em is not None:
+            entity_line_height = entity_em * _CJK_LINE_HEIGHT_RATIO
+            row_line_height = (
+                entity_line_height
+                if row_line_height is None
+                else max(row_line_height, entity_line_height)
+            )
+        if row_line_height is not None and row_line_height > 0:
+            # Document line grid, floored by THIS entity's own font: the page em
+            # (see _document_line_height) is a floor for body & Latin, the entity
+            # em lifts big headers. A single block's polygon cannot state its row
             # height reliably — loose, tilt-inflated, or (multi-line) the line
             # PITCH not the glyph height — which is why the wrapped 云A856Z8号 and
             # 日 towered while 小空山7号 read flat. Clamped to the block below.
-            row_h = min(float(block_bottom - block_top), float(line_height))
+            row_h = min(float(block_bottom - block_top), float(row_line_height))
         else:
             # No page grid (degenerate page with no adjacent CJK pair — never the
             # real pipeline, which always threads one in): full block polygon
@@ -700,6 +727,27 @@ def _charsless_block_line_rects(
     )
 
 
+def _region_cjk_em(region: SensitiveRegion, line_blocks: list[OCRTextBlock]) -> float | None:
+    """The font em (median single-CJK char WIDTH) of the glyphs under a region —
+    its own type size. Used to tell a genuinely large-font row (a title/header,
+    wide AND tall) from a body-grid row that is merely tall (a DATE's un-collapsed
+    digit boxes): the former's em row height clears the page median, the latter's
+    does not. None for an all-Latin value (no CJK glyph to measure)."""
+    rl, rt = region.left, region.top
+    rr, rb = region.left + region.width, region.top + region.height
+    inside = []
+    for b in line_blocks:
+        for c in (getattr(b, "chars", None) or []):
+            x1, x2 = c.get("x1"), c.get("x2")
+            y1, y2 = c.get("y1"), c.get("y2")
+            if x1 is None or x2 is None or y1 is None or y2 is None:
+                continue
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            if rl <= cx <= rr and rt <= cy <= rb:
+                inside.append(c)
+    return _median_single_cjk_width(inside)
+
+
 def split_regions_across_lines(
     regions: list[SensitiveRegion],
     ocr_blocks: list[OCRTextBlock],
@@ -766,22 +814,31 @@ def split_regions_across_lines(
                 source=region.source,
             ))
             single_row.append(True)
-    # Height has ONE source of truth: the page's OWN median single-row box height.
-    # It is self-calibrating (measured from the boxes we just produced, immune to
-    # the run-to-run wobble of the char-width em) and path-independent — whichever
-    # match/split produced a row, an over-tall outlier (a DATE's un-collapsed
-    # digit boxes, the wrapped 日 a grow-only step preserved) is trimmed to the
-    # same row so every text mask reads uniform. Only single rows, only downward:
-    # a real glyph is <= the row height so this never uncovers ink, and collapsed
-    # rows that grew UP stay put. Multi-line slabs are left whole.
+    # Trim over-tall single rows to the page's median single-row height — but
+    # never below the row's OWN font. The median is self-calibrating (measured
+    # from the boxes we just produced) and trims real outliers: a DATE's
+    # un-collapsed digit boxes, the wrapped 日 a grow-only step preserved. Yet a
+    # genuinely large-font row (a title/header) is legitimately taller than the
+    # body grid — flattening it to the median UNCOVERS its glyphs (the court name
+    # 昆明市盘龙区人民法院 read flat). The two are told apart with no threshold by
+    # the same em that sized the row upstream: its own median single-CJK char
+    # WIDTH. A large font is wide AND tall (em row height clears the median →
+    # kept); a body-grid outlier is merely tall (normal/absent CJK em → trimmed).
+    # No CJK em (an all-Latin value) keeps the body grid. Only single rows, only
+    # downward: a real glyph is <= its row height so this never uncovers ink,
+    # collapsed rows that grew UP stay put, multi-line slabs are left whole.
     row_heights = sorted(r.height for r, one in zip(out, single_row, strict=True) if one)
     if row_heights:
         median_row = row_heights[len(row_heights) // 2]
         for region, one in zip(out, single_row, strict=True):
-            if one and region.height > median_row:
+            if not one or region.height <= median_row:
+                continue
+            em = _region_cjk_em(region, line_blocks)
+            ceiling = median_row if em is None else max(median_row, int(em * _CJK_LINE_HEIGHT_RATIO))
+            if region.height > ceiling:
                 center_y = region.top + region.height / 2.0
-                region.top = int(center_y - median_row / 2.0)
-                region.height = int(median_row)
+                region.top = int(center_y - ceiling / 2.0)
+                region.height = int(ceiling)
     return out
 
 

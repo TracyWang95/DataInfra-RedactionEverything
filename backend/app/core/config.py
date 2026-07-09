@@ -213,28 +213,23 @@ class Settings(BaseSettings):
 
     # LocateAnything visual feature service
     VISUAL_FEATURES_BASE_URL: str = "http://127.0.0.1:9090"
-    VISUAL_FEATURES_MODEL_NAME: str = "GLM-4.6V-Flash-FP8"
+    VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
     VISUAL_FEATURES_TIMEOUT: float = 240.0
     VISUAL_FEATURES_CONF: float = 0.25
-    # GLM-backed visual grounding: one multi-category prompt per page (GLM has
-    # no multi-category recall collapse, unlike LocateAnything), and its
-    # full-frame recall is scale-immune, making the zero-recall tile retry
-    # redundant cost — disable it when this backend is active.
-    VISUAL_SINGLE_CALL: bool = False
+    # LocateAnything's recall collapses when categories share one prompt, so the
+    # detect stage always fans out one category per call; keep the zero-recall
+    # tile retry on to recover small / edge objects the full-frame pass drops.
     VISUAL_TILE_RETRY: bool = True
     # HaS-Image YOLO supplement service (empty = disabled). Runs every page
     # alongside the grounding model: native-resolution small-object recall
     # (stacked seal halves, watermark QR codes) at ~100ms.
     HAS_IMAGE_URL: str = ""
-    # LocateAnything-3B signature supplement. The GLM VLM has a hard ceiling on
-    # faint handwritten signatures (a full temperature/top_p/self-consistency
-    # sweep never recovered them); the task-trained LA grounding model does.
-    # Scoped to signature only — seals/codes stay with GLM+YOLO. Empty = off.
+    # Dedicated LocateAnything signature-only pass, higher recall on faint
+    # handwritten signatures than the shared multi-category detect. Scoped to
+    # signatures — seals/codes come from the main LA detect + YOLO. Empty = off.
     LA_SIGNATURE_URL: str = ""
-    # Fold signature boxes centered inside a seal into the seal hull. Needed
-    # for LocateAnything (it misreads stamp content as phantom signatures);
-    # must be OFF for the GLM backend, which has no phantom class and whose
-    # real stamped-over signatures would be swallowed.
+    # Fold signature boxes centered inside a seal into the seal hull —
+    # LocateAnything misreads stamp content as phantom signatures, so absorb them.
     ABSORB_SIGNATURES_IN_SEALS: bool = True
     # Zoom pass for margin (binding) seals: at page scale the grounding model
     # boxes only the most stamp-like part of an edge sliver (star/characters,

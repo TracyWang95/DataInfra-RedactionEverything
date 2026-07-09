@@ -19,8 +19,7 @@ from app.core.retry import RETRYABLE_HTTPX, retry_async
 from app.core.visual_feature_categories import (
     DEFAULT_VISUAL_FEATURE_SLUGS,
     SLUG_TO_NAME_ZH,
-    filter_visual_feature_slugs,
-    is_visual_feature_slug,
+    VISUAL_FEATURE_SLUGS,
     normalize_visual_slug,
 )
 from app.models.schemas import BoundingBox
@@ -66,6 +65,12 @@ _DEFAULT_CHECKLIST_CONFIDENCE = 0.82
 # phantom "seal" on top of the signature the full frame already found).
 _TILE_RETRY_MARGIN_SLUGS = frozenset({"official_seal"})
 _TILE_RETRY_BOTTOM_SLUGS = frozenset({"qr_code"})
+# Body-grid retry: a red thumbprint or a handwritten signature is a small,
+# faint, body-placed mark the full-frame pass loses to downscaling — proven on
+# the 受案回执 photo, invisible full-frame yet recalled at conf 0.82 inside a
+# lower-page crop. They are recovered by re-running on an overlapping grid that
+# covers the WHOLE page (not just margins/foot), gated on the full-frame miss.
+_TILE_RETRY_GRID_SLUGS = frozenset({"fingerprint", "signature"})
 # LA reads degraded machine codes as either sibling; both mask identically.
 _MACHINE_CODE_SIBLINGS = frozenset({"qr_code", "barcode"})
 
@@ -99,6 +104,33 @@ def _bottom_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
     return [
         (x0, row_top, min(width, x0 + window), height)
         for x0 in _axis_positions(width, window)
+    ]
+
+
+def _grid_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """A 2x2 grid of overlapping three-fifths windows covering the WHOLE frame.
+
+    A faint, small, body-placed mark (thumbprint, handwritten signature) is lost
+    once the full page is downscaled to the model input, but salient inside a
+    three-fifths-scale window (empirically: the 受案回执 photo's prints AND the
+    stamped-over signature, invisible full-frame, all come back at conf 0.82 in
+    these tiles — larger two-thirds tiles already lose the faintest, the
+    signature, to less salience, so three-fifths is the floor that still recalls).
+
+    The windows overlap by a FIFTH of the page: a content-independent GUARANTEE
+    (not a lucky cut) that any mark up to a fifth of the page is whole inside at
+    least one tile wherever it sits, even across a nominal seam (see
+    test_grid_tiles). That covers the real marks with margin — measured
+    thumbprints/signatures run 9-11% of the page — and it is enough because the
+    retry only runs for objects the full frame MISSED, and the full frame only
+    misses small/faint marks (it already sees anything large enough to straddle
+    a fifth-of-page overlap)."""
+    win_w = max(1, width * 3 // 5)
+    win_h = max(1, height * 3 // 5)
+    return [
+        (x0, y0, min(width, x0 + win_w), min(height, y0 + win_h))
+        for y0 in (0, height - win_h)
+        for x0 in (0, width - win_w)
     ]
 
 
@@ -243,6 +275,47 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def _detect_requests(
+    pipeline_types: list[Any] | None,
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Detect targets + the fixed-slug subset.
+
+    Each target is (tag_to_send, result_type, result_text): a fixed visual
+    category is sent as its slug (LA has a curated prompt keyed by slug) and
+    tagged by that slug; a user-defined custom_visual_features_* label is sent as
+    its human name verbatim (LA grounds it via _detect_prompt's fallback) and
+    tagged by its own type_id. One uniform path — the box is tagged by the
+    REQUESTED target, never LA's echoed category, which a non-ASCII label would
+    not survive.
+
+    The fixed-slug subset drives the slug-specific supplements (YOLO / seal
+    cascade / signature / tile retry). pipeline_types is None -> every fixed
+    category (the default preset)."""
+    if pipeline_types is None:
+        fixed = list(DEFAULT_VISUAL_FEATURE_SLUGS)
+        return [(s, s, SLUG_TO_NAME_ZH.get(s, s)) for s in fixed], fixed
+    requests: list[tuple[str, str, str]] = []
+    fixed: list[str] = []
+    seen: set[str] = set()
+    for item in pipeline_types:
+        tid = str(getattr(item, "id", item) or "")
+        slug = normalize_visual_slug(tid)
+        if slug in VISUAL_FEATURE_SLUGS:
+            if slug in seen:
+                continue
+            seen.add(slug)
+            requests.append((slug, slug, SLUG_TO_NAME_ZH.get(slug, slug)))
+            fixed.append(slug)
+        elif tid.startswith("custom_visual_features_") and tid not in seen:
+            label = str(getattr(item, "name", "") or "").strip() or tid[
+                len("custom_visual_features_"):
+            ].replace("_", " ").strip()
+            if label:
+                seen.add(tid)
+                requests.append((label, tid, label))
+    return requests, fixed
+
+
 class LocateAnythingGroundingService:
     """Single adapter for all visual grounding boxes produced by LocateAnything."""
 
@@ -257,71 +330,60 @@ class LocateAnythingGroundingService:
     ) -> tuple[list[BoundingBox], dict[str, int]]:
         total_start = time.perf_counter()
         timings = LocateGroundingTimings()
-        slugs = None if pipeline_types is None else [str(getattr(item, "id", item)) for item in pipeline_types]
-        model_slugs = filter_visual_feature_slugs(slugs if slugs is not None else list(DEFAULT_VISUAL_FEATURE_SLUGS))
-        if model_slugs is not None and not model_slugs:
+        # One detect request per target — a fixed visual slug (sent as its slug,
+        # which LA has a curated prompt for) or a user-defined visual label
+        # (custom_visual_features_*, sent as its human name verbatim). Each is one
+        # single-category call — LocateAnything's recall collapses when categories
+        # share a prompt — round-robined across both GPUs. The box is tagged by the
+        # REQUESTED target, never LA's echoed category, so a 中文 label is not
+        # normalize-stripped and fixed + custom tags flow through ONE path.
+        requests, model_slugs = _detect_requests(pipeline_types)
+        if not requests:
             timings.total = _elapsed_ms(total_start)
-            logger.info("LocateAnything visual category stage skipped: no supported fixed visual categories")
+            logger.info("LocateAnything visual category stage skipped: no visual categories")
             return [], timings.as_dict()
 
         model_start = time.perf_counter()
-        # Parallel inference across both GPUs: fan out one request per category
-        # so the load balancer round-robins them onto GPU0/GPU1 concurrently.
-        # Each LA call then does exactly one MoonViT encode + one generation, so
-        # the default {signature, official_seal} pair finishes in ~one category's
-        # time (~2s) instead of two sequential passes (~4s) on a single card.
-        # VISUAL_SINGLE_CALL (GLM backend): multi-category recall does NOT
-        # collapse there, so one prompt covers every category in one call.
-        single_call = bool(getattr(settings, "VISUAL_SINGLE_CALL", False))
-        if model_slugs is not None and len(model_slugs) > 1 and not single_call:
-            results = await asyncio.gather(
-                *[self._post_detect(image_data, [slug]) for slug in model_slugs],
-                return_exceptions=True,
-            )
-            raw_boxes = []
-            for slug, res in zip(model_slugs, results, strict=False):
-                if isinstance(res, BaseException):
-                    logger.warning("LocateAnything category %s failed, skipping: %s", slug, res)
-                    continue
-                raw_boxes.extend(res)
-        else:
-            raw_boxes = await self._post_detect(image_data, model_slugs)
+        results = await asyncio.gather(
+            *[self._post_detect(image_data, [tag]) for tag, _type, _text in requests],
+            return_exceptions=True,
+        )
         timings.model = _elapsed_ms(model_start)
 
         boxes: list[BoundingBox] = []
-        for index, raw in enumerate(raw_boxes):
-            slug = normalize_visual_slug(raw.get("category", ""))
-            if not is_visual_feature_slug(slug):
-                logger.debug("Skipping unsupported LocateAnything category: %s", raw.get("category"))
+        for (tag, result_type, result_text), res in zip(requests, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.warning("LocateAnything category %r failed, skipping: %s", tag, res)
                 continue
-            try:
-                normalized = _clamp_box(
-                    float(raw.get("x") or 0),
-                    float(raw.get("y") or 0),
-                    float(raw.get("width") or 0),
-                    float(raw.get("height") or 0),
+            for raw in res:
+                try:
+                    normalized = _clamp_box(
+                        float(raw.get("x") or 0),
+                        float(raw.get("y") or 0),
+                        float(raw.get("width") or 0),
+                        float(raw.get("height") or 0),
+                    )
+                except (TypeError, ValueError):
+                    normalized = None
+                if normalized is None:
+                    continue
+                x, y, width, height = normalized
+                boxes.append(
+                    BoundingBox(
+                        id=f"locate_{uuid.uuid4().hex[:8]}",
+                        x=x,
+                        y=y,
+                        width=width,
+                        height=height,
+                        type=result_type,
+                        text=result_text,
+                        page=page,
+                        confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                        source="visual_features",
+                        source_detail="locate_anything:detect",
+                        evidence_source="visual_feature_model",
+                    )
                 )
-            except (TypeError, ValueError):
-                normalized = None
-            if normalized is None:
-                continue
-            x, y, width, height = normalized
-            boxes.append(
-                BoundingBox(
-                    id=f"locate_{index}_{uuid.uuid4().hex[:8]}",
-                    x=x,
-                    y=y,
-                    width=width,
-                    height=height,
-                    type=slug,
-                    text=SLUG_TO_NAME_ZH.get(slug, slug),
-                    page=page,
-                    confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
-                    source="visual_features",
-                    source_detail="locate_anything:detect",
-                    evidence_source="visual_feature_model",
-                )
-            )
         has_image_url = str(getattr(settings, "HAS_IMAGE_URL", "") or "").strip()
         if has_image_url and model_slugs:
             supplement_start = time.perf_counter()
@@ -339,12 +401,11 @@ class LocateAnythingGroundingService:
 
         la_sig_url = str(getattr(settings, "LA_SIGNATURE_URL", "") or "").strip()
         if la_sig_url and model_slugs and "signature" in model_slugs:
-            # LocateAnything signature supplement. GLM cannot ground faint
-            # handwritten signatures (proven: a full prompt/temperature/
-            # self-consistency sweep never recovered the court-form 办案人
-            # signature); the task-trained LA model does. Scoped to signature
-            # so the validated seal/code behavior is untouched; LA's boxes
-            # union with GLM's in the merge layer (IoU dedup).
+            # Dedicated LocateAnything signature-only pass — higher recall on
+            # faint handwritten signatures (the shared multi-category detect
+            # missed the court-form 办案人 signature). Scoped to signature so the
+            # validated seal/code behavior is untouched; its boxes union with the
+            # main detect's in the merge layer (IoU dedup).
             la_start = time.perf_counter()
             try:
                 la_boxes = await self._detect_la_signature(la_sig_url, image_data, page)
@@ -399,7 +460,7 @@ class LocateAnythingGroundingService:
             #   photo bridged three red underlines into the seal's cluster
             #   and the raw extent painted a page-wide box). Flooded clusters
             #   (colored scene background) must not grow anything.
-            # - none, or >=2 (the shard path: GLM flakily segments page_02's
+            # - none, or >=2 (the shard path: the grounding model flakily segments page_02's
             #   binding-seal column; the color connected-component says they
             #   are one impression): send to the confirm crop.
             try:
@@ -530,7 +591,7 @@ class LocateAnythingGroundingService:
             and model_slugs
             and "official_seal" in model_slugs
         ):
-            # Binding (margin) seals: GLM's FULL-FRAME seal recall on thin edge
+            # Binding (margin) seals: the grounding model's FULL-FRAME seal recall on thin edge
             # slivers is unreliable AND non-monotonic in the requested category
             # count — page_02's right binding column is found with 4 categories,
             # missed entirely with 7 (what the medical/full preset sends, the
@@ -554,7 +615,7 @@ class LocateAnythingGroundingService:
                 tiles_for=_both_margins,
                 source_detail="locate_anything:edge_refine",
             )
-            # GLM reads a barcode/QR in the margin as a seal (med's top
+            # the grounding model reads a barcode/QR in the margin as a seal (med's top
             # barcode). Drop any margin-seal box overlapping a machine-code
             # box — the code is already covered by its own detection. Same
             # cross-detector arbitration as _prefer_yolo_machine_codes.
@@ -612,7 +673,7 @@ class LocateAnythingGroundingService:
         retry_slugs = [
             slug
             for slug in (model_slugs or [])
-            if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS
+            if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
             and not any(b.type == slug for b in boxes)
         ]
         if retry_slugs and not bool(getattr(settings, "VISUAL_TILE_RETRY", True)):
@@ -711,8 +772,8 @@ class LocateAnythingGroundingService:
         image_data: bytes,
         page: int,
     ) -> list[BoundingBox]:
-        """LocateAnything signature-only pass. Same /detect contract as the GLM
-        adapter; we request just signature so nothing else changes."""
+        """LocateAnything signature-only pass. Same /detect contract as the main
+        detect; we request just signature so nothing else changes."""
         body = {
             "image_base64": base64.b64encode(image_data).decode("utf-8"),
             "conf": settings.VISUAL_FEATURES_CONF,
@@ -1000,11 +1061,12 @@ class LocateAnythingGroundingService:
             if tiles_for is not None:
                 tiles = tiles_for(slug, width, height)
             else:
-                tiles = (
-                    _margin_tiles(width, height)
-                    if slug in _TILE_RETRY_MARGIN_SLUGS
-                    else _bottom_tiles(width, height)
-                )
+                if slug in _TILE_RETRY_MARGIN_SLUGS:
+                    tiles = _margin_tiles(width, height)
+                elif slug in _TILE_RETRY_GRID_SLUGS:
+                    tiles = _grid_tiles(width, height)
+                else:
+                    tiles = _bottom_tiles(width, height)
             for x0, y0, x1, y1 in tiles:
                 encoded = io.BytesIO()
                 image.crop((x0, y0, x1, y1)).save(encoded, format="JPEG", quality=_JPEG_QUALITY)

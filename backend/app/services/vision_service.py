@@ -485,10 +485,9 @@ class VisionService:
         all_boxes = self._prefer_yolo_machine_codes(all_boxes)
         all_boxes = self._merge_seal_shards(all_boxes)
         # LocateAnything misread stamp content (seal script, inked dates) as
-        # phantom "signatures", which this absorb pass folded into the seal
-        # hull. The GLM grounding backend does not produce that phantom class,
-        # and absorbing there swallows REAL signatures stamped over a seal
-        # (签字盖章重叠) — so the pass is config-gated per visual backend.
+        # phantom "signatures", which this absorb pass folds into the seal hull.
+        # Gated because absorbing also swallows a REAL signature stamped over a
+        # seal (签字盖章重叠) — turn it OFF when those must survive.
         if bool(getattr(settings, "ABSORB_SIGNATURES_IN_SEALS", True)):
             all_boxes = self._absorb_signatures_in_seals(all_boxes)
         all_boxes = self._deduplicate_boxes(all_boxes)

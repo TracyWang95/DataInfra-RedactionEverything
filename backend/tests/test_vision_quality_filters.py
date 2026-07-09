@@ -709,3 +709,133 @@ def test_cross_line_split_grows_collapsed_char_band_to_row_height() -> None:
     for r in out:
         # grown to ~row height, NOT the 2px collapsed char band
         assert r.height >= 20, f"sliver crop leaks glyphs: height={r.height}"
+
+
+def test_large_font_header_grows_to_its_own_glyph_height() -> None:
+    # The page's uniform line height is set by the small body text. A large-font
+    # header/title (court name 昆明市盘龙区人民法院) sits in a tall single-line
+    # block whose char boxes collapsed on the phone photo. Clamping it to the
+    # BODY line grid leaves its mask flat — a sliver of the tall glyph. The box
+    # must grow to the header's OWN glyph size (its wide CJK em), bounded by its
+    # block, never using the body grid as a ceiling for a bigger font.
+    body_text = "住昆明市盘龙区茨坝小空山七号"
+    body = OCRTextBlock(
+        text=body_text,
+        polygon=[[100, 200], [100 + len(body_text) * 20, 200],
+                 [100 + len(body_text) * 20, 222], [100, 222]],
+        confidence=0.95,
+        chars=[{"c": g, "x1": 100 + i * 20, "y1": 200, "x2": 118 + i * 20, "y2": 222}
+               for i, g in enumerate(body_text)],
+    )
+    header_text = "昆明市盘龙区人民法院"
+    # 48px-WIDE glyphs (big font) but only a 2px y-band survived the photo; the
+    # block keeps its real 55px height.
+    header = OCRTextBlock(
+        text=header_text,
+        polygon=[[100, 100], [100 + len(header_text) * 50, 100],
+                 [100 + len(header_text) * 50, 155], [100, 155]],
+        confidence=0.95,
+        chars=[{"c": g, "x1": 100 + i * 50, "y1": 126, "x2": 148 + i * 50, "y2": 128}
+               for i, g in enumerate(header_text)],
+    )
+
+    regions = match_entities_to_ocr([body, header], [{"type": "ORG", "text": header_text}])
+    header_regions = [r for r in regions if r.text == header_text]
+    assert len(header_regions) == 1
+    # body em ~18px -> line height ~27px; header glyph is 55px tall. The mask
+    # must cover the header glyph, not clamp to the body grid.
+    assert header_regions[0].height >= 45, (
+        f"large header masked flat: height={header_regions[0].height}"
+    )
+
+
+def test_latin_value_keeps_body_grid_and_never_uses_glyph_width() -> None:
+    # The safety invariant behind the header fix: a no-CJK value (bank account,
+    # all Latin) has no CJK em to measure, so it stays on the body line grid,
+    # byte-identical to before the per-entity em was added. This is what stopped
+    # per-char sizing from leaking tall Latin glyphs (Latin width << Latin
+    # height): width is never used as height here.
+    body_text = "住昆明市盘龙区茨坝小空山七号"
+    body = OCRTextBlock(
+        text=body_text,
+        polygon=[[100, 200], [100 + len(body_text) * 20, 200],
+                 [100 + len(body_text) * 20, 222], [100, 222]],
+        confidence=0.95,
+        chars=[{"c": g, "x1": 100 + i * 20, "y1": 200, "x2": 118 + i * 20, "y2": 222}
+               for i, g in enumerate(body_text)],
+    )
+    latin_text = "CIBBMYKL"
+    # Same tall 55px block as the header, collapsed char band — but Latin glyphs.
+    latin = OCRTextBlock(
+        text=latin_text,
+        polygon=[[100, 100], [100 + len(latin_text) * 50, 100],
+                 [100 + len(latin_text) * 50, 155], [100, 155]],
+        confidence=0.95,
+        chars=[{"c": g, "x1": 100 + i * 50, "y1": 126, "x2": 148 + i * 50, "y2": 128}
+               for i, g in enumerate(latin_text)],
+    )
+
+    regions = match_entities_to_ocr([body, latin], [{"type": "BANK_ACCOUNT", "text": latin_text}])
+    latin_regions = [r for r in regions if r.text == latin_text]
+    assert len(latin_regions) == 1
+    # No CJK em -> body grid only (~27px), NOT the 48px glyph width used as height.
+    assert latin_regions[0].height <= 35, (
+        f"Latin value sized by glyph width would leak: height={latin_regions[0].height}"
+    )
+
+
+def _char_block(text: str, x: int, top: int, cw: int, ch: int, atomic: bool = False) -> OCRTextBlock:
+    if atomic:  # Latin/digit run — PP-OCRv6 returns it as ONE token box, not per-glyph
+        chars = [{"c": text, "x1": x, "y1": top, "x2": x + len(text) * cw, "y2": top + ch}]
+    else:
+        chars = [{"c": g, "x1": x + i * cw, "y1": top, "x2": x + i * cw + cw - 2, "y2": top + ch}
+                 for i, g in enumerate(text)]
+    return OCRTextBlock(
+        text=text,
+        polygon=[[x, top], [x + len(text) * cw, top], [x + len(text) * cw, top + ch], [x, top + ch]],
+        confidence=0.95,
+        chars=chars,
+    )
+
+
+def _row_region(b: OCRTextBlock, etype: str) -> SensitiveRegion:
+    return SensitiveRegion(
+        text=b.text, entity_type=etype,
+        left=b.left, top=b.top, width=b.width, height=b.height,
+        confidence=1.0, source="text_match",
+    )
+
+
+def test_large_header_row_survives_downpress() -> None:
+    # The real production choke point is split_regions_across_lines, which trims
+    # over-tall single rows to the page median. A large-font header (court name)
+    # is legitimately taller than the body grid and must NOT be flattened — the
+    # bug Tracy saw as 昆明市盘龙区人民法院 read flat. (match-only tests missed this.)
+    from app.services.vision.ocr_entity_match import split_regions_across_lines
+
+    body = [_char_block("住昆明市盘龙区某某某", 60, 300 + k * 40, 20, 30) for k in range(5)]
+    header = _char_block("昆明市盘龙区人民法院", 60, 100, 35, 44)  # wide+tall big font
+    line_blocks = body + [header]
+    regions = [_row_region(b, "ORG") for b in body] + [_row_region(header, "ORG")]
+
+    out = split_regions_across_lines(regions, line_blocks)
+
+    hdr = [r for r in out if "人民法院" in r.text][0]
+    assert hdr.height >= 44, f"large-font header flattened by down-press: height={hdr.height}"
+
+
+def test_tall_non_cjk_row_still_downpressed() -> None:
+    # The down-press must keep its original job: a tall all-digit/Latin row (an
+    # un-collapsed date token, no CJK em) is a real outlier and is trimmed to the
+    # body grid — it must NOT be spared by the large-font exemption.
+    from app.services.vision.ocr_entity_match import split_regions_across_lines
+
+    body = [_char_block("住昆明市盘龙区某某某", 60, 300 + k * 40, 20, 30) for k in range(5)]
+    date = _char_block("2016-01-07", 60, 100, 22, 50, atomic=True)  # tall token, no CJK glyph
+    line_blocks = body + [date]
+    regions = [_row_region(b, "ADDRESS") for b in body] + [_row_region(date, "DATE")]
+
+    out = split_regions_across_lines(regions, line_blocks)
+
+    d = [r for r in out if "2016" in r.text][0]
+    assert d.height <= 32, f"tall non-CJK outlier not trimmed to body grid: height={d.height}"

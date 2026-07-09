@@ -937,7 +937,13 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
 async def detect(req: DetectRequest) -> dict[str, Any]:
     image = _decode_b64_image(req.image_base64)
     requested = [_normalize_slug(item) for item in (req.categories or list(FIXED_VISUAL_PROMPTS))]
-    requested = [item for item in requested if item in FIXED_VISUAL_PROMPTS]
+    # Keep every non-empty tag. A fixed slug uses its curated FIXED_VISUAL_PROMPTS
+    # description; a custom / user-defined tag (including non-ASCII, e.g. a 中文
+    # label) is grounded verbatim via _detect_prompt's `slug.replace("_"," ")`
+    # fallback. _accept_normalized_box trusts LA for any category, so custom boxes
+    # survive. Backward-compatible: callers that send only fixed slugs are
+    # unaffected (their slugs were kept either way).
+    requested = list(dict.fromkeys(item for item in requested if item))
     if not requested:
         return {"boxes": [], "elapsed": 0.0, "model": MODEL_NAME}
     start = time.perf_counter()
