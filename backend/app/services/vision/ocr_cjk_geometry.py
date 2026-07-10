@@ -176,6 +176,39 @@ def _entity_span_char_boxes(
     box_by_glyph, span_glyph_start, span_glyph_end = alignment
 
     span_boxes = box_by_glyph[span_glyph_start:span_glyph_end]
+    # The unique-glyph recovery pairs by identity alone, so a span glyph can
+    # grab a box from a DIFFERENT text row (2026's '6' paired with 试用期6个月's
+    # box one row up when the span text lacks that context). Char boxes run in
+    # reading order — a span's boxes must sit on a non-decreasing row sequence
+    # — so keep the longest such subsequence and drop the violators. Same-row
+    # out-of-order recoveries (the '27岁' word-engine case the recovery exists
+    # for) share a row index and always survive. Identity-based, no thresholds.
+    indexed = []
+    row_of: dict[int, int] = {}
+    for row_index, row in enumerate(_char_rows(getattr(block, "chars", None) or [])):
+        for box in row:
+            row_of[id(box)] = row_index
+    for position, box in enumerate(span_boxes):
+        if box is not None and id(box) in row_of:
+            indexed.append((position, row_of[id(box)]))
+    if any(b[1] < a[1] for a, b in zip(indexed, indexed[1:])):
+        span_boxes = list(span_boxes)
+        length = [1] * len(indexed)
+        parent = [-1] * len(indexed)
+        for j in range(len(indexed)):
+            for k in range(j):
+                if indexed[k][1] <= indexed[j][1] and length[k] + 1 > length[j]:
+                    length[j] = length[k] + 1
+                    parent[j] = k
+        cursor = max(range(len(indexed)), key=lambda j: length[j])
+        keep: set[int] = set()
+        while cursor != -1:
+            keep.add(indexed[cursor][0])
+            cursor = parent[cursor]
+        for position, _row in indexed:
+            if position not in keep:
+                span_boxes[position] = None
+
     # Recover a MISREAD span-edge glyph from the proven neighbour just OUTSIDE
     # the span. The entity sits between the char before it and the char after
     # it, both of which are usually common chars the recognizer got right — so

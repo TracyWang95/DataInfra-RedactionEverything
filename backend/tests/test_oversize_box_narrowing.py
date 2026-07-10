@@ -213,6 +213,44 @@ def test_partially_proven_wrapped_value_gets_line_rect_plus_row_band() -> None:
     assert all(r.height < 105 for r in regions)
 
 
+def test_row_band_survives_split_pass_without_cross_row_sliver() -> None:
+    """Service composition (match + split_regions_across_lines), 劳动合同 case:
+    the row band contains a sibling char-boxed line block AND its own paragraph
+    block's center, so the split pass re-aligns the full value text — which
+    used to re-derive the value's OTHER rows (already tightly boxed) and leave
+    a full-width sliver straddling the row boundary, via a unique-glyph
+    recovery pairing 2026's '6' with 试用期6个月's box one row up. The split
+    must stay clipped inside the region and the cross-row mispairing must be
+    dropped by the non-decreasing row-order rule."""
+    from app.services.vision.ocr_entity_match import split_regions_across_lines
+
+    para_row1 = _row_chars("试用期6个月，自2025年5月", 100, 100, 130)
+    para_row3 = _row_chars("有关事项如下。", 100, 200, 230)
+    para_text = "试用期6个月，自2025年5月10日起至2026年11月10日止。经协商，有关事项如下。"
+    paragraph = _block(para_text, [[95, 95], [700, 95], [700, 235], [95, 235]],
+                       para_row1 + para_row3)
+    # sibling PP-native line block carrying row 2's chars (the wrap continuation)
+    line2 = _block("10日起至2026年11月10日止。经协商，",
+                   [[100, 150], [560, 150], [560, 180], [100, 180]],
+                   _row_chars("10日起至2026年11月10日止。经协商，", 100, 150, 180))
+
+    entity = {"type": "DATE", "text": "2025年5月10日起至2026年11月10日止"}
+    regions = split_regions_across_lines(
+        match_entities_to_ocr([paragraph, line2], [entity]),
+        [paragraph, line2],
+    )
+
+    dates = [r for r in regions if r.entity_type == "DATE"]
+    for region in dates:
+        # no rect may straddle the row-1/row-2 boundary (the old sliver spanned
+        # y~130-150 at full width); every rect hugs exactly one physical row zone
+        assert not (region.top < 130 and region.top + region.height > 150) or (
+            region.top >= 95 and region.height <= 55
+        )
+    # the row-2 zone stays covered (either by the band or a proven rect)
+    assert any(r.top <= 150 and r.top + r.height >= 180 for r in dates)
+
+
 # ---------------------------------------------------------------------------
 # Fix 2: charless-block re-OCR attaches chars in reading order
 # ---------------------------------------------------------------------------

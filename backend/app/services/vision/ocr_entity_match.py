@@ -339,6 +339,22 @@ def split_regions_across_lines(
         rects = _entity_char_box_line_rects(
             _SynthCharsBlock(synthesized, poly), text, 0, len(text), document_line_height
         )
+        # A split PARTITIONS the region: alignment evidence outside the
+        # region's own box belongs to other regions, not to this one (a
+        # partial-proof row band contains a sibling line block, and aligning
+        # the full value text onto it re-derives the value's OTHER rows —
+        # rows that already carry their own tight rect). Clip each rect to
+        # the region; a genuine slab contains its rows, so this is a no-op
+        # for the original slab-splitting behavior.
+        if rects:
+            rects = [
+                (cx1, cy1, cx2, cy2)
+                for lx1, ly1, lx2, ly2 in rects
+                for cx1, cy1, cx2, cy2 in [
+                    (max(lx1, int(rl)), max(ly1, int(rt)), min(lx2, int(rr)), min(ly2, int(rb)))
+                ]
+                if cx2 > cx1 and cy2 > cy1
+            ]
         if not rects or len(rects) < 2:
             out.append(region)
             single_row.append(False)  # unprovable multi-line slab: never trim
