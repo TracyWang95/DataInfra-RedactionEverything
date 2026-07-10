@@ -487,6 +487,7 @@ class LocateAnythingGroundingService:
             )
 
         boxes = self._drop_solid_fill_seals(boxes, image_data)
+        boxes = self._drop_skin_hue_fingerprints(boxes, image_data)
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
@@ -755,6 +756,63 @@ class LocateAnythingGroundingService:
                 drop_ids.add(s.id)
         if drop_ids:
             logger.info("Dropped %d solid-fill (banner/logo) seal box(es)", len(drop_ids))
+            return [b for b in boxes if b.id not in drop_ids]
+        return boxes
+
+    def _drop_skin_hue_fingerprints(
+        self, boxes: list[BoundingBox], image_data: bytes
+    ) -> list[BoundingBox]:
+        """Reject 'fingerprint' boxes on REAL skin (the photographer's thumb
+        holding the page), keep crimson stamp-pad impressions.
+
+        Grid-tile retry zooms a page-holding thumb to salience and every
+        grounding wording then boxes it — geometry cannot separate the two
+        (the house photo's thumb reaches 24% into the frame). Pigment vs skin
+        spectra can: stamp-pad ink absorbs BOTH green and blue, so inside a
+        real print the colored pixels (same chroma>45 identity as the seal
+        cascade) have G≈B — hue ratio (G-B)/(R-G) ≤ 0.12 on all 7 corpus
+        prints. Skin is orange, G well above B — ratio ≥ 0.57 on both corpus
+        thumbs. 0.35 is the geometric middle of that 5x gap, a property of
+        what stamp ink IS, not a tuned score. Naive redness does NOT separate
+        (thumb R-G 47-53 vs print 55-76 overlap: warm light makes skin red).
+        Evidence-gated in the safe direction: a box whose pixels show no
+        colored ink at all (a faint print) is KEPT — a missed redaction
+        outranks a false box, so only a positively-skin-hued box is dropped.
+        """
+        if not bool(getattr(settings, "VISUAL_FINGERPRINT_INK_GATE", True)):
+            return boxes
+        prints = [b for b in boxes if b.type == "fingerprint"]
+        if not prints:
+            return boxes
+        try:
+            import numpy as np
+
+            img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+            arr = np.asarray(img).astype(np.int16)
+            height, width = arr.shape[:2]
+        except Exception:
+            return boxes
+        drop_ids: set[str] = set()
+        for b in prints:
+            x0, y0 = int(b.x * width), int(b.y * height)
+            x1, y1 = int((b.x + b.width) * width), int((b.y + b.height) * height)
+            region = arr[max(0, y0):min(height, y1), max(0, x0):min(width, x1)]
+            if region.size == 0:
+                continue
+            red = region[..., 0].astype(float)
+            green = region[..., 1].astype(float)
+            blue = region[..., 2].astype(float)
+            colored = (region.max(axis=2) - region.min(axis=2)) > 45
+            # hue is only meaningful on red-dominant colored pixels; a box with
+            # none carries no ink evidence either way and is kept.
+            reddish = colored & (red > green)
+            if not reddish.any():
+                continue
+            ratio = float(np.median(((green - blue) / np.maximum(red - green, 1.0))[reddish]))
+            if ratio > 0.35:
+                drop_ids.add(b.id)
+        if drop_ids:
+            logger.info("Dropped %d skin-hued fingerprint box(es) (real thumb)", len(drop_ids))
             return [b for b in boxes if b.id not in drop_ids]
         return boxes
 

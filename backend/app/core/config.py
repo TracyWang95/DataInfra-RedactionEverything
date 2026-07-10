@@ -256,6 +256,14 @@ class Settings(BaseSettings):
     # boxes that are majority-colored — kills the 中国裁判文书网 banner the
     # cascade grows a seed into, source-independent. Real stamps always pass.
     VISUAL_SEAL_SOLID_FILL_REJECT: bool = True
+    # Skin-hue arbitration for fingerprint boxes: stamp-pad ink absorbs green
+    # AND blue (hue ratio (G-B)/(R-G) ≤0.12 on all corpus prints) while real
+    # skin — the photographer's thumb holding the page, zoomed to salience by
+    # the grid-tile retry — is orange (≥0.57 on both corpus thumbs). Drop
+    # positively skin-hued fingerprint boxes; a box with no ink evidence is
+    # kept (a missed redaction outranks a false box). Assumes red stamp-pad
+    # prints (the domestic norm); disable for black-ink print corpora.
+    VISUAL_FINGERPRINT_INK_GATE: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
