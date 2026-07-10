@@ -35,20 +35,47 @@ def test_detect_requests_fixed_and_custom() -> None:
         _pt("custom_visual_features_shouyin", "红色手印"),
         _pt("official_seal"),
     ])
-    # fixed: sent as slug, tagged by slug, named by SLUG_TO_NAME_ZH
-    # custom: sent as its human label verbatim, tagged by its own type_id
+    # fixed: sent as its factory grounding query (checklist empty), tagged by
+    # slug, named by SLUG_TO_NAME_ZH; custom: sent as its human label verbatim,
+    # tagged by its own type_id
     assert reqs == [
-        ("fingerprint", "fingerprint", "指纹"),
+        ("red inked thumbprint mark", "fingerprint", "指纹"),
         ("红色手印", "custom_visual_features_shouyin", "红色手印"),
-        ("official_seal", "official_seal", "公章"),
+        ("seal", "official_seal", "公章"),
     ]
     assert fixed == ["fingerprint", "official_seal"]
 
 
 def test_detect_requests_none_is_all_fixed() -> None:
+    from app.core.visual_feature_categories import SLUG_TO_DEFAULT_QUERY, SLUG_TO_NAME_ZH
+
     reqs, fixed = _detect_requests(None)
     assert fixed == list(DEFAULT_VISUAL_FEATURE_SLUGS)
-    assert all(tag == rtype for tag, rtype, _text in reqs)  # fixed: tag == type
+    # fixed: tagged by slug, sent as the factory grounding query
+    assert all(
+        tag == (SLUG_TO_DEFAULT_QUERY.get(rtype) or SLUG_TO_NAME_ZH.get(rtype, rtype))
+        for tag, rtype, _text in reqs
+    )
+
+
+def test_detect_requests_checklist_wording_wins() -> None:
+    """勾选什么传入什么: the user's first positive checklist row IS the query
+    sent to the model — it overrides the factory default for a fixed slug."""
+    item = SimpleNamespace(
+        id="fingerprint",
+        name="指纹",
+        checklist=[{"rule": "红色手印", "positive_prompt": None}],
+        rules=[],
+    )
+    reqs, fixed = _detect_requests([item])
+    assert reqs == [("红色手印", "fingerprint", "指纹")]
+    assert fixed == ["fingerprint"]
+
+
+def test_detect_requests_rules_line_wins_when_no_checklist() -> None:
+    item = SimpleNamespace(id="official_seal", name="公章", checklist=[], rules=["红色圆形公章"])
+    reqs, _fixed = _detect_requests([item])
+    assert reqs == [("红色圆形公章", "official_seal", "公章")]
 
 
 def test_detect_requests_custom_falls_back_to_slug_label() -> None:

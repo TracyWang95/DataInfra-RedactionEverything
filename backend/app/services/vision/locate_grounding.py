@@ -116,6 +116,11 @@ class LocateAnythingGroundingService:
             timings.total = _elapsed_ms(total_start)
             logger.info("LocateAnything visual category stage skipped: no visual categories")
             return [], timings.as_dict()
+        # The user's grounding query per fixed slug, so every supplement pass
+        # (tile retry, edge refine, signature) sends the same wording the main
+        # detect sent — the 清单 owns the wording end to end.
+        slug_set = set(model_slugs)
+        query_by_slug = {rtype: tag for tag, rtype, _text in requests if rtype in slug_set}
 
         model_start = time.perf_counter()
         results = await asyncio.gather(
@@ -182,7 +187,9 @@ class LocateAnythingGroundingService:
             # main detect's in the merge layer (IoU dedup).
             la_start = time.perf_counter()
             try:
-                la_boxes = await self._detect_la_signature(la_sig_url, image_data, page)
+                la_boxes = await self._detect_la_signature(
+                    la_sig_url, image_data, page, query_by_slug.get("signature", "signature")
+                )
             except Exception as exc:
                 la_boxes = []
                 logger.warning("LocateAnything signature supplement failed: %s", exc)
@@ -388,6 +395,7 @@ class LocateAnythingGroundingService:
                 ["official_seal"],
                 tiles_for=_both_margins,
                 source_detail="locate_anything:edge_refine",
+                queries=query_by_slug,
             )
             # the grounding model reads a barcode/QR in the margin as a seal (med's top
             # barcode). Drop any margin-seal box overlapping a machine-code
@@ -454,7 +462,7 @@ class LocateAnythingGroundingService:
             retry_slugs = []
         if retry_slugs:
             retry_start = time.perf_counter()
-            tile_boxes = await self._detect_on_tiles(image_data, page, retry_slugs)
+            tile_boxes = await self._detect_on_tiles(image_data, page, retry_slugs, queries=query_by_slug)
             # Gap-filling only: a tile hit that touches anything the full
             # frame already found is the zoom second-guessing the page-scale
             # call - discard it.
@@ -545,21 +553,22 @@ class LocateAnythingGroundingService:
         base_url: str,
         image_data: bytes,
         page: int,
+        query: str = "signature",
     ) -> list[BoundingBox]:
         """LocateAnything signature-only pass. Same /detect contract as the main
-        detect; we request just signature so nothing else changes."""
+        detect; we request just the signature query — the user's 清单 wording —
+        so nothing else changes. Single-category call, so boxes are tagged by
+        the request (no echo filtering, which a custom wording would fail)."""
         body = {
             "image_base64": base64.b64encode(image_data).decode("utf-8"),
             "conf": settings.VISUAL_FEATURES_CONF,
-            "categories": ["signature"],
+            "categories": [query],
         }
         async with httpx.AsyncClient(timeout=settings.VISUAL_FEATURES_TIMEOUT, trust_env=False) as client:
             response = await client.post(f"{base_url.rstrip('/')}/detect", json=body)
             response.raise_for_status()
         boxes: list[BoundingBox] = []
         for raw in response.json().get("boxes") or []:
-            if normalize_visual_slug(str(raw.get("category", ""))) != "signature":
-                continue
             try:
                 normalized = _clamp_box(
                     float(raw.get("x") or 0),
@@ -812,6 +821,7 @@ class LocateAnythingGroundingService:
         slugs: list[str],
         tiles_for=None,
         source_detail: str = "locate_anything:tile_retry",
+        queries: dict[str, str] | None = None,
     ) -> list[BoundingBox]:
         """Re-run categories on native-resolution tiles.
 
@@ -844,7 +854,8 @@ class LocateAnythingGroundingService:
             for x0, y0, x1, y1 in tiles:
                 encoded = io.BytesIO()
                 image.crop((x0, y0, x1, y1)).save(encoded, format="JPEG", quality=_JPEG_QUALITY)
-                tasks.append(self._post_detect(encoded.getvalue(), [slug]))
+                # Same wording as the full-frame pass — the 清单 owns it.
+                tasks.append(self._post_detect(encoded.getvalue(), [(queries or {}).get(slug, slug)]))
                 metas.append((slug, x0, y0, x1 - x0, y1 - y0))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         boxes: list[BoundingBox] = []

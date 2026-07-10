@@ -12,6 +12,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.visual_feature_categories import (
     DEFAULT_VISUAL_FEATURE_SLUGS,
+    SLUG_TO_DEFAULT_QUERY,
     SLUG_TO_NAME_ZH,
     VISUAL_FEATURE_SLUGS,
     normalize_visual_slug,
@@ -67,25 +68,48 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
     return "\n".join(lines)
 
 
+def _grounding_query(item: Any, slug: str) -> str:
+    """The wording sent to the model for a fixed category — the user's 识别清单
+    owns it (勾选什么传入什么): the item's first positive checklist row wins,
+    then its first rule line; only an unconfigured item falls back to the
+    factory default next to the category definitions (SLUG_TO_DEFAULT_QUERY),
+    then to the category name."""
+    for row in getattr(item, "checklist", None) or []:
+        for key in ("rule", "positive_prompt"):
+            value = str(
+                (row.get(key) if isinstance(row, dict) else getattr(row, key, "")) or ""
+            ).strip()
+            if value:
+                return value
+    for rule in getattr(item, "rules", None) or []:
+        if str(rule).strip():
+            return str(rule).strip()
+    return SLUG_TO_DEFAULT_QUERY.get(slug) or SLUG_TO_NAME_ZH.get(slug, slug)
+
+
 def _detect_requests(
     pipeline_types: list[Any] | None,
 ) -> tuple[list[tuple[str, str, str]], list[str]]:
     """Detect targets + the fixed-slug subset.
 
     Each target is (tag_to_send, result_type, result_text): a fixed visual
-    category is sent as its slug (LA has a curated prompt keyed by slug) and
-    tagged by that slug; a user-defined custom_visual_features_* label is sent as
-    its human name verbatim (LA grounds it via _detect_prompt's fallback) and
-    tagged by its own type_id. One uniform path — the box is tagged by the
-    REQUESTED target, never LA's echoed category, which a non-ASCII label would
-    not survive.
+    category is sent as its grounding query — the user's checklist wording,
+    or the factory default (_grounding_query) — and tagged by its slug; a
+    user-defined custom_visual_features_* label is sent as its human name
+    verbatim and tagged by its own type_id. Every request reaches the model
+    as free text through one uniform path — no server-side slug table ever
+    overrides the user's 清单. The box is tagged by the REQUESTED target,
+    never LA's echoed category, which a non-ASCII label would not survive.
 
     The fixed-slug subset drives the slug-specific supplements (YOLO / seal
     cascade / signature / tile retry). pipeline_types is None -> every fixed
-    category (the default preset)."""
+    category (the default preset) with its factory query."""
     if pipeline_types is None:
         fixed = list(DEFAULT_VISUAL_FEATURE_SLUGS)
-        return [(s, s, SLUG_TO_NAME_ZH.get(s, s)) for s in fixed], fixed
+        return [
+            (SLUG_TO_DEFAULT_QUERY.get(s) or SLUG_TO_NAME_ZH.get(s, s), s, SLUG_TO_NAME_ZH.get(s, s))
+            for s in fixed
+        ], fixed
     requests: list[tuple[str, str, str]] = []
     fixed: list[str] = []
     seen: set[str] = set()
@@ -96,7 +120,7 @@ def _detect_requests(
             if slug in seen:
                 continue
             seen.add(slug)
-            requests.append((slug, slug, SLUG_TO_NAME_ZH.get(slug, slug)))
+            requests.append((_grounding_query(item, slug), slug, SLUG_TO_NAME_ZH.get(slug, slug)))
             fixed.append(slug)
         elif tid.startswith("custom_visual_features_") and tid not in seen:
             label = str(getattr(item, "name", "") or "").strip() or tid[
