@@ -124,12 +124,19 @@ FIXED_VISUAL_PROMPTS: dict[str, str] = {
     # over-detection (e.g. a plain page matched "national ID card"); the short
     # form is the same lesson as the official_seal / signature prompts.
     "face": "human face",
-    # "thumbprint", not "fingerprint": A/B on the transcript page with five red
-    # inked prints showed "fingerprint" recalls 0/5 while "thumbprint" recalls
-    # 5/5; "red fingerprint" also recalled 5/5 but false-fired on the two red
-    # official seals of the GPU contract page, so the color-free wording wins
-    # (0 seal/contract/customs false positives in the same A/B).
-    "fingerprint": "thumbprint",
+    # "red inked thumbprint mark" (2026-07-10 A/B, five phone-photo contracts):
+    # the ink-mark wording separates the DOCUMENT mark from the photographer's
+    # REAL thumb holding the page — "thumbprint" full-frame either recalled 0
+    # (forcing the grid-tile retry, which then boxed the real thumb) or boxed
+    # the real thumb outright (房屋 page). New wording: 7/7 true prints across
+    # 劳动/房屋/农业 pages with 0 real-thumb hits, 2/2 prints on the 受案回执
+    # with 0 overlap against its red official seal, 0 boxes on the seal-only
+    # 判决 page — the seal false-fire that killed the earlier "red fingerprint"
+    # candidate (its A/B: "fingerprint" 0/5, "thumbprint" 5/5 on the transcript
+    # page) does not reproduce with the full noun phrase. Residual known gap: a
+    # page with NO ink print but a page-holding thumb still tile-retries into
+    # the thumb (every wording matches a zoomed real thumb).
+    "fingerprint": "red inked thumbprint mark",
     "palmprint": "palmprint",
     "id_card": "ID card",
     "hk_macau_permit": "travel permit card",
