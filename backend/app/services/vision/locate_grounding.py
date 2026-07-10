@@ -104,9 +104,10 @@ class LocateAnythingGroundingService:
     ) -> tuple[list[BoundingBox], dict[str, int]]:
         total_start = time.perf_counter()
         timings = LocateGroundingTimings()
-        # One detect request per target — a fixed visual slug (sent as its slug,
-        # which LA has a curated prompt for) or a user-defined visual label
-        # (custom_visual_features_*, sent as its human name verbatim). Each is one
+        # One detect request per target, each carrying its grounding query as
+        # free text: a fixed category sends the user's 识别清单 wording (or its
+        # factory default, _grounding_query), a custom label its human name
+        # verbatim — the LA server holds no prompt table. Each is one
         # single-category call — LocateAnything's recall collapses when categories
         # share a prompt — round-robined across both GPUs. The box is tagged by the
         # REQUESTED target, never LA's echoed category, so a 中文 label is not

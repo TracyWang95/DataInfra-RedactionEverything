@@ -118,47 +118,6 @@ def _adaptive_image_sides(requested: int) -> list[int]:
     return result
 
 
-FIXED_VISUAL_PROMPTS: dict[str, str] = {
-    # Keep each description a short canonical noun phrase. Verbose "X or Y"
-    # variants widen the match surface in the joined detect prompt and cause
-    # over-detection (e.g. a plain page matched "national ID card"); the short
-    # form is the same lesson as the official_seal / signature prompts.
-    "face": "human face",
-    # "red inked thumbprint mark" (2026-07-10 A/B, five phone-photo contracts):
-    # the ink-mark wording separates the DOCUMENT mark from the photographer's
-    # REAL thumb holding the page — "thumbprint" full-frame either recalled 0
-    # (forcing the grid-tile retry, which then boxed the real thumb) or boxed
-    # the real thumb outright (房屋 page). New wording: 7/7 true prints across
-    # 劳动/房屋/农业 pages with 0 real-thumb hits, 2/2 prints on the 受案回执
-    # with 0 overlap against its red official seal, 0 boxes on the seal-only
-    # 判决 page — the seal false-fire that killed the earlier "red fingerprint"
-    # candidate (its A/B: "fingerprint" 0/5, "thumbprint" 5/5 on the transcript
-    # page) does not reproduce with the full noun phrase. Residual known gap: a
-    # page with NO ink print but a page-holding thumb still tile-retries into
-    # the thumb (every wording matches a zoomed real thumb).
-    "fingerprint": "red inked thumbprint mark",
-    "palmprint": "palmprint",
-    "id_card": "ID card",
-    "hk_macau_permit": "travel permit card",
-    "passport": "passport",
-    "employee_badge": "employee badge",
-    "license_plate": "license plate",
-    "bank_card": "bank card",
-    "physical_key": "physical key",
-    "receipt": "receipt",
-    "shipping_label": "shipping label",
-    "official_seal": "seal",
-    "whiteboard": "whiteboard",
-    "sticky_note": "sticky note",
-    "mobile_screen": "phone screen",
-    "monitor_screen": "computer monitor",
-    "medical_wristband": "medical wristband",
-    "qr_code": "QR code",
-    "barcode": "barcode",
-    "paper": "paper document",
-    "signature": "signature",
-}
-
 CUSTOM_VISUAL_PROMPTS: dict[str, str] = {
     # A short description matches the upstream demo's calling convention and far
     # outperforms the verbose, negative-laden variant: the long prompt made the
@@ -723,10 +682,12 @@ def _detect_prompt(categories: list[str]) -> str:
     # variant embedded a literal "<ref>signature</ref>" example that the model
     # echoed back (returning a lone signature box instead of the seals), and its
     # verbose negatives suppressed real detections.
-    descriptions = []
-    for raw in categories:
-        slug = _normalize_slug(raw)
-        descriptions.append(FIXED_VISUAL_PROMPTS.get(slug, slug.replace("_", " ")))
+    # The request text IS the grounding description — the backend sends the
+    # user's 识别清单 wording (or its factory default) verbatim; legacy slug
+    # callers get their underscores prettified into spaces.
+    descriptions = [
+        _normalize_slug(raw).replace("_", " ") for raw in categories if str(raw or "").strip()
+    ]
     category_set_str = "</c>".join(descriptions)
     return f"Locate all the instances that matches the following description: {category_set_str}."
 
@@ -943,13 +904,10 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
 @app.post("/detect")
 async def detect(req: DetectRequest) -> dict[str, Any]:
     image = _decode_b64_image(req.image_base64)
-    requested = [_normalize_slug(item) for item in (req.categories or list(FIXED_VISUAL_PROMPTS))]
-    # Keep every non-empty tag. A fixed slug uses its curated FIXED_VISUAL_PROMPTS
-    # description; a custom / user-defined tag (including non-ASCII, e.g. a 中文
-    # label) is grounded verbatim via _detect_prompt's `slug.replace("_"," ")`
-    # fallback. _accept_normalized_box trusts LA for any category, so custom boxes
-    # survive. Backward-compatible: callers that send only fixed slugs are
-    # unaffected (their slugs were kept either way).
+    # Every tag is grounded verbatim — the backend owns the wording (the
+    # user's 识别清单 or its factory default, see SLUG_TO_DEFAULT_QUERY there);
+    # this server holds no prompt table. Non-ASCII (中文) tags flow through.
+    requested = [_normalize_slug(item) for item in (req.categories or [])]
     requested = list(dict.fromkeys(item for item in requested if item))
     if not requested:
         return {"boxes": [], "elapsed": 0.0, "model": MODEL_NAME}
