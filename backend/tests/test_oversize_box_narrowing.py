@@ -213,6 +213,50 @@ def test_partially_proven_wrapped_value_gets_line_rect_plus_row_band() -> None:
     assert all(r.height < 105 for r in regions)
 
 
+def test_unproven_span_borrows_sibling_line_chars_for_tight_x() -> None:
+    """房屋合同 '共8层' variant: the VL paragraph block HAS chars, but they cover
+    only rows 2+ — zero proof for the address span on row 1. Row 1 exists as a
+    sibling PP-native line block WITH char boxes (the '共18层' twin's tight box
+    comes from it). Owning chars that prove NOTHING about a span must not
+    block the sibling-line discovery: the region must crop to the sibling's
+    glyphs instead of a full-block-width row band."""
+    line1 = _block(
+        "本房屋坐落在北京市朝阳区立城苑小区共18层，现甲方将该房屋出",
+        [[129, 668], [625, 668], [625, 705], [129, 705]],
+        _row_chars("本房屋坐落在北京市朝阳区立城苑小区共18层，现甲方将该房屋出", 129, 671, 700, width=17),
+    )
+    line2 = _block(
+        "售给乙方，出售房屋（建筑面积共120平方米）",
+        [[100, 710], [560, 710], [560, 745], [100, 745]],
+        _row_chars("售给乙方，出售房屋（建筑面积共120平方米）", 100, 713, 741, width=17),
+    )
+    para_text = (
+        "本房屋坐落在北京市朝阳区立城苑小区共8层，现甲方将该房屋出"
+        "售给乙方，出售房屋（建筑面积共120平方米）以人民币叁拾万元整的价款出售。"
+    )
+    # paragraph carries chars for row 2 ONLY (crop re-OCR missed row 1)
+    paragraph = _block(
+        para_text,
+        [[98, 665], [644, 665], [644, 790], [98, 790]],
+        _row_chars("售给乙方，出售房屋（建筑面积共120平方米）", 100, 713, 741, width=17),
+    )
+
+    regions = match_entities_to_ocr(
+        [paragraph, line1, line2],
+        [{"type": "ADDRESS", "text": "北京市朝阳区立城苑小区共8层"}],
+    )
+
+    address = [r for r in regions if r.entity_type == "ADDRESS"]
+    assert address, "address must be matched"
+    # every address rect crops to the sibling row-1 glyphs: x starts at the
+    # 北 glyph (129+6*17=231), NOT the paragraph's left edge (98), and the
+    # width hugs the 14-glyph span instead of the 546px block width
+    for region in address:
+        assert region.left > 200, f"full-width band leaked: {region.left}"
+        assert region.width < 300, f"too wide: {region.width}"
+        assert region.top < 710 and region.top + region.height > 671  # row 1
+
+
 def test_row_band_survives_split_pass_without_cross_row_sliver() -> None:
     """Service composition (match + split_regions_across_lines), 劳动合同 case:
     the row band contains a sibling char-boxed line block AND its own paragraph

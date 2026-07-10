@@ -24,6 +24,7 @@ from app.services.vision.ocr_cjk_geometry import (
     _entity_char_box_line_rects,
     _entity_span_char_boxes,  # noqa: F401
     _fold_glyph,  # noqa: F401
+    _glyph_alignment,
     _median_single_cjk_width,  # noqa: F401
     _region_cjk_em,
     _span_rects_with_row_bands,
@@ -236,6 +237,31 @@ class _SynthCharsBlock:
         self.polygon = polygon or []
 
 
+def _own_chars_own_span(
+    block: OCRTextBlock,
+    block_text: str,
+    occurrence_start: int,
+    occurrence_text: str,
+) -> bool:
+    """Whether the block's OWN chars are authoritative for this span.
+
+    They are only when they carry at least one proven glyph for it. A block
+    whose attached chars cover other rows but prove NOTHING about the span
+    (the crop re-OCR missed the value's line — the 房屋 paragraph's chars
+    start at row 2 while the address sits on row 1) must not monopolize the
+    span: a sibling PP-native line block with real char boxes for that row
+    is strictly better evidence than a full-width row band."""
+    if not (getattr(block, "chars", None) or []):
+        return False
+    alignment = _glyph_alignment(
+        block, block_text, occurrence_start, occurrence_start + len(occurrence_text)
+    )
+    if alignment is None:
+        return False
+    box_by_glyph, span_glyph_start, span_glyph_end = alignment
+    return any(box is not None for box in box_by_glyph[span_glyph_start:span_glyph_end])
+
+
 def _charsless_block_line_rects(
     block: OCRTextBlock,
     block_text: str,
@@ -255,7 +281,7 @@ def _charsless_block_line_rects(
     caller falls back to the argmax single-line narrow, then to the safe
     whole-block mask.
     """
-    if getattr(block, "chars", None):
+    if _own_chars_own_span(block, block_text, occurrence_start, occurrence_text):
         return None
     bl, bt, bw, bh = block.left, block.top, block.width, block.height
     lines = []
@@ -417,7 +443,7 @@ def _narrow_charsless_block_to_lines(
     Returns None when no line is located, so the caller keeps the safe
     whole-block mask and the value is never left unredacted.
     """
-    if getattr(block, "chars", None):
+    if _own_chars_own_span(block, block_text, occurrence_start, occurrence_text):
         return None
     bl, bt, bw, bh = block.left, block.top, block.width, block.height
     lines = []
