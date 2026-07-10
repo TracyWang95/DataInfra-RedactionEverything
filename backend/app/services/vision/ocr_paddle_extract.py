@@ -409,9 +409,13 @@ def _attach_chars_to_charless_blocks(
         except Exception as exc:
             logger.info("charless-block re-OCR failed: %s", exc)
             continue
+        # The structure engine returns the crop's line blocks unordered; chars
+        # concatenated in that order break the monotone glyph alignment
+        # downstream (_entity_span_char_boxes). Same reading-order key as
+        # _narrow_charsless_block_to_lines.
         recovered = [
             {"c": ch["c"], "x1": left + ch["x1"], "y1": top + ch["y1"], "x2": left + ch["x2"], "y2": top + ch["y2"]}
-            for cb in crop_blocks
+            for cb in sorted(crop_blocks, key=lambda item: (round(item.top), item.left))
             for ch in (getattr(cb, "chars", None) or [])
         ]
         if recovered:

@@ -14,6 +14,7 @@ from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 from app.services.vision.has_text_payload import (
     _canonical_image_text_type,
     _compact_text,
+    _strip_vl_math_markup,
 )
 
 # Geometry cluster: parent uses these + re-exports the rest for the public API.
@@ -25,6 +26,7 @@ from app.services.vision.ocr_cjk_geometry import (
     _fold_glyph,  # noqa: F401
     _median_single_cjk_width,  # noqa: F401
     _region_cjk_em,
+    _unproven_span_row_band,
 )
 from app.services.vision.ocr_table_semantics import (
     _amount_value_signature,
@@ -562,7 +564,9 @@ def match_entities_to_ocr(
     }
 
     for entity in entities:
-        entity_text = entity.get("text", "").strip()
+        # Same VL math-markup strip as _block_search_text: HaS tags entities on
+        # the raw VL text, so both sides must normalize identically to match.
+        entity_text = _strip_vl_math_markup(entity.get("text", "")).strip()
         entity_type = entity.get("type", "UNKNOWN")
         entity_source = str(entity.get("source") or "").strip()
 
@@ -690,6 +694,22 @@ def match_entities_to_ocr(
                             if narrowed_box is not None:
                                 rl, rt, rw, rh = narrowed_box
                                 crop_span = (rl, rl + rw)
+                            else:
+                                # Last narrowing before the whole-block slab: a
+                                # span with zero proven glyphs (handwritten fill
+                                # on a line the char engine skipped) still has
+                                # its rows bounded by the nearest proven boxes
+                                # around it. Y narrows on that evidence; x stays
+                                # the block's full width.
+                                row_band = _unproven_span_row_band(
+                                    block,
+                                    block_text,
+                                    visual_occurrence_start,
+                                    visual_occurrence_start + len(visual_text),
+                                    document_line_height,
+                                )
+                                if row_band is not None:
+                                    rt, rh = row_band[0], row_band[1] - row_band[0]
                     has_position_evidence = (
                         crop_span is not None
                         or _compact_text(block_text) == _compact_text(visual_text)

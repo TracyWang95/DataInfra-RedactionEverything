@@ -16,6 +16,7 @@ from html.parser import HTMLParser
 from app.services.ocr_has_vision_service import OCRTextBlock
 from app.services.vision.has_text_payload import (
     _compact_text,
+    _strip_vl_math_markup,
 )
 from app.services.vision.ocr_tuning import (
     _AMOUNT_FORMAT_ALLOWED_CHARS,
@@ -262,7 +263,7 @@ def _block_search_text(block: OCRTextBlock) -> str:
     actually contains it. The old whole-block fallback attached the lying
     text label to a box holding different pixels.
     """
-    block_text = str(block.text or "")
+    block_text = _strip_vl_math_markup(str(block.text or ""))
     chars = getattr(block, "chars", None) or []
     if not chars:
         return block_text

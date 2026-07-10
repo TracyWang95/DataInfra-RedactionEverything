@@ -68,23 +68,18 @@ def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
     return None if em is None else em * _CJK_LINE_HEIGHT_RATIO
 
 
-def _entity_span_char_boxes(
+def _glyph_alignment(
     block: OCRTextBlock,
     search_text: str,
     span_start: int,
     span_end: int,
-) -> list[dict | None] | None:
-    """Char boxes proven to render search_text[span_start:span_end).
+) -> tuple[list[dict | None], int, int] | None:
+    """Monotone glyph alignment of search_text onto the block's char boxes.
 
-    No proportional estimation and no thresholds: glyph correspondence comes
-    from the monotone alignment (difflib matching blocks) of the two
-    whitespace-stripped glyph sequences, which absorbs whitespace differences,
-    same-glyph misreads (帐/账) and dropped char boxes alike. Boxes are
-    returned only when the span's first and last glyphs each have a
-    corresponding box — char boxes run in reading order, so their union also
-    covers interior glyphs whose own box was dropped (interior entries may be
-    None). Anything unprovable returns None and the caller masks the whole
-    block.
+    Returns (box_by_glyph, span_glyph_start, span_glyph_end): one entry per
+    non-whitespace glyph of search_text, holding that glyph's proven char box
+    or None, plus the span's bounds mapped onto glyph indexes. None when the
+    block has no chars or the span maps to no glyphs.
     """
     chars = getattr(block, "chars", None) or []
     if not chars:
@@ -154,6 +149,31 @@ def _entity_span_char_boxes(
                 char_positions = unmatched_chars.get(glyph) or []
                 if len(search_positions) == 1 and len(char_positions) == 1:
                     box_by_glyph[search_positions[0]] = glyph_boxes[char_positions[0]]
+    return box_by_glyph, span_glyph_start, span_glyph_end
+
+
+def _entity_span_char_boxes(
+    block: OCRTextBlock,
+    search_text: str,
+    span_start: int,
+    span_end: int,
+) -> list[dict | None] | None:
+    """Char boxes proven to render search_text[span_start:span_end).
+
+    No proportional estimation and no thresholds: glyph correspondence comes
+    from the monotone alignment (difflib matching blocks) of the two
+    whitespace-stripped glyph sequences, which absorbs whitespace differences,
+    same-glyph misreads (帐/账) and dropped char boxes alike. Boxes are
+    returned only when the span's first and last glyphs each have a
+    corresponding box — char boxes run in reading order, so their union also
+    covers interior glyphs whose own box was dropped (interior entries may be
+    None). Anything unprovable returns None and the caller masks the whole
+    block.
+    """
+    alignment = _glyph_alignment(block, search_text, span_start, span_end)
+    if alignment is None:
+        return None
+    box_by_glyph, span_glyph_start, span_glyph_end = alignment
 
     span_boxes = box_by_glyph[span_glyph_start:span_glyph_end]
     # Recover a MISREAD span-edge glyph from the proven neighbour just OUTSIDE
@@ -315,6 +335,59 @@ def _entity_char_box_line_rects(
     # polygon) is dropped so the caller safely masks the whole block rather
     # than emit a zero-height crop.
     return [r for r in rects if r[3] > r[1]] or None
+
+
+def _unproven_span_row_band(
+    block: OCRTextBlock,
+    search_text: str,
+    span_start: int,
+    span_end: int,
+    line_height: float | None,
+) -> tuple[int, int] | None:
+    """Row band (top, bottom) bounding a span NONE of whose glyphs aligned to
+    a char box (a handwritten fill on a line the char engine skipped).
+
+    Char boxes run in reading order, which is physical order inside a block —
+    the span's ink lies after the nearest proven box BEFORE it and before the
+    nearest proven box AFTER it. Their rows bound the span vertically: band
+    top is the before-anchor's row top (block top when absent), band bottom
+    the after-anchor's row bottom (block bottom when absent). Anchor rows are
+    grown from the anchor's own y-band with the page line grid — same grow
+    rule as _entity_char_box_line_rects, phone-photo char boxes collapse
+    vertically. X carries no evidence on the value's own line, so the caller
+    keeps the block's x-extent. None without at least one anchor, a line
+    grid, or a real polygon: the caller keeps the whole-block mask.
+    """
+    if not line_height or line_height <= 0:
+        return None
+    polygon = getattr(block, "polygon", None) or []
+    ys = [int(pt[1]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+    if not ys:
+        return None
+    block_top, block_bottom = min(ys), max(ys)
+    alignment = _glyph_alignment(block, search_text, span_start, span_end)
+    if alignment is None:
+        return None
+    box_by_glyph, span_glyph_start, span_glyph_end = alignment
+    if any(box is not None for box in box_by_glyph[span_glyph_start:span_glyph_end]):
+        return None  # proven glyphs: the crop paths own this span
+    before = next(
+        (box for box in reversed(box_by_glyph[:span_glyph_start]) if box is not None), None
+    )
+    after = next((box for box in box_by_glyph[span_glyph_end:] if box is not None), None)
+    if before is None and after is None:
+        return None
+    top = float(block_top)
+    if before is not None:
+        center = (float(before["y1"]) + float(before["y2"])) / 2
+        top = max(top, min(float(before["y1"]), center - line_height / 2))
+    bottom = float(block_bottom)
+    if after is not None:
+        center = (float(after["y1"]) + float(after["y2"])) / 2
+        bottom = min(bottom, max(float(after["y2"]), center + line_height / 2))
+    if bottom <= top:
+        return None
+    return int(top), int(bottom)
 
 
 def _region_cjk_em(region: SensitiveRegion, line_blocks: list[OCRTextBlock]) -> float | None:

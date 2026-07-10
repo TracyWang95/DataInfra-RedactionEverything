@@ -4,6 +4,7 @@ HaS Text request payload helpers for OCR-derived text blocks.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 
 from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
@@ -110,6 +111,32 @@ def _build_has_text_type_names(vision_types: list | None = None) -> list[str]:
 
 def _compact_text(text: str | None) -> str:
     return "".join(str(text or "").split())
+
+
+# PaddleOCR-VL renders form-blank fills as math markup: $ \underline{2025} $,
+# $ \underline{\text{河南新乡市}} $. The wrappers are rendering directives, not
+# page content — chars never carry them, so they poison glyph alignment and
+# leak into region texts. A $...$ segment is markup only when it contains a
+# \command{...}; a bare currency $ never does and is left untouched.
+_VL_MATH_SEGMENT_RE = re.compile(r"\$([^$]*)\$")
+_VL_MATH_COMMAND_RE = re.compile(r"\\[a-zA-Z]+\{([^{}]*)\}")
+
+
+def _strip_vl_math_markup(text: str) -> str:
+    if "$" not in text:
+        return text
+
+    def _unwrap(match: re.Match) -> str:
+        body = match.group(1)
+        if not _VL_MATH_COMMAND_RE.search(body):
+            return match.group(0)
+        previous = None
+        while previous != body:  # \underline{\text{X}} unwraps inside-out
+            previous = body
+            body = _VL_MATH_COMMAND_RE.sub(r"\1", body)
+        return body.strip()
+
+    return _VL_MATH_SEGMENT_RE.sub(_unwrap, text)
 
 
 def _iter_payload_texts(text: str | None) -> list[str]:
