@@ -314,11 +314,15 @@ def test_same_row_segments_with_tilt_jitter_keep_reading_order(monkeypatch) -> N
     right_seg = _block("2025年", [[240, 19], [335, 19], [335, 39], [240, 39]],
                        _row_chars("2025年", 240, 19, 39))
 
-    monkeypatch.setattr(
-        ope,
-        "_run_structure_service_with_visuals",
-        lambda image, service: ([right_seg, left_seg, mid_seg], []),
-    )
+    calls: list[int] = []
+
+    def fake_structure(image, service):
+        # real engine returns crop-relative coords per crop; this fake models
+        # only the whole-block crop finding content (sweep windows: nothing)
+        calls.append(1)
+        return ([right_seg, left_seg, mid_seg] if len(calls) == 1 else []), []
+
+    monkeypatch.setattr(ope, "_run_structure_service_with_visuals", fake_structure)
 
     charless = _block("甲方聘用6个月，自2025年", [[0, 0], [350, 0], [350, 60], [0, 60]], [])
     image = Image.new("RGB", (400, 100), "white")
@@ -327,6 +331,49 @@ def test_same_row_segments_with_tilt_jitter_keep_reading_order(monkeypatch) -> N
     [result] = ope._attach_chars_to_charless_blocks([charless], image, service)
 
     assert "".join(c["c"] for c in result.chars) == "甲方聘用6个月，自2025年"
+
+
+def test_attach_sweeps_half_width_windows_for_missed_rows(monkeypatch) -> None:
+    """农业合同 row 1: the whole-block crop re-OCR misses the printed label AND
+    the handwritten value (det collapses on the underline+handwriting mix) and
+    returns only the row's right segment. The same engine DOES read the left
+    segment inside a half-width window (measured on the 5090). The attach pass
+    must sweep three anchored half-width windows and merge non-overlapping
+    recoveries, so the value's row gains char boxes end to end."""
+    from PIL import Image
+
+    from app.services.vision import ocr_paddle_extract as ope
+
+    right_seg = _block("，暂估面积100", [[535, 2], [667, 2], [667, 37], [535, 37]],
+                       _row_chars("，暂估面积100", 535, 4, 35, width=15))
+    left_seg = _block("乙方用于投资入股的土地位于", [[39, 16], [293, 16], [293, 50], [39, 50]],
+                      _row_chars("乙方用于投资入股的土地位于", 39, 18, 48, width=19))
+    value_seg = _block("河南素", [[298, 3], [378, 3], [378, 51], [298, 51]],
+                       _row_chars("河南素", 298, 5, 49, width=26))
+
+    def fake_structure(image, service):
+        # whole-block crop (full width) sees only the right segment; the
+        # half-width windows containing the left half recover label + value
+        if image.size[0] > 400:
+            return [right_seg], []
+        return [left_seg, value_seg], []
+
+    monkeypatch.setattr(ope, "_run_structure_service_with_visuals", fake_structure)
+
+    charless = _block(
+        "乙方用于投资入股的土地位于 河南新乡市，暂估面积100",
+        [[0, 0], [667, 0], [667, 62], [0, 62]],
+        [],
+    )
+    image = Image.new("RGB", (700, 80), "white")
+    service = type("Svc", (), {"extract_structure_boxes": staticmethod(lambda *a, **k: None)})()
+
+    [result] = ope._attach_chars_to_charless_blocks([charless], image, service)
+
+    text = "".join(c["c"] for c in result.chars)
+    assert "乙方用于投资入股的土地位于" in text  # left segment recovered
+    assert "河南素" in text  # handwritten value glyphs recovered
+    assert text.count("暂估面积") == 1  # overlapping re-detections deduped
 
 
 def test_recovered_chars_attach_in_reading_order(monkeypatch) -> None:
@@ -340,9 +387,13 @@ def test_recovered_chars_attach_in_reading_order(monkeypatch) -> None:
                   _row_chars("试用期6个月", 10, 40, 60))
 
     # The structure engine returns the crop's lines out of reading order.
-    monkeypatch.setattr(
-        ope, "_run_structure_service_with_visuals", lambda image, service: ([row2, row1], [])
-    )
+    calls: list[int] = []
+
+    def fake_structure(image, service):
+        calls.append(1)
+        return ([row2, row1] if len(calls) == 1 else []), []
+
+    monkeypatch.setattr(ope, "_run_structure_service_with_visuals", fake_structure)
 
     charless = _block("甲方聘用乙方试用期6个月", [[0, 0], [140, 0], [140, 70], [0, 70]], [])
     image = Image.new("RGB", (200, 100), "white")

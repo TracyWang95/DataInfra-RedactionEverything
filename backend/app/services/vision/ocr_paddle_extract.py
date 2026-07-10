@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -16,6 +17,7 @@ from PIL import Image
 
 from app.core.config import settings
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
+from app.services.vision.locate_tiles import _axis_positions
 from app.services.vision.has_text_payload import (
     _canonical_image_text_type,
     _compact_text,
@@ -425,25 +427,65 @@ def _attach_chars_to_charless_blocks(
         bottom = min(height, int(block.top + block.height))
         if right - left < 4 or bottom - top < 4:
             continue
-        try:
-            crop_blocks, _ = _run_structure_service_with_visuals(image.crop((left, top, right, bottom)), ocr_service)
-        except Exception as exc:
-            logger.info("charless-block re-OCR failed: %s", exc)
+        # Whole-block crop first, then three anchored half-width sweep windows:
+        # the engine's det collapses on an underline+handwriting row at block
+        # width (the 农业 row-1 printed label AND handwritten value both vanish)
+        # yet reads the same pixels inside a half-width window. Same
+        # start/center/end half-size anchoring identity as the tile retry
+        # (_axis_positions): anything narrower than half a window is whole
+        # inside at least one sweep.
+        crops = [(left, top, right, bottom)]
+        window = max(1, (right - left) // 2)
+        crops.extend(
+            (left + x0, top, min(right, left + x0 + window), bottom)
+            for x0 in _axis_positions(right - left, window)
+        )
+        kept_segments: list = []  # (page-coord bbox, page-coord chars)
+        for crop_left, crop_top, crop_right, crop_bottom in crops:
+            try:
+                crop_blocks, _ = _run_structure_service_with_visuals(
+                    image.crop((crop_left, crop_top, crop_right, crop_bottom)), ocr_service
+                )
+            except Exception as exc:
+                logger.info("charless-block re-OCR failed: %s", exc)
+                continue
+            for cb in crop_blocks:
+                chars = [
+                    {"c": ch["c"], "x1": crop_left + ch["x1"], "y1": crop_top + ch["y1"],
+                     "x2": crop_left + ch["x2"], "y2": crop_top + ch["y2"]}
+                    for ch in (getattr(cb, "chars", None) or [])
+                ]
+                if not chars:
+                    continue
+                x1 = min(c["x1"] for c in chars)
+                y1 = min(c["y1"] for c in chars)
+                x2 = max(c["x2"] for c in chars)
+                y2 = max(c["y2"] for c in chars)
+                # Region-overlap identity dedupe: a segment overlapping an
+                # already-kept one in BOTH x and y is the same physical text
+                # re-detected through another window — first seen (the
+                # whole-block crop) wins. A same-row segment at a new x range
+                # is genuinely new content and joins.
+                if any(
+                    x1 < kx2 and kx1 < x2 and y1 < ky2 and ky1 < y2
+                    for (kx1, ky1, kx2, ky2), _kc in kept_segments
+                ):
+                    continue
+                kept_segments.append(((x1, y1, x2, y2), chars))
+        if not kept_segments:
             continue
-        # The structure engine returns the crop's line blocks unordered, and a
-        # handwriting-gapped physical line comes back as SEVERAL segments whose
-        # tops differ by a few tilt pixels — a (round(top), left) sort shuffles
-        # them out of reading order and breaks the monotone glyph alignment
-        # downstream (_entity_span_char_boxes). Reading order needs the row
-        # identity: same-row segments overlap in y (physical rows do not), so
-        # group segments into rows by y-center-in-band, then sort each row by x.
-        recovered = [
-            {"c": ch["c"], "x1": left + ch["x1"], "y1": top + ch["y1"], "x2": left + ch["x2"], "y2": top + ch["y2"]}
-            for cb in _reading_order(crop_blocks)
-            for ch in (getattr(cb, "chars", None) or [])
+        # Reading order across all kept segments: same row identity as
+        # _reading_order (rows do not overlap in y; same-row segments do),
+        # then left-to-right inside a row.
+        segment_blocks = [
+            SimpleNamespace(
+                top=bbox[1], left=bbox[0], height=bbox[3] - bbox[1], width=bbox[2] - bbox[0], chars=chars
+            )
+            for bbox, chars in kept_segments
         ]
-        if recovered:
-            block.chars = recovered
+        block.chars = [
+            ch for seg in _reading_order(segment_blocks) for ch in seg.chars
+        ]
     return blocks
 
 
