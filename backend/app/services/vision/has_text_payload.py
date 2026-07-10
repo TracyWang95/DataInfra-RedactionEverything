@@ -140,7 +140,10 @@ def _strip_vl_math_markup(text: str) -> str:
 
 
 def _iter_payload_texts(text: str | None) -> list[str]:
-    raw = str(text or "").strip()
+    # HaS reads the same markup-free text the matcher matches against: the VL
+    # math wrappers are rendering noise that made HaS tag form-blank fills
+    # only intermittently (保底十万元 in $ \underline{\text{...}} $).
+    raw = _strip_vl_math_markup(str(text or "")).strip()
     if not raw:
         return []
     lines = [line.strip() for line in raw.splitlines() if _compact_text(line)]

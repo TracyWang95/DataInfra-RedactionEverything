@@ -53,21 +53,70 @@ def _iter_percent_value_tokens(text: str) -> list[str]:
     return tokens
 
 
+# Closed character classes for the currency value scanner — the same family
+# as the percent scanner's '%': alphabet constants, not decision thresholds.
+_CJK_NUMERALS = "〇零一二三四五六七八九十百千万亿壹贰叁肆伍陆柒捌玖拾佰仟两"
+_CJK_MAGNITUDES = "十百千万亿"
+_CURRENCY_UNITS = "元圆块"
+_CURRENCY_PREFIXES = "￥¥$"
+
+
+def _iter_currency_value_tokens(text: str) -> list[str]:
+    """Currency value substrings（100元 / 十万元 / ￥3600000元 / 壹拾万圆整）,
+    scanned without regular expressions like _iter_percent_value_tokens."""
+    raw = str(text or "")
+    tokens: list[str] = []
+    i = 0
+    n = len(raw)
+    while i < n:
+        start = i
+        if raw[i] in _CURRENCY_PREFIXES:
+            i += 1
+        if i < n and raw[i].isdigit():
+            while i < n and raw[i].isdigit():
+                i += 1
+            if i < n and raw[i] in ".．":
+                decimal_end = i + 1
+                while decimal_end < n and raw[decimal_end].isdigit():
+                    decimal_end += 1
+                if decimal_end > i + 1:
+                    i = decimal_end
+            while i < n and raw[i] in _CJK_MAGNITUDES:  # 100万元
+                i += 1
+        elif i < n and raw[i] in _CJK_NUMERALS:
+            while i < n and raw[i] in _CJK_NUMERALS:
+                i += 1
+        else:
+            i = start + 1
+            continue
+        if i < n and raw[i] in _CURRENCY_UNITS:
+            i += 1
+            if i < n and raw[i] == "整":
+                i += 1
+            tokens.append(raw[start:i])
+        else:
+            i = max(start + 1, i)
+    return tokens
+
+
 def _visual_match_text_for_entity(entity_type: str, entity_text: str) -> str:
     """Choose the visible span to place a box on for a semantic entity.
 
-    Amount percentages are often returned by HaS with surrounding business
-    context ("contract amount 40%"). The sensitive value on the page is the
-    percentage token itself, so use that shorter visible span when available.
+    Amounts are often returned by HaS with surrounding business context
+    ("contract amount 40%", 人民币每亩每年100元, 保底十万元/每年左右). The
+    sensitive ink on the page is the value token itself, so use that shorter
+    visible span when available. Currency narrowing fires only when the
+    entity holds exactly ONE value token — a multi-value entity keeps its
+    whole span so no second value is ever uncovered.
     """
     if entity_type != "AMOUNT":
         return entity_text
-    percent_tokens = _iter_percent_value_tokens(entity_text)
-    if not percent_tokens:
-        return entity_text
-    for token in percent_tokens:
+    for token in _iter_percent_value_tokens(entity_text):
         if _compact_text(token) != _compact_text(entity_text):
             return token
+    currency_tokens = _iter_currency_value_tokens(entity_text)
+    if len(currency_tokens) == 1 and _compact_text(currency_tokens[0]) != _compact_text(entity_text):
+        return currency_tokens[0]
     return entity_text
 
 
