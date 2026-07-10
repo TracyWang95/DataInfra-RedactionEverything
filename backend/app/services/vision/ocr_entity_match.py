@@ -26,7 +26,7 @@ from app.services.vision.ocr_cjk_geometry import (
     _fold_glyph,  # noqa: F401
     _median_single_cjk_width,  # noqa: F401
     _region_cjk_em,
-    _unproven_span_row_band,
+    _span_rects_with_row_bands,
 )
 from app.services.vision.ocr_table_semantics import (
     _amount_value_signature,
@@ -695,21 +695,25 @@ def match_entities_to_ocr(
                                 rl, rt, rw, rh = narrowed_box
                                 crop_span = (rl, rl + rw)
                             else:
-                                # Last narrowing before the whole-block slab: a
-                                # span with zero proven glyphs (handwritten fill
-                                # on a line the char engine skipped) still has
-                                # its rows bounded by the nearest proven boxes
-                                # around it. Y narrows on that evidence; x stays
-                                # the block's full width.
-                                row_band = _unproven_span_row_band(
+                                # Last narrowing before the whole-block slab:
+                                # tight rects for the span's proven glyph runs
+                                # plus measured row bands for the unproven
+                                # remainder (a handwritten fill on a line the
+                                # char engine skipped, bounded by the nearest
+                                # proven boxes around it). No x-crop evidence
+                                # is claimed (crop_span stays None).
+                                mixed_rects = _span_rects_with_row_bands(
                                     block,
                                     block_text,
                                     visual_occurrence_start,
                                     visual_occurrence_start + len(visual_text),
                                     document_line_height,
                                 )
-                                if row_band is not None:
-                                    rt, rh = row_band[0], row_band[1] - row_band[0]
+                                if mixed_rects is not None:
+                                    line_rects = mixed_rects
+                                    if len(mixed_rects) == 1:
+                                        lx1, ly1, lx2, ly2 = mixed_rects[0]
+                                        rl, rt, rw, rh = lx1, ly1, lx2 - lx1, ly2 - ly1
                     has_position_evidence = (
                         crop_span is not None
                         or _compact_text(block_text) == _compact_text(visual_text)

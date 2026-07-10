@@ -225,6 +225,17 @@ def _entity_char_box_line_rects(
     span_boxes = _entity_span_char_boxes(block, search_text, span_start, span_end)
     if not span_boxes:
         return None
+    return _line_rects_from_span_boxes(block, span_boxes, line_height)
+
+
+def _line_rects_from_span_boxes(
+    block: OCRTextBlock,
+    span_boxes: list,
+    line_height: float | None = None,
+) -> list[tuple[int, int, int, int]] | None:
+    """Per-text-line rects built from a span's (possibly gappy) char boxes —
+    the geometry half of _entity_char_box_line_rects, shared with the
+    partial-proof path (_span_rects_with_row_bands)."""
     rects: list[tuple[int, int, int, int]] = []
     current: tuple[int, int, int, int] | None = None
     previous_x1: float | None = None
@@ -337,29 +348,53 @@ def _entity_char_box_line_rects(
     return [r for r in rects if r[3] > r[1]] or None
 
 
+def _char_rows(chars: list) -> list[list[dict]]:
+    """Split a reading-ordered char stream into text rows.
+
+    Same identity as _entity_char_box_line_rects: a row break is where reading
+    order resets leftward (the next box STARTS left of the previous box's
+    start). Holds on tilted photos where y tests would fuse adjacent rows.
+    """
+    rows: list[list[dict]] = []
+    current: list[dict] = []
+    previous_x1: float | None = None
+    for box in chars:
+        x1 = float(box["x1"])
+        if current and previous_x1 is not None and x1 < previous_x1:
+            rows.append(current)
+            current = []
+        current.append(box)
+        previous_x1 = x1
+    if current:
+        rows.append(current)
+    return rows
+
+
 def _unproven_span_row_band(
     block: OCRTextBlock,
     search_text: str,
     span_start: int,
     span_end: int,
-    line_height: float | None,
 ) -> tuple[int, int] | None:
     """Row band (top, bottom) bounding a span NONE of whose glyphs aligned to
     a char box (a handwritten fill on a line the char engine skipped).
 
     Char boxes run in reading order, which is physical order inside a block —
     the span's ink lies after the nearest proven box BEFORE it and before the
-    nearest proven box AFTER it. Their rows bound the span vertically: band
-    top is the before-anchor's row top (block top when absent), band bottom
-    the after-anchor's row bottom (block bottom when absent). Anchor rows are
-    grown from the anchor's own y-band with the page line grid — same grow
-    rule as _entity_char_box_line_rects, phone-photo char boxes collapse
-    vertically. X carries no evidence on the value's own line, so the caller
-    keeps the block's x-extent. None without at least one anchor, a line
-    grid, or a real polygon: the caller keeps the whole-block mask.
+    nearest proven box AFTER it. Bounds are measured neighbour-row edges, not
+    grown estimates: the span can extend through its anchor's whole writing
+    zone (handwritten fills overshoot the printed glyph band — the 河南新乡市
+    descenders poked out below an anchor-height band), and that zone ends
+    exactly where the next physical row's ink starts. So band bottom is the
+    lowest top edge of the row BELOW the after-anchor's row (block bottom when
+    it is the last row), band top the highest bottom edge of the row ABOVE the
+    before-anchor's row (block top when it is the first) — the conservative
+    end of each measured edge, tilt shifts row edges across x. Both bounds are
+    kept outside the anchor's own row ink so the band never shaves it. X
+    carries no evidence on the value's own line, so the caller keeps the
+    block's x-extent. None without at least one anchor or a real polygon: the
+    caller keeps the whole-block mask.
     """
-    if not line_height or line_height <= 0:
-        return None
     polygon = getattr(block, "polygon", None) or []
     ys = [int(pt[1]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
     if not ys:
@@ -377,17 +412,126 @@ def _unproven_span_row_band(
     after = next((box for box in box_by_glyph[span_glyph_end:] if box is not None), None)
     if before is None and after is None:
         return None
+    rows = _char_rows(getattr(block, "chars", None) or [])
+    row_of = {id(box): index for index, row in enumerate(rows) for box in row}
+
     top = float(block_top)
     if before is not None:
-        center = (float(before["y1"]) + float(before["y2"])) / 2
-        top = max(top, min(float(before["y1"]), center - line_height / 2))
+        row_index = row_of[id(before)]
+        if row_index > 0:
+            previous_row = rows[row_index - 1]
+            row_ink_top = min(float(box["y1"]) for box in rows[row_index])
+            top = max(top, min(min(float(box["y2"]) for box in previous_row), row_ink_top))
     bottom = float(block_bottom)
     if after is not None:
-        center = (float(after["y1"]) + float(after["y2"])) / 2
-        bottom = min(bottom, max(float(after["y2"]), center + line_height / 2))
+        row_index = row_of[id(after)]
+        if row_index < len(rows) - 1:
+            next_row = rows[row_index + 1]
+            row_ink_bottom = max(float(box["y2"]) for box in rows[row_index])
+            bottom = min(
+                bottom, max(max(float(box["y1"]) for box in next_row), row_ink_bottom)
+            )
     if bottom <= top:
         return None
     return int(top), int(bottom)
+
+
+def _span_rects_with_row_bands(
+    block: OCRTextBlock,
+    search_text: str,
+    span_start: int,
+    span_end: int,
+    line_height: float | None,
+) -> list[tuple[int, int, int, int]] | None:
+    """Rects for a span the proven-crop path rejected (an edge glyph unproven).
+
+    Every span glyph falls in one of two evidence classes: a PROVEN run (its
+    char boxes aligned) keeps the ordinary tight line rects; an UNPROVEN
+    prefix/suffix run gets a measured row band — its ink lies between the
+    adjacent proven glyph inside the span and the nearest proven neighbour
+    outside it (reading order == physical order). A run whose two anchors sit
+    on one row is pinched by their x edges on that row; otherwise the run may
+    continue past the wrap margin, so its row rect runs to the block edge and
+    the rows in between, bounded by the anchors' measured row edges, are
+    covered by a full-width band (the 试用期 date: 2025年5月 proven on line 1,
+    the handwritten 10日起至…止 continuation on line 2 has no char boxes at
+    all — line 1 gets its tight rect, line 2 its measured band). All bounds
+    are measured char/row coordinates — no estimation, no thresholds. None
+    when the block carries no usable evidence; the caller keeps the
+    whole-block mask.
+    """
+    polygon = getattr(block, "polygon", None) or []
+    xs = [int(pt[0]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+    ys = [int(pt[1]) for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2]
+    if not xs or not ys:
+        return None
+    block_left, block_right = min(xs), max(xs)
+    block_top, block_bottom = min(ys), max(ys)
+    alignment = _glyph_alignment(block, search_text, span_start, span_end)
+    if alignment is None:
+        return None
+    box_by_glyph, span_glyph_start, span_glyph_end = alignment
+    span = box_by_glyph[span_glyph_start:span_glyph_end]
+    if not span:
+        return None
+    proven = [box for box in span if box is not None]
+    if not proven:
+        band = _unproven_span_row_band(block, search_text, span_start, span_end)
+        if band is None:
+            return None
+        return [(block_left, band[0], block_right, band[1])]
+    rects = _line_rects_from_span_boxes(block, proven, line_height)
+    if not rects:
+        return None
+    rows = _char_rows(getattr(block, "chars", None) or [])
+    row_of = {id(box): index for index, row in enumerate(rows) for box in row}
+    out = list(rects)
+
+    if span[-1] is None:
+        # Unproven suffix: after the last proven span glyph, before the nearest
+        # proven neighbour following the span.
+        last = next(box for box in reversed(span) if box is not None)
+        last_row = row_of.get(id(last))
+        after = next((box for box in box_by_glyph[span_glyph_end:] if box is not None), None)
+        after_row = row_of.get(id(after)) if after is not None else None
+        x1, y1, x2, y2 = out[-1]
+        if after is not None and after_row == last_row:
+            # Confined to one row between the two anchors: pinch by their x.
+            out[-1] = (x1, y1, max(x2, int(float(after["x1"]))), y2)
+        else:
+            # May continue past the wrap margin onto following rows.
+            out[-1] = (x1, y1, block_right, y2)
+            band_bottom = float(block_bottom)
+            if after_row is not None and last_row is not None and after_row > last_row:
+                band_bottom = min(
+                    band_bottom, max(float(box["y1"]) for box in rows[after_row])
+                )
+            if band_bottom > y2:
+                out.append((block_left, y2, block_right, int(band_bottom)))
+
+    if span[0] is None:
+        # Unproven prefix, mirror of the suffix case.
+        first = next(box for box in span if box is not None)
+        first_row = row_of.get(id(first))
+        before = next(
+            (box for box in reversed(box_by_glyph[:span_glyph_start]) if box is not None),
+            None,
+        )
+        before_row = row_of.get(id(before)) if before is not None else None
+        x1, y1, x2, y2 = out[0]
+        if before is not None and before_row == first_row:
+            out[0] = (min(x1, int(float(before["x2"]))), y1, x2, y2)
+        else:
+            out[0] = (block_left, y1, x2, y2)
+            band_top = float(block_top)
+            if before_row is not None and first_row is not None and before_row < first_row:
+                band_top = max(
+                    band_top, min(float(box["y2"]) for box in rows[before_row])
+                )
+            if y1 > band_top:
+                out.insert(0, (block_left, int(band_top), block_right, y1))
+
+    return out
 
 
 def _region_cjk_em(region: SensitiveRegion, line_blocks: list[OCRTextBlock]) -> float | None:

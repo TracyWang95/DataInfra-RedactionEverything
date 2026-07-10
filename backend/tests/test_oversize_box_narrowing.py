@@ -114,8 +114,10 @@ _FARM_BLOCK_CHARS = [
 
 def test_unproven_value_narrows_to_first_row_band() -> None:
     """Case 1 (农业合同): no proven box before the value, the after-anchor
-    （'，' at y 732-755）is on row 1 — the region must stay on row 1 instead
-    of the 91px two-row slab. X stays the block's full width (no estimation)."""
+    （'，' at y 732-755）is on row 1 — the region must cover row 1's whole
+    writing zone (handwriting overshoots the printed 732-755 glyph band, the
+    real photo's descenders reached ~775) and stop where row 2's ink starts.
+    X stays the block's full width (no estimation)."""
     block = _block(_FARM_BLOCK_TEXT, _FARM_BLOCK_POLYGON, list(_FARM_BLOCK_CHARS))
 
     regions = match_entities_to_ocr([block], [{"type": "ADDRESS", "text": "河南新乡市"}])
@@ -124,9 +126,9 @@ def test_unproven_value_narrows_to_first_row_band() -> None:
     region = regions[0]
     assert region.left == 92 and region.width == 667  # x: full block width kept
     assert region.top == 725  # no before-anchor: band starts at block top
-    # bottom bounded by the after-anchor's row, never reaching row 2 (787+)
-    assert region.top + region.height >= 755  # covers the anchor row's ink
-    assert region.top + region.height < 787  # excludes row 2
+    # bottom = measured top edge of row 2 (787): the full inter-row writing
+    # zone is covered (handwritten descenders included), row 2's ink is not.
+    assert region.top + region.height == 787
     assert region.height < 91  # strictly narrower than the old slab
 
 
@@ -148,7 +150,7 @@ def test_unproven_value_between_anchors_stays_on_its_row() -> None:
 
     assert len(regions) == 1
     region = regions[0]
-    assert region.top > 330  # row 1 fully excluded
+    assert region.top == 330  # band starts at row 1's measured ink bottom
     assert region.top + region.height >= 390  # covers row 2 ink
     assert region.height < 70  # not the two-row slab (~100px)
 
@@ -183,9 +185,67 @@ def test_proven_span_still_crops_tight() -> None:
     assert region.width < 60  # tight x crop from the proven char boxes
 
 
+def test_partially_proven_wrapped_value_gets_line_rect_plus_row_band() -> None:
+    """劳动合同 wrapped date: 2025年5月 proven on row 1, the handwritten
+    10日起至…止 continuation fills row 2 which the char engine missed entirely.
+    The old behavior was a whole-block slab (or a stray full-width sliver
+    straddling the row boundary). Now: a tight rect for the proven row-1 run
+    (right edge extended to the wrap margin) plus a measured band covering
+    row 2, stopping where row 3's ink starts."""
+    row1 = _row_chars("合同期限6个月，自2025年5月", 100, 100, 130)
+    row3 = _row_chars("其他条款如下。", 100, 200, 230)
+    text = "合同期限6个月，自2025年5月10日起至2026年11月10日止。经协商，其他条款如下。"
+    block = _block(text, [[95, 95], [700, 95], [700, 235], [95, 235]], row1 + row3)
+
+    regions = match_entities_to_ocr(
+        [block], [{"type": "DATE", "text": "2025年5月10日起至2026年11月10日止"}]
+    )
+
+    assert len(regions) == 2
+    top_rect, band = sorted(regions, key=lambda r: r.top)
+    # proven run: starts at the 2025 glyphs (x 100+8*19=252), wrap margin right
+    assert top_rect.left > 200 and top_rect.left + top_rect.width == 700
+    assert top_rect.top + top_rect.height <= band.top + 1  # contiguous, no gap
+    # unproven continuation: full-width band over row 2's zone only
+    assert (band.left, band.left + band.width) == (95, 700)
+    assert band.top + band.height == 200  # stops at row 3's measured ink top
+    # nothing regressed into a whole-block slab
+    assert all(r.height < 105 for r in regions)
+
+
 # ---------------------------------------------------------------------------
 # Fix 2: charless-block re-OCR attaches chars in reading order
 # ---------------------------------------------------------------------------
+
+def test_same_row_segments_with_tilt_jitter_keep_reading_order(monkeypatch) -> None:
+    """A handwriting-gapped physical line comes back from the crop re-OCR as
+    three segments whose integer tops differ by tilt pixels; a (round(top),
+    left) sort shuffles them. Row grouping by y-overlap must restore x order."""
+    from PIL import Image
+
+    from app.services.vision import ocr_paddle_extract as ope
+
+    left_seg = _block("甲方聘用", [[10, 21], [86, 21], [86, 41], [10, 41]],
+                      _row_chars("甲方聘用", 10, 21, 41))
+    mid_seg = _block("6个月，自", [[120, 20], [215, 20], [215, 40], [120, 40]],
+                     _row_chars("6个月，自", 120, 20, 40))
+    right_seg = _block("2025年", [[240, 19], [335, 19], [335, 39], [240, 39]],
+                       _row_chars("2025年", 240, 19, 39))
+
+    monkeypatch.setattr(
+        ope,
+        "_run_structure_service_with_visuals",
+        lambda image, service: ([right_seg, left_seg, mid_seg], []),
+    )
+
+    charless = _block("甲方聘用6个月，自2025年", [[0, 0], [350, 0], [350, 60], [0, 60]], [])
+    image = Image.new("RGB", (400, 100), "white")
+    service = type("Svc", (), {"extract_structure_boxes": staticmethod(lambda *a, **k: None)})()
+
+    [result] = ope._attach_chars_to_charless_blocks([charless], image, service)
+
+    assert "".join(c["c"] for c in result.chars) == "甲方聘用6个月，自2025年"
+
 
 def test_recovered_chars_attach_in_reading_order(monkeypatch) -> None:
     from PIL import Image

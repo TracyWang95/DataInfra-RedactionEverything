@@ -110,7 +110,11 @@ def test_incomplete_char_list_does_not_disprove_block_text() -> None:
         [{"type": "AMOUNT", "text": "89,000.00"}],
     )
 
-    assert [(region.left, region.width) for region in regions] == [(596, 80)]
+    # Partial proof now crops instead of falling back to the whole block: the
+    # proven 9,000.00 boxes (606-686) plus the unproven-prefix extension to the
+    # block's left edge (596). The dropped-leading-char match itself is the
+    # invariant under test; the crop covers every proven glyph.
+    assert [(region.left, region.width) for region in regions] == [(596, 90)]
 
 
 def test_equal_length_char_reading_variant_keeps_block_text() -> None:

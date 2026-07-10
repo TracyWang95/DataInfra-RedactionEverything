@@ -375,6 +375,27 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
     return blocks, visual_regions
 
 
+def _reading_order(blocks: list[OCRTextBlock]) -> list[OCRTextBlock]:
+    """Sort line blocks/segments into reading order: rows top-to-bottom, row
+    members left-to-right. Rows are discovered by the y identity — a segment
+    belongs to a row when its y-center falls inside the row's y band (same-row
+    segments overlap in y; distinct physical rows do not) — so a tilted line's
+    segments stay one row even when their integer tops differ."""
+    rows: list[list] = []  # [row_top, row_bottom, [segments]]
+    for segment in sorted(blocks, key=lambda item: item.top + item.height / 2.0):
+        center_y = segment.top + segment.height / 2.0
+        for row in rows:
+            if row[0] <= center_y <= row[1]:
+                row[2].append(segment)
+                row[0] = min(row[0], segment.top)
+                row[1] = max(row[1], segment.top + segment.height)
+                break
+        else:
+            rows.append([segment.top, segment.top + segment.height, [segment]])
+    rows.sort(key=lambda row: row[0])
+    return [seg for row in rows for seg in sorted(row[2], key=lambda item: item.left)]
+
+
 def _attach_chars_to_charless_blocks(
     blocks: list[OCRTextBlock],
     image: Image.Image,
@@ -409,13 +430,16 @@ def _attach_chars_to_charless_blocks(
         except Exception as exc:
             logger.info("charless-block re-OCR failed: %s", exc)
             continue
-        # The structure engine returns the crop's line blocks unordered; chars
-        # concatenated in that order break the monotone glyph alignment
-        # downstream (_entity_span_char_boxes). Same reading-order key as
-        # _narrow_charsless_block_to_lines.
+        # The structure engine returns the crop's line blocks unordered, and a
+        # handwriting-gapped physical line comes back as SEVERAL segments whose
+        # tops differ by a few tilt pixels — a (round(top), left) sort shuffles
+        # them out of reading order and breaks the monotone glyph alignment
+        # downstream (_entity_span_char_boxes). Reading order needs the row
+        # identity: same-row segments overlap in y (physical rows do not), so
+        # group segments into rows by y-center-in-band, then sort each row by x.
         recovered = [
             {"c": ch["c"], "x1": left + ch["x1"], "y1": top + ch["y1"], "x2": left + ch["x2"], "y2": top + ch["y2"]}
-            for cb in sorted(crop_blocks, key=lambda item: (round(item.top), item.left))
+            for cb in _reading_order(crop_blocks)
             for ch in (getattr(cb, "chars", None) or [])
         ]
         if recovered:
