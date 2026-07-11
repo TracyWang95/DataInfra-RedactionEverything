@@ -12,7 +12,6 @@ import time
 from types import SimpleNamespace
 from typing import Any
 
-import numpy as np
 from PIL import Image
 
 from app.core.config import settings
@@ -43,12 +42,6 @@ from app.services.vision.ocr_tuning import (
     _COARSE_MULTILINE_MIN_COMPACT_LEN,
     _DEFAULT_OCR_ITEM_CONFIDENCE,
     _SEAL_REGION_COLOR,
-    _TABLE_HEURISTIC_DARK_PIXEL_MAX,
-    _TABLE_HEURISTIC_HORIZONTAL_DARK_RATIO,
-    _TABLE_HEURISTIC_MIN_DIM_PX,
-    _TABLE_HEURISTIC_MIN_LINES,
-    _TABLE_HEURISTIC_THUMBNAIL_PX,
-    _TABLE_HEURISTIC_VERTICAL_DARK_RATIO,
     OCR_VISUAL_ENTITY_TYPES,
     TABLE_PRECISION_ENTITY_TYPES,
 )
@@ -103,14 +96,6 @@ def run_paddle_ocr(
     selected = {_canonical_image_text_type(type_id) for type_id in (selected_entity_types or [])}
     adaptive_mode = selected_entity_types is not None
 
-    # 惰性计算：structure-primary 提前 return 的路径无需扫描整页像素。
-    table_like_cache: bool | None = None
-
-    def table_like() -> bool:
-        nonlocal table_like_cache
-        if table_like_cache is None:
-            table_like_cache = _looks_like_table(image) if adaptive_mode else False
-        return table_like_cache
     needs_table_precision = bool(selected & TABLE_PRECISION_ENTITY_TYPES)
     needs_ocr_visual_regions = bool(selected & OCR_VISUAL_ENTITY_TYPES)
     needs_text_precision = adaptive_mode and bool(selected - OCR_VISUAL_ENTITY_TYPES)
@@ -211,10 +196,9 @@ def run_paddle_ocr(
                     )
                 else:
                     logger.info(
-                        "Using PP-StructureV3 primary OCR path: %d blocks (min=%d, table_like=%s, table_types=%s)",
+                        "Using PP-StructureV3 primary OCR path: %d blocks (min=%d, table_types=%s)",
                         len(primary_structure_blocks),
                         min_blocks,
-                        table_like(),
                         needs_table_precision,
                     )
                 return primary_structure_blocks, primary_structure_visual_regions
@@ -242,9 +226,8 @@ def run_paddle_ocr(
     should_structure_fallback = (
         settings.OCR_STRUCTURE_ENABLED
         and (
-            _should_run_structure_fallback(image, blocks)
+            _should_run_structure_fallback(blocks)
             or _has_coarse_markup_blocks(blocks)
-            or (adaptive_mode and needs_table_precision and table_like())
             or (needs_table_precision and _has_coarse_multiline_blocks(blocks))
             or (needs_text_precision and bool(primary_structure_blocks))
             or (needs_text_precision and bool(settings.OCR_STRUCTURE_TEXT_PRECISION_ENABLED))
@@ -281,26 +264,13 @@ def run_paddle_ocr(
     return blocks, visual_regions
 
 
-def _looks_like_table(image: Image.Image) -> bool:
-    gray = image.convert("L")
-    # Downsample for a cheap table-line heuristic.
-    gray.thumbnail((_TABLE_HEURISTIC_THUMBNAIL_PX, _TABLE_HEURISTIC_THUMBNAIL_PX))
-    width, height = gray.size
-    if width < _TABLE_HEURISTIC_MIN_DIM_PX or height < _TABLE_HEURISTIC_MIN_DIM_PX:
-        return False
-    dark = np.asarray(gray) < _TABLE_HEURISTIC_DARK_PIXEL_MAX
-    horizontal = int(np.count_nonzero(dark.sum(axis=1) / width > _TABLE_HEURISTIC_HORIZONTAL_DARK_RATIO))
-    vertical = int(np.count_nonzero(dark.sum(axis=0) / height > _TABLE_HEURISTIC_VERTICAL_DARK_RATIO))
-    return horizontal >= _TABLE_HEURISTIC_MIN_LINES and vertical >= _TABLE_HEURISTIC_MIN_LINES
-
-
-def _should_run_structure_fallback(image: Image.Image, blocks: list[OCRTextBlock]) -> bool:
+def _should_run_structure_fallback(blocks: list[OCRTextBlock]) -> bool:
     sparse = len(blocks) < max(1, int(settings.OCR_STRUCTURE_MIN_VL_BOXES))
     if not sparse:
         return False
-    if any(block.text.lstrip().lower().startswith(("<table", "<html", "<div")) for block in blocks):
-        return True
-    return _looks_like_table(image)
+    # OCR 产物即真相源：VL 版面把表格块以 <table html 回传，稀疏页只要携带任一
+    # 标记块就补跑 PP-StructureV3——不再用像素启发预判表格。
+    return any(block.text.lstrip().lower().startswith(("<table", "<html", "<div")) for block in blocks)
 
 
 def _has_coarse_multiline_blocks(blocks: list[OCRTextBlock]) -> bool:
