@@ -55,6 +55,39 @@ logger = logging.getLogger(__name__)
 # The model judges what is a date; no hand-written pattern enumerates them.
 
 
+async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: Any) -> None:
+    """Model-driven AMOUNT value narrowing（人民币每亩每年100元 → 100元）.
+
+    The sensitive ink on the page is the value token, but HaS queried as 金额
+    returns the span WITH its business context — that is its training
+    semantics, not an error. Queried as 数值 (settings.AMOUNT_VALUE_QUERY_LABEL)
+    on the entity text alone, the same model extracts the value itself, so the
+    narrowing is the model's own judgment end to end — no token grammar, no
+    word lists. Fires only on an unambiguous answer: exactly ONE value that is
+    a proper substring of the entity. Anything else — multi-value spans, no
+    answer, a model failure — keeps the whole span, so narrowing can only ever
+    trim label context, never uncover a value.
+    """
+    label = str(getattr(settings, "AMOUNT_VALUE_QUERY_LABEL", "") or "").strip()
+    if not label or not has_client:
+        return
+    for entity in entities:
+        if entity.get("type") != "AMOUNT":
+            continue
+        original = str(entity.get("text") or "")
+        if not original:
+            continue
+        try:
+            result = await asyncio.to_thread(has_client.ner, original, [label])
+        except Exception as exc:
+            logger.debug("amount value narrowing skipped for %r: %s", original, exc)
+            continue
+        values = [str(v).strip() for v in (result or {}).get(label, []) if str(v).strip()]
+        if len(values) == 1 and values[0] != original and values[0] in original:
+            logger.debug("amount narrowed by model: %r -> %r", original, values[0])
+            entity["text"] = values[0]
+
+
 async def run_has_text_analysis(
     ocr_blocks: list[OCRTextBlock],
     has_client: Any,
@@ -366,6 +399,8 @@ async def run_has_text_analysis(
                     "text": text,
                 })
                 logger.debug("HaS found entity: %s (%s)", text, normalized_type)
+
+        await _narrow_amount_entities(entities, has_client)
 
         # Boxes come from matching these values back to OCR blocks; mIoU is the
         # only merge step.

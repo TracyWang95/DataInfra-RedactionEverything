@@ -191,7 +191,7 @@ def _entity_span_char_boxes(
     for position, box in enumerate(span_boxes):
         if box is not None and id(box) in row_of:
             indexed.append((position, row_of[id(box)]))
-    if any(b[1] < a[1] for a, b in zip(indexed, indexed[1:])):
+    if any(b[1] < a[1] for a, b in zip(indexed, indexed[1:], strict=False)):
         span_boxes = list(span_boxes)
         length = [1] * len(indexed)
         parent = [-1] * len(indexed)

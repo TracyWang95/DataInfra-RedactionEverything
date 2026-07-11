@@ -349,6 +349,14 @@ class Settings(BaseSettings):
     HAS_TIMEOUT: float = 120.0
     HAS_NER_CONTEXT_TOKENS: int = 8192
     HAS_NER_MAX_TOKENS: int = 8192
+    # Second-pass HaS query label that extracts the bare value token from an
+    # AMOUNT entity（人民币每亩每年100元 → 100元）. Queried as 金额, HaS keeps
+    # the unit context (its training semantics); queried as 数值 it returns
+    # the value itself — so the narrowing is the model's own judgment, no
+    # hand-written token grammar. Verified stable on the 5090 corpus (5 cases
+    # x2 runs: business-context amounts, 保底 CJK amounts, 40% percents,
+    # thousands separators, multi-value spans). Empty string disables.
+    AMOUNT_VALUE_QUERY_LABEL: str = "数值"
     HAS_NER_MAX_TYPES_PER_REQUEST: int = 12
     HAS_NER_CUSTOM_MAX_TYPES_PER_REQUEST: int = 16
     HAS_NER_TYPE_BATCH_TARGET_TOKENS: int = 900

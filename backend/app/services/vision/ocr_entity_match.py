@@ -54,9 +54,7 @@ from app.services.vision.ocr_visual_span import (
     _char_visual_units,  # noqa: F401
     _extend_amount_pair_for_visual_match,  # noqa: F401
     _extend_entity_for_visual_match,  # noqa: F401
-    _iter_percent_value_tokens,  # noqa: F401
     _visual_match_span_for_entity,
-    _visual_match_text_for_entity,  # noqa: F401
 )
 
 logger = logging.getLogger(__name__)

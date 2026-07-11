@@ -95,11 +95,9 @@ from app.services.vision.ocr_entity_match import (
     _is_low_signal_vision_entity,
     _is_same_amount_value_block,
     _is_strict_match_entity,
-    _iter_percent_value_tokens,
     _narrow_charsless_block_to_lines,
     _regions_overlap,
     _visual_match_span_for_entity,
-    _visual_match_text_for_entity,
     match_entities_to_ocr,
 )
 from app.services.vision.ocr_image_prep import (
@@ -351,7 +349,6 @@ __all__ = [
     "_is_same_amount_value_block",
     "_is_standalone_amount_ocr_block",
     "_is_strict_match_entity",
-    "_iter_percent_value_tokens",
     "_join_visual_line_text",
     "_looks_like_table",
     "_merge_ocr_blocks",
@@ -373,7 +370,6 @@ __all__ = [
     "_should_run_structure_fallback",
     "_union_ocr_blocks",
     "_visual_match_span_for_entity",
-    "_visual_match_text_for_entity",
     "_wait_for_ocr_output_inflight",
     "asyncio",
     "expand_table_blocks",

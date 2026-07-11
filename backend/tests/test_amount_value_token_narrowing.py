@@ -1,75 +1,97 @@
-"""AMOUNT visual span narrows to the currency value token.
+"""Model-driven AMOUNT value narrowing（人民币每亩每年100元 → 100元）.
 
-HaS returns amounts with surrounding business context（人民币每亩每年100元 /
-保底十万元/每年左右）. The sensitive ink on the page is the value token
-itself — same rule the percent amounts already follow ("contract amount 40%"
-boxes just 40%). Token scanning is regex-free over closed character classes
-(digits / CJK numerals / currency units), the same family as the percent
-scanner's '%'.
+The value span comes from the MODEL, not from a token grammar: each AMOUNT
+entity is re-queried against HaS with the 数值 label
+(settings.AMOUNT_VALUE_QUERY_LABEL) and the model's answer replaces the span
+only when it is unambiguous — exactly one value, a proper substring. The old
+hand-written scanners (percent '%' tokens from the 2026-05-10 initial release,
+the short-lived currency grammar) are deleted: lexical grammars are magic
+rules; their gaps became leaks (1,000,000元 narrowed to 000元).
 
-Also: the HaS INPUT text is stripped of VL math markup（$ \\underline{...} $）
-— the wrapper noise made HaS tag the 保底十万元 fill only intermittently.
+5090-verified model behavior (5 cases x2 runs, stable): 人民币每亩每年100元
+→ 100元; 保底十万元/每年左右 → 十万元; 合同金额的40% → 40%; 定金1,000元整
+→ 1,000元整; multi-value spans return every value (→ no narrowing).
+
+Also: HaS INPUT text is stripped of VL math markup（$ \\underline{...} $）—
+the wrapper noise made HaS tag the 保底十万元 fill only intermittently.
 """
-from app.services.ocr_has_vision_service import OCRTextBlock
+import asyncio
+
 from app.services.vision.has_text_payload import _iter_payload_texts
-from app.services.vision.ocr_pipeline import match_entities_to_ocr
-from app.services.vision.ocr_visual_span import _visual_match_text_for_entity
+from app.services.vision.has_text_analysis import _narrow_amount_entities
 
 
-def test_arabic_amount_narrows_to_value_token() -> None:
-    assert _visual_match_text_for_entity("AMOUNT", "人民币每亩每年100元") == "100元"
+class _FakeHasClient:
+    def __init__(self, answers: dict[str, list[str]]):
+        self.answers = answers
+        self.queries: list[tuple[str, list[str]]] = []
+
+    def ner(self, text: str, entity_types=None, **_kw):
+        self.queries.append((text, list(entity_types or [])))
+        if isinstance(self.answers.get(text), Exception):
+            raise self.answers[text]
+        return {"数值": self.answers.get(text, [])}
 
 
-def test_cjk_amount_narrows_to_value_token() -> None:
-    assert _visual_match_text_for_entity("AMOUNT", "保底十万元/每年左右") == "十万元"
+def _narrow(entities, answers):
+    client = _FakeHasClient(answers)
+    asyncio.run(_narrow_amount_entities(entities, client))
+    return entities, client
 
 
-def test_pure_value_amounts_stay_whole() -> None:
-    # already the bare value (token == whole text): nothing to narrow
-    assert _visual_match_text_for_entity("AMOUNT", "壹拾万圆整") == "壹拾万圆整"
-    assert _visual_match_text_for_entity("AMOUNT", "￥3600000元") == "￥3600000元"
-    assert _visual_match_text_for_entity("AMOUNT", "100000元") == "100000元"
-
-
-def test_percent_precedent_unchanged() -> None:
-    assert _visual_match_text_for_entity("AMOUNT", "合同金额的40%") == "40%"
-
-
-def test_non_amount_types_untouched() -> None:
-    assert _visual_match_text_for_entity("ADDRESS", "位于河南新乡市100号") == "位于河南新乡市100号"
-
-
-def test_amount_without_any_value_token_stays_whole() -> None:
-    assert _visual_match_text_for_entity("AMOUNT", "按市场价结算") == "按市场价结算"
-
-
-def test_region_crops_to_value_token_glyphs() -> None:
-    """农业合同 block: the printed label 人民币每亩每年 must stay outside the
-    box — only the value token's glyphs are masked."""
-    text = "乙方按项目建设投产壹年内按人民币每亩每年100元的标准进行"
-    chars = []
-    cursor = 134
-    for ch in text:
-        chars.append({"c": ch, "x1": cursor, "y1": 885, "x2": cursor + 19, "y2": 916})
-        cursor += 19
-    block = OCRTextBlock(
-        text=text,
-        polygon=[[134, 880], [cursor, 880], [cursor, 925], [134, 925]],
-        confidence=0.98,
-        chars=chars,
+def test_unambiguous_model_answer_narrows_span() -> None:
+    entities, client = _narrow(
+        [{"type": "AMOUNT", "text": "人民币每亩每年100元"}],
+        {"人民币每亩每年100元": ["100元"]},
     )
+    assert entities[0]["text"] == "100元"
+    assert client.queries == [("人民币每亩每年100元", ["数值"])]
 
-    regions = match_entities_to_ocr(
-        [block], [{"type": "AMOUNT", "text": "人民币每亩每年100元"}]
+
+def test_multi_value_answer_keeps_whole_span() -> None:
+    entities, _ = _narrow(
+        [{"type": "AMOUNT", "text": "人民币壹佰万元及利息100元"}],
+        {"人民币壹佰万元及利息100元": ["壹佰万元", "100元"]},
     )
+    assert entities[0]["text"] == "人民币壹佰万元及利息100元"
 
-    assert len(regions) == 1
-    region = regions[0]
-    assert region.text == "100元"
-    # 100元 starts at glyph index 13 of the entity, i.e. text index 13+13=26?
-    # -> the box must start well past the printed label (134 + 20*19 = 514)
-    assert region.left > 480
-    assert region.width < 120  # 4 glyphs' span, not the 19-glyph phrase
+
+def test_non_substring_answer_keeps_whole_span() -> None:
+    # a hallucinated value that is not inside the entity must never replace it
+    entities, _ = _narrow(
+        [{"type": "AMOUNT", "text": "保底十万元/每年左右"}],
+        {"保底十万元/每年左右": ["100000元"]},
+    )
+    assert entities[0]["text"] == "保底十万元/每年左右"
+
+
+def test_model_failure_keeps_whole_span() -> None:
+    entities, _ = _narrow(
+        [{"type": "AMOUNT", "text": "定金1,000元整"}],
+        {"定金1,000元整": RuntimeError("HaS down")},
+    )
+    assert entities[0]["text"] == "定金1,000元整"
+
+
+def test_non_amount_entities_never_requeried() -> None:
+    entities, client = _narrow(
+        [{"type": "ADDRESS", "text": "河南新乡市100号"}],
+        {},
+    )
+    assert entities[0]["text"] == "河南新乡市100号"
+    assert client.queries == []
+
+
+def test_empty_label_disables_narrowing(monkeypatch) -> None:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AMOUNT_VALUE_QUERY_LABEL", "", raising=False)
+    entities, client = _narrow(
+        [{"type": "AMOUNT", "text": "人民币每亩每年100元"}],
+        {"人民币每亩每年100元": ["100元"]},
+    )
+    assert entities[0]["text"] == "人民币每亩每年100元"
+    assert client.queries == []
 
 
 def test_has_input_text_is_markup_free() -> None:
