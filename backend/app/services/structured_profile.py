@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
-from app.models.type_mapping import canonical_type_id, cn_to_id
+from app.models.type_mapping import canonical_type_id
 from app.services.structured_common import (
     MAX_PROFILE_ROWS,
     LoadedTable,
@@ -110,24 +110,16 @@ _PII_DEFAULT_GENERALIZE_TYPES = {"ADDRESS"}
 _PII_DEFAULT_TOKENIZE_TYPES = {"PERSON"}
 _SECURITY_DEFAULT_SUPPRESS_TYPES = {"USERNAME_PASSWORD", "AUTH_SECRET"}
 
-_STRUCTURED_HAS_NER_TYPES = [
-    "\u59d3\u540d",
-    "\u7535\u8bdd",
-    "\u90ae\u7bb1",
-    "\u8eab\u4efd\u8bc1\u53f7",
-    "\u94f6\u884c\u5361\u53f7",
-    "\u94f6\u884c\u8d26\u53f7",
-    "\u5730\u5740",
-    "\u8f66\u724c",
-    "IP\u5730\u5740",
-    "MAC\u5730\u5740",
-    "\u767b\u5f55\u8d26\u53f7",
-    "\u5bc6\u7801",
-    "\u7f51\u5740\u94fe\u63a5",
-    "\u8bbe\u5907\u53f7",
-    "\u62a4\u7167\u53f7",
-    "\u793e\u4fdd\u53f7",
-]
+# 库表链的 HaS 查询词 → 类型 id：查询词与其含义同址共存（清单即真相源，
+# 与文本/视觉链的清单直传同构）。回程按请求打标：返回桶名就是这里发出的词。
+_STRUCTURED_HAS_QUERY_TYPES = {
+    "姓名": "PERSON", "电话": "PHONE", "邮箱": "EMAIL", "身份证号": "ID_CARD",
+    "银行卡号": "BANK_CARD", "银行账号": "BANK_ACCOUNT", "地址": "ADDRESS",
+    "车牌": "LICENSE_PLATE", "IP地址": "IP_ADDRESS", "MAC地址": "MAC_ADDRESS",
+    "登录账号": "USERNAME_PASSWORD", "密码": "AUTH_SECRET", "网址链接": "URL_WEBSITE",
+    "设备号": "DEVICE_ID", "护照号": "PASSPORT", "社保号": "SOCIAL_SECURITY",
+}
+_STRUCTURED_HAS_NER_TYPES = list(_STRUCTURED_HAS_QUERY_TYPES)
 _STRUCTURED_SEMANTIC_TYPE_RISK = {
     "PERSON": "high",
     "PHONE": "high",
@@ -418,14 +410,17 @@ def map_has_entities_to_columns(
 
 
 def normalize_structured_entity_type(raw_type: str) -> str:
+    """Tag-by-request for the structured chain: a result bucket is keyed by a
+    query word WE sent (_STRUCTURED_HAS_QUERY_TYPES) — no global cn_terms
+    lookup. English echo variants land via pure string hygiene
+    (canonical_type_id). Unknown open-vocabulary labels become CUSTOM."""
     value = str(raw_type or "").strip()
     if not value:
         return "CUSTOM"
-    mapped = cn_to_id(value)
-    canonical = canonical_type_id(mapped)
-    if canonical in {"BANK_ACCOUNT"}:
+    canonical = _STRUCTURED_HAS_QUERY_TYPES.get(value) or canonical_type_id(value)
+    if canonical == "BANK_ACCOUNT":
         return "BANK_CARD"
-    if canonical in {"PASSWORD"}:
+    if canonical in {"PASSWORD", "TOKEN", "SECRET_KEY", "API_KEY", "OTP", "ACCOUNT_PASSWORD", "LOGIN_PASSWORD"}:
         return "AUTH_SECRET"
     if canonical in _STRUCTURED_SEMANTIC_TYPE_RISK:
         return canonical

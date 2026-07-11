@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from app.models.schemas import Entity
-from app.models.type_mapping import canonical_type_id, cn_to_id, id_to_cn, linkage_groups_for_type
+from app.models.type_mapping import canonical_type_id, id_to_cn, linkage_groups_for_type
 from app.services.entity_type_service import (
     PRESET_ENTITY_TYPES,
     EntityTypeConfig,
@@ -67,9 +67,9 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
         self.assertNotIn("DOCUMENT_NUMBER", default_ids)
         self.assertTrue(PRESET_ENTITY_TYPES["BIRTH_DATE"].enabled)
         self.assertTrue(PRESET_ENTITY_TYPES["DOCUMENT_NUMBER"].enabled)
-        self.assertEqual(canonical_type_id("LEGAL_CASE_ID"), "DOCUMENT_NUMBER")
-        self.assertEqual(cn_to_id("出生日期"), "BIRTH_DATE")
-        self.assertEqual(cn_to_id("文书编号"), "DOCUMENT_NUMBER")
+        # Alias/cn_terms translation layer is deleted: ids normalize by pure
+        # string hygiene only, LEGAL_CASE_ID is its own first-class item now.
+        self.assertEqual(canonical_type_id("LEGAL_CASE_ID"), "LEGAL_CASE_ID")
         self.assertEqual(id_to_cn("ADDRESS"), "地址")
         self.assertEqual(id_to_cn("BIRTH_DATE"), "出生日期")
         self.assertEqual(id_to_cn("DOCUMENT_NUMBER"), "文书编号")

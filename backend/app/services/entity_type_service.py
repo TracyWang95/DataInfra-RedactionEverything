@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.core.config import settings
 from app.core.persistence import load_json, save_json
 from app.core.tenant_config import store_lock, tenant_store_path
-from app.models.type_mapping import TYPE_ID_ALIASES, canonical_type_id
+from app.models.type_mapping import canonical_type_id
 
 # ── 数据模型 ──────────────────────────────────────────────
 
@@ -116,8 +116,12 @@ _PRESET_JSON_PATH = _os.path.join(
     _os.path.dirname(__file__), "..", "..", "config", "preset_entity_types.json"
 )
 _raw_presets = load_json(_PRESET_JSON_PATH, default={})
+# Every preset json entry is a first-class checklist item — the alias filter
+# that silently suppressed 案号(LEGAL_CASE_ID)/健康信息(HEALTH_INFO) is gone
+# with the alias layer (they were legitimate items killed by the mapping, and
+# the factory legal industry preset references LEGAL_CASE_ID directly).
 PRESET_ENTITY_TYPES: dict[str, EntityTypeConfig] = {
-    k: EntityTypeConfig(**v) for k, v in _raw_presets.items() if k not in TYPE_ID_ALIASES
+    k: EntityTypeConfig(**v) for k, v in _raw_presets.items()
 }
 
 def is_default_generic_entity_type_id(type_id: str) -> bool:
@@ -345,8 +349,6 @@ def _load_entity_types(owner_id: str | None = None) -> dict[str, EntityTypeConfi
         else:
             merged[key] = preset
     for key, val in raw.items():
-        if key in TYPE_ID_ALIASES:
-            continue
         if key not in merged and str(key).startswith("custom_"):
             try:
                 loaded = EntityTypeConfig(**val) if isinstance(val, dict) else val
