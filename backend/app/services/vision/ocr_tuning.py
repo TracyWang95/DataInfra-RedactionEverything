@@ -22,13 +22,6 @@ OCR_VISUAL_ENTITY_TYPES = VISUAL_ONLY_ENTITY_TYPES
 # Window (seconds) for treating a recent negative HaS health check as still valid.
 _HAS_NEGATIVE_HEALTH_TTL_SEC = 5.0
 
-# Default fallback median text-line height (px) when no block heights are known.
-# Amount-pair lookback: scan this many chars before the entity for 大写/小写 markers.
-_AMOUNT_PAIR_LOOKBACK_CHARS = 48
-# Sentinel "infinitely far" tail distance when no 小写 marker is present.
-_AMOUNT_PAIR_NO_LOWER_MARKER_UNITS = 999.0
-# Max visual units between 小写 marker and amount to treat as one upper/lower pair.
-_AMOUNT_PAIR_MAX_LOWER_TAIL_UNITS = 8.0
 
 # Standalone-amount digit-count bounds.
 _STANDALONE_AMOUNT_MIN_DIGITS = 4
@@ -117,21 +110,12 @@ _NER_MIN_LEN_BY_TYPE = {
     "ADDRESS": 4,
 }
 
-# Document-title visual suffix lookahead (chars) for PROPERTY entities.
-_PROPERTY_TITLE_TAIL_LOOKAHEAD_CHARS = 12
 
 # Characters allowed in an amount-formatted value (digits plus separators,
 # currency symbols and grouping decoration). Shared by the standalone-amount
 # block test and the table-cell amount-format test.
 _AMOUNT_FORMAT_ALLOWED_CHARS = set("0123456789.,，￥¥$€£-()（）[] ")
 
-# Per-character visual-unit weights.
-_CHAR_UNIT_SPACE = 0.25
-_CHAR_UNIT_CJK = 1.0
-_CHAR_UNIT_ALNUM = 0.56
-_CHAR_UNIT_PUNCT = 0.35
-_CHAR_UNIT_OTHER = 0.65
-_CHAR_UNIT_MIN_TOTAL = 0.01
 
 # Form-field label/value width tuning.
 # Visual-wrap break search window and scoring.

@@ -47,16 +47,6 @@ from app.services.vision.ocr_tuning import (
     _TABLE_FALLBACK_CONFIDENCE,
 )
 
-# Visual-span cluster: parent uses _visual_match_span_for_entity + re-exports
-# the rest for the public API (ocr_pipeline imports them from here).
-from app.services.vision.ocr_visual_span import (
-    DOCUMENT_TITLE_SUFFIXES,  # noqa: F401
-    _char_visual_units,  # noqa: F401
-    _extend_amount_pair_for_visual_match,  # noqa: F401
-    _extend_entity_for_visual_match,  # noqa: F401
-    _visual_match_span_for_entity,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -665,12 +655,12 @@ def match_entities_to_ocr(
                     ):
                         search_from = occurrence_start + max(1, len(entity_text))
                         continue
-                    visual_text, visual_occurrence_start = _visual_match_span_for_entity(
-                        contextual_type,
-                        block_text,
-                        entity_text,
-                        occurrence_start,
-                    )
+                    # The matched span IS the visual span. The old 大写/小写
+                    # pair word-lookup is gone: the main HaS query's dual
+                    # labels (金额+大写金额) tag both renderings of a paired
+                    # amount independently (5 layout variants x2 runs, 100%),
+                    # so each side carries its own box with no lookback rule.
+                    visual_text, visual_occurrence_start = entity_text, occurrence_start
                     if contextual_type == "AMOUNT":
                         amount_signature = _amount_value_signature(visual_text)
                         if (
