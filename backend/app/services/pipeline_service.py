@@ -60,6 +60,10 @@ class PipelineTypeConfig(BaseModel):
     enabled: bool = Field(default=True, description="Whether this type is enabled")
     order: int = Field(default=100, description="Sort order")
 
+    query_labels: list[str] = Field(
+        default_factory=list,
+        description="Model query labels for this item (text chain); empty -> [name]",
+    )
     rules: list[str] = Field(default_factory=list, description="Visual feature prompt rules")
     checklist: list[VisualFeatureChecklistItem] = Field(
         default_factory=list,

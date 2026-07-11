@@ -33,7 +33,6 @@ from PIL import Image, ImageOps
 
 from app.core.config import settings
 from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
-from app.models.type_mapping import TYPE_CN_TO_ID, TYPE_ID_TO_CN, has_query_labels_for
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 from app.services.vision.has_text_analysis import (
     run_has_text_analysis,
@@ -83,7 +82,6 @@ from app.services.vision.ocr_cache import (
 )
 from app.services.vision.ocr_entity_match import (
     _AMOUNT_UNIT_SUFFIX_CHARS,
-    _HAS_ENTITY_TYPE_MAPPING,
     _char_word_class,
     _dedupe_ocr_regions,
     _entity_type_from_block_context,
@@ -209,8 +207,6 @@ __all__ = [
     "SensitiveRegion",
     "SequenceMatcher",
     "TABLE_PRECISION_ENTITY_TYPES",
-    "TYPE_CN_TO_ID",
-    "TYPE_ID_TO_CN",
     "VISUAL_ONLY_ENTITY_TYPES",
     "_AMOUNT_FORMAT_ALLOWED_CHARS",
     "_AMOUNT_TRAILING_ZEROS_MIN_DIGITS",
@@ -238,7 +234,6 @@ __all__ = [
     "_FUZZY_MATCH_CONFIDENCE",
     "_FUZZY_MATCH_MIN_ENTITY_LEN",
     "_FUZZY_MATCH_RATIO",
-    "_HAS_ENTITY_TYPE_MAPPING",
     "_HAS_NEGATIVE_HEALTH_TTL_SEC",
     "_HAS_TEXT_NER_INFLIGHT",
     "_HAS_TEXT_NER_INFLIGHT_LOOP",
@@ -344,7 +339,6 @@ __all__ = [
     "asyncio",
     "expand_table_blocks",
     "extract_table_cells",
-    "has_query_labels_for",
     "hashlib",
     "html",
     "io",

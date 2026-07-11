@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 
 from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
-from app.models.type_mapping import TYPE_ID_TO_CN, canonical_type_id, has_query_labels_for
+from app.models.type_mapping import canonical_type_id
 from app.services.ocr_has_vision_service import OCRTextBlock
 
 logger = logging.getLogger(__name__)
@@ -80,33 +80,48 @@ def _canonical_image_text_type(entity_type: str | None) -> str:
     return canonical_type_id(value)
 
 
+def _item_query_labels(item) -> list[str]:
+    """The model query labels a checklist item sends — the item OWNS them
+    (勾选什么查什么): its explicit query_labels field when configured (the
+    factory presets carry e.g. 金额+大写金额 so both numeral renderings of a
+    paired amount land in separate buckets), else its user-facing name. No
+    backend registry translation — an enumerated id→label mapping can never
+    be complete and silently diverged from the checklist (健康信息 was
+    secretly queried as 诊断)."""
+    labels = [str(label).strip() for label in (getattr(item, "query_labels", None) or []) if str(label).strip()]
+    if labels:
+        return labels
+    name = str(getattr(item, "name", "") or "").strip()
+    return [name or str(getattr(item, "id", "") or "")]
+
+
+def _default_has_text_items() -> list:
+    """The default checklist when the caller supplies none: the factory
+    preset items themselves (the same objects the UI shows), filtered to the
+    default text-type id set — names and query labels come from the user's
+    visible preset file, not from a registry."""
+    from app.services.pipeline_service import PRESET_OCR_HAS_TYPES
+
+    wanted = set(DEFAULT_HAS_TEXT_TYPE_IDS)
+    return [item for item in PRESET_OCR_HAS_TYPES if item.id in wanted]
+
+
 def _build_has_text_type_names(vision_types: list | None = None) -> list[str]:
     """Build the de-duplicated HaS Text prompt label list for OCR text.
 
-    Each requested schema item contributes its own label (has_query_labels_for);
-    the open-vocabulary model returns whatever it finds under whatever label, and
+    Each checked item contributes its own labels (_item_query_labels); the
+    open-vocabulary model returns whatever it finds under whatever label, and
     that label IS the type (识别出来是啥就是啥).
     """
-    if not vision_types:
-        entries: list[tuple[str, str]] = [(type_id, "") for type_id in DEFAULT_HAS_TEXT_TYPE_IDS]
-    else:
-        entries = []
-        seen_type_ids: set[str] = set()
-        for vt in vision_types:
-            type_id = _canonical_image_text_type(getattr(vt, "id", ""))
-            if not type_id or type_id in VISUAL_ONLY_ENTITY_TYPES or type_id in seen_type_ids:
-                continue
-            seen_type_ids.add(type_id)
-            entries.append((type_id, str(getattr(vt, "name", "") or "").strip()))
-
+    items = list(vision_types) if vision_types else _default_has_text_items()
     labels: list[str] = []
-    for type_id, name in entries:
-        if type_id in TYPE_ID_TO_CN:
-            labels.extend(has_query_labels_for(type_id))
-        else:
-            # Custom item: the registry has no Chinese label for it, and the
-            # raw id means nothing to the model — query by the user-given name.
-            labels.append(name or type_id)
+    seen_type_ids: set[str] = set()
+    for item in items:
+        type_id = _canonical_image_text_type(getattr(item, "id", ""))
+        if not type_id or type_id in VISUAL_ONLY_ENTITY_TYPES or type_id in seen_type_ids:
+            continue
+        seen_type_ids.add(type_id)
+        labels.extend(_item_query_labels(item))
     return list(dict.fromkeys(label for label in labels if label))
 
 def _compact_text(text: str | None) -> str:

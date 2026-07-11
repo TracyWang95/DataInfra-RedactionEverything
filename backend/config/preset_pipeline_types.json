@@ -325,7 +325,11 @@
         "account_like"
       ],
       "entity_type_ids": [],
-      "generic_target": "GEN_AMOUNT_VALUE"
+      "generic_target": "GEN_AMOUNT_VALUE",
+      "query_labels": [
+        "金额",
+        "大写金额"
+      ]
     },
     {
       "id": "DEVICE_ID",
@@ -790,7 +794,11 @@
       "default_enabled": false,
       "linkage_groups": [],
       "entity_type_ids": [],
-      "generic_target": "GEN_ATTRIBUTE_STATUS"
+      "generic_target": "GEN_ATTRIBUTE_STATUS",
+      "query_labels": [
+        "健康信息",
+        "诊断"
+      ]
     },
     {
       "id": "RELIGION",
@@ -990,7 +998,11 @@
         "identifier_like"
       ],
       "entity_type_ids": [],
-      "generic_target": "GEN_NUMBER_CODE"
+      "generic_target": "GEN_NUMBER_CODE",
+      "query_labels": [
+        "案号",
+        "文书编号"
+      ]
     },
     {
       "id": "LEGAL_CLAIM",

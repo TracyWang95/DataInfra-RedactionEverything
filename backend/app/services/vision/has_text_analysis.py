@@ -12,15 +12,15 @@ import time
 from typing import Any
 
 from app.core.config import settings
-from app.models.type_mapping import TYPE_ID_TO_CN, has_query_labels_for
 from app.services.ocr_has_vision_service import OCRTextBlock
 from app.services.vision.has_text_payload import (
-    DEFAULT_HAS_TEXT_TYPE_IDS,
     _build_has_text_payload,
     _build_has_text_type_names,
     _canonical_image_text_type,
     _compact_text,
+    _default_has_text_items,
     _filter_blocks_for_has_text,
+    _item_query_labels,
 )
 from app.services.vision.ocr_cache import (
     _add_has_text_duration,
@@ -306,9 +306,14 @@ async def run_has_text_analysis(
 
         # ----- reverse mapping: Chinese -> type ID -----
         # Every label the prompt asked for on an item's behalf maps back to
-        # that item (has_query_labels_for is the same source the prompt was
+        # that item (the request's own labels are the same source the prompt was
         # built from, so query and answer stay symmetric — 大写金额 -> AMOUNT).
         if vision_types:
+            # Tag-by-request (same principle as the LA chain): every result
+            # bucket key is a label WE sent for a checked item, so the map is
+            # built purely from the request — item name, item id, and the
+            # item's own query labels. No registry lookups: the checklist owns
+            # the vocabulary end to end.
             chinese_to_id = {}
             for vt in vision_types:
                 normalized_id = _canonical_image_text_type(vt.id)
@@ -316,17 +321,18 @@ async def run_has_text_analysis(
                     continue
                 chinese_to_id[vt.name] = normalized_id
                 chinese_to_id[normalized_id] = normalized_id
-                canonical_name = TYPE_ID_TO_CN.get(normalized_id)
-                if canonical_name:
-                    chinese_to_id[canonical_name] = normalized_id
-                for query_label in has_query_labels_for(normalized_id):
+                for query_label in _item_query_labels(vt):
                     chinese_to_id[query_label] = normalized_id
         else:
             chinese_to_id = {}
-            for type_id in DEFAULT_HAS_TEXT_TYPE_IDS:
-                chinese_to_id[TYPE_ID_TO_CN.get(type_id, type_id)] = type_id
-                for query_label in has_query_labels_for(type_id):
-                    chinese_to_id[query_label] = type_id
+            for item in _default_has_text_items():
+                normalized_id = _canonical_image_text_type(item.id)
+                if not normalized_id:
+                    continue
+                chinese_to_id[item.name] = normalized_id
+                chinese_to_id[normalized_id] = normalized_id
+                for query_label in _item_query_labels(item):
+                    chinese_to_id[query_label] = normalized_id
 
         bridge_ner_result: dict[str, list[str]] = {}
         bridge_blocks = reconstruct_visual_line_blocks(candidate_blocks)

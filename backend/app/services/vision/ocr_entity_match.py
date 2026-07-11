@@ -115,27 +115,6 @@ def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]
     return deduplicate_by_iou(tightest, lambda r: (r.left, r.top, r.width, r.height))
 
 
-# Chinese label -> canonical type id mapping for HaS entity matching.
-_HAS_ENTITY_TYPE_MAPPING = {
-    "人名": "PERSON",
-    "姓名": "PERSON",
-    "昵称": "NICKNAME",
-    "实验室名称": "LAB_NAME",
-    "实验室": "LAB_NAME",
-    "机构": "INSTITUTION_NAME",
-    "电话": "PHONE",
-    "手机号": "PHONE",
-    "电话号码": "PHONE",
-    "身份证": "ID_CARD",
-    "身份证号": "ID_CARD",
-    "银行卡": "BANK_CARD",
-    "银行卡号": "BANK_CARD",
-    "地址": "ADDRESS",
-    "公司": "COMPANY_NAME",
-    "公司名称": "COMPANY_NAME",
-}
-
-
 def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
     """The two regions share any pixels (topological, no thresholds)."""
     return (
@@ -603,7 +582,11 @@ def match_entities_to_ocr(
         if not entity_text:
             continue
 
-        normalized_type = _canonical_image_text_type(_HAS_ENTITY_TYPE_MAPPING.get(entity_type, entity_type.upper()))
+        # Tag-by-request: entity types arrive as the checked item's id (the
+        # HaS bucket map is built purely from the request) — no Chinese-label
+        # translation table. Unknown open-vocabulary labels pass through as
+        # their own type (识别出来是啥就是啥).
+        normalized_type = _canonical_image_text_type(entity_type)
 
         if _is_low_signal_vision_entity(normalized_type, entity_text):
             logger.debug("HaS skipped low-signal vision entity: '%s' (%s)", entity_text, normalized_type)
