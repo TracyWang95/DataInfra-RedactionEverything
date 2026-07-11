@@ -17,11 +17,11 @@ from PIL import Image
 
 from app.core.config import settings
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
-from app.services.vision.locate_tiles import _axis_positions
 from app.services.vision.has_text_payload import (
     _canonical_image_text_type,
     _compact_text,
 )
+from app.services.vision.locate_tiles import _axis_positions
 from app.services.vision.ocr_block_merge import (
     _is_coarse_markup_block,
     _merge_ocr_blocks,
