@@ -32,8 +32,6 @@ from app.services.vision.ocr_cjk_geometry import (
 from app.services.vision.ocr_table_semantics import (
     _amount_value_signature,
     _block_search_text,
-    _compact_amount_candidate,
-    _is_standalone_amount_ocr_block,
     extract_table_cells,
 )
 from app.services.vision.ocr_tuning import (
@@ -165,25 +163,21 @@ def _is_strict_match_entity(entity_type: str, entity_text: str) -> bool:
     return len(entity_text.strip()) < min_len
 
 
-# RMB unit decoration accepted around a standalone amount cell (data).
-_AMOUNT_UNIT_SUFFIX_CHARS = "元"
-
-
 def _is_same_amount_value_block(entity_text: str, block_text: str) -> bool:
     """Same amount value in a different display form (￥1431400.00元 vs 1431400，00).
 
-    Pure value-level normalization via _amount_value_signature; the block must
-    itself BE one amount value (the existing standalone-amount format test,
-    after stripping currency/unit decoration), so running text that merely
-    contains the same digits never matches.
+    Pure digit-sequence identity over the block's ENTIRE digit content: the
+    block renders exactly the number the entity carries, with divergent
+    grouping/currency/unit decoration. No format charset, no digit-count
+    window — digits that coincide with a detected amount ARE that number on
+    the page, so matching can only add cover (over-mask), never uncover.
+    Blocks mixing other digits (running text with several numbers) never
+    match: their digit sequence differs.
     """
     entity_signature = _amount_value_signature(entity_text)
     if not entity_signature:
         return False
-    candidate = _compact_text(block_text).strip(_AMOUNT_UNIT_SUFFIX_CHARS)
-    if not _is_standalone_amount_ocr_block(candidate):
-        return False
-    return _amount_value_signature(_compact_amount_candidate(candidate)) == entity_signature
+    return _amount_value_signature(block_text) == entity_signature
 
 
 class _SynthCharsBlock:
@@ -564,14 +558,6 @@ def match_entities_to_ocr(
     ]
     document_line_height = _document_line_height([block for block, _text, _is_tv in prepared_blocks])
 
-    standalone_amount_signatures = {
-        signature
-        for _block, search_text, is_table_virtual in prepared_blocks
-        if not is_table_virtual and _is_standalone_amount_ocr_block(search_text)
-        for signature in [_amount_value_signature(search_text)]
-        if signature
-    }
-
     for entity in entities:
         # Same VL math-markup strip as _block_search_text: HaS tags entities on
         # the raw VL text, so both sides must normalize identically to match.
@@ -608,7 +594,6 @@ def match_entities_to_ocr(
                 regions.extend(cross_regions)
                 continue
 
-        direct_amount_signatures: set[str] = set()
         # This entity's matches, with the evidence they carry: whether the
         # region pins the value's position (the block IS the value, or the
         # char-aligned crop located its glyphs) versus an uncropped
@@ -644,19 +629,6 @@ def match_entities_to_ocr(
                     # amount independently (5 layout variants x2 runs, 100%),
                     # so each side carries its own box with no lookback rule.
                     visual_text, visual_occurrence_start = entity_text, occurrence_start
-                    if contextual_type == "AMOUNT":
-                        amount_signature = _amount_value_signature(visual_text)
-                        if (
-                            amount_signature in standalone_amount_signatures
-                            and not _is_standalone_amount_ocr_block(block_text)
-                        ):
-                            search_from = occurrence_start + max(1, len(entity_text))
-                            continue
-                        if is_table_virtual and amount_signature in direct_amount_signatures:
-                            search_from = occurrence_start + max(1, len(entity_text))
-                            continue
-                        if not is_table_virtual and amount_signature:
-                            direct_amount_signatures.add(amount_signature)
                     # Value-level crop: narrow x to the union of the char boxes
                     # proven by glyph alignment to render this occurrence;
                     # otherwise mask the whole block (safe). y/height stay the
@@ -788,11 +760,6 @@ def match_entities_to_ocr(
             # Same amount value in a different display form — full/half-width
             # currency and separator variants (￥1431400.00元 vs 1431400，00).
             if normalized_type == "AMOUNT" and _is_same_amount_value_block(entity_text, block_text):
-                amount_signature = _amount_value_signature(entity_text)
-                if is_table_virtual and amount_signature in direct_amount_signatures:
-                    continue
-                if not is_table_virtual and amount_signature:
-                    direct_amount_signatures.add(amount_signature)
                 entity_regions.append((
                     SensitiveRegion(
                         text=block_text.strip() or entity_text,
@@ -811,7 +778,10 @@ def match_entities_to_ocr(
                             else "text_match"
                         ),
                     ),
-                    True,  # the block is the value in another display form
+                    # Reviewer-mandated: this whole-block recall is NOT position
+                    # evidence — an evidenced flag would let it kill overlapping
+                    # positionless claims (a missed-redaction path).
+                    False,
                     False,
                 ))
                 logger.debug("MATCH '%s' ~ '%s' (amount value form)", entity_text, block_text[:20])

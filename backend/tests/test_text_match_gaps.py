@@ -134,7 +134,11 @@ def test_equal_length_char_reading_variant_keeps_block_text() -> None:
     assert [region.left for region in regions] == [169]
 
 
-def test_amount_value_display_variants_match_by_signature() -> None:
+def test_amount_value_display_variants_and_same_digit_mentions_all_covered() -> None:
+    # The cell renders the value with different punctuation (recall by digit
+    # identity); the running-text mention carries the SAME digits in the clear
+    # — leaving it readable was a missed redaction, so it is covered too
+    # (whole-block, over-mask direction only).
     cell = _block("￥1,431,400.00元", 700, 100)
     running_text = _block("合同总金额按附件执行1431400相关", 100, 300)
 
@@ -143,7 +147,37 @@ def test_amount_value_display_variants_match_by_signature() -> None:
         [{"type": "AMOUNT", "text": "1431400，00"}],
     )
 
-    assert [region.left for region in regions] == [700]
+    assert {region.left for region in regions} == {700, 100}
+
+
+def test_running_text_occurrence_not_suppressed_by_standalone_cell() -> None:
+    # The same amount printed twice — a dedicated cell AND inside running
+    # text — is two physical occurrences; the old standalone-signature
+    # suppression silently skipped the running-text one (a missed redaction).
+    standalone = _block("1,431,400.00", 700, 100)
+    running = _block("合同金额1,431,400.00元整", 100, 300)
+    regions = match_entities_to_ocr(
+        [standalone, running], [{"type": "AMOUNT", "text": "1,431,400.00"}]
+    )
+    assert {r.top for r in regions} == {100, 300}
+
+
+def test_table_cell_occurrence_not_suppressed_by_direct_block() -> None:
+    # The same amount in a real table cell AND in a direct block elsewhere:
+    # the old direct_amount_signatures bookkeeping skipped the virtual cell.
+    from app.services.ocr_has_vision_service import OCRTextBlock
+
+    table = OCRTextBlock(
+        text="<table><tr><td>金额</td><td>1,431,400.00</td></tr></table>",
+        polygon=[[50, 500], [650, 500], [650, 560], [50, 560]],
+        confidence=0.98,
+    )
+    direct = _block("1,431,400.00", 700, 100)
+    regions = match_entities_to_ocr(
+        [table, direct], [{"type": "AMOUNT", "text": "1,431,400.00"}]
+    )
+    tops = sorted(r.top for r in regions)
+    assert tops[0] == 100 and any(t >= 500 for t in tops)
 
 
 def test_short_value_attaches_by_equality_or_isolated_token_only() -> None:

@@ -19,22 +19,10 @@ from app.services.vision.has_text_payload import (
     _strip_vl_math_markup,
 )
 from app.services.vision.ocr_tuning import (
-    _AMOUNT_FORMAT_ALLOWED_CHARS,
-    _AMOUNT_TRAILING_ZEROS_MIN_DIGITS,
-    _STANDALONE_AMOUNT_MAX_DIGITS,
-    _STANDALONE_AMOUNT_MIN_DIGITS,
     _TABLE_CELL_CONFIDENCE_FACTOR,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _compact_amount_candidate(text: str) -> str:
-    return _compact_text(text).strip(" \t\r\n:：;；,，.。()（）[]【】$¥￥")
-
-
-def _amount_digit_count(text: str) -> int:
-    return sum(1 for ch in text if ch.isdigit())
 
 
 def _amount_digit_signature(text: str) -> str:
@@ -42,42 +30,27 @@ def _amount_digit_signature(text: str) -> str:
 
 
 def _amount_value_signature(text: str) -> str:
-    """Normalize display variants of the same amount for dedupe.
+    """Digit-sequence identity for display variants of one amount.
 
-    This is deliberately a value-level helper, not a detector. HaS still decides
-    whether text is an amount; this only prevents OCR supplements such as
-    1431400 and 1431400.00 from being kept as separate findings.
+    Two renderings of the same number carry the same digit sequence no matter
+    the grouping/currency decoration (数学恒等式, not a detector — HaS still
+    decides what is an amount). Whitespace is folded first (typographic
+    identity: OCR splits '1431400. 00' with a space). One typographic identity
+    on top: a trailing "00" sitting DIRECTLY after a decimal separator is a
+    zero fraction part (1431400.00 / 1431400，00 == 1431400) and is dropped.
+    The separator must be immediately before those zeros — the old
+    any-position test wrongly collapsed thousands groups (3,100 -> "31",
+    splitting it from 3100: a recall miss on the same value).
     """
-    raw = str(text or "")
+    raw = _compact_text(str(text or ""))
     digits = _amount_digit_signature(raw)
-    if len(digits) > _AMOUNT_TRAILING_ZEROS_MIN_DIGITS and digits.endswith("00") and any(ch in raw for ch in ".,\uff0c\uff0e"):
+    last_digit = max((i for i, ch in enumerate(raw) if ch.isdigit()), default=-1)
+    core = raw[: last_digit + 1]
+    # len(digits) > 2 is structural, not tuned: at least one integer digit must
+    # remain beside the two fraction zeros, so the signature never strips empty.
+    if len(digits) > 2 and core.endswith("00") and len(core) >= 3 and core[-3] in ".．,，":
         return digits[:-2]
     return digits
-
-
-def _is_amount_format_text(text: str) -> bool:
-    """Format test: the text is one numeric value (digits plus optional
-    thousands separators / decimal point / currency symbols).
-
-    This is a literal-format judgement, like the standalone-date test: it says
-    nothing about whether the number is sensitive. Semantics come from table
-    structure (an amount-labelled column header).
-    """
-    compact = _compact_amount_candidate(text)
-    if not compact or not any(ch.isdigit() for ch in compact):
-        return False
-    return all(ch in _AMOUNT_FORMAT_ALLOWED_CHARS for ch in compact)
-
-
-def _is_standalone_amount_ocr_block(text: str) -> bool:
-    """Return True when an OCR block is essentially one amount value."""
-    compact = _compact_amount_candidate(text)
-    if not _is_amount_format_text(compact):
-        return False
-    digits = _amount_digit_count(compact)
-    if digits < _STANDALONE_AMOUNT_MIN_DIGITS or digits > _STANDALONE_AMOUNT_MAX_DIGITS:
-        return False
-    return bool(_amount_value_signature(compact))
 
 
 def _parse_table_placements(table_html: str) -> list[tuple[str, int, int, int, int]]:

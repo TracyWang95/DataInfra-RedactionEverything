@@ -6,7 +6,7 @@ from app.services.ocr_service import OCRItem
 from app.services.vision.ocr_pipeline import (
     _clone_text_block,
     _dedupe_ocr_regions,
-    _is_amount_format_text,
+    _amount_value_signature,
     _merge_ocr_blocks,
     match_entities_to_ocr,
     reconstruct_visual_line_blocks,
@@ -164,16 +164,17 @@ def _flat_block(text: str, left: int, top: int, width: int, height: int) -> OCRT
     )
 
 
-def test_amount_format_text_is_a_pure_format_judgement() -> None:
-    assert _is_amount_format_text("715700")
-    assert _is_amount_format_text("715,700.00")
-    assert _is_amount_format_text("￥1,431,400")
-    assert _is_amount_format_text("2")
-
-    assert not _is_amount_format_text("1684000元")  # unit suffix = running text
-    assert not _is_amount_format_text("SZAI-300")
-    assert not _is_amount_format_text("40%")
-    assert not _is_amount_format_text("")
+def test_amount_value_signature_is_a_positional_identity() -> None:
+    # digit-sequence identity across decorations
+    assert _amount_value_signature("￥1,431,400.00元") == "1431400"
+    assert _amount_value_signature("1431400，00") == "1431400"
+    assert _amount_value_signature("1431400. 00") == "1431400"  # OCR whitespace folded
+    assert _amount_value_signature("1431400") == "1431400"
+    # zero-fraction strip fires ONLY when the separator sits right before the 00
+    assert _amount_value_signature("3,100") == "3100"  # old any-position rule wrongly gave "31"
+    assert _amount_value_signature("3100") == "3100"
+    assert _amount_value_signature("100.00") == "100"
+    assert _amount_value_signature("") == ""
 
 
 def test_positionless_whole_block_claim_yields_to_dedicated_box() -> None:

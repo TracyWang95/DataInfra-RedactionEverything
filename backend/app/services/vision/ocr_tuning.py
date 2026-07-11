@@ -23,12 +23,6 @@ OCR_VISUAL_ENTITY_TYPES = VISUAL_ONLY_ENTITY_TYPES
 _HAS_NEGATIVE_HEALTH_TTL_SEC = 5.0
 
 
-# Standalone-amount digit-count bounds.
-_STANDALONE_AMOUNT_MIN_DIGITS = 4
-_STANDALONE_AMOUNT_MAX_DIGITS = 14
-# Probable amount-token digit-count bounds (with/without thousands separators).
-# An amount value signature drops a trailing ".00"; require more than this many digits first.
-_AMOUNT_TRAILING_ZEROS_MIN_DIGITS = 2
 
 # Visual-row grouping tolerance: fraction of median block height, with a floor.
 # Amount-table column detection needs at least this many cells in a header row.
@@ -104,10 +98,6 @@ _NER_MIN_LEN_BY_TYPE = {
 }
 
 
-# Characters allowed in an amount-formatted value (digits plus separators,
-# currency symbols and grouping decoration). Shared by the standalone-amount
-# block test and the table-cell amount-format test.
-_AMOUNT_FORMAT_ALLOWED_CHARS = set("0123456789.,，￥¥$€£-()（）[] ")
 
 
 # Form-field label/value width tuning.
