@@ -12,12 +12,7 @@
 TYPE_REGISTRY: dict[str, dict] = {
     "ADDRESS": {"cn": "地址", "label": "地址", "groups": ["address_like"], "cn_terms": ["住址", "地址", "居住地", "收货地址", "详细地址", "通信地址"]},
     "AGE": {"cn": "年龄", "label": "年龄", "groups": ["person_like"], "cn_terms": ["年龄", "年龄段"]},
-    # query_labels_extra: additional open-vocabulary prompt labels queried
-    # alongside the item's own label. 金额 and 大写金额 are the same schema item
-    # written in two numeral systems; queried as one bucket the 0.6B NER
-    # deduplicates them by value and silently drops the uppercase form on
-    # page-scale input — separate buckets have nothing to deduplicate.
-    "AMOUNT": {"cn": "金额", "label": "金额", "groups": ["account_like"], "id_aliases": ["MONEY"], "cn_terms": ["数额", "款项", "金额", "大写金额"], "query_labels_extra": ["大写金额"]},
+    "AMOUNT": {"cn": "金额", "label": "金额", "groups": ["account_like"], "id_aliases": ["MONEY"], "cn_terms": ["数额", "款项", "金额", "大写金额"]},
     "AUTH_SECRET": {"cn": "密码", "label": "密码", "groups": ["credential_like"], "id_aliases": ["ACCOUNT_PASSWORD", "API_KEY", "LOGIN_PASSWORD", "OTP", "PASSWORD", "SECRET_KEY", "TOKEN"], "cn_terms": ["API Key", "Token", "令牌", "密码", "密钥", "验证码"]},
     "BANK_ACCOUNT": {"cn": "银行账号", "label": "银行账号", "groups": ["account_like"], "id_aliases": ["PAYMENT_ACCOUNT", "PAYMENT_ID", "WALLET_ADDRESS"], "cn_terms": ["对公账号", "支付账号", "收款账号", "账户号", "账户号码", "银行账号"]},
     "BANK_CARD": {"cn": "银行卡号", "label": "银行卡号", "groups": ["account_like"], "cn_terms": ["信用卡号", "卡号", "银行卡", "银行卡号"]},
@@ -143,19 +138,6 @@ def linkage_group_for_type(type_id: str) -> str:
     """Return a stable primary linkage group for legacy single-group callers."""
     groups = linkage_groups_for_type(type_id)
     return sorted(groups)[0] if groups else ""
-
-
-def has_query_labels_for(type_id: str) -> list[str]:
-    """The Chinese labels sent to the open-vocabulary HaS prompt for a schema
-    item — the item's own label, plus any query_labels_extra the registry
-    declares for it (e.g. AMOUNT also asks for 大写金额 so the two numeral
-    systems land in separate buckets and the NER's same-value deduplication
-    cannot drop one of them). Whatever it returns is the type
-    (识别出来是啥就是啥)."""
-    canonical = canonical_type_id(type_id)
-    labels = [id_to_cn(canonical)]
-    labels.extend(TYPE_REGISTRY.get(canonical, {}).get("query_labels_extra", []))
-    return labels
 
 
 def cn_to_id(chinese_type: str) -> str:

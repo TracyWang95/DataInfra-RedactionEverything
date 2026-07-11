@@ -359,7 +359,10 @@ class Settings(BaseSettings):
     AMOUNT_VALUE_QUERY_LABEL: str = "数值"
     HAS_NER_MAX_TYPES_PER_REQUEST: int = 12
     HAS_NER_CUSTOM_MAX_TYPES_PER_REQUEST: int = 16
-    HAS_NER_TYPE_BATCH_TARGET_TOKENS: int = 900
+    # Owner decision (Tracy 2026-07-10): NER batch token budget runs at the
+    # model context scale — 900 split batches too aggressively and diluted
+    # recall; 8072 keeps one batch for typical pages (context ceiling 8192).
+    HAS_NER_TYPE_BATCH_TARGET_TOKENS: int = 8072
     HAS_NER_SINGLE_PASS_MAX_TYPES: int = 96
     HAS_NER_SINGLE_PASS_MAX_TEXT_CHARS: int = 1600
     HAS_NER_MAX_PARALLEL_REQUESTS: int = 4

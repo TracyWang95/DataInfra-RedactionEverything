@@ -639,20 +639,6 @@ def test_visual_region_fallback_keeps_structure_blocks_primary(monkeypatch) -> N
     assert "甲方（盖章）：苏州市纳达信息服务有限公司" in texts
 
 
-def test_amount_queries_both_numeral_systems() -> None:
-    # The 0.6B NER deduplicates same-value mentions inside one bucket, so on a
-    # full page it returns ¥1,294,000.00 and silently drops 壹佰贰拾玖万肆仟元整.
-    # Separate buckets have no shared value to deduplicate: when AMOUNT is in
-    # the schema, the prompt also asks for 大写金额 (open-vocabulary type), and
-    # the answer key maps back to AMOUNT.
-    from app.models.type_mapping import cn_to_id, has_query_labels_for
-
-    assert has_query_labels_for("AMOUNT") == ["金额", "大写金额"]
-    assert cn_to_id("大写金额") == "AMOUNT"
-    # Other types keep their single own label.
-    assert has_query_labels_for("PERSON") == ["姓名"]
-
-
 def test_uppercase_amount_entity_crops_to_its_glyphs() -> None:
     # An AMOUNT value matched inside the 合计 line must crop to the uppercase
     # run itself, not mask the whole line.

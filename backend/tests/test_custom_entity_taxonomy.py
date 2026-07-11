@@ -225,13 +225,14 @@ class CustomEntityTaxonomyTests(unittest.TestCase):
 
         self.assertEqual([(item.start, item.end) for item in relocated], [(6, 8), (16, 18)])
 
-    def test_address_l3_has_prompt_only_location_aliases(self):
+    def test_query_names_are_passthrough_no_hidden_aliases(self):
+        # 勾选什么查什么: the checklist owns the query vocabulary — the old
+        # prompt-only alias expansion (地理位置/道路地址 silently appended to a
+        # checked 地址) is gone with the registry translation layer.
         service = HaSService()
         names = service._expand_query_type_names("ADDRESS", ["地址"])
 
-        self.assertIn("地址", names)
-        self.assertIn("地理位置", names)
-        self.assertIn("道路地址", names)
+        self.assertEqual(names, ["地址"])
 
     def test_health_info_is_not_default_or_medical_industry_l3(self):
         default_ids = {item.id for item in get_default_generic_types()}
