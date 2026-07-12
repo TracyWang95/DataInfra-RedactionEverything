@@ -608,26 +608,27 @@ def _extract_allowed_type_ids(prompt: str) -> list[str]:
 
 
 def _description_for_type_id(prompt: str, type_id: str) -> str:
+    """SHORT category phrase per the official CATEGORIES semantics (model
+    card: detection takes a comma-separated category list). The old variant
+    concatenated every Check/Exclude checklist row into one verbose
+    description — exactly the negative-laden prompt the A/B measured to
+    suppress faint detections. The backend now sends an explicit "Query:"
+    line per type (checklist row.query or the human name); fall back to the
+    name= field, then the prettified id."""
     escaped = re.escape(type_id)
-    parts: list[str] = []
-    name_match = re.search(rf"type_id={escaped};\s*name=([^\n\r]+)", prompt)
-    if name_match:
-        parts.append(name_match.group(1).strip())
     block_match = re.search(
         rf"type_id={escaped};.*?(?=\n-\s*type_id=|\nIf none,|\Z)",
         prompt,
         flags=re.S,
     )
     if block_match:
-        for line in block_match.group(0).splitlines():
-            line = line.strip()
-            if "Check:" in line:
-                parts.append(line.split("Check:", 1)[1].strip())
-            elif line.startswith("Exclude:"):
-                parts.append(f"Exclude: {line.split(':', 1)[1].strip()}")
-    if not parts:
-        parts.append(type_id.replace("_", " "))
-    return "; ".join(dict.fromkeys(part for part in parts if part))
+        query_match = re.search(r"^\s*Query:\s*(.+)$", block_match.group(0), flags=re.M)
+        if query_match and query_match.group(1).strip():
+            return query_match.group(1).strip()
+    name_match = re.search(rf"type_id={escaped};\s*name=([^\n\r]+)", prompt)
+    if name_match and name_match.group(1).strip():
+        return name_match.group(1).strip()
+    return type_id.replace("_", " ")
 
 
 def _chat_prompt_for_type(prompt: str, type_id: str) -> str:
@@ -639,7 +640,7 @@ def _chat_prompt_for_type(prompt: str, type_id: str) -> str:
     made the model emit <box>None</box> on faint signatures (1.tiff doctor
     signature) while a short description recovers them."""
     description = _description_for_type_id(prompt, type_id)
-    return f"Locate all the instances that match the following description: {description}."
+    return f"Locate all the instances that matches the following description: {description}."
 
 
 def _find_first_user_image_and_text(messages: list[dict[str, Any]]) -> tuple[Image.Image, str]:

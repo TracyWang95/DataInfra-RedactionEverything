@@ -59,6 +59,19 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
         type_id = str(getattr(item, "id", "")).strip()
         name = str(getattr(item, "name", "") or type_id).strip()
         lines.append(f"- type_id={type_id}; name={name}")
+        # Grounding query per official CATEGORIES semantics: a SHORT category
+        # phrase (row.query wins, else the human name) — the LA server grounds
+        # exactly this line; Check/Exclude rows below stay as schema context
+        # only (the verbose variant suppressed faint detections, measured).
+        query = ""
+        for row in getattr(item, "checklist", None) or []:
+            value = str(
+                (row.get("query") if isinstance(row, dict) else getattr(row, "query", "")) or ""
+            ).strip()
+            if value:
+                query = value
+                break
+        lines.append(f"  Query: {query or name}")
         for index, rule in enumerate(_type_rules(item), start=1):
             lines.append(f"  {index}. Check: {rule}")
         negative = str(getattr(item, "negative_prompt", "") or "").strip()
