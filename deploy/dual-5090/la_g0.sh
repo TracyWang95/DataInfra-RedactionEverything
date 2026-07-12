@@ -11,7 +11,6 @@ export LOCATE_ANYTHING_GENERATION_MODE=hybrid
 export LOCATE_ANYTHING_MAX_NEW_TOKENS=8192
 export LOCATE_ANYTHING_MAX_IMAGE_SIDE=1280
 export LOCATE_ANYTHING_MIN_IMAGE_SIDE=1280
-export LOCATE_ANYTHING_TEMPERATURE=0.1
 export LOCATE_ANYTHING_FAST_FIRST=0
 exec ~/rvenv/la/bin/python scripts/locate_anything_server.py \
   --backend hf --model "$LOCATE_ANYTHING_MODEL" --dtype bfloat16 --port 8090

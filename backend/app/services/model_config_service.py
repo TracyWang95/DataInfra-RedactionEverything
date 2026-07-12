@@ -69,8 +69,10 @@ def _default_configs() -> ModelConfigList:
                 enabled=True,
                 base_url=_visual_features_base_url(),
                 model_name=_visual_features_model_name(),
-                temperature=0.1,
-                top_p=0.6,
+                # Official LocateAnything model-card sampling; 0.1 was a
+                # measured hard recall killer (see locate_grounding.py note).
+                temperature=0.7,
+                top_p=0.9,
                 max_tokens=max(8192, int(getattr(settings, "LOCATE_ANYTHING_MAX_NEW_TOKENS", 8192) or 8192)),
                 enable_thinking=False,
                 description="LocateAnything-3B grounding unifies fixed visual classes and user-defined visual labels.",

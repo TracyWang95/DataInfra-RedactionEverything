@@ -67,9 +67,15 @@ _DETECT_BASE_DELAY = 1.0
 # Fallback max-new-tokens cap when no setting is configured
 _DEFAULT_MAX_NEW_TOKENS = 8192
 # Sampling defaults / caps for the chat request
-_DEFAULT_TEMPERATURE = 0.1
-_MAX_TEMPERATURE = 0.2
-_DEFAULT_TOP_P = 0.6
+# Official model-card sampling (temperature=0.7/top_p=0.9). The old 0.1
+# override was measured as a HARD RECALL KILLER on the per-GPU A/B
+# (5 truth images x3 runs: fingerprints farm 0/0/0 vs 2/2/2, house 1/1/1 vs
+# 4/4/4 at GT=4; zero new false positives on the CT-report negatives) — the
+# long-standing "0/2 sampling flake" was actually the lb alternating between
+# a 0.1 GPU (missing) and an official-default GPU (hitting).
+_DEFAULT_TEMPERATURE = 0.7
+_MAX_TEMPERATURE = 0.7
+_DEFAULT_TOP_P = 0.9
 # Default confidence when the model omits one
 _DEFAULT_DETECT_CONFIDENCE = 0.8
 _DEFAULT_CHECKLIST_CONFIDENCE = 0.82
