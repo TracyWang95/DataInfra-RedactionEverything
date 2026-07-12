@@ -100,6 +100,12 @@ def _elapsed_ms(start: float) -> int:
     return max(0, round((time.perf_counter() - start) * 1000))
 
 
+def _both_margins(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """Full-height outer-third margin strips (binding-seal probe geometry)."""
+    strip = max(1, width // 3)
+    return [(0, 0, strip, height), (width - strip, 0, width, height)]
+
+
 class LocateAnythingGroundingService:
     """Single adapter for all visual grounding boxes produced by LocateAnything."""
 
@@ -133,9 +139,74 @@ class LocateAnythingGroundingService:
         slug_set = set(model_slugs)
         query_by_slug = {rtype: tag for tag, rtype, _text in requests if rtype in slug_set}
 
+        # P0 无损重排: the YOLO supplement and the edge-seal margin probe used
+        # to run as strictly serial stages AFTER the main gather (each its own
+        # barrier). Both depend only on image_data/settings, and the services
+        # are stateless, so they are FIRED here and AWAITED at their original
+        # positions — the merge order (and therefore the output) is identical,
+        # only the wall-clock overlaps. Gates mirror the original branches
+        # verbatim; a task is created only when its branch would run.
+        has_image_url = str(getattr(settings, "HAS_IMAGE_URL", "") or "").strip()
+        has_task = (
+            asyncio.create_task(self._detect_has_image(has_image_url, image_data, page, model_slugs))
+            if has_image_url and model_slugs
+            else None
+        )
+        refine_task = (
+            asyncio.create_task(self._detect_on_tiles(
+                image_data,
+                page,
+                ["official_seal"],
+                tiles_for=_both_margins,
+                source_detail="locate_anything:edge_refine",
+                queries=query_by_slug,
+            ))
+            if (
+                not bool(getattr(settings, "VISUAL_SEAL_COLOR_CASCADE", True))
+                and bool(getattr(settings, "VISUAL_EDGE_SEAL_REFINE", True))
+                and model_slugs
+                and "official_seal" in model_slugs
+            )
+            else None
+        )
+        # Exception safety on every exit path: if code between here and the
+        # consuming await raises, the prefired task would hold a never-retrieved
+        # exception. The callback retrieves it immediately on completion, so no
+        # orphan noise and no dangling error regardless of how we exit.
+        for prefired in (has_task, refine_task):
+            if prefired is not None:
+                prefired.add_done_callback(
+                    lambda t: t.exception() if not t.cancelled() else None
+                )
+
+        # P1 speculative tile fire: a tile-retriable slug whose OWN main
+        # detect came back empty starts its tile pass immediately (the
+        # earliest possible signal) instead of waiting for the strictly
+        # serial retry stage — 11-17 tiles over 2 GPU slots used to run as a
+        # tail. The DECISION to keep tile boxes is unchanged: the retry
+        # section below still recomputes retry_slugs against the FINAL merged
+        # boxes and awaits (or discards) these tasks — output is identical,
+        # only the wall-clock overlaps. Gated on the same VISUAL_TILE_RETRY
+        # flag as the consumer (kill switch works in both places).
+        tile_retry_enabled = bool(getattr(settings, "VISUAL_TILE_RETRY", True))
+        _retriable = _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
+        spec_tile_tasks: dict[str, asyncio.Task] = {}
+
+        async def _detect_one(tag: str, rtype: str) -> list[dict[str, Any]]:
+            res = await self._post_detect(image_data, [tag])
+            if tile_retry_enabled and rtype in _retriable and not res and rtype not in spec_tile_tasks:
+                spec_task = asyncio.create_task(
+                    self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
+                )
+                spec_task.add_done_callback(
+                    lambda t: t.exception() if not t.cancelled() else None
+                )
+                spec_tile_tasks[rtype] = spec_task
+            return res
+
         model_start = time.perf_counter()
         results = await asyncio.gather(
-            *[self._post_detect(image_data, [tag]) for tag, _type, _text in requests],
+            *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
             return_exceptions=True,
         )
         timings.model = _elapsed_ms(model_start)
@@ -174,11 +245,10 @@ class LocateAnythingGroundingService:
                         evidence_source="visual_feature_model",
                     )
                 )
-        has_image_url = str(getattr(settings, "HAS_IMAGE_URL", "") or "").strip()
-        if has_image_url and model_slugs:
+        if has_task is not None:
             supplement_start = time.perf_counter()
             try:
-                yolo_boxes = await self._detect_has_image(has_image_url, image_data, page, model_slugs)
+                yolo_boxes = await has_task
             except Exception as exc:
                 yolo_boxes = []
                 logger.warning("HaS-Image supplement failed: %s", exc)
@@ -395,19 +465,7 @@ class LocateAnythingGroundingService:
             # stable: page_02 right 5/5 hit, seal-less edges 0/0) and union the
             # result with the full-frame seals.
             refine_start = time.perf_counter()
-
-            def _both_margins(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
-                strip = max(1, width // 3)
-                return [(0, 0, strip, height), (width - strip, 0, width, height)]
-
-            refine_boxes = await self._detect_on_tiles(
-                image_data,
-                page,
-                ["official_seal"],
-                tiles_for=_both_margins,
-                source_detail="locate_anything:edge_refine",
-                queries=query_by_slug,
-            )
+            refine_boxes = await refine_task if refine_task is not None else []
             # the grounding model reads a barcode/QR in the margin as a seal (med's top
             # barcode). Drop any margin-seal box overlapping a machine-code
             # box — the code is already covered by its own detection. Same
@@ -469,11 +527,29 @@ class LocateAnythingGroundingService:
             if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
             and not any(b.type == slug for b in boxes)
         ]
-        if retry_slugs and not bool(getattr(settings, "VISUAL_TILE_RETRY", True)):
+        if retry_slugs and not tile_retry_enabled:
+            # Kill switch: the flag gates BOTH the speculative fire above and
+            # this consumer — with it off, zero tile passes run anywhere.
             retry_slugs = []
         if retry_slugs:
             retry_start = time.perf_counter()
-            tile_boxes = await self._detect_on_tiles(image_data, page, retry_slugs, queries=query_by_slug)
+            tile_boxes = []
+            live_slugs = []
+            for slug in retry_slugs:
+                spec = spec_tile_tasks.get(slug)
+                if spec is not None:
+                    try:
+                        tile_boxes.extend(await spec)
+                    except Exception as exc:
+                        logger.warning("speculative tile retry %s failed: %s", slug, exc)
+                else:
+                    live_slugs.append(slug)
+            if live_slugs:
+                # a slug whose main detect had raw boxes that all got dropped
+                # later (clamp/physical gates) never fired a spec — run it now
+                tile_boxes.extend(
+                    await self._detect_on_tiles(image_data, page, live_slugs, queries=query_by_slug)
+                )
             tile_boxes = self._filter_tile_candidates(tile_boxes, boxes)
             tile_boxes = self._verify_machine_code_tile_boxes(tile_boxes, image_data)
             boxes.extend(tile_boxes)
@@ -483,6 +559,17 @@ class LocateAnythingGroundingService:
                 len(tile_boxes),
                 _elapsed_ms(retry_start),
             )
+
+        leftover_specs = [
+            t for slug, t in spec_tile_tasks.items() if slug not in retry_slugs
+        ]
+        if leftover_specs:
+            # A supplement (YOLO/refine/cascade) filled these types after the
+            # spec fired: await the tasks to completion and DISCARD the boxes
+            # — exactly today's semantics (tile boxes never join when the type
+            # already has one). Never cancel: the HTTP is in flight and the
+            # done-callback already consumes any exception.
+            await asyncio.gather(*leftover_specs, return_exceptions=True)
 
         boxes = self._drop_solid_fill_seals(boxes, image_data)
         boxes = self._drop_skin_hue_fingerprints(boxes, image_data)
