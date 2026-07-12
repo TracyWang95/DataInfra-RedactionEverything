@@ -656,9 +656,6 @@ async def services_health():
         "disk": disk,
         "retention_days": int(settings.DATA_RETENTION_DAYS or 0),
         "backup": backup_info,
-        # Endpoint is intentionally unauthenticated (dev.mjs waitJson probes it),
-        # so process names/PIDs are not exposed. Field kept for the frontend hook.
-        "gpu_processes": [],
     }
 
 

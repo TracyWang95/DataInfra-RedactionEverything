@@ -836,7 +836,7 @@ class JobStore(RepairMixin):
             conn.commit()
 
     def update_job_draft(self, job_id: str, patch: dict[str, Any]) -> bool:
-        """Update draft fields: title, config, skip_item_review, priority."""
+        """Update draft fields: title, config, skip_item_review."""
         job = self.get_job(job_id)
         if not job or job["status"] != JobStatus.DRAFT.value:
             return False
@@ -852,9 +852,6 @@ class JobStore(RepairMixin):
         if "skip_item_review" in patch:
             sets.append("skip_item_review = ?")
             params.append(1 if patch["skip_item_review"] else 0)
-        if "priority" in patch:
-            sets.append("priority = ?")
-            params.append(int(patch["priority"]))
         if not sets:
             return False
         sets.append("updated_at = ?")

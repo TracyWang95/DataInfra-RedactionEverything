@@ -321,11 +321,11 @@ class OcrHasVisionService:
             if ignored_types:
                 logger.info("PDF OCR+HaS semantic path ignoring visual/non-semantic types: %s", ignored_types)
         else:
-            entity_type_ids = _canonicalize_image_text_types([
-                "PERSON", "ORG", "COMPANY_NAME", "PHONE", "EMAIL",
-                "ID_CARD", "BANK_CARD", "ACCOUNT_NAME", "BANK_NAME",
-                "ACCOUNT_NUMBER", "ADDRESS", "DATE",
-            ])
+            # 无勾选时的默认清单与 HaS Text 载荷层单源(has_text_payload),不再维护
+            # 本地副本。id 只喂给集合隶属布尔(needs_table_precision 等);实际 NER
+            # 清单本就由 _default_has_text_items() 走同一集。
+            from app.services.vision.has_text_payload import DEFAULT_HAS_TEXT_TYPE_IDS
+            entity_type_ids = _semantic_entity_type_ids(list(DEFAULT_HAS_TEXT_TYPE_IDS))
             semantic_vision_types = vision_types
 
         entities = []
@@ -415,11 +415,11 @@ class OcrHasVisionService:
             if ignored_types:
                 logger.info("OCR+HaS semantic path ignoring visual/non-semantic types: %s", ignored_types)
         else:
-            entity_type_ids = _canonicalize_image_text_types([
-                "PERSON", "ORG", "COMPANY_NAME", "PHONE", "EMAIL",
-                "ID_CARD", "BANK_CARD", "ACCOUNT_NAME", "BANK_NAME",
-                "ACCOUNT_NUMBER", "ADDRESS", "DATE",
-            ])
+            # 无勾选时的默认清单与 HaS Text 载荷层单源(has_text_payload),不再维护
+            # 本地副本。id 只喂给集合隶属布尔(needs_table_precision 等);实际 NER
+            # 清单本就由 _default_has_text_items() 走同一集。
+            from app.services.vision.has_text_payload import DEFAULT_HAS_TEXT_TYPE_IDS
+            entity_type_ids = _semantic_entity_type_ids(list(DEFAULT_HAS_TEXT_TYPE_IDS))
             semantic_vision_types = vision_types
 
         # 1. Run PaddleOCR-VL first. PP-StructureV3 is an adaptive supplement

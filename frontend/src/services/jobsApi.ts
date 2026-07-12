@@ -504,7 +504,6 @@ export function createJob(body: {
   title?: string;
   config?: Record<string, unknown>;
   skip_item_review?: boolean;
-  priority?: number;
 }): Promise<JobSummary> {
   return post('/jobs', body).then(normalizeJobSummary);
 }

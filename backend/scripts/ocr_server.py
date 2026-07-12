@@ -51,7 +51,7 @@ def _vl_seal_enabled() -> bool:
     return os.environ.get("OCR_VL_SEAL_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
-DEFAULT_CONFIDENCE = 0.9  # fallback confidence score when a box has none
+DEFAULT_CONFIDENCE = 0.9  # FABRICATED placeholder (not a measurement): stamped when the engine emits no score; downstream must never threshold on it (入册, 同 LA 的 0.82).
 MAX_ITER_DEPTH = 8  # max recursion depth when walking nested OCR result objects
 NORMALIZED_COORD_MAX = 1.5  # if all coords <= this, treat them as already in [0,1] space
 MIN_BOX_SIZE = 1.0  # floor (px) for a box's width/height after clamping

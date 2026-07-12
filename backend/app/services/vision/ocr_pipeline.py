@@ -6,8 +6,8 @@ ocr_tuning (tuning constants + semantic vocabulary), ocr_cache (caches,
 in-flight dedupe registries, stage metrics), ocr_image_prep (image
 preparation + blank-page detection), ocr_paddle_extract (PaddleOCR-VL /
 PP-StructureV3 extraction), ocr_block_merge (block merging),
-ocr_table_semantics (HTML table expansion +
-structural recall), ocr_visual_lines (visual-line reconstruction),
+ocr_table_semantics (HTML table expansion),
+ocr_visual_lines (visual-line reconstruction),
 has_text_analysis (HaS NER text analysis) and ocr_entity_match
 (entity-to-OCR matching).
 

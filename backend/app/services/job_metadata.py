@@ -258,7 +258,7 @@ def file_meta_for_item(
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """Get file metadata for a job item."""
-    info, metadata_warning = _safe_file_info(file_id)
+    info, _ = _safe_file_info(file_id)
     if not info:
         structured_meta = _structured_file_meta(file_id, owner_id=owner_id, job_id=job_id)
         if structured_meta:
@@ -268,7 +268,6 @@ def file_meta_for_item(
             "file_type": None,
             "has_output": False,
             "entity_count": 0,
-            "metadata_warning": metadata_warning,
         }
 
     raw_file_type = info.get("file_type")
@@ -279,7 +278,6 @@ def file_meta_for_item(
         "file_type": _status_value(file_type, fallback=""),
         "has_output": has_output,
         "entity_count": _safe_entity_count(info),
-        "metadata_warning": metadata_warning,
     }
 
 
@@ -301,7 +299,6 @@ def item_to_out(row: dict[str, Any], *, owner_id: str | None = None, job_id: str
         "file_type": file_meta["file_type"],
         "has_output": file_meta["has_output"],
         "entity_count": file_meta["entity_count"],
-        "metadata_warning": file_meta.get("metadata_warning"),
         "has_review_draft": bool(row.get("review_draft_json")),
         "review_draft_updated_at": row.get("review_draft_updated_at"),
         "progress_stage": row.get("progress_stage"),

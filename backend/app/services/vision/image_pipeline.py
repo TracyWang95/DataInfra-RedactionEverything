@@ -1,8 +1,7 @@
 """
-Image Pipeline - visual feature region refinement and image manipulation.
+Image Pipeline - preview rendering and image redaction.
 
 Responsibilities:
-- Matching visual feature regions with OCR text blocks (coordinate refinement)
 - Drawing detection boxes on images (debug/preview visualization)
 - Applying redaction (solid color overlay on sensitive regions)
 """

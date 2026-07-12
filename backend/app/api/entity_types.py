@@ -36,15 +36,6 @@ async def get_text_taxonomy():
     return entity_type_service.get_text_taxonomy()
 
 
-@router.get("/custom-types/{type_id}", response_model=EntityTypeConfig)
-async def get_entity_type(type_id: str, owner_id: str = Depends(require_auth)):
-    """获取单个实体类型配置"""
-    result = entity_type_service.get_type(type_id, owner_id=owner_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="实体类型不存在")
-    return result
-
-
 @router.post("/custom-types", response_model=EntityTypeConfig)
 async def create_entity_type(request: CreateEntityTypeRequest, owner_id: str = Depends(require_auth)):
     """创建新的实体类型"""

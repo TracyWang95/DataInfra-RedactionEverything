@@ -65,8 +65,6 @@ export interface BatchConfigState {
   confirmStep1: boolean;
   setConfirmStep1: React.Dispatch<React.SetStateAction<boolean>>;
   isStep1Complete: boolean;
-  jobPriority: number;
-  setJobPriority: React.Dispatch<React.SetStateAction<number>>;
   onBatchTextPresetChange: (id: string) => void;
   onBatchVisionPresetChange: (id: string) => void;
   batchDefaultTextTypeIds: string[];
@@ -90,7 +88,6 @@ export function useBatchConfig(
   const [presetLoadError, setPresetLoadError] = useState<string | null>(null);
   const [presetReloading, setPresetReloading] = useState(false);
   const [confirmStep1, setConfirmStep1] = useState(false);
-  const [jobPriority, setJobPriority] = useState<number>(0);
 
   // Save config to local storage on change
   useEffect(() => {
@@ -108,7 +105,6 @@ export function useBatchConfig(
       setPresetReloading(false);
       setCfg({ ...previewBatchConfig });
       setConfirmStep1(true);
-      setJobPriority(5);
       setConfigLoaded(true);
       setMsg(null);
       if (!activeJobId) setActiveJobId(PREVIEW_BATCH_JOB_ID);
@@ -433,8 +429,6 @@ export function useBatchConfig(
     confirmStep1,
     setConfirmStep1,
     isStep1Complete,
-    jobPriority,
-    setJobPriority,
     onBatchTextPresetChange,
     onBatchVisionPresetChange,
     batchDefaultTextTypeIds,

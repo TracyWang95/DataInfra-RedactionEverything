@@ -100,7 +100,6 @@ class HaSResult:
 class HaSClient:
     """HaS本地模型客户端"""
 
-    # 法律文档常用实体类型
     _SHARED_NER_CACHE: OrderedDict[
         tuple[str, tuple[str, ...], str, str],
         tuple[float, dict[str, list[str]]],
@@ -108,12 +107,6 @@ class HaSClient:
     _SHARED_NER_INFLIGHT: dict[tuple[str, tuple[str, ...], str, str], threading.Event] = {}
     _SHARED_NER_LOCK = threading.Lock()
 
-    LEGAL_ENTITY_TYPES = [
-        "姓名", "公司名称", "机构名称", "机关单位", "工作单位",
-        "部门名称", "地址", "电话", "邮箱",
-        "身份证号", "银行卡号", "银行账号", "金额", "日期",
-        "业务编号", "编号", "统一社会信用代码", "税号"
-    ]
 
     def __init__(
         self,
@@ -297,10 +290,11 @@ class HaSClient:
 
     @classmethod
     def _normalize_ner_types(cls, entity_types: list[str] | None) -> list[str]:
-        raw_types = entity_types or cls.LEGAL_ENTITY_TYPES
+        if not entity_types:
+            raise ValueError("entity_types 必须显式传入非空清单(清单即真相源,无隐藏默认词表)")
         return list(dict.fromkeys(
             normalized
-            for type_name in raw_types
+            for type_name in entity_types
             if (normalized := cls._normalize_ner_type_name(type_name))
         ))
 
@@ -408,7 +402,7 @@ class HaSClient:
 
         Args:
             text: 待识别文本
-            entity_types: 要识别的实体类型，默认使用法律文档类型
+            entity_types: 要识别的实体类型清单(必须显式传入)
 
         Returns:
             {类型: [实体列表]}

@@ -133,8 +133,6 @@ export function useBatchWizard() {
     confirmStep1,
     setConfirmStep1,
     isStep1Complete,
-    jobPriority,
-    setJobPriority,
     onBatchTextPresetChange,
     onBatchVisionPresetChange,
   } = config;
@@ -753,7 +751,6 @@ export function useBatchWizard() {
           job_type: toBatchJobType(mode),
           title: `${t('batchHub.batch')} ${new Date().toLocaleString()}`,
           config: payload,
-          priority: jobPriority,
         });
         jid = j.id;
         writeLocalWizardMaxStep(jid, nextFurthest);
@@ -783,7 +780,6 @@ export function useBatchWizard() {
     furthestStep,
     isPreviewMode,
     isStep1Complete,
-    jobPriority,
     mode,
     itemIdByFileIdRef,
     setMsg,
@@ -866,8 +862,6 @@ export function useBatchWizard() {
     confirmStep1,
     setConfirmStep1,
     isStep1Complete,
-    jobPriority,
-    setJobPriority,
     onBatchTextPresetChange,
     onBatchVisionPresetChange,
 

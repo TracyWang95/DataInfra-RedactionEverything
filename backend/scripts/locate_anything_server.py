@@ -44,7 +44,6 @@ VLLM_LM_MODEL = os.environ.get("LOCATE_ANYTHING_VLLM_MODEL", "locate_qwen2_model
 # on every click (reproducible) without collapsing to greedy. Tunable via env.
 VLLM_LM_SEED = int(os.environ.get("LOCATE_ANYTHING_VLLM_SEED", "1234"))
 FAST_FIRST_ENABLED = _env_flag("LOCATE_ANYTHING_FAST_FIRST", "1")
-FAST_FIRST_FALLBACK_ON_EMPTY = _env_flag("LOCATE_ANYTHING_FAST_FIRST_FALLBACK_ON_EMPTY", "1")
 VALID_GENERATION_MODES = {"fast", "hybrid", "slow"}
 
 # Smallest image side the adaptive-OOM retry will downscale to before giving up.

@@ -68,17 +68,6 @@ DELETABLE_JOB_STATUSES = frozenset(
 )
 
 REVIEWABLE_ITEM_STATUSES = frozenset({JobItemStatus.AWAITING_REVIEW.value})
-PROCESSING_NAV_ITEM_STATUSES = frozenset(
-    {
-        JobItemStatus.PENDING.value,
-        JobItemStatus.QUEUED.value,
-        JobItemStatus.PROCESSING.value,
-        JobItemStatus.PARSING.value,
-        JobItemStatus.NER.value,
-        JobItemStatus.VISION.value,
-        JobItemStatus.REDACTING.value,
-    }
-)
 
 # ---------------------------------------------------------------------------
 # Job status inference
@@ -165,14 +154,6 @@ def _empty_review_draft_response(*, degraded: bool = False) -> dict[str, Any]:
     return response
 
 
-def _nav_review_confirmed(item: dict[str, Any], has_output: bool, skip_item_review: bool) -> bool:
-    if skip_item_review and has_output:
-        return True
-    status = _status_value(item.get("status"))
-    if status == JobItemStatus.COMPLETED.value:
-        return has_output
-    return status in (JobItemStatus.REVIEW_APPROVED.value, JobItemStatus.REDACTING.value)
-
 
 def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
     """Build job summary dict including progress and nav hints."""
@@ -196,37 +177,21 @@ def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
     first_awaiting: str | None = None
     redacted_count = 0
     reviewable_count = 0
-    processing_count = 0
-    export_ready_count = 0
-    metadata_degraded_count = 0
     skip_item_review = bool(row.get("skip_item_review"))
     for i in items:
         fid = str(i["file_id"])
         status = _status_value(i.get("status"))
         if is_structured:
-            metadata_warning = None
             has_output = status == JobItemStatus.COMPLETED.value or fid in structured_export_dataset_ids
-            redacted_skip_reason = None if has_output else "missing_structured_export"
         else:
-            info, metadata_warning = _safe_file_info(fid)
-            if metadata_warning == "file_metadata_unavailable":
-                metadata_degraded_count += 1
-            has_output, redacted_skip_reason = _redacted_output_state(info)
+            info, _ = _safe_file_info(fid)
+            has_output, _ = _redacted_output_state(info)
         if has_output:
             redacted_count += 1
         if status in REVIEWABLE_ITEM_STATUSES:
             reviewable_count += 1
             if first_awaiting is None:
                 first_awaiting = str(i["id"])
-        if status in PROCESSING_NAV_ITEM_STATUSES:
-            processing_count += 1
-        if (
-            status not in (JobItemStatus.FAILED.value, JobItemStatus.CANCELLED.value)
-            and has_output
-            and _nav_review_confirmed(i, has_output, skip_item_review)
-            and redacted_skip_reason is None
-        ):
-            export_ready_count += 1
     cfg = job_config_dict(row)
     item_count = len(items)
     nav_hints: dict[str, Any] = {
@@ -235,14 +200,6 @@ def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
         "batch_step1_configured": infer_batch_step1_configured(cfg, str(row["job_type"])),
         "redacted_count": redacted_count,
         "awaiting_review_count": reviewable_count,
-        "reviewable_count": reviewable_count,
-        "processing_count": processing_count,
-        "export_ready_count": export_ready_count,
-        "export_blocked_count": max(0, item_count - export_ready_count),
-        "can_review_now": reviewable_count > 0,
-        "can_export_now": item_count > 0 and export_ready_count == item_count,
-        "metadata_degraded": metadata_degraded_count > 0,
-        "metadata_degraded_count": metadata_degraded_count,
     }
     wf = coerce_wizard_furthest_step(cfg.get("wizard_furthest_step"))
     if wf is not None:
@@ -253,7 +210,6 @@ def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
         "title": row["title"],
         "status": _status_value(row.get("status")),
         "skip_item_review": skip_item_review,
-        "priority": _safe_int(row.get("priority")),
         "config": cfg,
         "error_message": row.get("error_message"),
         "created_at": row["created_at"],

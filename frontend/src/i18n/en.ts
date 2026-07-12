@@ -549,10 +549,6 @@ const enBase: Record<string, string> = {
   'batchWizard.step1.defaultVisionCoverage':
     'Recommended image scope: checks {selected} visual content types; {excluded} optional types stay off until selected.',
   'batchWizard.step1.defaultVisionExcluded': 'Not included by default: {labels}.',
-  'batchWizard.step1.priority': 'Priority',
-  'batchWizard.step1.priorityNormal': 'Normal',
-  'batchWizard.step1.priorityHigh': 'High',
-  'batchWizard.step1.priorityUrgent': 'Urgent',
   'batchWizard.step1.confirm':
     'I have confirmed the recognition list, item combination, and redaction methods.',
   'batchWizard.step1.nextUpload': 'Next: Upload',

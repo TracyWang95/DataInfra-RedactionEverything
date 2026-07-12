@@ -1,9 +1,9 @@
 """Entity-to-OCR matching: attach detected values to OCR boxes.
 
 Split out of ocr_pipeline.py (which stays the public facade): visual match
-span selection (amount pairs, document-title suffixes), char-box-proven value
-crops, chars-less paragraph narrowing, strict/isolated-token rules, fuzzy and
-table fallbacks, and spatial region dedupe.
+span selection, char-box-proven value crops, chars-less paragraph narrowing,
+strict/isolated-token rules, fuzzy and table fallbacks, and spatial region
+dedupe.
 """
 from __future__ import annotations
 

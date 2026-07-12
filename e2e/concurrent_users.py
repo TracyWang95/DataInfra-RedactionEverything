@@ -66,9 +66,10 @@ def run_user(username: str, password: str, tag: str) -> None:
             for fid, _ in out["uploaded"]:
                 pr = h.get(f"/api/v1/files/{fid}/parse")
                 assert pr.status_code == 200, f"parse {pr.status_code}"
-                ner = h.post(f"/api/v1/files/{fid}/ner/hybrid", json={"entity_types": []})
+                ner = h.post(f"/api/v1/files/{fid}/ner/hybrid", json={"entity_type_ids": None})
                 assert ner.status_code == 200, f"ner {ner.status_code} {ner.text[:150]}"
                 entities = ner.json().get("entities", [])
+                assert entities, f"hybrid NER returned no entities for {fid}"
                 ex = h.post(
                     "/api/v1/redaction/execute",
                     json={

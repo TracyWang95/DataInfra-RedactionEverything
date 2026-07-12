@@ -473,10 +473,6 @@ const zhBase: Record<string, string> = {
   'batchWizard.step1.defaultVisionCoverage':
     '推荐图片范围：将检查 {selected} 类图片内容；{excluded} 类可选内容默认不纳入。',
   'batchWizard.step1.defaultVisionExcluded': '默认不纳入：{labels}。',
-  'batchWizard.step1.priority': '优先级',
-  'batchWizard.step1.priorityNormal': '普通',
-  'batchWizard.step1.priorityHigh': '高',
-  'batchWizard.step1.priorityUrgent': '紧急',
   'batchWizard.step1.confirm': '已确认配置清单、识别项组合和打码方式',
   'batchWizard.step1.nextUpload': '下一步：上传',
   'batchWizard.step1.loadingConfig': '加载配置清单中…',

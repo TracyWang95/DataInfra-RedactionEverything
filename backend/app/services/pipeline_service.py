@@ -341,21 +341,6 @@ def get_pipeline(mode: str, owner_id: str | None = None) -> PipelineConfig | Non
     return db.get(_canonical_pipeline_mode(mode))
 
 
-def toggle_pipeline(mode: str, owner_id: str | None = None) -> bool | None:
-    """Return new enabled state, or None if the pipeline is missing."""
-
-    global pipelines_db
-    db = _pipelines_for_owner(owner_id)
-    mode = _canonical_pipeline_mode(mode)
-    if mode not in db:
-        return None
-    db[mode].enabled = not db[mode].enabled
-    if owner_id is None:
-        pipelines_db = db
-    _persist_pipelines(db, owner_id)
-    return db[mode].enabled
-
-
 def get_pipeline_types(
     mode: str,
     enabled_only: bool = True,
@@ -428,29 +413,6 @@ def update_pipeline_type(
             pipelines_db = db
         _persist_pipelines(db, owner_id)
         return pipeline.types[index], ""
-    return None, "Type does not exist"
-
-
-def toggle_pipeline_type(
-    mode: str,
-    type_id: str,
-    owner_id: str | None = None,
-) -> tuple[bool | None, str]:
-    """Return ``(new_enabled_state, error_message)``."""
-
-    global pipelines_db
-    db = _pipelines_for_owner(owner_id)
-    mode = _canonical_pipeline_mode(mode)
-    if mode not in db:
-        return None, "Pipeline does not exist"
-    for item in db[mode].types:
-        if item.id != type_id:
-            continue
-        item.enabled = not item.enabled
-        if owner_id is None:
-            pipelines_db = db
-        _persist_pipelines(db, owner_id)
-        return item.enabled, ""
     return None, "Type does not exist"
 
 
