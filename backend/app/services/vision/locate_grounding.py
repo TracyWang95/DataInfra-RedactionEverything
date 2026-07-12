@@ -486,9 +486,62 @@ class LocateAnythingGroundingService:
 
         boxes = self._drop_solid_fill_seals(boxes, image_data)
         boxes = self._drop_skin_hue_fingerprints(boxes, image_data)
+        boxes = self._grow_fingerprints_to_ink(boxes, image_data)
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
+
+    @staticmethod
+    def _grow_fingerprints_to_ink(
+        boxes: list[BoundingBox],
+        image_data: bytes,
+    ) -> list[BoundingBox]:
+        """Grow each fingerprint box to cover its own ink (physical identity).
+
+        A red thumbprint IS a red-ink deposit; the box must cover the deposit
+        to cover the print. LA's box measurably under-covers (0710 农业合同:
+        box bottom 0.247 vs ink bottom 0.259 — the print's lower edge stayed
+        readable) and its extent drifts run to run. The UNDILATED colored
+        components (raw_colored_component_bboxes — per-piece, so a bridged
+        page-wide cluster can't leak in) that INTERSECT the box are this
+        print's own ink; the box grows to their hull. Grow-only: coverage
+        never shrinks. No intersecting component (greyscale scan, no colour
+        evidence) or analysis failure -> box unchanged (fail open).
+        """
+        fps = [b for b in boxes if b.type == "fingerprint"]
+        if not fps:
+            return boxes
+        try:
+            components = raw_colored_component_bboxes(image_data)
+        except Exception:
+            logger.warning("fingerprint ink growth unavailable; keeping boxes", exc_info=True)
+            return boxes
+        if not components:
+            return boxes
+        out: list[BoundingBox] = []
+        grown = 0
+        for b in boxes:
+            if b.type != "fingerprint":
+                out.append(b)
+                continue
+            x1, y1 = b.x, b.y
+            x2, y2 = b.x + b.width, b.y + b.height
+            for cx, cy, cw, ch in components:
+                if b.x < cx + cw and cx < b.x + b.width and b.y < cy + ch and cy < b.y + b.height:
+                    x1 = min(x1, cx)
+                    y1 = min(y1, cy)
+                    x2 = max(x2, cx + cw)
+                    y2 = max(y2, cy + ch)
+            if (x1, y1, x2, y2) != (b.x, b.y, b.x + b.width, b.y + b.height):
+                out.append(b.model_copy(update={
+                    "x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1,
+                }))
+                grown += 1
+            else:
+                out.append(b)
+        if grown:
+            logger.info("Grew %d fingerprint box(es) to their ink hull", grown)
+        return out
 
     @staticmethod
     def _filter_tile_candidates(
