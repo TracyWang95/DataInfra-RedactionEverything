@@ -250,6 +250,13 @@ class Settings(BaseSettings):
     # only drops a red edge ANNOTATION on one page — net win. Kept as a flag for
     # faint/photocopy red stamps VL-layout might miss; re-enable per deployment.
     VISUAL_SEAL_COLOR_CASCADE: bool = False
+    # Merge the per-category visual fan-out into ONE /detect request when the
+    # LA server runs in vLLM prompt-embeds mode (single MoonViT vision encode
+    # shared across categories). Off by default; enable together with the
+    # vLLM deploy (LOCATE_ANYTHING_VLLM_URL) — in HF mode a merged request is
+    # SLOWER (server runs categories serially inside one lock slot; measured
+    # 5.4s vs 3.3s fan-out).
+    VISUAL_DETECT_BATCH_CATEGORIES: bool = False
     # Physical seal arbiter: a 公章 is a sparse ink impression (paper shows
     # through; colored coverage ≤0.18 on real stamps), while a printed
     # masthead/banner/logo is a solid colored fill (≥0.59). Drop official_seal

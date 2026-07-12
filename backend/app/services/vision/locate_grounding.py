@@ -100,6 +100,13 @@ def _elapsed_ms(start: float) -> int:
     return max(0, round((time.perf_counter() - start) * 1000))
 
 
+def _normalize_detect_tag(value: object) -> str:
+    """Mirror locate_anything_server._normalize_slug byte for byte: /detect
+    tags each box with the NORMALIZED requested category, so batched-request
+    demultiplexing must apply the same fold. CJK passes through untouched."""
+    return str(value or "").strip().lower().replace("-", "_")
+
+
 def _both_margins(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
     """Full-height outer-third margin strips (binding-seal probe geometry)."""
     strip = max(1, width // 3)
@@ -205,10 +212,54 @@ class LocateAnythingGroundingService:
             return res
 
         model_start = time.perf_counter()
-        results = await asyncio.gather(
-            *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
-            return_exceptions=True,
-        )
+        if bool(getattr(settings, "VISUAL_DETECT_BATCH_CATEGORIES", False)) and len(requests) > 1:
+            # vLLM prompt-embeds mode: ONE request carries every category; the
+            # server encodes the image once (MoonViT) and runs per-category
+            # generations batched. Boxes come back tagged with the NORMALIZED
+            # requested category (server-side per-category prompts — not a
+            # model echo), demuxed here by the mirrored fold. Any tag that
+            # fails to demux is a contract break: fail LOUD per category
+            # (empty result), never silently retag.
+            demux = {_normalize_detect_tag(tag): index for index, (tag, _r, _t) in enumerate(requests)}
+            try:
+                batch_raw = await self._post_detect(
+                    image_data, [tag for tag, _r, _t in requests]
+                )
+            except Exception as exc:
+                logger.warning("batched visual detect failed, falling back to fan-out: %s", exc)
+                batch_raw = None
+            if batch_raw is None:
+                results = await asyncio.gather(
+                    *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
+                    return_exceptions=True,
+                )
+            else:
+                per_request: list[list[dict[str, Any]]] = [[] for _ in requests]
+                for raw in batch_raw:
+                    index = demux.get(_normalize_detect_tag(raw.get("category")))
+                    if index is None:
+                        logger.warning(
+                            "batched detect returned unmappable category %r; box dropped from demux",
+                            raw.get("category"),
+                        )
+                        continue
+                    per_request[index].append(raw)
+                results = per_request
+                # speculative tiles for empty retriable slugs (same as _detect_one)
+                for (_tag, rtype, _t), res in zip(requests, results, strict=True):
+                    if tile_retry_enabled and rtype in _retriable and not res and rtype not in spec_tile_tasks:
+                        spec_task = asyncio.create_task(
+                            self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
+                        )
+                        spec_task.add_done_callback(
+                            lambda t: t.exception() if not t.cancelled() else None
+                        )
+                        spec_tile_tasks[rtype] = spec_task
+        else:
+            results = await asyncio.gather(
+                *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
+                return_exceptions=True,
+            )
         timings.model = _elapsed_ms(model_start)
 
         boxes: list[BoundingBox] = []

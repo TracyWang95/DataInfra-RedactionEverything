@@ -7,5 +7,5 @@ exec "$VLLM" serve "$MODEL" \
   --host 0.0.0.0 --port 8080 \
   --trust-remote-code --dtype bfloat16 \
   --max-model-len 8192 --max-num-batched-tokens 8192 \
-  --gpu-memory-utilization 0.15 \
+  --gpu-memory-utilization 0.11 \
   --default-chat-template-kwargs '{"enable_thinking":false}'
