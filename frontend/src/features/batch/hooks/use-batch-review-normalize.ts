@@ -1,8 +1,6 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
-import type { BatchWizardPersistedConfig } from '@/services/batchPipeline';
-import { isDefaultExcludedPipelineTypeId } from '@/services/defaultRedactionPreset';
 import type { ReviewVisionPageQuality } from '../types';
 
 export function normalizePage(page: unknown, fallback = 1): number {
@@ -72,21 +70,6 @@ export function normalizeReviewBox(
       ? raw.warnings.filter((warning): warning is string => typeof warning === 'string')
       : undefined,
   };
-}
-
-export function sanitizeReviewBoxSelection(
-  box: EditorBox,
-  cfg: Pick<BatchWizardPersistedConfig, 'visualFeatureTypes'>,
-): EditorBox {
-  const type = String(box.type ?? '');
-  if (
-    box.source === 'visual_features' &&
-    isDefaultExcludedPipelineTypeId('visual_features', type) &&
-    !cfg.visualFeatureTypes.includes(type)
-  ) {
-    return { ...box, selected: false };
-  }
-  return box;
 }
 
 export function boxesToDraftPayload(boxes: EditorBox[]): Array<Record<string, unknown>> {

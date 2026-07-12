@@ -132,6 +132,11 @@ function buildRecoveryTarget(
   return buildBatchWorkbenchUrl(job.id, job.job_type, 3, undefined, job.config);
 }
 
+// INVENTORY(pending backend error codes): the keyword tables below are a
+// heuristic failure-attribution layer over free-text error messages. They also
+// count `filename` as evidence (a filename containing "seal"/"印章" routes to
+// vision_model). Kept as-is to preserve the recovery flow; replace wholesale
+// with a structured error_code mapping once the backend emits one.
 export function classifyFailedItem(item: JobItemRow): JobRecoveryCategory {
   const haystack = [
     item.error_message,

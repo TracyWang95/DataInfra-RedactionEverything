@@ -3,24 +3,12 @@
 import {
   apiClient as api,
   authFetch,
-  downloadFile,
   authenticatedBlobUrl,
   BATCH_TIMEOUT,
-  VISION_TIMEOUT,
 } from './api-client';
-import type {
-  CompareData,
-  EntityTypeConfigSimple,
-  FileInfo,
-  FileListResponse,
-  ParseResult,
-  RedactionRequest,
-  RedactionResult,
-  ReplacementModeConfig,
-  VisionResult,
-} from '../types';
+import type { CompareData, FileInfo, FileListResponse } from '../types';
 
-export { downloadFile, authenticatedBlobUrl };
+export { authenticatedBlobUrl };
 
 export interface BatchZipSkippedItem {
   file_id: string;
@@ -219,8 +207,6 @@ export const fileApi = {
     });
   },
 
-  parse: async (fileId: string): Promise<ParseResult> => api.get(`/files/${fileId}/parse`),
-
   getInfo: async (fileId: string): Promise<FileInfo> => api.get(`/files/${fileId}`),
 
   list: async (
@@ -277,23 +263,7 @@ export const fileApi = {
 };
 
 export const redactionApi = {
-  execute: async (request: RedactionRequest): Promise<RedactionResult> =>
-    api.post('/redaction/execute', request),
-
   getComparison: async (fileId: string): Promise<CompareData> =>
     api.get(`/redaction/${fileId}/compare`),
-
-  detectSensitiveRegions: async (fileId: string, page = 1): Promise<VisionResult> =>
-    api.post(`/redaction/${fileId}/vision?page=${page}&include_result_image=false`, undefined, {
-      timeout: VISION_TIMEOUT,
-    }),
-
-  getEntityTypes: async (): Promise<{ entity_types: EntityTypeConfigSimple[] }> =>
-    api.get('/redaction/entity-types'),
-
-  getReport: async (fileId: string): Promise<unknown> => api.get(`/redaction/${fileId}/report`),
-
-  getReplacementModes: async (): Promise<{ replacement_modes: ReplacementModeConfig[] }> =>
-    api.get('/redaction/replacement-modes'),
 };
 

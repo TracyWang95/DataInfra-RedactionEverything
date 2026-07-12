@@ -135,7 +135,6 @@ const enBase: Record<string, string> = {
   'report.medium': 'Medium',
   'report.low': 'Low',
 
-  'health.title': 'Services',
   'health.allOnline': 'All services online',
   'health.someOffline': 'Some services offline',
   'health.someBusy': 'Ready',
@@ -147,20 +146,13 @@ const enBase: Record<string, string> = {
   'health.offline': 'Offline',
   'health.busy': 'Online',
   'health.degraded': 'Degraded',
-  'health.backendProbe': 'Backend probe',
   'health.frontendRoundTrip': 'Frontend round-trip',
-  'health.gpuUsage': 'GPU',
-  'health.gpuMemory': 'GPU Memory',
   'health.gpuNotDetected': 'Not detected',
-  'health.probeTime': 'Probe time',
   'health.refreshTitle': 'Refresh service status',
   'health.sidebar.title': 'Services',
   'health.service.paddle_ocr': 'PaddleOCR',
   'health.service.has_ner': 'HaS Text',
   'health.service.visual_features': 'Visual Elements',
-  'health.openModelSettings': 'Open model settings',
-  'health.impact.paddleOcr': 'Affects OCR, scanned PDFs, and image text extraction.',
-  'health.impact.hasNer': 'Affects text semantic recognition and batch text jobs.',
 
   'offline.banner': 'Network disconnected. Some features may be unavailable.',
 
@@ -794,10 +786,6 @@ const enBase: Record<string, string> = {
   'layout.headerActions': 'Status and settings',
   'layout.toggleSidebar': 'Toggle sidebar',
   'layout.languageSwitch': 'Switch language',
-  'health.status.checking': 'Checking',
-  'health.status.allOnline': 'All online',
-  'health.status.someOffline': 'Some offline',
-  'health.status.backendDown': 'Backend disconnected',
 
   'entityTag.CUSTOM': 'Custom',
 
@@ -844,7 +832,6 @@ const enOverrides: Record<string, string> = {
   'page.textModel.sub': 'Text recognition service connection',
   'page.visionModel.title': 'Vision Service',
   'page.visionModel.sub': 'OCR and image recognition service connection',
-  'health.title': 'Services',
   'health.allOnline': 'All services online',
   'health.someOffline': 'Some services need attention',
   'health.someBusy': 'Ready',
@@ -856,64 +843,9 @@ const enOverrides: Record<string, string> = {
   'health.offline': 'Offline',
   'health.busy': 'Online',
   'health.degraded': 'Degraded',
-  'health.backendProbe': 'Backend probe',
   'health.frontendRoundTrip': 'Frontend round-trip',
-  'health.gpuUsage': 'GPU',
-  'health.gpuMemory': 'GPU Memory',
   'health.gpuNotDetected': 'Not detected',
-  'health.probeTime': 'Checked at',
   'health.refreshTitle': 'Refresh service status',
-  'health.openModelSettings': 'Open model settings',
-  'health.impact.paddleOcr': 'Affects OCR, scanned PDFs, and image text extraction.',
-  'health.impact.hasNer': 'Affects text semantic recognition and batch text jobs.',
-  'health.modelServicesDownHint':
-    'The main service is available, but some recognition services are not running. The matching capabilities will return empty results.',
-  'health.modelServicesBusyHint':
-    'Recognition service is online and processing. The queue can keep waiting without marking the service unavailable.',
-  'health.modelServicesDegradedHint':
-    'A recognition service is reachable but not fully ready. Some recognition capabilities may be incomplete until the service finishes loading or recovers.',
-  'health.user.canLabel': 'You can:',
-  'health.user.cannotLabel': 'Not available now:',
-  'health.user.nextLabel': 'Next:',
-  'health.user.technicalLabel': 'Technical status:',
-  'health.user.ready.title': 'Ready for live processing',
-  'health.user.ready.can':
-    'upload files, run recognition, review results, and export after confirming the output.',
-  'health.user.ready.cannot': 'no service limitations are detected right now.',
-  'health.user.ready.next': 'start with one file and confirm the result before scaling to batch.',
-  'health.user.checking.title': 'Checking service readiness',
-  'health.user.checking.can': 'keep this page open and prepare a file or review settings.',
-  'health.user.checking.cannot': 'start live recognition confidently until the check finishes.',
-  'health.user.checking.next':
-    'refresh once; if this stays here, ask an operator to run npm run doctor.',
-  'health.user.backendDown.title': 'Live processing is temporarily unavailable',
-  'health.user.backendDown.can': 'review the interface and existing local settings.',
-  'health.user.backendDown.cannot':
-    'upload, recognize, redact, or create live jobs until the main service reconnects.',
-  'health.user.backendDown.next': 'start or restart the backend, then refresh this status.',
-  'health.user.modelsDown.title': 'Some recognition is unavailable',
-  'health.user.modelsDown.can':
-    'keep reviewing existing results and adjust settings for unaffected parts.',
-  'health.user.modelsDown.cannot':
-    'rely on the affected OCR, text, or image recognition until those services recover.',
-  'health.user.modelsDown.next':
-    'start or restart the affected recognition service, then refresh before processing new files.',
-  'health.user.modelsDegraded.title': 'Recognition may be incomplete',
-  'health.user.modelsDegraded.can':
-    'continue low-risk review work and inspect any result carefully.',
-  'health.user.modelsDegraded.cannot':
-    'treat new automatic detections as complete until the service is healthy.',
-  'health.user.modelsDegraded.next':
-    'wait for model loading or restart the affected service, then rerun recognition.',
-  'health.user.modelsBusy.title': 'Recognition service online',
-  'health.user.modelsBusy.can': 'upload or review while queued work continues.',
-  'health.user.modelsBusy.cannot': 'expect every new file to finish immediately.',
-  'health.user.modelsBusy.next':
-    'wait a moment and refresh; if progress stalls, check the running queue.',
-  'health.serviceNext.paddleOcr':
-    'Scanned PDFs and images may miss text until OCR is healthy; text-only files and manual review can still continue.',
-  'health.serviceNext.hasNer':
-    'Semantic text labels may be missing until text recognition is healthy; use manual review or retry later.',
   'batchHub.kicker': 'Batch jobs',
   'batchHub.title': 'Create a mixed-file batch',
   'batchHub.desc':
@@ -1019,15 +951,6 @@ const enOverrides: Record<string, string> = {
   'history.cleanupMsg':
     'This removes all uploaded files, redacted outputs, processing history, and every job record, including drafts and running jobs. This cannot be undone.',
   'history.unnamedContent': 'Unnamed content',
-  'entityGroup.identity': 'Identity',
-  'entityGroup.contact': 'Contact',
-  'entityGroup.finance': 'Finance',
-  'entityGroup.org_address': 'Organization and Address',
-  'entityGroup.time_number': 'Time and Reference',
-  'entityGroup.demographics': 'Demographics',
-  'entityGroup.legal_party': 'Legal Parties',
-  'entityGroup.sensitive': 'Sensitive',
-  'entityGroup.visual': 'Visual Elements',
   'entityGroup.other': 'Other',
   'playground.upload.kicker': 'Single-file start',
   'playground.upload.title': 'Upload one file',
@@ -1501,7 +1424,6 @@ Object.assign(enOverrides, {
 });
 
 Object.assign(enOverrides, {
-  'health.title': 'Services',
   'health.sidebar.title': 'Services',
   'health.allOnline': 'Ready',
   'health.someOffline': 'Needs attention',
@@ -1521,7 +1443,6 @@ Object.assign(enOverrides, {
   'playground.visualFeatureShort': 'Visual features',
   'health.service.visual_features': 'Visual feature service',
   'history.previewImageRegion': 'Visual feature',
-  'entityGroup.visual': 'Visual features',
   'settings.pipelineDisplayName.image': 'Visual features',
   'settings.redaction.imageGroup': 'Visual features',
   'batchWizard.step1.visualFeatureTypes': 'Visual features',
@@ -1571,8 +1492,6 @@ Object.assign(enOverrides, {
   'entity.PASSPORT': 'Passport number',
   'entity.SOCIAL_SECURITY': 'Social security number',
   'entity.DRIVER_LICENSE': 'Driver license number',
-  'entity.MILITARY_ID': 'Military ID',
-  'entity.QQ_WECHAT_ID': 'Social account',
   'entity.USERNAME_PASSWORD': 'Account credential',
   'entity.IP_ADDRESS': 'IP address',
   'entity.MAC_ADDRESS': 'MAC address',
@@ -1580,7 +1499,6 @@ Object.assign(enOverrides, {
   'entity.URL_WEBSITE': 'URL',
   'entity.BANK_ACCOUNT': 'Bank account',
   'entity.BANK_NAME': 'Bank name',
-  'entity.PAYMENT_ACCOUNT': 'Payment account',
   'entity.TAX_ID': 'Tax ID',
   'entity.COMPANY_CODE': 'Unified social credit code',
   'entity.POSTAL_CODE': 'Postal code',
@@ -1601,27 +1519,15 @@ Object.assign(enOverrides, {
   'entity.POLITICAL': 'Political affiliation',
   'entity.RELIGION': 'Religion',
   'entity.SEXUAL_ORIENTATION': 'Sexual orientation',
-  'entity.LEGAL_DOC_NO': 'Legal document number',
   'entity.LEGAL_PARTY': 'Legal party',
   'entity.LAWYER': 'Lawyer',
   'entity.JUDGE': 'Judge',
   'entity.WITNESS': 'Witness',
-  'entity.fingerprint_mark': 'Fingerprint impression',
-  'entity.finance_handwritten_amount': 'Financial handwritten amount',
-  'entity.legal_service_note': 'Legal service note',
-  'entity.medical_handwritten_order': 'Medical handwritten order',
   'layout.switchToChinese': '中文',
-  'settings.redaction.presetName.industry_general_document_sharing':
-    'Industry - General document sharing',
   'settings.redaction.presetName.industry_contract_legal_disclosure': 'Legal industry',
   'settings.redaction.presetName.industry_medical_record_release': 'Healthcare industry',
   'settings.redaction.presetName.industry_finance_audit_sharing': 'Financial industry',
   'settings.redaction.presetName.industry_gov_document_release': 'Government industry',
-  'settings.redaction.presetName.industry_hr_personnel_file': 'Industry - HR and personnel file',
-  'settings.redaction.presetName.industry_public_sector_release':
-    'Industry - Public-sector document release',
-  'settings.redaction.presetName.industry_image_heavy_certificates':
-    'Industry - Image-heavy certificates and forms',
 });
 
 Object.assign(enOverrides, {
@@ -1630,14 +1536,11 @@ Object.assign(enOverrides, {
   'entity.PASSPORT': 'Document number',
   'entity.SOCIAL_SECURITY': 'Document number',
   'entity.DRIVER_LICENSE': 'Document number',
-  'entity.MILITARY_ID': 'Document number',
   'entity.PHONE': 'Contact phone',
   'entity.EMAIL': 'Email address',
-  'entity.QQ_WECHAT_ID': 'Account credential',
   'entity.USERNAME_PASSWORD': 'Account credential',
   'entity.BANK_CARD': 'Account credential',
   'entity.BANK_ACCOUNT': 'Account credential',
-  'entity.PAYMENT_ACCOUNT': 'Account credential',
   'entity.BANK_NAME': 'Organization',
   'entity.ORG': 'Organization',
   'entity.COMPANY': 'Organization',
@@ -1654,7 +1557,6 @@ Object.assign(enOverrides, {
   'entity.PROPERTY': 'Asset information',
   'entity.CASE_NUMBER': 'Business identifier',
   'entity.CONTRACT_NO': 'Business identifier',
-  'entity.LEGAL_DOC_NO': 'Business identifier',
   'entity.COMPANY_CODE': 'Business identifier',
   'entity.TAX_ID': 'Business identifier',
   'entity.LICENSE_PLATE': 'Business identifier',

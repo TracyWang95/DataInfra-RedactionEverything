@@ -123,3 +123,4 @@ e2e/.artifacts/
 *.db
 *.db-journal
 *.db-wal
+AUDIT_2026-07-12_findings.json

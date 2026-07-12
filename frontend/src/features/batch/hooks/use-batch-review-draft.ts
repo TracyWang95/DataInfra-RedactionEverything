@@ -17,7 +17,6 @@ import {
   normalizePage,
   normalizeReviewBox,
   normalizeVisionQualityByPage,
-  sanitizeReviewBoxSelection,
 } from './use-batch-review-normalize';
 import type { ReviewDataDeps } from './use-batch-review-data';
 
@@ -169,7 +168,7 @@ export function useReviewDraft(deps: ReviewDraftDeps): {
           setReviewTextUndoStack([]);
           setReviewTextRedoStack([]);
           setPreviewEntityMap(
-            buildFallbackPreviewEntityMap(previewPayload.entities, cfg.replacementMode),
+            buildFallbackPreviewEntityMap(previewPayload.entities),
           );
           const map = await fetchCachedBatchPreviewMap(
             previewPayload.entities,
@@ -220,9 +219,7 @@ export function useReviewDraft(deps: ReviewDraftDeps): {
               ? draft.bounding_boxes
               : flattenBoundingBoxesFromStore(info.bounding_boxes);
           const pageCountFromInfo = normalizePage(info.page_count, 1);
-          const boxes = raw
-            .map((box, index) => normalizeReviewBox(box, index, 1))
-            .map((box) => sanitizeReviewBoxSelection(box, { visualFeatureTypes: cfg.visualFeatureTypes }));
+          const boxes = raw.map((box, index) => normalizeReviewBox(box, index, 1));
           const maxBoxPage = boxes.reduce(
             (max, box) => Math.max(max, normalizePage(box.page, 1)),
             1,
@@ -276,7 +273,7 @@ export function useReviewDraft(deps: ReviewDraftDeps): {
           setReviewTextUndoStack([]);
           setReviewTextRedoStack([]);
           const storedMap = normalizeEntityMap(info.entity_map);
-          const fallbackMap = buildFallbackPreviewEntityMap(mapped, cfg.replacementMode);
+          const fallbackMap = buildFallbackPreviewEntityMap(mapped);
           if (Object.keys(storedMap).length > 0) {
             setPreviewEntityMap(storedMap);
           } else {
@@ -324,7 +321,6 @@ export function useReviewDraft(deps: ReviewDraftDeps): {
     },
     [
       activeJobId,
-      cfg.visualFeatureTypes,
       cfg.replacementMode,
       isPreviewMode,
       itemIdByFileIdRef,

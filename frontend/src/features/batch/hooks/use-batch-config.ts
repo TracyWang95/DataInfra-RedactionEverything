@@ -22,8 +22,6 @@ import {
 import {
   buildDefaultPipelineTypeIds,
   buildDefaultTextTypeIds,
-  isDefaultExcludedPipelineTypeId,
-  isDefaultExcludedTextTypeId,
 } from '@/services/defaultRedactionPreset';
 import {
   fetchRecognitionEntityTypes,
@@ -151,25 +149,13 @@ export function useBatchConfig(
         const persistedTextIds = persisted?.selectedEntityTypeIds?.length
           ? persisted.selectedEntityTypeIds.filter((id) => types.some((tt) => tt.id === id))
           : [];
-        const persistedLooksLikeOldTextDefault =
-          persistedTextIds.some(isDefaultExcludedTextTypeId) &&
-          defaultTextTypeIds.every((id) => persistedTextIds.includes(id));
         const selectedEntityTypeIds = persistedTextIds.length
-          ? persistedLooksLikeOldTextDefault
-            ? defaultTextTypeIds
-            : persistedTextIds
+          ? persistedTextIds
           : defaultTextTypeIds;
         const persistedOcrHas = persisted?.ocrHasTypes?.length
           ? persisted.ocrHasTypes.filter((id) => ocrIds.includes(id))
           : [];
-        const persistedLooksLikeOldOcrDefault =
-          persistedOcrHas.some((id) => isDefaultExcludedPipelineTypeId('ocr_has', id)) &&
-          defaultOcrHasTypeIds.every((id) => persistedOcrHas.includes(id));
-        const filteredOcrHas = persistedOcrHas.length
-          ? persistedLooksLikeOldOcrDefault
-            ? defaultOcrHasTypeIds
-            : persistedOcrHas
-          : defaultOcrHasTypeIds;
+        const filteredOcrHas = persistedOcrHas.length ? persistedOcrHas : defaultOcrHasTypeIds;
         const filteredVisualFeatures = persisted?.visualFeatureTypes?.length
           ? persisted.visualFeatureTypes.filter((id) => visualIds.includes(id))
           : defaultVisualFeatureTypeIds;

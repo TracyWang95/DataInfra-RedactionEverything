@@ -1,11 +1,11 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import type { BoundingBox as EditorBox } from '@/components/ImageBBoxEditor';
-import { hasReviewBoxIssue } from './review-box-quality';
+import { LOW_CONFIDENCE_THRESHOLD, hasReviewBoxIssue } from './review-box-quality';
 import type { ReviewEntity, ReviewPageSummary } from '../types';
 
 function hasLowConfidence(confidence: number | undefined): boolean {
-  return typeof confidence === 'number' && confidence > 0 && confidence < 0.55;
+  return typeof confidence === 'number' && confidence > 0 && confidence < LOW_CONFIDENCE_THRESHOLD;
 }
 
 function hasReviewEntityIssue(entity: ReviewEntity): boolean {

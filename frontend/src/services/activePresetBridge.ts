@@ -27,7 +27,6 @@ export function setActivePresetTextId(id: string | null): void {
     const scoped = scopedStorageKey(K_TEXT);
     if (id) {
       localStorage.setItem(scoped, id);
-      if (scoped === K_TEXT) localStorage.setItem(K_TEXT_LEGACY, id);
     } else {
       localStorage.removeItem(scoped);
       if (scoped === K_TEXT) localStorage.removeItem(K_TEXT_LEGACY);
@@ -56,7 +55,6 @@ export function setActivePresetVisionId(id: string | null): void {
     const scoped = scopedStorageKey(K_VISION);
     if (id) {
       localStorage.setItem(scoped, id);
-      if (scoped === K_VISION) localStorage.setItem(K_VISION_LEGACY, id);
     } else {
       localStorage.removeItem(scoped);
       if (scoped === K_VISION) localStorage.removeItem(K_VISION_LEGACY);
