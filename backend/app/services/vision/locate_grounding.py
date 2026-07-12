@@ -552,6 +552,7 @@ class LocateAnythingGroundingService:
                 )
             tile_boxes = self._filter_tile_candidates(tile_boxes, boxes)
             tile_boxes = self._verify_machine_code_tile_boxes(tile_boxes, image_data)
+            tile_boxes = self._verify_fingerprint_tile_boxes(tile_boxes, image_data)
             boxes.extend(tile_boxes)
             logger.info(
                 "LocateAnything tile retry for %s kept %d box(es) in %dms",
@@ -663,6 +664,45 @@ class LocateAnythingGroundingService:
                 for b in existing
             )
         ]
+
+    @staticmethod
+    def _verify_fingerprint_tile_boxes(
+        tile_boxes: list[BoundingBox],
+        image_data: bytes,
+    ) -> list[BoundingBox]:
+        """Ink existence identity for tile-retry fingerprint candidates.
+
+        Same shape as the machine-code decode gate: a red thumbprint IS a
+        red-ink deposit, and a tile crop that loses page context hallucinates
+        "fingerprints" out of X-ray film texture (CT-report bench: 3 baseline
+        false boxes amplified to 8 under speculative tiles; all greyscale, so
+        the skin-hue gate's "no colour evidence -> keep" passed them). A tile
+        candidate is kept only if it intersects a colored ink component —
+        existence proven by measurement. MAIN-detect boxes never pass through
+        here (full-frame context is trusted; greyscale-scan prints stay), so
+        the failure direction is "tile supplement narrows back to main-detect
+        level", never below it. Analysis failure fails OPEN (over-mask).
+        """
+        if not any(t.type == "fingerprint" for t in tile_boxes):
+            return tile_boxes
+        try:
+            components = raw_colored_component_bboxes(image_data)
+        except Exception:
+            logger.warning("fingerprint tile ink gate unavailable; keeping candidates", exc_info=True)
+            return tile_boxes
+        kept: list[BoundingBox] = []
+        dropped = 0
+        for t in tile_boxes:
+            if t.type == "fingerprint" and not any(
+                t.x < cx + cw and cx < t.x + t.width and t.y < cy + ch and cy < t.y + t.height
+                for cx, cy, cw, ch in components
+            ):
+                dropped += 1
+                continue
+            kept.append(t)
+        if dropped:
+            logger.info("Fingerprint ink gate dropped %d tile candidate(s) with no ink evidence", dropped)
+        return kept
 
     def _verify_machine_code_tile_boxes(
         self,
