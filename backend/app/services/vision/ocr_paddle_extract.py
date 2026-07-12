@@ -49,6 +49,17 @@ from app.services.vision.ocr_visual_lines import _infer_typical_textline_height
 
 logger = logging.getLogger(__name__)
 
+# Seal sentinel — cross-service contract with backend/scripts/ocr_server.py
+# (SEAL_TEXT + the VL layout 'seal' class label): the OCR service emits a seal
+# block as label="seal" with text=SEAL_TEXT. Single-sourced here for the two
+# consumer sites below; keep in sync with ocr_server.py:SEAL_TEXT.
+_OCR_SEAL_LABEL = "seal"
+_OCR_SEAL_TEXT = "[公章]"
+
+
+def _is_seal_ocr_item(label: object, text: object) -> bool:
+    return str(label or "") == _OCR_SEAL_LABEL or str(text or "").strip() == _OCR_SEAL_TEXT
+
 
 def run_paddle_ocr(
     image: Image.Image,
@@ -312,9 +323,9 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
         if str(label).strip().lower() in {"figure", "image", "picture", "diagram", "chart"}:
             continue
         text = str(getattr(item, "text", "") or "").strip()
-        if label == "seal" or text == "[公章]":
+        if _is_seal_ocr_item(label, text):
             region = SensitiveRegion(
-                text="[公章]",
+                text=_OCR_SEAL_TEXT,
                 entity_type="SEAL",
                 left=left,
                 top=top,
@@ -575,9 +586,9 @@ def _run_ocr_service(
 
             # seals -> direct sensitive region
             label = getattr(item, 'label', 'text') or 'text'
-            if label == "seal" or item.text.strip() == "[公章]":
+            if _is_seal_ocr_item(label, item.text):
                 region = SensitiveRegion(
-                    text="[公章]",
+                    text=_OCR_SEAL_TEXT,
                     entity_type="SEAL",
                     left=left,
                     top=top,

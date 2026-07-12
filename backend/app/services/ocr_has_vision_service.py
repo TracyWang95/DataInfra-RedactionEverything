@@ -20,16 +20,11 @@ from PIL import Image
 from app.core.visual_feature_categories import VISUAL_ONLY_ENTITY_TYPES
 from app.models.type_mapping import canonical_type_id
 
-IMAGE_TEXT_ENTITY_TYPE_ALIASES = {
-    "DATETIME": "DATE",
-    "DATE_TIME": "DATE",
-    "COMPANY": "COMPANY_NAME",
-}
-
 
 def _canonical_image_text_type(entity_type: str | None) -> str:
-    value = str(entity_type or "").strip().upper()
-    return canonical_type_id(IMAGE_TEXT_ENTITY_TYPE_ALIASES.get(value, value))
+    # Pure string hygiene via canonical_type_id — the GLM-era alias table
+    # (DATETIME/DATE_TIME/COMPANY) is gone; no producer emits those ids.
+    return canonical_type_id(str(entity_type or ""))
 
 
 def _canonicalize_image_text_types(entity_type_ids: list[str]) -> list[str]:
@@ -327,7 +322,7 @@ class OcrHasVisionService:
                 logger.info("PDF OCR+HaS semantic path ignoring visual/non-semantic types: %s", ignored_types)
         else:
             entity_type_ids = _canonicalize_image_text_types([
-                "PERSON", "ORG", "COMPANY", "PHONE", "EMAIL",
+                "PERSON", "ORG", "COMPANY_NAME", "PHONE", "EMAIL",
                 "ID_CARD", "BANK_CARD", "ACCOUNT_NAME", "BANK_NAME",
                 "ACCOUNT_NUMBER", "ADDRESS", "DATE",
             ])
@@ -421,7 +416,7 @@ class OcrHasVisionService:
                 logger.info("OCR+HaS semantic path ignoring visual/non-semantic types: %s", ignored_types)
         else:
             entity_type_ids = _canonicalize_image_text_types([
-                "PERSON", "ORG", "COMPANY", "PHONE", "EMAIL",
+                "PERSON", "ORG", "COMPANY_NAME", "PHONE", "EMAIL",
                 "ID_CARD", "BANK_CARD", "ACCOUNT_NAME", "BANK_NAME",
                 "ACCOUNT_NUMBER", "ADDRESS", "DATE",
             ])

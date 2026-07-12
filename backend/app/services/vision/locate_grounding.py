@@ -1059,6 +1059,7 @@ class LocateAnythingGroundingService:
             "top_p": float(config.top_p or _DEFAULT_TOP_P),
             "max_tokens": max_tokens,
             "stream": False,
+            "response_format": {"type": "json_object"},
             "chat_template_kwargs": {"enable_thinking": False},
             "thinking": {"type": "disabled"},
             "enable_thinking": False,

@@ -118,17 +118,6 @@ def _adaptive_image_sides(requested: int) -> list[int]:
     return result
 
 
-CUSTOM_VISUAL_PROMPTS: dict[str, str] = {
-    # A short description matches the upstream demo's calling convention and far
-    # outperforms the verbose, negative-laden variant: the long prompt made the
-    # model emit <box>None</box> on faint signatures (e.g. the 1.tiff doctor
-    # signature), while "handwritten signature" recovers them without
-    # over-detecting on heavily handwritten forms (2.tiff stays at its 2 real
-    # signatures). Same lesson as the official_seal prompt.
-    "signature": "Locate all the instances that matches the following description: signature.",
-}
-
-
 class DetectRequest(BaseModel):
     image_base64: str = Field(...)
     conf: float = Field(default=0.25, ge=0.01, le=1.0)
@@ -146,6 +135,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: float | None = None
     max_tokens: int | None = None
     stream: bool | None = False
+    response_format: dict[str, Any] | None = None
 
 
 class LocateService:
@@ -641,14 +631,16 @@ def _description_for_type_id(prompt: str, type_id: str) -> str:
     return "; ".join(dict.fromkeys(part for part in parts if part))
 
 
-def _chat_prompt_for(prompt: str, allowed_ids: list[str]) -> tuple[str, str]:
-    normalized_ids = {_normalize_slug(item) for item in allowed_ids}
-    text = prompt.lower()
-    if "signature" in normalized_ids or "signature" in text or "签" in prompt:
-        return "signature", CUSTOM_VISUAL_PROMPTS["signature"]
-    type_id = allowed_ids[0] if allowed_ids else "object"
+def _chat_prompt_for_type(prompt: str, type_id: str) -> str:
+    """Grounding prompt for ONE allowed type_id — the uniform path for every
+    category, signature included. The old "签"/"signature" keyword hijack
+    rerouted the WHOLE request to a signature preset, so any second custom
+    type was never detected and a stray 签 in a name like 签收单/标签 dropped
+    every box. Keep the description short: the verbose negative-laden variant
+    made the model emit <box>None</box> on faint signatures (1.tiff doctor
+    signature) while a short description recovers them."""
     description = _description_for_type_id(prompt, type_id)
-    return type_id, f"Locate all the instances that match the following description: {description}."
+    return f"Locate all the instances that match the following description: {description}."
 
 
 def _find_first_user_image_and_text(messages: list[dict[str, Any]]) -> tuple[Image.Image, str]:
@@ -768,45 +760,6 @@ def _dedupe_boxes(boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(kept_all, key=lambda item: (item.get("category", ""), float(item["y"]), float(item["x"])))
 
 
-def _category_from_label(label: str, categories: list[str]) -> str | None:
-    if len(categories) == 1:
-        return categories[0]
-    text = _normalize_slug(label)
-    for category in categories:
-        slug = _normalize_slug(category)
-        if slug and slug in text:
-            return slug
-    keyword_map = {
-        "official_seal": ("seal", "stamp", "red_stamp", "red_seal"),
-        "qr_code": ("qr", "qrcode"),
-        "barcode": ("bar_code", "barcode"),
-        "id_card": ("identity", "national_id"),
-        "bank_card": ("credit_card", "bank_card"),
-        "face": ("face", "human_face"),
-        "fingerprint": ("fingerprint", "finger_print"),
-        "palmprint": ("palmprint", "palm_print"),
-        "hk_macau_permit": ("hong_kong", "macau", "permit"),
-        "passport": ("passport",),
-        "employee_badge": ("employee", "badge", "work_id"),
-        "license_plate": ("license_plate", "plate"),
-        "physical_key": ("key",),
-        "receipt": ("receipt",),
-        "shipping_label": ("shipping", "delivery", "waybill"),
-        "whiteboard": ("whiteboard",),
-        "sticky_note": ("sticky", "note"),
-        "mobile_screen": ("mobile", "phone_screen"),
-        "monitor_screen": ("monitor", "computer_screen"),
-        "medical_wristband": ("wristband",),
-        "paper": ("paper", "document_page", "page"),
-        "signature": ("signature", "signer", "handwritten"),
-    }
-    for category in categories:
-        for keyword in keyword_map.get(_normalize_slug(category), ()):
-            if keyword in text:
-                return _normalize_slug(category)
-    return None
-
-
 @app.on_event("startup")
 async def startup() -> None:
     print(f"[LocateAnything] loading model={service.model_path}", flush=True)
@@ -854,28 +807,39 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="stream=true is not supported")
     image, prompt = _find_first_user_image_and_text(req.messages)
     allowed_ids = _extract_allowed_type_ids(prompt)
-    type_id, locate_prompt = _chat_prompt_for(prompt, allowed_ids)
     max_new_tokens = max(int(req.max_tokens or 0), DEFAULT_MAX_NEW_TOKENS)
     temperature = float(req.temperature if req.temperature is not None else DEFAULT_TEMPERATURE)
-    # Signature is detected like any other category (trust LA, no special path).
-    answer, boxes, (width, height) = await service.predict_boxes(
-        image,
-        locate_prompt,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
+    # Structured-output contract: the backend checklist caller asks for JSON via
+    # the standard OpenAI response_format field. The prompt-literal sniff stays as
+    # a fallback for older backends — the sole real JSON sender (_checklist_prompt)
+    # always carries "Schema:" and "Allowed type_id:".
+    wants_json = (
+        str((req.response_format or {}).get("type") or "") == "json_object"
+        or "Schema:" in prompt
+        or "Allowed type_id:" in prompt
+        or '"objects"' in prompt
     )
-    wants_json = "Schema:" in prompt or "Allowed type_id:" in prompt or '"objects"' in prompt
     if wants_json:
+        # One grounding pass per allowed type_id: every configured type is
+        # detected and its boxes tagged by the type they were REQUESTED as — no
+        # first-type-only shortcut, no keyword-based prompt hijack.
         normalized_objects: list[dict[str, Any]] = []
-        for box in boxes:
-            normalized = _box_to_normalized(box, width, height, type_id)
-            if normalized is not None:
-                normalized_objects.append(normalized)
+        for type_id in allowed_ids or ["object"]:
+            _answer, boxes, (width, height) = await service.predict_boxes(
+                image,
+                _chat_prompt_for_type(prompt, type_id),
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+            for box in boxes:
+                normalized = _box_to_normalized(box, width, height, type_id)
+                if normalized is not None:
+                    normalized_objects.append(normalized)
         normalized_objects = _dedupe_boxes(normalized_objects)
         objects = [
             {
-                "type_id": type_id,
-                "label": type_id,
+                "type_id": box["category"],
+                "label": box["category"],
                 "box_2d": [
                     max(0, min(1000, round(float(box["x"]) * 1000))),
                     max(0, min(1000, round(float(box["y"]) * 1000))),
@@ -883,14 +847,20 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
                     max(0, min(1000, round((float(box["y"]) + float(box["height"])) * 1000))),
                 ],
                 "confidence": LOCATEANYTHING_CONFIDENCE,
-                "rule_matched": f"{type_id}#locateanything",
-                "text": str(box.get("label") or type_id),
+                "rule_matched": f"{box['category']}#locateanything",
+                "text": str(box["category"]),
             }
             for box in normalized_objects
         ]
         content = json.dumps({"objects": objects}, ensure_ascii=False, separators=(",", ":"))
     else:
-        content = answer
+        type_id = allowed_ids[0] if allowed_ids else "object"
+        content, _boxes, _size = await service.predict_boxes(
+            image,
+            _chat_prompt_for_type(prompt, type_id),
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
     return {
         "id": f"chatcmpl-locate-{int(time.time() * 1000)}",
         "object": "chat.completion",

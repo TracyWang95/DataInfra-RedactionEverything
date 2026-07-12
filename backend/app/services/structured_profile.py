@@ -334,9 +334,14 @@ def should_include_column_for_structured_semantics(
     model for every obvious phone/email/name column makes the policy screen feel
     slow and does not improve recall, so HaS is reserved for low-confidence
     natural-language columns where the field name is not enough.
+
+    Business-descriptor columns (备注/摘要/描述/memo/note...) are deliberately
+    NOT excluded: they commonly embed names/phones, so they keep their low-risk
+    default classification but stay eligible for HaS semantic review — the
+    review can only upgrade them (never below the deterministic result).
     """
     reasons = {str(reason) for reason in (profile.get("reasons") or [])}
-    if reasons.intersection({"technical_identifier", "business_descriptor"}):
+    if "technical_identifier" in reasons:
         return False
     entity_type = str(profile.get("entity_type") or "CUSTOM")
     confidence = float(profile.get("confidence") or 0)

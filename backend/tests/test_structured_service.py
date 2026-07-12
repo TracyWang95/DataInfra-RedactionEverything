@@ -249,11 +249,21 @@ def test_deterministic_structured_columns_skip_has_semantic_inference(tmp_path, 
     monkeypatch.setattr(structured_service.settings, "JWT_SECRET_KEY", "test-secret")
     monkeypatch.setattr(structured_service, "has_text_semantic_ready", lambda: True)
 
-    class UnexpectedHaSClient:
+    # Business-descriptor columns (product_name/tier) are now eligible for HaS
+    # review (they can embed PII) — the model returns nothing for these clean
+    # samples, so classifications are unchanged. Deterministic PII columns still
+    # never depend on HaS.
+    class EmptyHaSClient:
         def __init__(self, *args, **kwargs):
-            raise AssertionError("HaS should not be called for deterministic structured columns")
+            pass
 
-    monkeypatch.setattr("app.services.has_client.HaSClient", UnexpectedHaSClient)
+        def is_available(self):
+            return True
+
+        def ner(self, *args, **kwargs):
+            return {}
+
+    monkeypatch.setattr("app.services.has_client.HaSClient", EmptyHaSClient)
 
     csv_path = tmp_path / "deterministic_columns.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as fh:
@@ -283,7 +293,6 @@ def test_deterministic_structured_columns_skip_has_semantic_inference(tmp_path, 
     )
     profile = structured_service.profile_dataset(result["datasets"][0]["id"], owner_id="tenant_a", store=store)
 
-    assert profile["semantic_inference"]["status"] == "skipped_no_candidates"
     by_name = {col["name"]: col for col in profile["columns"]}
     assert by_name["customer_name"]["entity_type"] == "PERSON"
     assert by_name["mobile_phone"]["entity_type"] == "PHONE"
