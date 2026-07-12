@@ -45,6 +45,11 @@ from app.services.vision.locate_tiles import (
     _grid_tiles,
     _margin_tiles,
 )
+from app.services.vision.machine_code_detector import (
+    BARCODE_SLUG,
+    QR_CODE_SLUG,
+    detect_machine_code_regions,
+)
 from app.services.vision.seal_color_cascade import (
     propose_colored_seal_regions,
     raw_colored_component_bboxes,
@@ -478,6 +483,7 @@ class LocateAnythingGroundingService:
                     for b in boxes
                 )
             ]
+            tile_boxes = self._verify_machine_code_tile_boxes(tile_boxes, image_data)
             boxes.extend(tile_boxes)
             logger.info(
                 "LocateAnything tile retry for %s kept %d box(es) in %dms",
@@ -491,6 +497,60 @@ class LocateAnythingGroundingService:
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
+
+    def _verify_machine_code_tile_boxes(
+        self,
+        tile_boxes: list[BoundingBox],
+        image_data: bytes,
+    ) -> list[BoundingBox]:
+        """Machine-code existence identity for tile-retry candidates.
+
+        A QR code / barcode IS machine-decodable by definition. A tile crop
+        loses page context and makes the grounding model hallucinate codes out
+        of watermark logos and film texture (0712 医院CT报告单: a bottom tile
+        returned the NetEase watermark logo as qr_code, and another returned
+        itself as one giant code). So a tile-retry candidate of a machine-code
+        type is kept only where the deterministic decoder proves a code exists:
+        it must intersect a decoded region (payload decoded = existence
+        proven, box exact). An undecodable "code" carries no extractable
+        payload, so dropping it cannot leak information — the failure
+        direction is safe by the definition of the object itself. Non-code
+        types pass through untouched; the full-frame detect and the YOLO
+        supplement are not gated (this identity check covers only the
+        context-starved tile path). Decoder breakage fails OPEN (keep the
+        candidates): over-mask, never silently un-cover.
+        """
+        code_types = {QR_CODE_SLUG, BARCODE_SLUG}
+        if not any(t.type in code_types for t in tile_boxes):
+            return tile_boxes
+        try:
+            with Image.open(io.BytesIO(image_data)) as img:
+                decoded = detect_machine_code_regions(img)
+        except Exception:
+            logger.warning(
+                "machine-code identity check unavailable; keeping tile candidates",
+                exc_info=True,
+            )
+            return tile_boxes
+        kept: list[BoundingBox] = []
+        dropped = 0
+        for t in tile_boxes:
+            if t.type in code_types and not any(
+                t.x < r.x + r.width
+                and r.x < t.x + t.width
+                and t.y < r.y + r.height
+                and r.y < t.y + t.height
+                for r in decoded
+            ):
+                dropped += 1
+                continue
+            kept.append(t)
+        if dropped:
+            logger.info(
+                "Machine-code identity dropped %d tile-retry candidate(s) with no decodable code",
+                dropped,
+            )
+        return kept
 
     async def _detect_has_image(
         self,

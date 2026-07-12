@@ -30,6 +30,10 @@ class VisualFeatureChecklistItem(BaseModel):
     """One visual feature prompt row with positive/negative guidance."""
 
     rule: str = Field(..., description="Checklist item")
+    query: str | None = Field(
+        default=None,
+        description="Model grounding query wording (decoupled from the display rule); A/B-picked per type",
+    )
     positive_prompt: str | None = Field(default=None, description="Positive prompt guidance")
     negative_prompt: str | None = Field(default=None, description="Negative prompt guidance")
 

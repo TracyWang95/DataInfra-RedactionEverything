@@ -70,12 +70,16 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
 
 def _grounding_query(item: Any, slug: str) -> str:
     """The wording sent to the model for a fixed category — the user's 识别清单
-    owns it (勾选什么传入什么): the item's first positive checklist row wins,
-    then its first rule line; only an unconfigured item falls back to the
+    owns it (勾选什么传入什么): a checklist row's explicit `query` field wins
+    (model query wording decoupled from the Chinese display `rule` — the
+    signature A/B matrix picked "handwritten name signature": it removed the
+    underline false positive AND recalled the faint tiff1 signature the
+    Chinese phrase missed), then the row's rule/positive_prompt, then the
+    item's first rule line; only an unconfigured item falls back to the
     factory default next to the category definitions (SLUG_TO_DEFAULT_QUERY),
     then to the category name."""
     for row in getattr(item, "checklist", None) or []:
-        for key in ("rule", "positive_prompt"):
+        for key in ("query", "rule", "positive_prompt"):
             value = str(
                 (row.get(key) if isinstance(row, dict) else getattr(row, key, "")) or ""
             ).strip()
