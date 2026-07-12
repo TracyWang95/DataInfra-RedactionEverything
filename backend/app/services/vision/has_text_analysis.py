@@ -387,6 +387,64 @@ async def run_has_text_analysis(
                 if clean_text and clean_text not in merged_ner_result[entity_type]:
                     merged_ner_result[entity_type].append(clean_text)
 
+        # ---- Residual re-ask pass (0712 海关发票实证) ----
+        # 长 payload 召回稀释: 161块×38标签一次NER, 金额桶16值恰好漏掉
+        # USD 4,700.00/USD 125.00(同标签块级14/14全召回; temp=0确定性; 收窄/
+        # 匹配无辜)。"已消费"恒等式=模型自己的答案: 任一已返回值(不短于其
+        # 类型 min-len——防'男'把整块标已消费、防多值块部分召回逃逸)与块文本
+        # compact 后互为子串 → 该块已消费。未消费块按原序拼残差 payload
+        # (同 caps 同标签集)再问一次——同一模型在短上下文召回完美(实测)。
+        # 附加式合并只增不减: force-fit 最坏=表头多遮一块; 返回空=与现状全等。
+        consumed_values: list[str] = []
+        for entity_type, entity_list in merged_ner_result.items():
+            normalized_type = chinese_to_id.get(entity_type, entity_type)
+            value_min_len = _NER_MIN_LEN_BY_TYPE.get(normalized_type, _NER_DEFAULT_MIN_LEN)
+            for value in entity_list:
+                compact_value = _compact_text(value)
+                if compact_value and len(compact_value) >= value_min_len:
+                    consumed_values.append(compact_value)
+        residual_blocks = []
+        for block in candidate_blocks:
+            block_compact = _compact_text(str(getattr(block, "text", "") or ""))
+            if not block_compact:
+                continue
+            consumed = any(
+                value in block_compact or block_compact in value for value in consumed_values
+            )
+            if not consumed:
+                residual_blocks.append(block)
+        if residual_blocks:
+            residual_payload = _build_has_text_payload(
+                residual_blocks,
+                max_chars=settings.HAS_VISION_MAX_TEXT_CHARS,
+                max_block_chars=settings.HAS_VISION_MAX_BLOCK_CHARS,
+            )
+            residual_text = residual_payload.content
+            if residual_text.strip() and residual_text != text_content:
+                residual_ner_result = _get_cached_has_text_ner(has_client, residual_text, chinese_types)
+                if residual_ner_result is None:
+                    from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
+                    async with shared_gpu_inference_slot("OCR HaS Text residual NER"):
+                        residual_ner_result = _get_cached_has_text_ner(has_client, residual_text, chinese_types)
+                        if residual_ner_result is None:
+                            model_start = time.perf_counter()
+                            result = await asyncio.to_thread(has_client.ner, residual_text, chinese_types)
+                            _add_has_text_duration(
+                                stage_status,
+                                "has_text_model_ms",
+                                round((time.perf_counter() - model_start) * 1000),
+                            )
+                            residual_ner_result = result if isinstance(result, dict) else {}
+                for entity_type, entity_list in (residual_ner_result or {}).items():
+                    if not entity_list:
+                        continue
+                    merged_ner_result.setdefault(entity_type, [])
+                    for text in entity_list:
+                        clean_text = _compact_text(text)
+                        if clean_text and clean_text not in merged_ner_result[entity_type]:
+                            merged_ner_result[entity_type].append(clean_text)
+
         for entity_type, entity_list in merged_ner_result.items():
             if not entity_list:
                 continue

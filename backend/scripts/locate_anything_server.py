@@ -911,7 +911,13 @@ async def detect(req: DetectRequest) -> dict[str, Any]:
             # single-category hybrid pass each restores recall. Mirrors the vLLM
             # predict_boxes_per_category path. Quality over a few extra seconds.
             for cat in general_requested:
-                answer, boxes, (width, height) = await service.predict_boxes(image, _detect_prompt([cat]))
+                answer, boxes, (width, height) = await service.predict_boxes(
+                    image,
+                    _detect_prompt([cat]),
+                    generation_mode=req.generation_mode or DEFAULT_GENERATION_MODE,
+                    fast_first=req.fast_first,
+                    max_image_side=req.max_image_side or DEFAULT_MAX_SIDE,
+                )
                 raw_answers.append(f"[{cat}] {answer}")
                 for box in boxes:
                     normalized = _box_to_normalized(box, width, height, cat)
