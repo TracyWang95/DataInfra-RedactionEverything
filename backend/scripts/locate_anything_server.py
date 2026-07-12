@@ -40,9 +40,6 @@ DEFAULT_TEMPERATURE = float(os.environ.get("LOCATE_ANYTHING_TEMPERATURE", "0.7")
 # vision tower + mlp1 projector on GPU and posts the stitched embeds to vLLM.
 VLLM_LM_URL = os.environ.get("LOCATE_ANYTHING_VLLM_URL", "").strip()
 VLLM_LM_MODEL = os.environ.get("LOCATE_ANYTHING_VLLM_MODEL", "locate_qwen2_model")
-# Fixed seed pins the 0.7/0.9 open sampling so the same page yields the same boxes
-# on every click (reproducible) without collapsing to greedy. Tunable via env.
-VLLM_LM_SEED = int(os.environ.get("LOCATE_ANYTHING_VLLM_SEED", "1234"))
 FAST_FIRST_ENABLED = _env_flag("LOCATE_ANYTHING_FAST_FIRST", "1")
 VALID_GENERATION_MODES = {"fast", "hybrid", "slow"}
 
@@ -361,9 +358,12 @@ class LocateService:
             # slightly between runs; that is intentional. NOTE: repetition_penalty
             # is omitted — with vLLM prompt-embeds there are no prompt token-ids, so
             # the penalty kernel indexes out of bounds and triggers a CUDA assert.
+            # NOTE: no fixed seed — a pinned seed makes a BAD sample permanent
+            # (measured: seed 1234 deterministically dropped one of the two farm
+            # signatures on every run, a hard recall regression the HF path's
+            # seedless sampling recovers on retry). Behavior now mirrors HF.
             "temperature": DEFAULT_TEMPERATURE,
             "top_p": 0.9,
-            "seed": VLLM_LM_SEED,
             "prompt_embeds": prompt_embeds_b64,
             "skip_special_tokens": False,
             "spaces_between_special_tokens": False,
