@@ -146,11 +146,11 @@ export function inferWizardFloorFromBatchConfig(
   if (jobType === 'smart_batch') {
     if (Array.isArray(jobConfig.entity_type_ids) && jobConfig.entity_type_ids.length > 0) return 2;
     if (Array.isArray(jobConfig.ocr_has_types) && jobConfig.ocr_has_types.length > 0) return 2;
-    if (Array.isArray(jobConfig.visual_features_types) && jobConfig.visual_features_types.length > 0) return 2;
+    if (Array.isArray(jobConfig.visual_feature_types) && jobConfig.visual_feature_types.length > 0) return 2;
     return null;
   }
   if (Array.isArray(jobConfig.ocr_has_types) && jobConfig.ocr_has_types.length > 0) return 2;
-  if (Array.isArray(jobConfig.visual_features_types) && jobConfig.visual_features_types.length > 0) return 2;
+  if (Array.isArray(jobConfig.visual_feature_types) && jobConfig.visual_feature_types.length > 0) return 2;
   return null;
 }
 

@@ -362,7 +362,7 @@ def sample_looks_semantic(sample: str) -> bool:
         return False
     if re.search(r"[\u4e00-\u9fff]", text):
         return True
-    if re.search(r"[A-Za-z]+[\s路.'-]+[A-Za-z]+", text):
+    if re.search(r"[A-Za-z]+[\s·.'-]+[A-Za-z]+", text):
         return True
     if len(text) >= 16 and re.search(r"[A-Za-z]", text) and not re.fullmatch(r"[A-Za-z0-9_\-]+", text):
         return True

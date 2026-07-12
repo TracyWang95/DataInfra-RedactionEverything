@@ -125,9 +125,14 @@ PRESET_ENTITY_TYPES: dict[str, EntityTypeConfig] = {
 }
 
 def is_default_generic_entity_type_id(type_id: str) -> bool:
-    """Return whether a type belongs to the broad generic default schema."""
-    normalized = canonical_type_id(type_id)
-    return bool(normalized) and not normalized.startswith("custom_")
+    """Return whether a type belongs to the broad generic default schema.
+
+    Custom types (id prefixed custom_) are excluded — checked on the RAW id:
+    canonical_type_id upper-cases, so a post-canonical startswith("custom_")
+    never matched and the guard was silently always-true (custom types with
+    default_enabled leaked into the generic default schema)."""
+    raw = str(type_id or "").strip()
+    return bool(raw) and not raw.lower().startswith("custom_")
 
 
 TEXT_GENERIC_TARGETS_BY_DATA_DOMAIN: dict[str, tuple[str, ...]] = {

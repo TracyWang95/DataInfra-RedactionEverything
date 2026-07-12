@@ -92,7 +92,7 @@ def is_number_like(value: Any) -> bool:
         return False
     if isinstance(value, int | float | Decimal):
         return True
-    text = str(value).strip().replace(",", "").replace("楼", "")
+    text = str(value).strip().replace(",", "").replace("¥", "").replace("￥", "")
     if not text:
         return False
     try:
