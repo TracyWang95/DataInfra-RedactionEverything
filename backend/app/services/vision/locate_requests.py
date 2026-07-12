@@ -19,31 +19,6 @@ from app.core.visual_feature_categories import (
 )
 
 
-def _type_rules(type_config: Any) -> list[str]:
-    checklist = getattr(type_config, "checklist", None) or []
-    rules: list[str] = []
-    for item in checklist:
-        if isinstance(item, dict):
-            for key in ("rule", "positive_prompt"):
-                value = str(item.get(key) or "").strip()
-                if value:
-                    rules.append(value)
-        else:
-            for key in ("rule", "positive_prompt"):
-                value = str(getattr(item, key, "") or "").strip()
-                if value:
-                    rules.append(value)
-    if not rules:
-        rules = [str(rule).strip() for rule in (getattr(type_config, "rules", None) or []) if str(rule).strip()]
-    description = str(getattr(type_config, "description", "") or "").strip()
-    if description:
-        rules.append(description)
-    name = str(getattr(type_config, "name", "") or getattr(type_config, "id", "")).strip()
-    if name:
-        rules.append(name)
-    return list(dict.fromkeys(rules))
-
-
 def _checklist_prompt(type_configs: list[Any]) -> str:
     lines = [
         "Task: locate visual features in this document image.",
@@ -53,7 +28,7 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
         f"Coordinates are integers in 0..{settings.VISUAL_FEATURES_COORD_MODE}, origin top-left.",
         "Use one tight box per visible instance.",
         f"Allowed type_id: {', '.join(str(getattr(item, 'id', '')).strip() for item in type_configs)}",
-        "Configured visual checklist:",
+        "Targets:",
     ]
     for item in type_configs:
         type_id = str(getattr(item, "id", "")).strip()
@@ -61,8 +36,9 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
         lines.append(f"- type_id={type_id}; name={name}")
         # Grounding query per official CATEGORIES semantics: a SHORT category
         # phrase (row.query wins, else the human name) — the LA server grounds
-        # exactly this line; Check/Exclude rows below stay as schema context
-        # only (the verbose variant suppressed faint detections, measured).
+        # exactly this line and nothing else. The old Check/Exclude rows are
+        # GONE (not kept as "context"): the verbose variant measurably
+        # suppressed faint detections and the server never reads them.
         query = ""
         for row in getattr(item, "checklist", None) or []:
             value = str(
@@ -72,11 +48,6 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
                 query = value
                 break
         lines.append(f"  Query: {query or name}")
-        for index, rule in enumerate(_type_rules(item), start=1):
-            lines.append(f"  {index}. Check: {rule}")
-        negative = str(getattr(item, "negative_prompt", "") or "").strip()
-        if bool(getattr(item, "negative_prompt_enabled", False)) and negative:
-            lines.append(f"  Exclude: {negative}")
     lines.append('If none, return {"objects":[]}.')
     return "\n".join(lines)
 

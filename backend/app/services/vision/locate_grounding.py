@@ -33,7 +33,6 @@ from app.services.vision.locate_payload import (
 from app.services.vision.locate_requests import (
     _checklist_prompt,
     _detect_requests,
-    _type_rules,  # noqa: F401  # re-exported for API stability
 )
 from app.services.vision.locate_tiles import (
     _MACHINE_CODE_SIBLINGS,
