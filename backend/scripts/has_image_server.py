@@ -45,10 +45,6 @@ _device = "unknown"
 _gpu_available = False
 
 
-def _allow_cpu() -> bool:
-    return os.environ.get("HAS_IMAGE_ALLOW_CPU", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _resolve_device() -> str:
     global _gpu_available
     try:
@@ -57,33 +53,20 @@ def _resolve_device() -> str:
         _gpu_available = bool(torch.cuda.is_available() and torch.cuda.device_count() > 0)
     except Exception as exc:
         _gpu_available = False
-        if not _allow_cpu():
-            print(f"[HaS-Image] FATAL: unable to inspect CUDA availability: {exc}", flush=True)
-            sys.exit(1)
+        print(f"[HaS-Image] FATAL: unable to inspect CUDA availability: {exc}", flush=True)
+        sys.exit(1)
 
     configured = os.environ.get("HAS_IMAGE_DEVICE", "").strip()
     if configured:
-        if configured.lower() == "cpu" and not _allow_cpu():
-            print(
-                "[HaS-Image] FATAL: HAS_IMAGE_DEVICE=cpu is blocked by GPU-only mode. "
-                "Set HAS_IMAGE_ALLOW_CPU=1 for debug-only CPU mode.",
-                flush=True,
-            )
+        if configured.lower() == "cpu":
+            print("[HaS-Image] FATAL: HAS_IMAGE_DEVICE=cpu is blocked (GPU-only).", flush=True)
             sys.exit(1)
         return configured
 
     if _gpu_available:
         return "0"
-    if _allow_cpu():
-        print("[HaS-Image] WARN: HAS_IMAGE_ALLOW_CPU=1; running CPU inference.", flush=True)
-        return "cpu"
 
-    print(
-        "[HaS-Image] FATAL: no CUDA GPU detected. "
-        "HaS Image defaults to GPU-only mode to avoid silent CPU fallback. "
-        "Set HAS_IMAGE_ALLOW_CPU=1 only for debug-only CPU mode.",
-        flush=True,
-    )
+    print("[HaS-Image] FATAL: no CUDA GPU detected (GPU-only, no CPU fallback).", flush=True)
     sys.exit(1)
 
 
@@ -206,7 +189,6 @@ def _predict_sync(image_bytes: bytes, conf: float, classes: list[int] | None) ->
 @app.get("/health")
 async def health():
     runtime_mode = "gpu" if _gpu_available and str(_device).lower() != "cpu" else "cpu"
-    gpu_only_mode = not _allow_cpu()
     return {
         "status": "ok" if _ready else "unavailable",
         "ready": _ready,
@@ -216,8 +198,8 @@ async def health():
         "runtime_mode": runtime_mode,
         "gpu_available": _gpu_available,
         "device": _device,
-        "gpu_only_mode": gpu_only_mode,
-        "cpu_fallback_risk": (not gpu_only_mode) or runtime_mode != "gpu",
+        "gpu_only_mode": True,
+        "cpu_fallback_risk": runtime_mode != "gpu",
     }
 
 

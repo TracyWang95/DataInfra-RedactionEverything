@@ -28,7 +28,6 @@ HOST = os.environ.get("HAS_TEXT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("HAS_TEXT_PORT", "8080"))
 N_CTX = int(os.environ.get("HAS_TEXT_N_CTX", "8192"))
 N_GPU_LAYERS = int(os.environ.get("HAS_TEXT_N_GPU_LAYERS", "-1"))
-ALLOW_CPU = os.environ.get("HAS_TEXT_ALLOW_CPU", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _print_missing_model_help() -> None:
@@ -60,7 +59,7 @@ def main() -> None:
     print(f"Server URL: http://{HOST}:{PORT}/v1")
     print(f"Context length: {N_CTX}")
     print(f"GPU layers: {N_GPU_LAYERS} (-1 means all layers; 0 means CPU)")
-    print(f"GPU-only mode: {'no' if ALLOW_CPU or N_GPU_LAYERS == 0 else 'yes'}")
+    print(f"GPU-only mode: {'no' if N_GPU_LAYERS == 0 else 'yes'}")
     print("\nLoading model...")
 
     try:
@@ -70,10 +69,9 @@ def main() -> None:
         from llama_cpp.server.settings import ModelSettings, ServerSettings
 
         supports_gpu = getattr(llama_cpp, "llama_supports_gpu_offload", lambda: None)()
-        if N_GPU_LAYERS != 0 and not ALLOW_CPU and supports_gpu is False:
+        if N_GPU_LAYERS != 0 and supports_gpu is False:
             print("\nERROR: llama-cpp-python was built without GPU offload support.")
-            print("HaS Text defaults to GPU-only mode to avoid silent CPU fallback.")
-            print("Install a CUDA/Vulkan-enabled llama.cpp runtime or set HAS_TEXT_ALLOW_CPU=1 for debug-only CPU mode.")
+            print("HaS Text is GPU-only (no CPU fallback). Install a CUDA/Vulkan-enabled llama.cpp runtime.")
             sys.exit(1)
 
         app = create_app(

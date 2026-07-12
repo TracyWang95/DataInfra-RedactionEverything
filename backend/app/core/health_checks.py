@@ -325,13 +325,12 @@ def _has_text_runtime_detail() -> dict[str, Any]:
     gpu_layers = _runtime_config_value("HAS_TEXT_N_GPU_LAYERS") or "-1"
     device = _runtime_config_value("HAS_TEXT_DEVICE")
     gpu_provider = _runtime_config_value("HAS_TEXT_GPU_PROVIDER")
-    allow_cpu = _runtime_config_value("HAS_TEXT_ALLOW_CPU").lower() in {"1", "true", "yes", "on"}
     detail: dict[str, Any] = {
         "runtime": "llama.cpp server",
         "gpu_layers": gpu_layers if gpu_layers else None,
         "device": device if device else None,
         "gpu_provider": gpu_provider if gpu_provider else None,
-        "gpu_only_mode": not allow_cpu and gpu_layers != "0",
+        "gpu_only_mode": gpu_layers != "0",
     }
     if gpu_layers == "0":
         detail["gpu_enabled"] = False
@@ -346,7 +345,7 @@ def _has_text_runtime_detail() -> dict[str, Any]:
         detail["gpu_enabled"] = None
         detail["runtime_mode"] = "unknown"
     detail["runtime_expectation"] = "cuda-gpu"
-    detail["cpu_fallback_risk"] = allow_cpu or detail["runtime_mode"] != "gpu"
+    detail["cpu_fallback_risk"] = detail["runtime_mode"] != "gpu"
     return detail
 
 

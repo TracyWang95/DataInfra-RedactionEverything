@@ -27,7 +27,6 @@ app.add_middleware(
 )
 
 _vl: Any | None = None
-_ocr: Any | None = None
 _structure: Any | None = None
 _ready = False
 _model_name = "PaddleOCR-VL-1.6-0.9B"
@@ -105,10 +104,6 @@ def _fatal(exit_code: int = 1) -> None:
     os._exit(exit_code)
 
 
-def _allow_cpu() -> bool:
-    return os.environ.get("OCR_ALLOW_CPU", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _structure_enabled() -> bool:
     return os.environ.get("OCR_STRUCTURE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -120,19 +115,6 @@ def _require_gpu_or_exit() -> None:
     except ImportError as exc:
         print(f"[OCR] FATAL: paddle is not installed: {exc}", flush=True)
         _fatal(1)
-
-    if _allow_cpu():
-        print("[OCR] WARN: OCR_ALLOW_CPU is enabled; GPU remains preferred.", flush=True)
-        try:
-            if paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
-                paddle.set_device("gpu:0")
-                _paddle_device = str(paddle.get_device())
-            else:
-                paddle.set_device("cpu")
-                _paddle_device = "cpu"
-        except Exception as exc:
-            print(f"[OCR] WARN: failed to select Paddle device: {exc}", flush=True)
-        return
 
     if not paddle.is_compiled_with_cuda():
         print("[OCR] FATAL: installed Paddle build has no CUDA support.", flush=True)
@@ -176,7 +158,7 @@ def _vl_disabled() -> bool:
 
 
 def init_ocr() -> None:
-    global _vl, _ocr, _ready, _model_name
+    global _vl, _ready, _model_name
     _require_gpu_or_exit()
 
     if _vl_disabled():
@@ -212,20 +194,7 @@ def init_ocr() -> None:
         return
     except Exception as exc:
         print(f"[OCR] FATAL: PaddleOCR-VL init failed: {exc}", flush=True)
-        if not _allow_cpu():
-            _fatal(1)
-        _vl = None
-
-    try:
-        from paddleocr import PaddleOCR
-
-        _ocr = PaddleOCR(use_angle_cls=True, lang="ch")
-        _ready = True
-        _model_name = "PaddleOCR-2.x CPU fallback"
-        print(f"[OCR] {_model_name} loaded because OCR_ALLOW_CPU is enabled", flush=True)
-    except Exception as exc:
-        print(f"[OCR] FATAL: fallback PaddleOCR init failed: {exc}", flush=True)
-        _ready = False
+        _fatal(1)
 
 
 def warmup() -> None:
@@ -916,7 +885,6 @@ async def health() -> dict[str, Any]:
     except Exception:
         pass
 
-    gpu_only_mode = not _allow_cpu()
     runtime_mode = "gpu" if gpu_ok and str(device).lower().startswith("gpu") else "cpu"
     return {
         "status": "online" if _ready else "offline",
@@ -926,8 +894,8 @@ async def health() -> dict[str, Any]:
         "runtime_mode": runtime_mode,
         "gpu_available": gpu_ok,
         "device": device or "unknown",
-        "gpu_only_mode": gpu_only_mode,
-        "cpu_fallback_risk": (not gpu_only_mode) or runtime_mode != "gpu",
+        "gpu_only_mode": True,
+        "cpu_fallback_risk": runtime_mode != "gpu",
         "structure_ready": _structure is not None,
     }
 
