@@ -36,13 +36,17 @@ def test_box_becomes_exactly_the_ink_hull(monkeypatch):
     assert (round(b.x, 3), round(b.y, 3), round(b.width, 3), round(b.height, 3)) == (0.306, 0.203, 0.056, 0.056)
 
 
-def test_one_loose_box_over_two_prints_snaps_to_their_union(monkeypatch):
+def test_one_loose_box_over_two_prints_splits_per_deposit(monkeypatch):
+    # 0710 农业合同: one LA box straddled both prints (and the signature
+    # between them) — the union hull was the "刘悦上面那个指纹框太大" bug.
+    # A connected component IS a separate deposit: one exact box per print.
     fp = _box("fingerprint", 0.275, 0.155, 0.150, 0.104)
     comps = [(0.350, 0.157, 0.059, 0.044), (0.306, 0.203, 0.056, 0.056)]
     out = _snap(monkeypatch, [fp], comps)
-    b = out[0]
-    assert round(b.x, 3) == 0.306 and round(b.y, 3) == 0.157
-    assert round(b.x + b.width, 3) == 0.409 and round(b.y + b.height, 3) == 0.259
+    assert len(out) == 2
+    got = sorted((round(b.x, 3), round(b.y, 3), round(b.width, 3), round(b.height, 3)) for b in out)
+    assert got == [(0.306, 0.203, 0.056, 0.056), (0.350, 0.157, 0.059, 0.044)]
+    assert all(b.type == "fingerprint" for b in out)
 
 
 def test_detached_ink_is_not_absorbed(monkeypatch):

@@ -536,17 +536,17 @@ class LocateAnythingGroundingService:
             if not touched:
                 out.append(b)
                 continue
-            x1 = min(c[0] for c in touched)
-            y1 = min(c[1] for c in touched)
-            x2 = max(c[0] + c[2] for c in touched)
-            y2 = max(c[1] + c[3] for c in touched)
-            if (x1, y1, x2 - x1, y2 - y1) != (b.x, b.y, b.width, b.height):
+            # One box PER ink deposit, never their union: a connected
+            # component IS a separate deposit by definition, so a loose LA box
+            # straddling two prints (0710 农业合同: one box spanned both the
+            # 甲方 and 刘悦 prints plus the signature between them) splits
+            # into one exact box per print.
+            for index, (cx, cy, cw, ch) in enumerate(touched):
                 out.append(b.model_copy(update={
-                    "x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1,
+                    "id": f"{b.id}_ink{index}" if len(touched) > 1 else b.id,
+                    "x": cx, "y": cy, "width": cw, "height": ch,
                 }))
-                snapped += 1
-            else:
-                out.append(b)
+            snapped += 1
         if snapped:
             logger.info("Snapped %d fingerprint box(es) to their measured ink extent", snapped)
         return out
