@@ -469,20 +469,7 @@ class LocateAnythingGroundingService:
         if retry_slugs:
             retry_start = time.perf_counter()
             tile_boxes = await self._detect_on_tiles(image_data, page, retry_slugs, queries=query_by_slug)
-            # Gap-filling only: a tile hit that touches anything the full
-            # frame already found is the zoom second-guessing the page-scale
-            # call - discard it.
-            tile_boxes = [
-                t
-                for t in tile_boxes
-                if not any(
-                    t.x < b.x + b.width
-                    and b.x < t.x + t.width
-                    and t.y < b.y + b.height
-                    and b.y < t.y + t.height
-                    for b in boxes
-                )
-            ]
+            tile_boxes = self._filter_tile_candidates(tile_boxes, boxes)
             tile_boxes = self._verify_machine_code_tile_boxes(tile_boxes, image_data)
             boxes.extend(tile_boxes)
             logger.info(
@@ -497,6 +484,32 @@ class LocateAnythingGroundingService:
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
+
+    @staticmethod
+    def _filter_tile_candidates(
+        tile_boxes: list[BoundingBox],
+        existing: list[BoundingBox],
+    ) -> list[BoundingBox]:
+        """Gap-filling only, scoped to the SAME type: a tile hit touching a
+        full-frame box of the same type is the zoom second-guessing the
+        page-scale call - discard it. A tile hit overlapping a box of a
+        DIFFERENT type is a different entity sharing pixels (a thumbprint
+        pressed onto a handwritten name, 0710 农业合同实证) and must be kept;
+        type equality is a string identity, so custom types participate with
+        no enumeration.
+        """
+        return [
+            t
+            for t in tile_boxes
+            if not any(
+                b.type == t.type
+                and t.x < b.x + b.width
+                and b.x < t.x + t.width
+                and t.y < b.y + b.height
+                and b.y < t.y + t.height
+                for b in existing
+            )
+        ]
 
     def _verify_machine_code_tile_boxes(
         self,

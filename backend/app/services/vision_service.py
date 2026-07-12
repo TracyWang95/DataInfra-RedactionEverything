@@ -699,23 +699,36 @@ class VisionService:
         boxes: list[BoundingBox],
         iou_threshold: float | None = None,
     ) -> list[BoundingBox]:
-        """Geometric dedup only: a single IoU pass, no type/source/text/ranking
-        rules. Boxes whose IoU with a kept box is >= the threshold are the same
-        physical region; the larger box is kept so redaction coverage never
-        shrinks. Every removed hardcoded rule (signature-name folding, same-line
-        heuristics, LA-wins precedence, containment ratios) could drop a genuine
-        PII box — i.e. cause a missed redaction. Pure IoU only merges boxes that
-        occupy essentially the same pixels, so distinct detections are kept.
+        """Geometric dedup scoped to one entity type at a time.
+
+        "Duplicate" means the SAME OBJECT detected twice; a differing type is
+        the model asserting a DIFFERENT entity, so cross-type boxes are never
+        merged however tightly they overlap - a thumbprint pressed onto a
+        handwritten name (0710 农业合同实证: same pixels, two entities) must
+        keep both boxes; the old type-blind pass ate the fingerprint on one
+        line and the signature on the other. Type equality is a string
+        identity, so user-defined custom types participate as their own
+        entities with no enumeration. Within one (page, type) group it stays
+        a pure IoU pass - the larger box is kept so redaction coverage never
+        shrinks, and no source/text/ranking rule is ever consulted (each such
+        removed rule could drop a genuine PII box).
         """
         if len(boxes) <= 1:
             return boxes
         from app.services.vision.region_merger import deduplicate_by_iou
 
         kwargs = {} if iou_threshold is None else {"iou_threshold": iou_threshold}
-        result = deduplicate_by_iou(boxes, lambda b: (b.x, b.y, b.width, b.height), **kwargs)
+        kept_ids: set[int] = set()
+        groups: dict[tuple, list[BoundingBox]] = {}
+        for b in boxes:
+            groups.setdefault((b.page, b.type), []).append(b)
+        for group in groups.values():
+            for b in deduplicate_by_iou(group, lambda b: (b.x, b.y, b.width, b.height), **kwargs):
+                kept_ids.add(id(b))
+        result = [b for b in boxes if id(b) in kept_ids]
         removed_count = len(boxes) - len(result)
         if removed_count > 0:
-            logger.info("DEDUP removed %d duplicate boxes (IoU only)", removed_count)
+            logger.info("DEDUP removed %d duplicate boxes (IoU within same type only)", removed_count)
         return result
 
     async def _detect_with_pdf_text_layer(
