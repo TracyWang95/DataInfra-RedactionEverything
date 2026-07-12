@@ -48,12 +48,17 @@ def test_unambiguous_model_answer_narrows_span() -> None:
     assert client.queries == [("人民币每亩每年100元", ["数值"])]
 
 
-def test_multi_value_answer_keeps_whole_span() -> None:
+def test_multi_value_answer_splits_per_value() -> None:
+    # Dual-numeral span: the model names N values -> N AMOUNT entities, each
+    # hunting its own box. The old keep-whole-span rule left the wrapped
+    # ￥360000 unmasked (0712 房屋合同) because the whole span exists in no
+    # single OCR block.
     entities, _ = _narrow(
         [{"type": "AMOUNT", "text": "人民币壹佰万元及利息100元"}],
         {"人民币壹佰万元及利息100元": ["壹佰万元", "100元"]},
     )
-    assert entities[0]["text"] == "人民币壹佰万元及利息100元"
+    assert sorted(e["text"] for e in entities) == ["100元", "壹佰万元"]
+    assert all(e["type"] == "AMOUNT" for e in entities)
 
 
 def test_non_substring_answer_keeps_whole_span() -> None:

@@ -63,14 +63,18 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
     semantics, not an error. Queried as 数值 (settings.AMOUNT_VALUE_QUERY_LABEL)
     on the entity text alone, the same model extracts the value itself, so the
     narrowing is the model's own judgment end to end — no token grammar, no
-    word lists. Fires only on an unambiguous answer: exactly ONE value that is
-    a proper substring of the entity. Anything else — multi-value spans, no
-    answer, a model failure — keeps the whole span, so narrowing can only ever
-    trim label context, never uncover a value.
+    word lists. One value that is a proper substring -> the span narrows to
+    it. SEVERAL values (a dual-numeral span such as '人民币陆7元整(￥360000元)'
+    — the 大写 reading plus the bracketed figure, 0712 房屋合同实证) -> the
+    entity SPLITS into one AMOUNT entity per value, each hunting its own box;
+    the old single-value-only rule silently dropped every extra numeral
+    (360000 went unmasked). No answer / model failure keeps the whole span,
+    so narrowing still only ever trims label context, never uncovers a value.
     """
     label = str(getattr(settings, "AMOUNT_VALUE_QUERY_LABEL", "") or "").strip()
     if not label or not has_client:
         return
+    split_entities: list[dict[str, str]] = []
     for entity in entities:
         if entity.get("type") != "AMOUNT":
             continue
@@ -83,9 +87,14 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
             logger.debug("amount value narrowing skipped for %r: %s", original, exc)
             continue
         values = [str(v).strip() for v in (result or {}).get(label, []) if str(v).strip()]
-        if len(values) == 1 and values[0] != original and values[0] in original:
-            logger.debug("amount narrowed by model: %r -> %r", original, values[0])
-            entity["text"] = values[0]
+        values = list(dict.fromkeys(v for v in values if v != original and v in original))
+        if not values:
+            continue
+        logger.debug("amount narrowed by model: %r -> %r", original, values)
+        entity["text"] = values[0]
+        for extra in values[1:]:
+            split_entities.append({**entity, "text": extra})
+    entities.extend(split_entities)
 
 
 async def run_has_text_analysis(

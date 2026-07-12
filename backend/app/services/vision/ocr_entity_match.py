@@ -30,6 +30,7 @@ from app.services.vision.ocr_cjk_geometry import (
     _span_rects_with_row_bands,
 )
 from app.services.vision.ocr_table_semantics import (
+    _amount_digit_signature,
     _amount_value_signature,
     _block_search_text,
     extract_table_cells,
@@ -523,6 +524,7 @@ def _match_cross_block_entity(
 def match_entities_to_ocr(
     ocr_blocks: list[OCRTextBlock],
     entities: list[dict[str, str]],
+    _digit_retry: bool = False,
 ) -> list[SensitiveRegion]:
     """
     Match HaS-detected entities to OCR text blocks using text matching to get
@@ -530,6 +532,7 @@ def match_entities_to_ocr(
     and fuzzy matching.
     """
     regions: list[SensitiveRegion] = []
+    digit_retry_entities: list[dict[str, str]] = []
 
     # Expand HTML tables into virtual cell blocks
     expanded_blocks: list[OCRTextBlock] = []
@@ -840,6 +843,18 @@ def match_entities_to_ocr(
                     break
 
         # Fallback: search in original (unexpanded) blocks
+        if not matched and normalized_type == "AMOUNT" and not _digit_retry:
+            # Line-wrap recall: the value's tail glyph wrapped to the next OCR
+            # line ('…(￥360000' / '元)…', 0712 房屋合同), so the full entity
+            # text exists in no single block. An AMOUNT's sensitive payload IS
+            # its digit sequence (W3 identity: same digits = same value, cover
+            # it); retry the whole precise-match pipeline with the digit
+            # payload as the target. len > 2 is the W3 structural guard — a
+            # 1-2 digit payload would match any stray numeral.
+            digit_payload = _amount_digit_signature(entity_text)
+            if len(digit_payload) > 2 and digit_payload != entity_text:
+                digit_retry_entities.append({"type": "AMOUNT", "text": digit_payload})
+
         if not matched and not strict_value:
             for block in ocr_blocks:
                 if block.text.startswith("<table") and entity_text in block.text:
@@ -858,6 +873,11 @@ def match_entities_to_ocr(
                         entity_text, block.left, block.top, block.width, block.height,
                     )
                     break
+
+    if digit_retry_entities:
+        regions.extend(
+            match_entities_to_ocr(ocr_blocks, digit_retry_entities, _digit_retry=True)
+        )
 
     deduped_regions = _dedupe_ocr_regions(regions)
     logger.info("Matched %d entities to OCR blocks (%d after dedupe)", len(regions), len(deduped_regions))
