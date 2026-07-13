@@ -78,6 +78,11 @@ _BLUR_RADIUS_MAX_SPAN = 24
 # Rasterization scale for redacting PDF pages.
 _PDF_REDACTION_RENDER_SCALE = 2.0
 
+# A text region this fraction inside a larger same-type region is a redundant
+# duplicate (OCR line-wrap makes HaS return a heading both whole and as line
+# fragments). IoU dedup misses it because the size gap keeps IoU low.
+_CONTAINED_TEXT_DROP_RATIO = 0.85
+
 
 def _elapsed_ms(start: float) -> int:
     return max(0, round((time.perf_counter() - start) * 1000))
@@ -884,7 +889,35 @@ class VisionService:
         bounding_boxes = await asyncio.to_thread(
             self._filter_ocr_has_regions, img, regions, page
         )
+        bounding_boxes = self._drop_contained_same_type_text(bounding_boxes)
         return bounding_boxes, result_image_base64
+
+    def _drop_contained_same_type_text(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """Drop a text region mostly contained within a larger same-type region.
+
+        OCR line-wrap makes HaS return a wrapped heading both whole and as line
+        fragments (19合同 标题 "...供货合同" also emits a "货合同" tail), so the
+        matcher lays a small box inside the larger same-type box. IoU dedup
+        misses it — the size gap keeps IoU below threshold — but containment
+        catches it. The larger box is kept so redaction coverage never shrinks.
+        Same-type only: a different type is a different entity the model asserts.
+        """
+        if len(boxes) <= 1:
+            return boxes
+        drop: set[int] = set()
+        for smaller in boxes:
+            area_s = smaller.width * smaller.height
+            for larger in boxes:
+                if larger is smaller or larger.type != smaller.type:
+                    continue
+                if larger.width * larger.height <= area_s:
+                    continue
+                if self._calculate_smaller_overlap(smaller, larger) >= _CONTAINED_TEXT_DROP_RATIO:
+                    drop.add(id(smaller))
+                    break
+        if drop:
+            logger.info("Dropped %d text region(s) contained in a larger same-type box", len(drop))
+        return [b for b in boxes if id(b) not in drop]
 
     def _filter_ocr_has_regions(
         self,
