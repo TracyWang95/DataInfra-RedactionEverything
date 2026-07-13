@@ -122,6 +122,7 @@ class DetectRequest(BaseModel):
     fast_first: bool | None = None
     signature_fallback: bool = True
     max_image_side: int | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -362,7 +363,7 @@ class LocateService:
             # (measured: seed 1234 deterministically dropped one of the two farm
             # signatures on every run, a hard recall regression the HF path's
             # seedless sampling recovers on retry). Behavior now mirrors HF.
-            "temperature": DEFAULT_TEMPERATURE,
+            "temperature": temperature,
             "top_p": 0.9,
             "prompt_embeds": prompt_embeds_b64,
             "skip_special_tokens": False,
@@ -383,7 +384,8 @@ class LocateService:
         return payload["choices"][0]["text"]
 
     async def _predict_boxes_vllm(
-        self, image: Image.Image, prompt: str, max_image_side: int
+        self, image: Image.Image, prompt: str, max_image_side: int,
+        temperature: float = DEFAULT_TEMPERATURE,
     ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
         if not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
@@ -487,7 +489,7 @@ class LocateService:
         fallback_when_no_boxes: bool = True,
     ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
         if VLLM_LM_URL:
-            return await self._predict_boxes_vllm(image, prompt, max_image_side)
+            return await self._predict_boxes_vllm(image, prompt, max_image_side, temperature=temperature)
         if self.worker is None or not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
         source_size = image.size
@@ -917,6 +919,7 @@ async def detect(req: DetectRequest) -> dict[str, Any]:
                     generation_mode=req.generation_mode or DEFAULT_GENERATION_MODE,
                     fast_first=req.fast_first,
                     max_image_side=req.max_image_side or DEFAULT_MAX_SIDE,
+                    temperature=req.temperature if req.temperature is not None else DEFAULT_TEMPERATURE,
                 )
                 raw_answers.append(f"[{cat}] {answer}")
                 for box in boxes:
