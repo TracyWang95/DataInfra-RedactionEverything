@@ -664,15 +664,19 @@ class VisionService:
         ocr_blocks: list,
         page_size: tuple[int, int],
     ) -> list[BoundingBox]:
-        """Drop an id_card visual box that is the whole page hallucinated as a
-        card (立案告知书 upscaled: LA grounds the entire document as "ID card"
-        5/5). Zero tuned numbers — pure geometry + the existing ID-card face
-        vocabulary and the existing 18-digit ID regex. An id_card box that (a)
-        contains the pixel hull of ALL OCR text AND (b) whose interior OCR shows
-        NO face word and NO 18-digit number carries no card evidence and is a
-        page hallucination. A real card (face words readable, OR — for a blurred
-        copy — the 18-digit number survives OCR) escapes and is kept. No OCR /
-        no id_card -> unchanged (fail toward keeping the mask).
+        """Drop an id_card visual box that is really the document hallucinated
+        as a card (立案告知书 upscaled: LA grounds the page as "ID card"). Zero
+        tuned numbers — pure identity signals. An id_card box is a hallucination
+        when it shows NO card evidence (no 二代身份证 face word AND no 18-digit
+        ID number in its interior OCR) AND EITHER:
+          - it contains an official_seal box — a real 身份证 never encloses a
+            red 公章 (semantic identity), or
+          - it covers the whole OCR text hull — the box IS the document.
+        A real card (face words readable, OR — a blurred copy — the 18-digit
+        number survives OCR) escapes on the evidence test and is kept. No OCR /
+        no id_card -> unchanged (fail toward keeping the mask). Failure
+        direction: any escape condition true -> keep (over-mask, never a
+        missed real card).
         """
         page_w, page_h = page_size
         if not ocr_blocks or page_w <= 0 or page_h <= 0:
@@ -695,14 +699,16 @@ class VisionService:
             any(word in all_text for word in self._ID_CARD_FACE_WORDS)
             or bool(self._ID_CARD_NUMBER_RE.search(all_text))
         )
+        seals = [b for b in boxes if b.type == "official_seal"]
         out = []
         for box in boxes:
-            if box.type == "id_card" and box.source == "visual_features":
+            if box.type == "id_card" and box.source == "visual_features" and not has_face_evidence:
                 bx1, by1 = box.x * page_w, box.y * page_h
                 bx2, by2 = (box.x + box.width) * page_w, (box.y + box.height) * page_h
                 covers_all_text = bx1 <= hull[0] and by1 <= hull[1] and bx2 >= hull[2] and by2 >= hull[3]
-                if covers_all_text and not has_face_evidence:
-                    logger.info("Dropped page-hallucinated id_card box (no card face evidence)")
+                encloses_seal = any(self._center_inside(s, box) for s in seals)
+                if covers_all_text or encloses_seal:
+                    logger.info("Dropped page-hallucinated id_card box (no card evidence; seal=%s)", encloses_seal)
                     continue
             out.append(box)
         return out

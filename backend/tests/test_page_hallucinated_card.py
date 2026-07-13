@@ -57,3 +57,22 @@ def test_no_ocr_blocks_keeps_card():
 def test_non_idcard_untouched():
     seal = _box("official_seal", 0.0, 0.0, 1.0, 1.0)
     assert _drop([seal], [_blk("x", 1, 1)]) == [seal]
+
+
+def test_card_enclosing_seal_dropped_even_if_footer_clipped():
+    # 立案告知书实证: card box covers 95% but clips footer OCR; a real 身份证
+    # never encloses a 公章 -> the seal-containment identity drops it
+    card = _box("id_card", 0.076, 0.045, 0.849, 0.807)  # clips bottom footer
+    seal = _box("official_seal", 0.5, 0.4, 0.2, 0.15)   # inside the card box
+    blocks = [_blk("立案告知书", 100, 40), _blk("一式两份一份附卷", 36, 560)]  # footer at y560 > card bottom
+    out = _drop([card, seal], blocks)
+    assert [b.type for b in out] == ["official_seal"]  # card dropped, seal kept
+
+
+def test_real_card_with_seal_nearby_but_face_words_kept():
+    # a card that has face evidence is kept regardless of any seal geometry
+    card = _box("id_card", 0.0, 0.0, 1.0, 1.0)
+    seal = _box("official_seal", 0.5, 0.5, 0.1, 0.1)
+    blocks = [_blk("居民身份证 公民身份号码 11010119900307461X", 120, 200)]
+    out = _drop([card, seal], blocks)
+    assert any(b.type == "id_card" for b in out)
