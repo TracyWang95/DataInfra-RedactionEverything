@@ -8,6 +8,7 @@ import base64
 import inspect
 import io
 import logging
+import re
 import time
 import uuid
 from types import SimpleNamespace
@@ -403,6 +404,17 @@ class VisionService:
         # seal (签字盖章重叠) — turn it OFF when those must survive.
         if bool(getattr(settings, "ABSORB_SIGNATURES_IN_SEALS", True)):
             all_boxes = self._absorb_signatures_in_seals(all_boxes)
+        # Small images are upscaled before LA now, which makes LA hallucinate
+        # the whole document as an id_card (立案告知书 upscaled: 5/5). Drop a
+        # card box that swallows all OCR text yet shows no card face evidence.
+        ocr_page_blocks = list(getattr(self.ocr_has_service, "last_ocr_blocks", []) or [])
+        if ocr_page_blocks:
+            try:
+                with Image.open(io.BytesIO(await get_image_data())) as _pg:
+                    page_size = ImageOps.exif_transpose(_pg).size
+                all_boxes = self._drop_page_hallucinated_cards(all_boxes, ocr_page_blocks, page_size)
+            except Exception:
+                logger.warning("page-hallucinated card filter skipped", exc_info=True)
         all_boxes = self._deduplicate_boxes(all_boxes)
         all_boxes = self._expand_signature_boxes(all_boxes)
         all_boxes = self._present_seals_as_visual(all_boxes)
@@ -638,6 +650,62 @@ class VisionService:
                 result.append(hull_by_id.pop(b.id))
         result.extend(hull_by_id.values())
         return result
+
+    # ID-card face evidence: the printed labels present on a real 二代身份证
+    # (front or back). A page LA hallucinated as a card carries none of them.
+    _ID_CARD_FACE_WORDS = (
+        "居民身份证", "公民身份号码", "签发机关", "有效期限", "出生", "性别", "民族", "住址",
+    )
+    _ID_CARD_NUMBER_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
+
+    def _drop_page_hallucinated_cards(
+        self,
+        boxes: list[BoundingBox],
+        ocr_blocks: list,
+        page_size: tuple[int, int],
+    ) -> list[BoundingBox]:
+        """Drop an id_card visual box that is the whole page hallucinated as a
+        card (立案告知书 upscaled: LA grounds the entire document as "ID card"
+        5/5). Zero tuned numbers — pure geometry + the existing ID-card face
+        vocabulary and the existing 18-digit ID regex. An id_card box that (a)
+        contains the pixel hull of ALL OCR text AND (b) whose interior OCR shows
+        NO face word and NO 18-digit number carries no card evidence and is a
+        page hallucination. A real card (face words readable, OR — for a blurred
+        copy — the 18-digit number survives OCR) escapes and is kept. No OCR /
+        no id_card -> unchanged (fail toward keeping the mask).
+        """
+        page_w, page_h = page_size
+        if not ocr_blocks or page_w <= 0 or page_h <= 0:
+            return boxes
+        rects = []
+        for b in ocr_blocks:
+            try:
+                left, top, right, bottom = b.left, b.top, b.left + b.width, b.top + b.height
+            except AttributeError:
+                continue
+            rects.append((left, top, right, bottom))
+        if not rects:
+            return boxes
+        hull = (
+            min(r[0] for r in rects), min(r[1] for r in rects),
+            max(r[2] for r in rects), max(r[3] for r in rects),
+        )
+        all_text = " ".join(str(getattr(b, "text", "") or "") for b in ocr_blocks)
+        has_face_evidence = (
+            any(word in all_text for word in self._ID_CARD_FACE_WORDS)
+            or bool(self._ID_CARD_NUMBER_RE.search(all_text))
+        )
+        out = []
+        for box in boxes:
+            if box.type == "id_card" and box.source == "visual_features":
+                bx1, by1 = box.x * page_w, box.y * page_h
+                bx2, by2 = (box.x + box.width) * page_w, (box.y + box.height) * page_h
+                covers_all_text = bx1 <= hull[0] and by1 <= hull[1] and bx2 >= hull[2] and by2 >= hull[3]
+                if covers_all_text and not has_face_evidence:
+                    logger.info("Dropped page-hallucinated id_card box (no card face evidence)")
+                    continue
+            out.append(box)
+        return out
 
     def _absorb_signatures_in_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """A 'signature' OR 'fingerprint' centered inside an official_seal box

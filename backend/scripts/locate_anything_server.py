@@ -389,7 +389,9 @@ class LocateService:
     ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
         if not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
-        inference_image = _resize_for_inference(image, max_image_side)
+        inference_image = _resize_for_inference(
+            image, max_image_side, upscale_target=min(DEFAULT_MIN_SIDE, max_image_side)
+        )
         # GPU work (vision encode + embed stitch) stays inside the lock; the
         # vLLM network round-trip (up to VLLM_REQUEST_TIMEOUT_SECONDS) runs
         # outside it so a slow generation cannot starve other GPU requests --
@@ -432,7 +434,9 @@ class LocateService:
         """
         if not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
-        inference_image = _resize_for_inference(image, max_image_side)
+        inference_image = _resize_for_inference(
+            image, max_image_side, upscale_target=min(DEFAULT_MIN_SIDE, max_image_side)
+        )
         width, height = inference_image.width, inference_image.height
         _t0 = time.perf_counter()
         # Phase 1 (GPU, serialized): one vision encode + per-category prompt-embeds.
@@ -500,7 +504,9 @@ class LocateService:
             FAST_FIRST_ENABLED if fast_first is None else bool(fast_first),
         )
         for attempt_side in _adaptive_image_sides(max_image_side):
-            inference_image = _resize_for_inference(image, attempt_side)
+            inference_image = _resize_for_inference(
+                image, attempt_side, upscale_target=min(DEFAULT_MIN_SIDE, attempt_side)
+            )
             scale_x = inference_image.width / source_size[0] if source_size[0] else 1.0
             scale_y = inference_image.height / source_size[1] if source_size[1] else 1.0
             last_answer = ""

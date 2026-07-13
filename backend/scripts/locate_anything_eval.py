@@ -83,16 +83,31 @@ def _collect_inputs(inputs: list[str], recursive: bool) -> list[Path]:
     return sorted(dict.fromkeys(files), key=lambda p: str(p).lower())
 
 
-def _resize_for_inference(image: Image.Image, max_image_side: int) -> Image.Image:
-    if max_image_side <= 0:
-        return image
+def _resize_for_inference(
+    image: Image.Image, max_image_side: int, upscale_target: int = 0
+) -> Image.Image:
+    """Normalize the longest side into the model's inference-resolution band.
+
+    longest > max_image_side  -> shrink to max_image_side (unchanged).
+    longest < upscale_target  -> UPSCALE to upscale_target (Lanczos): a source
+        image below the model's operating resolution starves the ViT of
+        patches (立案告知书 457px: native recall flakes, upscale recovers it).
+        upscale_target is a physical constant (the min inference side), never a
+        tuned number; the OOM ladder passes a clamped target so a retry never
+        upscales past its shrunk budget. Default 0 keeps the old shrink-only
+        behavior byte-for-byte.
+    """
     width, height = image.size
     longest = max(width, height)
-    if longest <= max_image_side:
-        return image
-    scale = max_image_side / longest
-    new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
-    return image.resize(new_size, Image.Resampling.LANCZOS)
+    if max_image_side > 0 and longest > max_image_side:
+        scale = max_image_side / longest
+        new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        return image.resize(new_size, Image.Resampling.LANCZOS)
+    if upscale_target > 0 and longest < upscale_target:
+        scale = upscale_target / longest
+        new_size = (max(1, round(width * scale)), max(1, round(height * scale)))
+        return image.resize(new_size, Image.Resampling.LANCZOS)
+    return image
 
 
 def _load_pages(path: Path, max_pdf_pages: int, max_image_side: int = 0) -> list[PageImage]:

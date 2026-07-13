@@ -1,0 +1,59 @@
+"""整页误判身份证过滤 (立案告知书实证: 放大后LA把整页文书ground成id_card 5/5).
+
+谓词纯几何+既有词表/正则,零调参: id_card视觉框(归一化)覆盖全页OCR文本(OCR
+像素hull⊆框)且框内OCR无身份证卡面证据(卡面专有词 OR 既有18位号正则)→整页
+幻觉drop。真身份证(卡面词/号可读)逃逸保留。失效方向: 任一逃逸命中即保留(不漏真卡)。
+"""
+from app.models.entity_schemas import BoundingBox
+from app.services.ocr_has_vision_service import OCRTextBlock
+from app.services.vision_service import VisionService
+
+PAGE = (700, 900)
+
+
+def _box(btype, x, y, w, h, src="visual_features"):
+    return BoundingBox(id=f"b_{btype}_{x}", x=x, y=y, width=w, height=h, type=btype,
+        text=btype, page=1, confidence=0.88, source=src,
+        source_detail="locate_anything:detect", evidence_source="visual_feature_model")
+
+
+def _blk(text, left, top, w=100, h=20):
+    return OCRTextBlock(text=text, polygon=[[left,top],[left+w,top],[left+w,top+h],[left,top+h]], confidence=0.95)
+
+
+def _drop(boxes, blocks):
+    return VisionService()._drop_page_hallucinated_cards(boxes, blocks, PAGE)
+
+
+def test_full_page_hallucination_dropped():
+    card = _box("id_card", 0.0, 0.0, 1.0, 1.0)
+    blocks = [_blk("立案告知书", 100, 40), _blk("本告知书已收到", 66, 338), _blk("办案人", 87, 450)]
+    assert _drop([card], blocks) == []
+
+
+def test_real_card_with_face_words_kept():
+    card = _box("id_card", 0.0, 0.0, 1.0, 1.0)
+    blocks = [_blk("居民身份证 公民身份号码", 120, 200), _blk("签发机关 有效期限", 120, 260)]
+    assert len(_drop([card], blocks)) == 1
+
+
+def test_card_with_18_digit_number_kept_even_if_words_blurred():
+    card = _box("id_card", 0.0, 0.0, 1.0, 1.0)
+    blocks = [_blk("模糊不清的文字", 100, 100), _blk("11010119900307461X", 150, 300)]
+    assert len(_drop([card], blocks)) == 1
+
+
+def test_card_not_covering_all_text_kept():
+    card = _box("id_card", 0.1, 0.1, 0.3, 0.2)  # px (70,90,210,180)
+    blocks = [_blk("标题", 100, 40), _blk("很远的文字", 100, 700)]
+    assert len(_drop([card], blocks)) == 1
+
+
+def test_no_ocr_blocks_keeps_card():
+    card = _box("id_card", 0.0, 0.0, 1.0, 1.0)
+    assert len(_drop([card], [])) == 1
+
+
+def test_non_idcard_untouched():
+    seal = _box("official_seal", 0.0, 0.0, 1.0, 1.0)
+    assert _drop([seal], [_blk("x", 1, 1)]) == [seal]
