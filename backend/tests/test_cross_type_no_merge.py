@@ -63,3 +63,18 @@ def test_tile_gap_filter_is_type_scoped():
     sig_tile = sig_tile.model_copy(update={"source_detail": "locate_anything:tile_retry"})
     kept = svc._filter_tile_candidates([fp_tile, sig_tile], existing)
     assert kept == [fp_tile]
+
+
+def test_fingerprint_inside_seal_absorbed_into_hull():
+    """章内'指纹'=章自己的红墨误读(0713 contract19 电子章出4个tile指纹):
+    中心在章内的 fingerprint 并入章 hull——章全遮像素不变,冗余错误标注消失。
+    章外真指印(农业合同)不受影响(中心不在章内)。"""
+    from app.services.vision_service import VisionService
+
+    seal = _box("official_seal", 0.48, 0.30, 0.30, 0.19)
+    fp_inside = _box("fingerprint", 0.57, 0.37, 0.05, 0.04)
+    fp_outside = _box("fingerprint", 0.30, 0.86, 0.06, 0.05)
+    out = VisionService()._absorb_signatures_in_seals([seal, fp_inside, fp_outside])
+    types = [b.type for b in out]
+    assert types.count("fingerprint") == 1  # only the outside one survives
+    assert types.count("official_seal") == 1

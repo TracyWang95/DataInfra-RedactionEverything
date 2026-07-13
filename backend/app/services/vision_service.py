@@ -640,12 +640,14 @@ class VisionService:
         return result
 
     def _absorb_signatures_in_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """A 'signature' centered inside an official_seal box is the stamp's
-        own content (seal script, inked date) misread by the model, not an
-        independent signature. Absorb it: expand the seal box to the hull of
-        both and drop the signature box. Coverage can only grow - a genuine
-        signature overlapping the stamp keeps every pixel masked, only the
-        redundant box disappears.
+        """A 'signature' OR 'fingerprint' centered inside an official_seal box
+        is the stamp's own content (seal script, star, inked date — all red
+        ink, so the fingerprint interior-ink gate legitimately passes it)
+        misread by the model, not an independent mark. Absorb it: expand the
+        seal box to the hull of both and drop the inner box. Coverage can
+        only grow - a genuine mark overlapping the stamp keeps every pixel
+        masked, only the redundant box disappears. (0713 contract19: the top
+        electronic seal came back as 4 tile "fingerprints".)
         """
         seal_indexes = [i for i, b in enumerate(boxes) if b.type == "official_seal"]
         if not seal_indexes:
@@ -653,7 +655,7 @@ class VisionService:
         out = list(boxes)
         absorbed: set[int] = set()
         for j, b in enumerate(boxes):
-            if b.type != "signature":
+            if b.type not in ("signature", "fingerprint"):
                 continue
             for i in seal_indexes:
                 seal = out[i]
@@ -672,7 +674,7 @@ class VisionService:
                     break
         if not absorbed:
             return boxes
-        logger.info("Absorbed %d signature box(es) into seal hulls", len(absorbed))
+        logger.info("Absorbed %d signature/fingerprint box(es) into seal hulls", len(absorbed))
         return [b for j, b in enumerate(out) if j not in absorbed]
 
     @staticmethod
