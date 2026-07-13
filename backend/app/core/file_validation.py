@@ -31,6 +31,14 @@ MAGIC_BYTES: dict[bytes, set[str]] = {
 # Text-like extensions that have no fixed magic bytes
 TEXT_EXTENSIONS: frozenset[str] = frozenset({".txt", ".md", ".rtf", ".html", ".htm"})
 
+# Image extensions are decoded by content downstream (PIL Image.open), never by
+# extension. A mislabeled image — e.g. JPEG bytes saved as ``.webp`` — is safe:
+# it is still a valid image the pipeline can read. So any image content is
+# accepted under any image extension; non-image binaries stay rejected.
+IMAGE_EXTENSIONS: frozenset[str] = frozenset(
+    {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
+)
+
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -47,7 +55,13 @@ def validate_magic_bytes(file_path: str, ext: str) -> bool:
             header = f.read(8)
         for magic, exts in MAGIC_BYTES.items():
             if header.startswith(magic):
-                return ext in exts
+                if ext in exts:
+                    return True
+                # Cross-format image mislabels (e.g. JPEG bytes named .webp)
+                # are harmless — the content is a real image and decodes fine.
+                if ext in IMAGE_EXTENSIONS and exts & IMAGE_EXTENSIONS:
+                    return True
+                return False
         # No known magic-byte match — only allow text extensions through
         if ext in TEXT_EXTENSIONS:
             return True
