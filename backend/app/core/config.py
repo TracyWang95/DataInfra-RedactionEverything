@@ -176,6 +176,11 @@ class Settings(BaseSettings):
     APP_NAME: str = "DataShield 匿名化数据基础设施"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
+    # Session/CSRF cookies carry the Secure flag by default (HTTPS-only). A
+    # plain-HTTP intranet deployment (e.g. accessed over an SSH-tunnelled
+    # http://localhost) MUST set COOKIE_SECURE=0, or the browser silently
+    # drops the Secure cookie and every mutating request fails CSRF (403).
+    COOKIE_SECURE: bool = True
 
     # API 配置
     API_PREFIX: str = "/api/v1"
