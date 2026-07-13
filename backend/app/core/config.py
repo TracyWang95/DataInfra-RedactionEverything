@@ -382,6 +382,7 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
     LOCAL_PASSWORD_HASH: str = ""  # PBKDF2 hash, set via setup endpoint
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
+    COOKIE_SECURE: bool = False
 
     # 企业目录（LDAP/AD）登录。默认关闭：登录行为与纯本地账号完全一致。
     # 开启后 /auth/login 先走目录认证（本地 super_admin 保留 break-glass 本地

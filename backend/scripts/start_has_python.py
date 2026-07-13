@@ -63,6 +63,9 @@ def main() -> None:
     print("\nLoading model...")
 
     try:
+        import sys
+        print(f'Python executable:', sys.executable)
+        print(f'Python path:', sys.path)
         import llama_cpp
         import uvicorn
         from llama_cpp.server.app import create_app
@@ -89,8 +92,12 @@ def main() -> None:
         print("\nModel loaded. Starting server...\n")
         uvicorn.run(app, host=HOST, port=PORT)
 
-    except ImportError:
+    except ImportError as e:
         print("\nERROR: llama-cpp-python is not installed.")
+        print("Exception:", type(e).__name__, str(e))
+        import traceback
+        print("\nStack trace:")
+        traceback.print_exc()
         print("\nInstall it with:")
         print("  pip install llama-cpp-python")
         print("\nOr use a prebuilt CPU wheel:")

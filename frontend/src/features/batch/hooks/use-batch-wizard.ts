@@ -752,7 +752,6 @@ export function useBatchWizard() {
           job_type: toBatchJobType(mode),
           title: `${t('batchHub.batch')} ${new Date().toLocaleString()}`,
           config: payload,
-          priority: jobPriority,
         });
         jid = j.id;
         writeLocalWizardMaxStep(jid, nextFurthest);

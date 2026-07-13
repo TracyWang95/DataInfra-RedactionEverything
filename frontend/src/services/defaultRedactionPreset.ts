@@ -95,3 +95,10 @@ export function buildDefaultPipelineCoverage<T extends DefaultPipelineTypeLike>(
     enabledIds: enabledIdList,
   };
 }
+
+export function isDefaultExcludedPipelineTypeId(
+  _mode: PipelineMode,
+  _typeId: string,
+): boolean {
+  return false;
+}

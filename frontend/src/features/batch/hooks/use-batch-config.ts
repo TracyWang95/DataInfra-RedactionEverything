@@ -71,6 +71,8 @@ export interface BatchConfigState {
   batchDefaultOcrHasTypeIds: string[];
   batchDefaultVisualFeatureTypeIds: string[];
   setConfigLoadError: (msg: string) => void;
+  jobPriority: string;
+  setJobPriority: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export function useBatchConfig(
@@ -88,6 +90,7 @@ export function useBatchConfig(
   const [presetLoadError, setPresetLoadError] = useState<string | null>(null);
   const [presetReloading, setPresetReloading] = useState(false);
   const [confirmStep1, setConfirmStep1] = useState(false);
+  const [jobPriority, setJobPriority] = useState('normal');
 
   // Save config to local storage on change
   useEffect(() => {
@@ -435,5 +438,7 @@ export function useBatchConfig(
     batchDefaultOcrHasTypeIds,
     batchDefaultVisualFeatureTypeIds,
     setConfigLoadError,
+    jobPriority,
+    setJobPriority,
   };
 }

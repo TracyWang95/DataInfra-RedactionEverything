@@ -23,6 +23,7 @@ frontend/dist/
 frontend/build/
 
 # Build & cache
+.cache/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -127,3 +128,13 @@ deploy/offline/*.tar.gz
 
 # Release build output
 dist-release/
+
+# General Temporary and Compiled Files
+*.tmp
+*.iml
+*.obj
+*.o
+*.exe
+*.dll
+*.so
+*.dylib

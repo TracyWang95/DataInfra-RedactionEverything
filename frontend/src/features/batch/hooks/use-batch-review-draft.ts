@@ -168,9 +168,7 @@ export function useReviewDraft(deps: ReviewDraftDeps): {
           setReviewTextContent(previewPayload.content);
           setReviewTextUndoStack([]);
           setReviewTextRedoStack([]);
-          setPreviewEntityMap(
-            buildFallbackPreviewEntityMap(previewPayload.entities, cfg.replacementMode),
-          );
+          setPreviewEntityMap(buildFallbackPreviewEntityMap(previewPayload.entities));
           const map = await fetchCachedBatchPreviewMap(
             previewPayload.entities,
             cfg.replacementMode,
@@ -276,7 +274,7 @@ export function useReviewDraft(deps: ReviewDraftDeps): {
           setReviewTextUndoStack([]);
           setReviewTextRedoStack([]);
           const storedMap = normalizeEntityMap(info.entity_map);
-          const fallbackMap = buildFallbackPreviewEntityMap(mapped, cfg.replacementMode);
+          const fallbackMap = buildFallbackPreviewEntityMap(mapped);
           if (Object.keys(storedMap).length > 0) {
             setPreviewEntityMap(storedMap);
           } else {

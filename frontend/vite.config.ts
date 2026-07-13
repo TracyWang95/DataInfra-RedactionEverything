@@ -70,12 +70,12 @@ export default defineConfig({
     setupFiles: [],
   },
   server: {
-    port: 3000,
+    port: 3005,
     proxy: { ...backendProxy },
   },
   /** `vite preview` 默认不转发 API，直接打开 dist 会请求不到后端 → 与 dev 共用代理 */
   preview: {
-    port: 3000,
+    port: 3005,
     proxy: { ...backendProxy },
   },
 })

@@ -33,6 +33,7 @@ __all__ = [
     "ReviewDraftResponse",
     "JobCreateBody",
     "JobUpdateBody",
+    "JobItemAddBody",
     "ReviewDraftBody",
     "ReviewCommitBody",
     "BatchDetailsBody",
@@ -813,6 +814,11 @@ class JobUpdateBody(BaseModel):
     title: str | None = None
     config: dict[str, Any] | None = None
     skip_item_review: bool | None = None
+
+
+class JobItemAddBody(BaseModel):
+    file_id: str
+    sort_order: int = 0
 
 
 class ReviewDraftBody(BaseModel):

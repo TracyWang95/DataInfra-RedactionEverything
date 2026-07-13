@@ -127,16 +127,23 @@ def _require_gpu_or_exit() -> None:
         _fatal(1)
 
     if gpu_count < 1:
-        print("[OCR] FATAL: no CUDA device is visible to Paddle.", flush=True)
-        _fatal(1)
-
-    try:
-        paddle.set_device("gpu:0")
-        _paddle_device = str(paddle.get_device())
-        print(f"[OCR] Paddle GPU ready: device={_paddle_device}, visible_gpus={gpu_count}", flush=True)
-    except Exception as exc:
-        print(f"[OCR] FATAL: failed to select Paddle GPU: {exc}", flush=True)
-        _fatal(1)
+        print("[OCR] WARNING: no CUDA device is visible to Paddle, trying fallback...", flush=True)
+        try:
+            paddle.set_device("gpu:0")
+            _paddle_device = str(paddle.get_device())
+            gpu_count = 1
+            print(f"[OCR] Paddle GPU ready via fallback: device={_paddle_device}, visible_gpus={gpu_count}", flush=True)
+        except Exception as exc:
+            print(f"[OCR] FATAL: failed to select Paddle GPU even with fallback: {exc}", flush=True)
+            _fatal(1)
+    else:
+        try:
+            paddle.set_device("gpu:0")
+            _paddle_device = str(paddle.get_device())
+            print(f"[OCR] Paddle GPU ready: device={_paddle_device}, visible_gpus={gpu_count}", flush=True)
+        except Exception as exc:
+            print(f"[OCR] FATAL: failed to select Paddle GPU: {exc}", flush=True)
+            _fatal(1)
 
 
 def trim_cuda_cache(label: str) -> None:

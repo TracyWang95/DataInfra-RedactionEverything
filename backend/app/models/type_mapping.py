@@ -124,6 +124,20 @@ TYPE_REGISTRY: dict[str, dict] = {
 TYPE_ID_TO_CN: dict[str, str] = {tid: e["cn"] for tid, e in TYPE_REGISTRY.items() if e.get("cn")}
 TYPE_ID_TO_LABEL: dict[str, str] = {tid: e["label"] for tid, e in TYPE_REGISTRY.items() if e.get("label")}
 LINKAGE_GROUP_BY_TYPE_ID: dict[str, set[str]] = {tid: set(e["groups"]) for tid, e in TYPE_REGISTRY.items() if e.get("groups")}
+TYPE_CN_TO_ID: dict[str, str] = {e["cn"]: tid for tid, e in TYPE_REGISTRY.items() if e.get("cn")}
+
+QUERY_LABELS_BY_TYPE_ID: dict[str, list[str]] = {
+    "AMOUNT": ["金额", "大写金额"],
+}
+
+
+def has_query_labels_for(type_id: str) -> list[str]:
+    canonical = canonical_type_id(type_id)
+    return QUERY_LABELS_BY_TYPE_ID.get(canonical, [TYPE_ID_TO_CN.get(canonical, canonical)]) if TYPE_ID_TO_CN.get(canonical) else []
+
+
+def cn_to_id(cn: str) -> str:
+    return TYPE_CN_TO_ID.get(cn, cn)
 
 
 def linkage_groups_for_type(type_id: str) -> set[str]:
