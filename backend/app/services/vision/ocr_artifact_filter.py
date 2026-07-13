@@ -42,6 +42,20 @@ _SMALL_REGION_AREA_RATIO = 0.006
 _SMALL_REGION_MIN_DENSITY = 0.004
 _DEFAULT_MIN_DENSITY = 0.008
 
+# Minimum count of decoded content characters (CJK / alphanumeric) that marks a
+# region as recognized text rather than a blank scanner strip. A scan-edge line
+# or page border decodes to nothing coherent (0-1 stray chars); real PII — a
+# signing date, even a 2-character Chinese name — has at least two. Threshold 2
+# protects short names while still catching textless noise. ``str.isalnum()`` is
+# True for CJK ideographs and digits, False for brackets/underscores/punctuation.
+_MIN_CONTENT_CHARS = 2
+
+
+def _has_substantial_text(text: str | None) -> bool:
+    if not text:
+        return False
+    return sum(1 for ch in text if ch.isalnum()) >= _MIN_CONTENT_CHARS
+
 # Visual-region exemption for the page-edge/ink artifact filters, derived from
 # the canonical visual registries instead of a hand-maintained parallel word
 # list: the visual-only entity type ids plus the fixed visual category slugs
@@ -64,8 +78,15 @@ def is_page_edge_ocr_artifact(
     page_width: int,
     page_height: int,
     entity_type: str | None = None,
+    text: str | None = None,
 ) -> bool:
     if page_width <= 0 or page_height <= 0 or is_visual_ocr_type(entity_type):
+        return False
+    # A region OCR decoded into coherent text is recognized content (e.g. a
+    # signing date sitting on the document's last line), not a blank scanner
+    # edge strip. The geometric edge heuristics below only target textless
+    # scan lines/borders, so never let them drop real decoded PII.
+    if _has_substantial_text(text):
         return False
 
     x = left / page_width

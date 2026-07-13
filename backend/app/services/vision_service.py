@@ -908,6 +908,7 @@ class VisionService:
                 width,
                 height,
                 region.entity_type,
+                region.text,
             ):
                 logger.debug("Skipping OCR region on page edge artifact: %s %s", region.entity_type, region.text)
                 continue
