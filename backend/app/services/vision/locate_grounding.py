@@ -200,7 +200,7 @@ class LocateAnythingGroundingService:
 
         async def _detect_one(tag: str, rtype: str) -> list[dict[str, Any]]:
             res = await self._post_detect(image_data, [tag])
-            if tile_retry_enabled and rtype in _retriable and not res and rtype not in spec_tile_tasks:
+            if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
                 spec_task = asyncio.create_task(
                     self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
                 )
@@ -245,8 +245,8 @@ class LocateAnythingGroundingService:
                     per_request[index].append(raw)
                 results = per_request
                 # speculative tiles for empty retriable slugs (same as _detect_one)
-                for (_tag, rtype, _t), res in zip(requests, results, strict=True):
-                    if tile_retry_enabled and rtype in _retriable and not res and rtype not in spec_tile_tasks:
+                for _tag, rtype, _t in requests:
+                    if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
                         spec_task = asyncio.create_task(
                             self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
                         )
@@ -571,11 +571,18 @@ class LocateAnythingGroundingService:
                 folded, added, _elapsed_ms(refine_start),
             )
 
+        # Tile pass runs for EVERY requested retriable slug, not only 0-box
+        # ones: the old miss-rescue gate lost partial-recall pages — 立案告知书
+        # 实证: full-frame found 1 of 3 signatures, so the gate skipped tiles
+        # even though the grid tiles find all 3. A page carries no prior on
+        # its instance count; the only non-magic dedup is geometric — a tile
+        # box overlapping a same-type full-frame box is the zoom re-stating
+        # the page-scale call (dropped by _filter_tile_candidates), a
+        # non-overlapping one is a NEW instance the full frame missed.
         retry_slugs = [
             slug
             for slug in (model_slugs or [])
             if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
-            and not any(b.type == slug for b in boxes)
         ]
         if retry_slugs and not tile_retry_enabled:
             # Kill switch: the flag gates BOTH the speculative fire above and

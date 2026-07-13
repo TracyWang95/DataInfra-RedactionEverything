@@ -72,29 +72,28 @@ def test_spec_tile_result_joins_when_type_still_missing(svc, monkeypatch):
     assert tile_calls == [["fingerprint"]]  # fired exactly once (speculatively)
 
 
-def test_spec_tile_discarded_when_supplement_already_filled(svc, monkeypatch):
-    spec_completed = asyncio.Event()
-
+def test_spec_tile_overlapping_supplement_dropped_new_position_kept(svc, monkeypatch):
+    """立案告知书门控放宽后的新契约: tile恒跑,同类gap-filter去重——与已有框
+    相交的tile候选=zoom复述(丢),不相交的=全帧漏掉的新实例(收)。"""
     async def fake_detect(self, image_data, categories):
         return []
 
     async def fake_tiles(self, image_data, page, slugs, tiles_for=None, source_detail="", queries=None):
-        spec_completed.set()
-        return [_bb("official_seal", 0.5, 0.5)]
+        return [
+            _bb("official_seal", 0.1, 0.1),  # overlaps the YOLO box -> dropped
+            _bb("official_seal", 0.5, 0.5),  # new position -> kept
+        ]
 
     async def fake_yolo(self, base_url, image_data, page, slugs):
-        return [_bb("official_seal", 0.1, 0.1)]  # supplement fills the type
+        return [_bb("official_seal", 0.1, 0.1)]
 
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.HAS_IMAGE_URL", "http://x", raising=False)
     monkeypatch.setattr(LocateAnythingGroundingService, "_post_detect", fake_detect)
     monkeypatch.setattr(LocateAnythingGroundingService, "_detect_on_tiles", fake_tiles)
     monkeypatch.setattr(LocateAnythingGroundingService, "_detect_has_image", fake_yolo)
     boxes, _ = asyncio.run(svc.detect_categories(b"img", 1, _ptypes(["official_seal"])))
-    # today's semantics: the YOLO box is the only official_seal; the spec tile
-    # box is awaited and discarded
-    seals = [b for b in boxes if b.type == "official_seal"]
-    assert len(seals) == 1 and seals[0].x == 0.1
-    assert spec_completed.is_set()  # the spec ran to completion, not cancelled
+    xs = sorted(round(b.x, 2) for b in boxes if b.type == "official_seal")
+    assert xs == [0.1, 0.5]
 
 
 def test_kill_switch_blocks_every_tile_path(svc, monkeypatch):
