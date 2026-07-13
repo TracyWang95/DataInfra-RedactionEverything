@@ -34,16 +34,11 @@ export const ENTITY_FALLBACK_STYLE = {
 
 const ENTITY_TYPE_ALIASES: Record<string, string> = {
   DRIVER_LICENSE: 'ID_CARD',
-  MILITARY_ID: 'ID_CARD',
-  QQ_WECHAT_ID: 'USERNAME_PASSWORD',
-  PAYMENT_ACCOUNT: 'BANK_ACCOUNT',
   MONEY: 'AMOUNT',
   MAC_ADDRESS: 'DEVICE_ID',
   URL: 'URL_WEBSITE',
   WEBSITE: 'URL_WEBSITE',
   LINK: 'URL_WEBSITE',
-  DATETIME: 'DATE',
-  DATE_TIME: 'DATE',
   COMPANY: 'COMPANY_NAME',
   INSTITUTION: 'INSTITUTION_NAME',
   EMPLOYER: 'WORK_UNIT',
@@ -52,7 +47,6 @@ const ENTITY_TYPE_ALIASES: Record<string, string> = {
   CONTRACT_NO: 'CASE_NUMBER',
   CONTRACT_NUMBER: 'CASE_NUMBER',
   LEGAL_CASE_ID: 'DOCUMENT_NUMBER',
-  LEGAL_DOC_NO: 'DOCUMENT_NUMBER',
   MEDICAL_RECORD: 'MED_RECORD_ID',
   LAWYER: 'LEGAL_ATTORNEY',
   seal: 'official_seal',
@@ -282,21 +276,6 @@ export function getEntityGroupLabel(groupId: string): string {
 export function getEntityTypeConfig(typeId: string): EntityTypeConfig | undefined {
   const canonicalTypeId = normalizeEntityTypeId(typeId);
   return ALL_ENTITY_TYPES.find((type) => type.id === canonicalTypeId);
-}
-
-export function getEntityColor(typeId: string): string {
-  const group = getEntityGroup(typeId);
-  return group?.color ?? ENTITY_FALLBACK_STYLE.color;
-}
-
-export function getEntityBgColor(typeId: string): string {
-  const group = getEntityGroup(typeId);
-  return group?.bgColor ?? ENTITY_FALLBACK_STYLE.bgColor;
-}
-
-export function getEntityTextColor(typeId: string): string {
-  const group = getEntityGroup(typeId);
-  return group?.textColor ?? ENTITY_FALLBACK_STYLE.textColor;
 }
 
 export function getEntityTypeName(typeId: string): string {

@@ -109,3 +109,21 @@ backend/test_*.py
 *.db
 *.db-journal
 *.db-wal
+
+# Backup files
+*.bak
+*.bak-*
+*.*.bak
+*.*.bak-*
+**/*.bak/
+**/*-bak/
+**/*.bak-*/
+
+# Offline deploy binary bundle (docker images, model weights)
+deploy/offline/offline-bundle/
+deploy/offline/app-bundle/
+deploy/offline/model-bundle/
+deploy/offline/*.tar.gz
+
+# Release build output
+dist-release/

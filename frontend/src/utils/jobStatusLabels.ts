@@ -128,7 +128,3 @@ export function getJobItemStatusMeta(status: string): JobStatusMeta {
 export function formatAggregateJobStatus(status: string): string {
   return getAggregateJobStatusMeta(status).label;
 }
-
-export function formatJobItemStatus(status: string): string {
-  return getJobItemStatusMeta(status).label;
-}

@@ -189,87 +189,6 @@ def _query_gpu_memory_nvidia_smi() -> dict | None:
     return None
 
 
-def _parse_nvidia_smi_process_csv(stdout: str) -> list[dict]:
-    if not stdout or not stdout.strip():
-        return []
-    processes: list[dict] = []
-    for raw_line in stdout.strip().splitlines():
-        line = raw_line.strip().lstrip("\ufeff")
-        if not line:
-            continue
-        parts = [x.strip() for x in line.split(",", 2)]
-        if len(parts) < 3:
-            continue
-        try:
-            pid = int(parts[0])
-        except (ValueError, TypeError):
-            continue
-        name = "" if parts[1] in {"", "[Not Found]", "[N/A]"} else parts[1]
-        try:
-            used_mb: int | None = int(float(parts[2]))
-        except (ValueError, TypeError):
-            used_mb = None
-        processes.append({"pid": pid, "name": name, "used_mb": used_mb})
-    return processes
-
-
-def _process_label_from_os(pid: int) -> str:
-    if os.name == "nt":
-        return ""
-    try:
-        r = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "args="],
-            capture_output=True,
-            timeout=2.0,
-            encoding="utf-8",
-            errors="replace",
-            stdin=subprocess.DEVNULL,
-        )
-    except (subprocess.SubprocessError, OSError, ValueError, TypeError):
-        return ""
-    if r.returncode != 0:
-        return ""
-    return " ".join((r.stdout or "").split())
-
-
-def _query_gpu_processes_nvidia_smi() -> list[dict]:
-    args = [
-        "--query-compute-apps=pid,process_name,used_memory",
-        "--format=csv,noheader,nounits",
-    ]
-    for exe in _nvidia_smi_executable_candidates():
-        workdir = os.path.dirname(os.path.abspath(exe)) if os.name == "nt" else None
-        base_kw: dict = {
-            "capture_output": True,
-            "timeout": 6.0,
-            "encoding": "utf-8",
-            "errors": "replace",
-            "stdin": subprocess.DEVNULL,
-        }
-        if workdir and os.path.isdir(workdir):
-            base_kw["cwd"] = workdir
-        if os.name == "nt":
-            base_kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        try:
-            r = subprocess.run([exe, *args], **base_kw)
-        except (subprocess.SubprocessError, OSError, ValueError, TypeError):
-            continue
-        if r.returncode != 0 and not (r.stdout or "").strip():
-            continue
-        processes = _parse_nvidia_smi_process_csv(r.stdout or "")
-        if not processes:
-            continue
-        for proc in processes:
-            if not proc.get("name"):
-                proc["name"] = _process_label_from_os(proc["pid"])
-        return processes
-    return []
-
-
-# ---------------------------------------------------------------------------
-# pynvml helpers
-# ---------------------------------------------------------------------------
-
 def _ensure_nvml_dll_windows() -> None:
     """Python 3.8+ Windows：nvml.dll 在 NVSMI 目录时须 add_dll_directory，否则 pynvml 初始化失败。"""
     global _nvml_dll_prepared
@@ -406,6 +325,3 @@ def query_gpu_memory_all() -> list[dict]:
     return []
 
 
-def query_gpu_processes() -> list[dict]:
-    """查询正在占用 GPU 的进程。失败时返回空列表，不影响健康检查。"""
-    return _query_gpu_processes_nvidia_smi()

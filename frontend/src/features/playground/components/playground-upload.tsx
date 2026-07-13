@@ -24,17 +24,18 @@ function serviceStatusLabel(status: ServiceStatus, t: Translate) {
   return t(`health.${status}`);
 }
 
-function serviceDisplayName(service: Service, t: Translate) {
-  const rawName = service.name.toLowerCase();
-  if (rawName.includes('paddle')) return t('health.service.paddle_ocr');
-  if (rawName.includes('has text') || rawName.includes('has_')) return t('health.service.has_ner');
-  if (rawName.includes('visual') || rawName.includes('locate')) return t('health.service.visual_features');
-  return service.name;
+type ServiceKey = 'paddle_ocr' | 'has_ner' | 'visual_features';
+
+const SERVICE_KEYS: readonly ServiceKey[] = ['paddle_ocr', 'has_ner', 'visual_features'];
+
+interface ServiceEntry {
+  key: ServiceKey;
+  service: Service;
 }
 
-function serviceSummary(services: Service[], t: Translate) {
-  return services
-    .map((service) => `${serviceDisplayName(service, t)}: ${serviceStatusLabel(service.status, t)}`)
+function serviceSummary(entries: ServiceEntry[], t: Translate) {
+  return entries
+    .map((entry) => `${t(`health.service.${entry.key}`)}: ${serviceStatusLabel(entry.service.status, t)}`)
     .join(', ');
 }
 
@@ -45,12 +46,13 @@ export const PlaygroundUpload: FC<PlaygroundUploadProps> = ({ ctx }) => {
   const visualTypeCount =
     rec.pipelines.find((pipeline) => pipeline.mode === 'visual_features')?.types.length ?? 0;
   const selectedVisualTypeCount = rec.selectedVisualFeatureTypes.length;
-  const services = health
-    ? (['paddle_ocr', 'has_ner', 'visual_features'] as const)
-        .map((key) => health.services[key])
-        .filter((service): service is Service => Boolean(service))
+  const services: ServiceEntry[] = health
+    ? SERVICE_KEYS.flatMap((key) => {
+        const service = health.services[key];
+        return service ? [{ key, service }] : [];
+      })
     : [];
-  const blockedServices = services.filter((service) => blockedServiceStatuses.has(service.status));
+  const blockedServices = services.filter((entry) => blockedServiceStatuses.has(entry.service.status));
   const backendChecking = !health && checking;
   const backendUnavailable = !health && !checking;
   const modelServicesBlocked = blockedServices.length > 0;

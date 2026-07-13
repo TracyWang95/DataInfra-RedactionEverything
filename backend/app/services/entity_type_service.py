@@ -13,9 +13,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.core.config import settings
 from app.core.persistence import load_json, save_json
-from app.core.safe_regex import RegexTimeoutError, safe_compile, safe_finditer
 from app.core.tenant_config import store_lock, tenant_store_path
-from app.models.type_mapping import TYPE_ID_ALIASES, canonical_type_id
+from app.models.type_mapping import canonical_type_id
 
 # ── 数据模型 ──────────────────────────────────────────────
 
@@ -111,31 +110,29 @@ class UpdateEntityTypeRequest(BaseModel):
     default_enabled: bool | None = None
 
 
-class RegexTestRequest(BaseModel):
-    pattern: str = Field(..., description="正则表达式")
-    test_text: str = Field(..., description="测试文本")
-
-
-class RegexTestResult(BaseModel):
-    valid: bool = Field(..., description="正则表达式是否有效")
-    matches: list[dict] = Field(default_factory=list, description="匹配结果列表")
-    error: str = Field(default="", description="错误信息")
-
-
 # ── 预置类型 ──────────────────────────────────────────────
 
 _PRESET_JSON_PATH = _os.path.join(
     _os.path.dirname(__file__), "..", "..", "config", "preset_entity_types.json"
 )
 _raw_presets = load_json(_PRESET_JSON_PATH, default={})
+# Every preset json entry is a first-class checklist item — the alias filter
+# that silently suppressed 案号(LEGAL_CASE_ID)/健康信息(HEALTH_INFO) is gone
+# with the alias layer (they were legitimate items killed by the mapping, and
+# the factory legal industry preset references LEGAL_CASE_ID directly).
 PRESET_ENTITY_TYPES: dict[str, EntityTypeConfig] = {
-    k: EntityTypeConfig(**v) for k, v in _raw_presets.items() if k not in TYPE_ID_ALIASES
+    k: EntityTypeConfig(**v) for k, v in _raw_presets.items()
 }
 
 def is_default_generic_entity_type_id(type_id: str) -> bool:
-    """Return whether a type belongs to the broad generic default schema."""
-    normalized = canonical_type_id(type_id)
-    return bool(normalized) and not normalized.startswith("custom_")
+    """Return whether a type belongs to the broad generic default schema.
+
+    Custom types (id prefixed custom_) are excluded — checked on the RAW id:
+    canonical_type_id upper-cases, so a post-canonical startswith("custom_")
+    never matched and the guard was silently always-true (custom types with
+    default_enabled leaked into the generic default schema)."""
+    raw = str(type_id or "").strip()
+    return bool(raw) and not raw.lower().startswith("custom_")
 
 
 TEXT_GENERIC_TARGETS_BY_DATA_DOMAIN: dict[str, tuple[str, ...]] = {
@@ -357,8 +354,6 @@ def _load_entity_types(owner_id: str | None = None) -> dict[str, EntityTypeConfi
         else:
             merged[key] = preset
     for key, val in raw.items():
-        if key in TYPE_ID_ALIASES:
-            continue
         if key not in merged and str(key).startswith("custom_"):
             try:
                 loaded = EntityTypeConfig(**val) if isinstance(val, dict) else val
@@ -395,10 +390,6 @@ def _db_for_owner(owner_id: str | None = None) -> dict[str, EntityTypeConfig]:
     return entity_types_db if owner_id is None else _load_entity_types(owner_id)
 
 
-def get_enabled_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
-    """获取所有启用的实体类型"""
-    db = _db_for_owner(owner_id)
-    return [t for t in db.values() if t.enabled]
 
 
 def get_default_generic_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
@@ -416,10 +407,6 @@ def get_regex_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
     return [t for t in db.values() if t.enabled and t.regex_pattern]
 
 
-def get_llm_types(owner_id: str | None = None) -> list[EntityTypeConfig]:
-    """获取使用LLM识别的类型"""
-    db = _db_for_owner(owner_id)
-    return [t for t in db.values() if t.enabled and t.use_llm]
 
 
 def resolve_requested_entity_types(
@@ -608,34 +595,8 @@ def reset_types(owner_id: str | None = None) -> None:
         _persist_entity_types(db, owner_id)
 
 
-def test_regex(pattern: str, test_text: str) -> RegexTestResult:
-    try:
-        compiled = safe_compile(pattern, timeout=1.0)
-    except re.error:
-        return RegexTestResult(valid=False, matches=[], error="正则语法错误")
-    except RegexTimeoutError:
-        return RegexTestResult(valid=False, matches=[], error="正则执行超时，请简化表达式")
-
-    try:
-        found = safe_finditer(compiled, test_text, timeout=1.0)
-    except RegexTimeoutError:
-        return RegexTestResult(valid=False, matches=[], error="正则匹配超时，请简化表达式")
-
-    matches = []
-    for m in found:
-        matches.append({
-            "text": m.group(),
-            "start": m.start(),
-            "end": m.end(),
-            "groups": [],
-        })
-    return RegexTestResult(valid=True, matches=matches)
-
 # ---------------------------------------------------------------------------
 # Public accessor — use this instead of importing entity_types_db directly,
 # so other layers don't couple to the module-level mutable dict.
 # ---------------------------------------------------------------------------
 
-def get_entity_types_db(owner_id: str | None = None) -> dict[str, EntityTypeConfig]:
-    """Return the in-memory entity-types dictionary."""
-    return _db_for_owner(owner_id)

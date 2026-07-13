@@ -1,0 +1,6 @@
+=== VL-layout seal 2026年 07月 08日 星期三 12:10:15 CST ===
+ocr 8082:$(curl -m3 -s -o /dev/null -w %{http_code} localhost:8082/health) 8084:$(curl -m3 -s -o /dev/null -w %{http_code} localhost:8084/health) lb9082:$(curl -m3 -s -o /dev/null -w %{http_code} localhost:9082/health)
+/home/adminroot/run_seal_test.sh: 行 15: $PY: 未找到命令
+/home/adminroot/run_seal_test.sh: 行 15: $PY: 未找到命令
+/home/adminroot/run_seal_test.sh: 行 15: $PY: 未找到命令
+ALLDONE

@@ -19,7 +19,6 @@ from app.core.auth import require_auth
 from app.core.idempotency import check_idempotency, save_idempotency
 from app.models.schemas import (
     CompareData,
-    EntityTypeListResponse,
     PreviewEntityMapRequest,
     PreviewEntityMapResponse,
     PreviewImageRequest,
@@ -28,7 +27,6 @@ from app.models.schemas import (
     RedactionRequest,
     RedactionResult,
     RedactionVersionsResponse,
-    ReplacementModeListResponse,
     VisionDetectRequest,
     VisionResult,
 )
@@ -154,18 +152,6 @@ async def detect_sensitive_regions(
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-
-
-@router.get("/redaction/entity-types", response_model=EntityTypeListResponse)
-async def get_entity_types():
-    """Return supported entity types."""
-    return {"entity_types": _orch.get_entity_types_list()}
-
-
-@router.get("/redaction/replacement-modes", response_model=ReplacementModeListResponse)
-async def get_replacement_modes():
-    """Return supported replacement modes."""
-    return {"replacement_modes": _orch.get_replacement_modes_list()}
 
 
 @router.get("/redaction/{file_id}/report", response_model=RedactionReport)

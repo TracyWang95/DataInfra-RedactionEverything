@@ -40,11 +40,7 @@ DEFAULT_TEMPERATURE = float(os.environ.get("LOCATE_ANYTHING_TEMPERATURE", "0.7")
 # vision tower + mlp1 projector on GPU and posts the stitched embeds to vLLM.
 VLLM_LM_URL = os.environ.get("LOCATE_ANYTHING_VLLM_URL", "").strip()
 VLLM_LM_MODEL = os.environ.get("LOCATE_ANYTHING_VLLM_MODEL", "locate_qwen2_model")
-# Fixed seed pins the 0.7/0.9 open sampling so the same page yields the same boxes
-# on every click (reproducible) without collapsing to greedy. Tunable via env.
-VLLM_LM_SEED = int(os.environ.get("LOCATE_ANYTHING_VLLM_SEED", "1234"))
 FAST_FIRST_ENABLED = _env_flag("LOCATE_ANYTHING_FAST_FIRST", "1")
-FAST_FIRST_FALLBACK_ON_EMPTY = _env_flag("LOCATE_ANYTHING_FAST_FIRST_FALLBACK_ON_EMPTY", "1")
 VALID_GENERATION_MODES = {"fast", "hybrid", "slow"}
 
 # Smallest image side the adaptive-OOM retry will downscale to before giving up.
@@ -118,51 +114,6 @@ def _adaptive_image_sides(requested: int) -> list[int]:
     return result
 
 
-FIXED_VISUAL_PROMPTS: dict[str, str] = {
-    # Keep each description a short canonical noun phrase. Verbose "X or Y"
-    # variants widen the match surface in the joined detect prompt and cause
-    # over-detection (e.g. a plain page matched "national ID card"); the short
-    # form is the same lesson as the official_seal / signature prompts.
-    "face": "human face",
-    # "thumbprint", not "fingerprint": A/B on the transcript page with five red
-    # inked prints showed "fingerprint" recalls 0/5 while "thumbprint" recalls
-    # 5/5; "red fingerprint" also recalled 5/5 but false-fired on the two red
-    # official seals of the GPU contract page, so the color-free wording wins
-    # (0 seal/contract/customs false positives in the same A/B).
-    "fingerprint": "thumbprint",
-    "palmprint": "palmprint",
-    "id_card": "ID card",
-    "hk_macau_permit": "travel permit card",
-    "passport": "passport",
-    "employee_badge": "employee badge",
-    "license_plate": "license plate",
-    "bank_card": "bank card",
-    "physical_key": "physical key",
-    "receipt": "receipt",
-    "shipping_label": "shipping label",
-    "official_seal": "seal",
-    "whiteboard": "whiteboard",
-    "sticky_note": "sticky note",
-    "mobile_screen": "phone screen",
-    "monitor_screen": "computer monitor",
-    "medical_wristband": "medical wristband",
-    "qr_code": "QR code",
-    "barcode": "barcode",
-    "paper": "paper document",
-    "signature": "signature",
-}
-
-CUSTOM_VISUAL_PROMPTS: dict[str, str] = {
-    # A short description matches the upstream demo's calling convention and far
-    # outperforms the verbose, negative-laden variant: the long prompt made the
-    # model emit <box>None</box> on faint signatures (e.g. the 1.tiff doctor
-    # signature), while "handwritten signature" recovers them without
-    # over-detecting on heavily handwritten forms (2.tiff stays at its 2 real
-    # signatures). Same lesson as the official_seal prompt.
-    "signature": "Locate all the instances that matches the following description: signature.",
-}
-
-
 class DetectRequest(BaseModel):
     image_base64: str = Field(...)
     conf: float = Field(default=0.25, ge=0.01, le=1.0)
@@ -171,6 +122,7 @@ class DetectRequest(BaseModel):
     fast_first: bool | None = None
     signature_fallback: bool = True
     max_image_side: int | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -180,6 +132,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: float | None = None
     max_tokens: int | None = None
     stream: bool | None = False
+    response_format: dict[str, Any] | None = None
 
 
 class LocateService:
@@ -390,7 +343,7 @@ class LocateService:
         torch.save(prompt_embeds, buf)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    def _vllm_complete_b64(self, prompt_embeds_b64: str) -> str:
+    def _vllm_complete_b64(self, prompt_embeds_b64: str, temperature: float = DEFAULT_TEMPERATURE) -> str:
         """Greedy vLLM completion from a base64 prompt-embeds payload."""
         import json
         import urllib.error
@@ -406,9 +359,12 @@ class LocateService:
             # slightly between runs; that is intentional. NOTE: repetition_penalty
             # is omitted — with vLLM prompt-embeds there are no prompt token-ids, so
             # the penalty kernel indexes out of bounds and triggers a CUDA assert.
-            "temperature": DEFAULT_TEMPERATURE,
+            # NOTE: no fixed seed — a pinned seed makes a BAD sample permanent
+            # (measured: seed 1234 deterministically dropped one of the two farm
+            # signatures on every run, a hard recall regression the HF path's
+            # seedless sampling recovers on retry). Behavior now mirrors HF.
+            "temperature": temperature,
             "top_p": 0.9,
-            "seed": VLLM_LM_SEED,
             "prompt_embeds": prompt_embeds_b64,
             "skip_special_tokens": False,
             "spaces_between_special_tokens": False,
@@ -428,11 +384,14 @@ class LocateService:
         return payload["choices"][0]["text"]
 
     async def _predict_boxes_vllm(
-        self, image: Image.Image, prompt: str, max_image_side: int
+        self, image: Image.Image, prompt: str, max_image_side: int,
+        temperature: float = DEFAULT_TEMPERATURE,
     ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
         if not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
-        inference_image = _resize_for_inference(image, max_image_side)
+        inference_image = _resize_for_inference(
+            image, max_image_side, upscale_target=min(DEFAULT_MIN_SIDE, max_image_side)
+        )
         # GPU work (vision encode + embed stitch) stays inside the lock; the
         # vLLM network round-trip (up to VLLM_REQUEST_TIMEOUT_SECONDS) runs
         # outside it so a slow generation cannot starve other GPU requests --
@@ -457,7 +416,7 @@ class LocateService:
                 # the shared 16GB card thrashes (observed: tower at ~12GB, encodes
                 # stalling at 100% GPU with the whole stack resident).
                 trim_cuda_cache("vllm-chat-encode")
-        answer = await asyncio.to_thread(self._vllm_complete_b64, b64)
+        answer = await asyncio.to_thread(self._vllm_complete_b64, b64, temperature)
         boxes = _parse_boxes(answer, inference_image.width, inference_image.height)
         return answer, boxes, (inference_image.width, inference_image.height)
 
@@ -475,7 +434,9 @@ class LocateService:
         """
         if not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
-        inference_image = _resize_for_inference(image, max_image_side)
+        inference_image = _resize_for_inference(
+            image, max_image_side, upscale_target=min(DEFAULT_MIN_SIDE, max_image_side)
+        )
         width, height = inference_image.width, inference_image.height
         _t0 = time.perf_counter()
         # Phase 1 (GPU, serialized): one vision encode + per-category prompt-embeds.
@@ -532,7 +493,7 @@ class LocateService:
         fallback_when_no_boxes: bool = True,
     ) -> tuple[str, list[dict[str, Any]], tuple[int, int]]:
         if VLLM_LM_URL:
-            return await self._predict_boxes_vllm(image, prompt, max_image_side)
+            return await self._predict_boxes_vllm(image, prompt, max_image_side, temperature=temperature)
         if self.worker is None or not self.ready:
             raise HTTPException(status_code=503, detail="LocateAnything model is not ready")
         source_size = image.size
@@ -543,7 +504,9 @@ class LocateService:
             FAST_FIRST_ENABLED if fast_first is None else bool(fast_first),
         )
         for attempt_side in _adaptive_image_sides(max_image_side):
-            inference_image = _resize_for_inference(image, attempt_side)
+            inference_image = _resize_for_inference(
+                image, attempt_side, upscale_target=min(DEFAULT_MIN_SIDE, attempt_side)
+            )
             scale_x = inference_image.width / source_size[0] if source_size[0] else 1.0
             scale_y = inference_image.height / source_size[1] if source_size[1] else 1.0
             last_answer = ""
@@ -653,36 +616,39 @@ def _extract_allowed_type_ids(prompt: str) -> list[str]:
 
 
 def _description_for_type_id(prompt: str, type_id: str) -> str:
+    """SHORT category phrase per the official CATEGORIES semantics (model
+    card: detection takes a comma-separated category list). The old variant
+    concatenated every Check/Exclude checklist row into one verbose
+    description — exactly the negative-laden prompt the A/B measured to
+    suppress faint detections. The backend now sends an explicit "Query:"
+    line per type (checklist row.query or the human name); fall back to the
+    name= field, then the prettified id."""
     escaped = re.escape(type_id)
-    parts: list[str] = []
-    name_match = re.search(rf"type_id={escaped};\s*name=([^\n\r]+)", prompt)
-    if name_match:
-        parts.append(name_match.group(1).strip())
     block_match = re.search(
         rf"type_id={escaped};.*?(?=\n-\s*type_id=|\nIf none,|\Z)",
         prompt,
         flags=re.S,
     )
     if block_match:
-        for line in block_match.group(0).splitlines():
-            line = line.strip()
-            if "Check:" in line:
-                parts.append(line.split("Check:", 1)[1].strip())
-            elif line.startswith("Exclude:"):
-                parts.append(f"Exclude: {line.split(':', 1)[1].strip()}")
-    if not parts:
-        parts.append(type_id.replace("_", " "))
-    return "; ".join(dict.fromkeys(part for part in parts if part))
+        query_match = re.search(r"^\s*Query:\s*(.+)$", block_match.group(0), flags=re.M)
+        if query_match and query_match.group(1).strip():
+            return query_match.group(1).strip()
+    name_match = re.search(rf"type_id={escaped};\s*name=([^\n\r]+)", prompt)
+    if name_match and name_match.group(1).strip():
+        return name_match.group(1).strip()
+    return type_id.replace("_", " ")
 
 
-def _chat_prompt_for(prompt: str, allowed_ids: list[str]) -> tuple[str, str]:
-    normalized_ids = {_normalize_slug(item) for item in allowed_ids}
-    text = prompt.lower()
-    if "signature" in normalized_ids or "signature" in text or "签" in prompt:
-        return "signature", CUSTOM_VISUAL_PROMPTS["signature"]
-    type_id = allowed_ids[0] if allowed_ids else "object"
+def _chat_prompt_for_type(prompt: str, type_id: str) -> str:
+    """Grounding prompt for ONE allowed type_id — the uniform path for every
+    category, signature included. The old "签"/"signature" keyword hijack
+    rerouted the WHOLE request to a signature preset, so any second custom
+    type was never detected and a stray 签 in a name like 签收单/标签 dropped
+    every box. Keep the description short: the verbose negative-laden variant
+    made the model emit <box>None</box> on faint signatures (1.tiff doctor
+    signature) while a short description recovers them."""
     description = _description_for_type_id(prompt, type_id)
-    return type_id, f"Locate all the instances that match the following description: {description}."
+    return f"Locate all the instances that matches the following description: {description}."
 
 
 def _find_first_user_image_and_text(messages: list[dict[str, Any]]) -> tuple[Image.Image, str]:
@@ -716,10 +682,12 @@ def _detect_prompt(categories: list[str]) -> str:
     # variant embedded a literal "<ref>signature</ref>" example that the model
     # echoed back (returning a lone signature box instead of the seals), and its
     # verbose negatives suppressed real detections.
-    descriptions = []
-    for raw in categories:
-        slug = _normalize_slug(raw)
-        descriptions.append(FIXED_VISUAL_PROMPTS.get(slug, slug.replace("_", " ")))
+    # The request text IS the grounding description — the backend sends the
+    # user's 识别清单 wording (or its factory default) verbatim; legacy slug
+    # callers get their underscores prettified into spaces.
+    descriptions = [
+        _normalize_slug(raw).replace("_", " ") for raw in categories if str(raw or "").strip()
+    ]
     category_set_str = "</c>".join(descriptions)
     return f"Locate all the instances that matches the following description: {category_set_str}."
 
@@ -800,45 +768,6 @@ def _dedupe_boxes(boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(kept_all, key=lambda item: (item.get("category", ""), float(item["y"]), float(item["x"])))
 
 
-def _category_from_label(label: str, categories: list[str]) -> str | None:
-    if len(categories) == 1:
-        return categories[0]
-    text = _normalize_slug(label)
-    for category in categories:
-        slug = _normalize_slug(category)
-        if slug and slug in text:
-            return slug
-    keyword_map = {
-        "official_seal": ("seal", "stamp", "red_stamp", "red_seal"),
-        "qr_code": ("qr", "qrcode"),
-        "barcode": ("bar_code", "barcode"),
-        "id_card": ("identity", "national_id"),
-        "bank_card": ("credit_card", "bank_card"),
-        "face": ("face", "human_face"),
-        "fingerprint": ("fingerprint", "finger_print"),
-        "palmprint": ("palmprint", "palm_print"),
-        "hk_macau_permit": ("hong_kong", "macau", "permit"),
-        "passport": ("passport",),
-        "employee_badge": ("employee", "badge", "work_id"),
-        "license_plate": ("license_plate", "plate"),
-        "physical_key": ("key",),
-        "receipt": ("receipt",),
-        "shipping_label": ("shipping", "delivery", "waybill"),
-        "whiteboard": ("whiteboard",),
-        "sticky_note": ("sticky", "note"),
-        "mobile_screen": ("mobile", "phone_screen"),
-        "monitor_screen": ("monitor", "computer_screen"),
-        "medical_wristband": ("wristband",),
-        "paper": ("paper", "document_page", "page"),
-        "signature": ("signature", "signer", "handwritten"),
-    }
-    for category in categories:
-        for keyword in keyword_map.get(_normalize_slug(category), ()):
-            if keyword in text:
-                return _normalize_slug(category)
-    return None
-
-
 @app.on_event("startup")
 async def startup() -> None:
     print(f"[LocateAnything] loading model={service.model_path}", flush=True)
@@ -886,28 +815,39 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="stream=true is not supported")
     image, prompt = _find_first_user_image_and_text(req.messages)
     allowed_ids = _extract_allowed_type_ids(prompt)
-    type_id, locate_prompt = _chat_prompt_for(prompt, allowed_ids)
     max_new_tokens = max(int(req.max_tokens or 0), DEFAULT_MAX_NEW_TOKENS)
     temperature = float(req.temperature if req.temperature is not None else DEFAULT_TEMPERATURE)
-    # Signature is detected like any other category (trust LA, no special path).
-    answer, boxes, (width, height) = await service.predict_boxes(
-        image,
-        locate_prompt,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
+    # Structured-output contract: the backend checklist caller asks for JSON via
+    # the standard OpenAI response_format field. The prompt-literal sniff stays as
+    # a fallback for older backends — the sole real JSON sender (_checklist_prompt)
+    # always carries "Schema:" and "Allowed type_id:".
+    wants_json = (
+        str((req.response_format or {}).get("type") or "") == "json_object"
+        or "Schema:" in prompt
+        or "Allowed type_id:" in prompt
+        or '"objects"' in prompt
     )
-    wants_json = "Schema:" in prompt or "Allowed type_id:" in prompt or '"objects"' in prompt
     if wants_json:
+        # One grounding pass per allowed type_id: every configured type is
+        # detected and its boxes tagged by the type they were REQUESTED as — no
+        # first-type-only shortcut, no keyword-based prompt hijack.
         normalized_objects: list[dict[str, Any]] = []
-        for box in boxes:
-            normalized = _box_to_normalized(box, width, height, type_id)
-            if normalized is not None:
-                normalized_objects.append(normalized)
+        for type_id in allowed_ids or ["object"]:
+            _answer, boxes, (width, height) = await service.predict_boxes(
+                image,
+                _chat_prompt_for_type(prompt, type_id),
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+            )
+            for box in boxes:
+                normalized = _box_to_normalized(box, width, height, type_id)
+                if normalized is not None:
+                    normalized_objects.append(normalized)
         normalized_objects = _dedupe_boxes(normalized_objects)
         objects = [
             {
-                "type_id": type_id,
-                "label": type_id,
+                "type_id": box["category"],
+                "label": box["category"],
                 "box_2d": [
                     max(0, min(1000, round(float(box["x"]) * 1000))),
                     max(0, min(1000, round(float(box["y"]) * 1000))),
@@ -915,14 +855,20 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
                     max(0, min(1000, round((float(box["y"]) + float(box["height"])) * 1000))),
                 ],
                 "confidence": LOCATEANYTHING_CONFIDENCE,
-                "rule_matched": f"{type_id}#locateanything",
-                "text": str(box.get("label") or type_id),
+                "rule_matched": f"{box['category']}#locateanything",
+                "text": str(box["category"]),
             }
             for box in normalized_objects
         ]
         content = json.dumps({"objects": objects}, ensure_ascii=False, separators=(",", ":"))
     else:
-        content = answer
+        type_id = allowed_ids[0] if allowed_ids else "object"
+        content, _boxes, _size = await service.predict_boxes(
+            image,
+            _chat_prompt_for_type(prompt, type_id),
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
     return {
         "id": f"chatcmpl-locate-{int(time.time() * 1000)}",
         "object": "chat.completion",
@@ -936,8 +882,11 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
 @app.post("/detect")
 async def detect(req: DetectRequest) -> dict[str, Any]:
     image = _decode_b64_image(req.image_base64)
-    requested = [_normalize_slug(item) for item in (req.categories or list(FIXED_VISUAL_PROMPTS))]
-    requested = [item for item in requested if item in FIXED_VISUAL_PROMPTS]
+    # Every tag is grounded verbatim — the backend owns the wording (the
+    # user's 识别清单 or its factory default, see SLUG_TO_DEFAULT_QUERY there);
+    # this server holds no prompt table. Non-ASCII (中文) tags flow through.
+    requested = [_normalize_slug(item) for item in (req.categories or [])]
+    requested = list(dict.fromkeys(item for item in requested if item))
     if not requested:
         return {"boxes": [], "elapsed": 0.0, "model": MODEL_NAME}
     start = time.perf_counter()
@@ -970,7 +919,14 @@ async def detect(req: DetectRequest) -> dict[str, Any]:
             # single-category hybrid pass each restores recall. Mirrors the vLLM
             # predict_boxes_per_category path. Quality over a few extra seconds.
             for cat in general_requested:
-                answer, boxes, (width, height) = await service.predict_boxes(image, _detect_prompt([cat]))
+                answer, boxes, (width, height) = await service.predict_boxes(
+                    image,
+                    _detect_prompt([cat]),
+                    generation_mode=req.generation_mode or DEFAULT_GENERATION_MODE,
+                    fast_first=req.fast_first,
+                    max_image_side=req.max_image_side or DEFAULT_MAX_SIDE,
+                    temperature=req.temperature if req.temperature is not None else DEFAULT_TEMPERATURE,
+                )
                 raw_answers.append(f"[{cat}] {answer}")
                 for box in boxes:
                     normalized = _box_to_normalized(box, width, height, cat)

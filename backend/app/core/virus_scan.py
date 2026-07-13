@@ -27,11 +27,6 @@ class ScanResult:
         self.virus_name = virus_name
         self.error = error  # 扫描器不可用时的错误信息
 
-    @property
-    def available(self) -> bool:
-        """扫描器是否可用（error 为 None 表示可用）"""
-        return self.error is None
-
 
 def _get_clamd():
     """获取 ClamAV 客户端（延迟导入，不可用时返回 None）"""
@@ -75,8 +70,3 @@ def scan_file(file_path: str) -> ScanResult:
     except Exception as e:
         logger.warning("Virus scan error for %s: %s (degraded: allowing file)", file_path, e)
         return ScanResult(clean=True, error=str(e))
-
-
-def is_available() -> bool:
-    """检查 ClamAV 是否可用"""
-    return _get_clamd() is not None

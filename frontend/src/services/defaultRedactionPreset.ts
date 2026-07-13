@@ -27,43 +27,18 @@ export interface DefaultPipelineCoverage {
   enabledIds: string[];
 }
 
-const DEFAULT_EXCLUDED_TEXT_TYPE_IDS = new Set<string>();
 export type PipelineMode = 'ocr_has' | 'visual_features';
 
-const DEFAULT_EXCLUDED_PIPELINE_TYPE_IDS: Record<PipelineMode, ReadonlySet<string>> = {
-  ocr_has: new Set(),
-  visual_features: new Set(),
-};
-
 export function normalizeVisualTypeId(id: string): string {
-  const normalized = id.trim().toLowerCase().replace(/-/g, '_');
-  const aliases: Record<string, string> = {
-    receipt_region: 'receipt',
-    portrait_face: 'face',
-    stamp_region: 'official_seal',
-  };
-  return aliases[normalized] ?? normalized;
+  return id.trim().toLowerCase().replace(/-/g, '_');
 }
 
 function enabledIds<T extends { id: string; enabled?: boolean }>(items: T[]): string[] {
   return items.filter((item) => item.enabled !== false).map((item) => item.id);
 }
 
-function normalizeTextTypeId(id: string): string {
-  return id.trim().toUpperCase().replace(/[- /]/g, '_');
-}
-
-export function isDefaultExcludedTextTypeId(id: string): boolean {
-  const normalized = normalizeTextTypeId(id);
-  return DEFAULT_EXCLUDED_TEXT_TYPE_IDS.has(normalized);
-}
-
 export function isBuiltinDefaultTextType(type: DefaultTextTypeLike): boolean {
-  return (
-    type.enabled !== false &&
-    type.default_enabled === true &&
-    !isDefaultExcludedTextTypeId(type.id)
-  );
+  return type.enabled !== false && type.default_enabled === true;
 }
 
 export function buildDefaultTextTypeIds<T extends DefaultTextTypeLike>(types: T[]): string[] {
@@ -72,28 +47,6 @@ export function buildDefaultTextTypeIds<T extends DefaultTextTypeLike>(types: T[
 
 export function isBuiltinDefaultPipelineType(type: DefaultPipelineTypeLike): boolean {
   return type.enabled !== false && type.default_enabled === true;
-}
-
-export function isDefaultExcludedPipelineTypeId(
-  mode: PipelineMode,
-  id: string,
-): boolean {
-  if (mode === 'ocr_has' && isDefaultExcludedTextTypeId(id)) return true;
-  return DEFAULT_EXCLUDED_PIPELINE_TYPE_IDS[mode].has(id);
-}
-
-function isDefaultPipelineType(
-  type: DefaultPipelineTypeLike,
-  mode: PipelineMode,
-): boolean {
-  return isBuiltinDefaultPipelineType(type) && !isDefaultExcludedPipelineTypeId(mode, type.id);
-}
-
-function enabledDefaultPipelineIds<T extends DefaultPipelineTypeLike>(
-  items: T[],
-  mode: PipelineMode,
-): string[] {
-  return enabledIds(items).filter((id) => !isDefaultExcludedPipelineTypeId(mode, id));
 }
 
 function isPipelineTypeVisibleInConfig(
@@ -111,7 +64,7 @@ export function buildDefaultPipelineTypeIds<T extends DefaultPipelineTypeLike>(
   const builtinIds = pipelines
     .filter((pipeline) => pipeline.mode === mode && pipeline.enabled)
     .flatMap((pipeline) =>
-      pipeline.types.filter((type) => isDefaultPipelineType(type, mode)).map((type) => type.id),
+      pipeline.types.filter(isBuiltinDefaultPipelineType).map((type) => type.id),
     );
   if (builtinIds.length > 0) {
     return builtinIds;
@@ -121,7 +74,7 @@ export function buildDefaultPipelineTypeIds<T extends DefaultPipelineTypeLike>(
   }
   return pipelines
     .filter((pipeline) => pipeline.mode === mode && pipeline.enabled)
-    .flatMap((pipeline) => enabledDefaultPipelineIds(pipeline.types, mode));
+    .flatMap((pipeline) => enabledIds(pipeline.types));
 }
 
 export function buildDefaultPipelineCoverage<T extends DefaultPipelineTypeLike>(

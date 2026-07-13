@@ -1,8 +1,7 @@
 """
-Image Pipeline - visual feature region refinement and image manipulation.
+Image Pipeline - preview rendering and image redaction.
 
 Responsibilities:
-- Matching visual feature regions with OCR text blocks (coordinate refinement)
 - Drawing detection boxes on images (debug/preview visualization)
 - Applying redaction (solid color overlay on sensitive regions)
 """
@@ -11,12 +10,11 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from enum import Enum
 
 from PIL import Image, ImageDraw, ImageFont
 
-from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
+from app.services.ocr_has_vision_service import SensitiveRegion
 
 logger = logging.getLogger(__name__)
 
@@ -31,75 +29,6 @@ _OCR_VISUAL_MATCH_IOU_THRESHOLD = 0.3
 _OCR_VISUAL_TEXT_SIMILARITY_MIN = 0.6
 
 
-def match_ocr_to_visual_regions(
-    ocr_blocks: list[OCRTextBlock],
-    visual_regions: list[SensitiveRegion],
-    iou_threshold: float = _OCR_VISUAL_MATCH_IOU_THRESHOLD,
-) -> list[SensitiveRegion]:
-    """
-    Refine visual feature regions using OCR text blocks.
-
-    When a visual region overlaps an OCR block (by IoU or text similarity), the
-    OCR block's more precise coordinates are used instead.
-    """
-    from app.services.vision.region_merger import calc_iou_boxes
-
-    def normalize_text(text: str) -> str:
-        if not text:
-            return ""
-        return "".join(
-            ch
-            for ch in text
-            if not ch.isspace() and (ch.isalnum() or ch == "_" or "\u4e00" <= ch <= "\u9fff")
-        )
-
-    refined_regions: list[SensitiveRegion] = []
-
-    for visual_region in visual_regions:
-        visual_box = (visual_region.left, visual_region.top, visual_region.width, visual_region.height)
-
-        best_match: OCRTextBlock | None = None
-        best_iou = 0.0
-
-        for ocr_block in ocr_blocks:
-            ocr_box = (ocr_block.left, ocr_block.top, ocr_block.width, ocr_block.height)
-            iou = calc_iou_boxes(visual_box, ocr_box)
-
-            if iou > best_iou and iou >= iou_threshold:
-                best_iou = iou
-                best_match = ocr_block
-
-        if not best_match:
-            # IoU failed - fall back to text similarity
-            norm_visual = normalize_text(visual_region.text)
-            if norm_visual:
-                for ocr_block in ocr_blocks:
-                    norm_ocr = normalize_text(ocr_block.text)
-                    if norm_ocr and (norm_visual in norm_ocr or norm_ocr in norm_visual):
-                        best_match = ocr_block
-                        break
-                    if norm_ocr:
-                        ratio = SequenceMatcher(None, norm_visual, norm_ocr).ratio()
-                        if ratio >= _OCR_VISUAL_TEXT_SIMILARITY_MIN:
-                            best_match = ocr_block
-                            break
-
-        if best_match:
-            refined_regions.append(SensitiveRegion(
-                text=best_match.text,
-                entity_type=visual_region.entity_type,
-                left=best_match.left,
-                top=best_match.top,
-                width=best_match.width,
-                height=best_match.height,
-                confidence=max(visual_region.confidence, best_match.confidence),
-                source="merged",
-                color=visual_region.color,
-            ))
-        else:
-            refined_regions.append(visual_region)
-
-    return refined_regions
 
 
 # ---------------------------------------------------------------------------

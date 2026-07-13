@@ -27,7 +27,6 @@ app.add_middleware(
 )
 
 _vl: Any | None = None
-_ocr: Any | None = None
 _structure: Any | None = None
 _ready = False
 _model_name = "PaddleOCR-VL-1.6-0.9B"
@@ -43,7 +42,15 @@ _char_lock = asyncio.Lock()  # separate from _infer_lock: a peer-delegated /char
 MAX_SIDE = int(os.environ.get("OCR_MAX_IMAGE_SIDE", "1600"))
 SEAL_TEXT = "[公章]"
 
-DEFAULT_CONFIDENCE = 0.9  # fallback confidence score when a box has none
+
+def _vl_seal_enabled() -> bool:
+    # 公章 comes from PaddleOCR-VL's OWN layout detection (the 'seal' class),
+    # read off the same pipeline output that already produces text — no extra
+    # model, no seal-text recognition. PP-Structure never touches seals.
+    return os.environ.get("OCR_VL_SEAL_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+DEFAULT_CONFIDENCE = 0.9  # FABRICATED placeholder (not a measurement): stamped when the engine emits no score; downstream must never threshold on it (入册, 同 LA 的 0.82).
 MAX_ITER_DEPTH = 8  # max recursion depth when walking nested OCR result objects
 NORMALIZED_COORD_MAX = 1.5  # if all coords <= this, treat them as already in [0,1] space
 MIN_BOX_SIZE = 1.0  # floor (px) for a box's width/height after clamping
@@ -97,10 +104,6 @@ def _fatal(exit_code: int = 1) -> None:
     os._exit(exit_code)
 
 
-def _allow_cpu() -> bool:
-    return os.environ.get("OCR_ALLOW_CPU", "").strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _structure_enabled() -> bool:
     return os.environ.get("OCR_STRUCTURE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -112,19 +115,6 @@ def _require_gpu_or_exit() -> None:
     except ImportError as exc:
         print(f"[OCR] FATAL: paddle is not installed: {exc}", flush=True)
         _fatal(1)
-
-    if _allow_cpu():
-        print("[OCR] WARN: OCR_ALLOW_CPU is enabled; GPU remains preferred.", flush=True)
-        try:
-            if paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
-                paddle.set_device("gpu:0")
-                _paddle_device = str(paddle.get_device())
-            else:
-                paddle.set_device("cpu")
-                _paddle_device = "cpu"
-        except Exception as exc:
-            print(f"[OCR] WARN: failed to select Paddle device: {exc}", flush=True)
-        return
 
     if not paddle.is_compiled_with_cuda():
         print("[OCR] FATAL: installed Paddle build has no CUDA support.", flush=True)
@@ -168,7 +158,7 @@ def _vl_disabled() -> bool:
 
 
 def init_ocr() -> None:
-    global _vl, _ocr, _ready, _model_name
+    global _vl, _ready, _model_name
     _require_gpu_or_exit()
 
     if _vl_disabled():
@@ -204,20 +194,7 @@ def init_ocr() -> None:
         return
     except Exception as exc:
         print(f"[OCR] FATAL: PaddleOCR-VL init failed: {exc}", flush=True)
-        if not _allow_cpu():
-            _fatal(1)
-        _vl = None
-
-    try:
-        from paddleocr import PaddleOCR
-
-        _ocr = PaddleOCR(use_angle_cls=True, lang="ch")
-        _ready = True
-        _model_name = "PaddleOCR-2.x CPU fallback"
-        print(f"[OCR] {_model_name} loaded because OCR_ALLOW_CPU is enabled", flush=True)
-    except Exception as exc:
-        print(f"[OCR] FATAL: fallback PaddleOCR init failed: {exc}", flush=True)
-        _ready = False
+        _fatal(1)
 
 
 def warmup() -> None:
@@ -540,6 +517,35 @@ def _extract_vl_spotting_boxes(outputs: Any) -> list[dict]:
     return raw
 
 
+def _extract_vl_seal_boxes(outputs: Any) -> list[dict]:
+    """Pull 公章 boxes from the PaddleOCR-VL pipeline's own layout detection.
+
+    The VL pipeline already runs layout detection locally, and 'seal' is one of
+    its layout classes — this reads only those boxes off the same output that
+    produced the page text. No extra model is loaded and the seal-text
+    RECOGNITION path (de-warp pseudo-coordinate pathology) is never touched.
+    Validated: clean document-space bboxes matching LA/YOLO on real stamps,
+    and no false-positive on the 中国裁判文书网 masthead emblem.
+    """
+    raw: list[dict] = []
+    for item in _iter_dicts(outputs):
+        layout_boxes = _first_value(item, "boxes")
+        if not (isinstance(layout_boxes, list) and layout_boxes and all(isinstance(e, dict) for e in layout_boxes)):
+            continue
+        for box_info in layout_boxes:
+            if str(_first_value(box_info, "label", "block_label") or "").strip().lower() != "seal":
+                continue
+            coord = _first_value(box_info, "coordinate", "bbox", "box", "dt_polys", "rec_box")
+            _append_raw_box(
+                raw,
+                SEAL_TEXT,
+                coord,
+                "seal",
+                float(_first_value(box_info, "score", "confidence") or DEFAULT_CONFIDENCE),
+            )
+    return raw
+
+
 def extract_vl(
     image: Image.Image,
     max_new_tokens: int = 512,
@@ -580,6 +586,8 @@ def extract_vl(
             try:
                 outputs = _vl.predict(temp_path, max_new_tokens=max_new_tokens, **predict_kwargs)
                 raw_boxes = _extract_vl_parsing_boxes(outputs)
+                if _vl_seal_enabled():
+                    raw_boxes.extend(_extract_vl_seal_boxes(outputs))
                 print(f"[OCR] PaddleOCR-VL parser produced {len(raw_boxes)} boxes", flush=True)
             except Exception as exc:
                 print(f"[OCR] PaddleOCR-VL parser failed: {exc}", flush=True)
@@ -739,6 +747,52 @@ def _extract_char_boxes(image: Image.Image) -> list[dict[str, Any]]:
     return chars
 
 
+def _reocr_wide_block_chars(mapped: list[OCRBox], ocr_image: Image.Image) -> int:
+    """Re-OCR char boxes for wide, long line blocks whose full-page word pass
+    misplaces trailing chars.
+
+    The det model drifts / clamps char boxes on full-width lines: on a
+    judgement body line "2023" was boxed at the 5月 position (whole line shifted
+    right) and the tail 洪频颢 was clamped onto the right edge — so an entity's
+    char-box crop landed on the wrong glyphs and the value got the whole line or
+    a shifted box. Re-running the word engine on the ISOLATED line crop (not
+    downscaled or competing with the rest of the page) recovers correct
+    positions. Scoped to wide (>0.7 page width) AND long (>=30 non-space glyph)
+    lines — the only case that drifts; short blocks are untouched (zero cost).
+    """
+    engine = get_word_engine()
+    if engine is None:
+        return 0
+    width, height = ocr_image.size
+    fixed = 0
+    for box in mapped:
+        if box.width < 0.7 or sum(1 for c in (box.text or "") if not c.isspace()) < 30:
+            continue
+        pad = max(2, int(0.004 * width))
+        x1 = max(0, int(box.x * width) - pad)
+        y1 = max(0, int(box.y * height) - pad)
+        x2 = min(width, int((box.x + box.width) * width) + pad)
+        y2 = min(height, int((box.y + box.height) * height) + pad)
+        if x2 - x1 < 4 or y2 - y1 < 4:
+            continue
+        crop_chars = _extract_char_boxes(ocr_image.crop((x1, y1, x2, y2)))
+        if not crop_chars:
+            continue
+        crop_w, crop_h = x2 - x1, y2 - y1
+        box.chars = [
+            {
+                "c": ch["c"],
+                "x": (x1 + ch["x"] * crop_w) / width,
+                "y": (y1 + ch["y"] * crop_h) / height,
+                "w": ch["w"] * crop_w / width,
+                "h": ch["h"] * crop_h / height,
+            }
+            for ch in crop_chars
+        ]
+        fixed += 1
+    return fixed
+
+
 def _attach_chars(boxes: list[OCRBox], chars: list[dict[str, Any]]) -> None:
     """Attach to each line box the char boxes whose center falls inside it,
     ordered left-to-right."""
@@ -747,154 +801,23 @@ def _attach_chars(boxes: list[OCRBox], chars: list[dict[str, Any]]) -> None:
     for box in boxes:
         bx1, by1 = box.x, box.y
         bx2, by2 = box.x + box.width, box.y + box.height
+        # Attach a char when its center sits on the box's line (y) and within
+        # one of its OWN widths of the box's x-span. The x tolerance is the
+        # char's own width (self-scaling, not a fixed number), which recovers
+        # the edge-clamped trailing chars of a full-width line: the word engine
+        # clamps chars that run to the right margin onto the box's right edge,
+        # so their centers land just past bx2 and a strict center-inside test
+        # dropped them — leaving a full-width fallback box for a name that is
+        # actually at the line's right end (observed: 将被执行人洪频颢 clamped to
+        # the block edge; the name got the whole 0.96-wide line instead of a
+        # tight box).
         inside = [
             ch for ch in chars
-            if bx1 <= ch["x"] + ch["w"] / 2 <= bx2 and by1 <= ch["y"] + ch["h"] / 2 <= by2
+            if bx1 - ch["w"] <= ch["x"] + ch["w"] / 2 <= bx2 + ch["w"]
+            and by1 <= ch["y"] + ch["h"] / 2 <= by2
         ]
         inside.sort(key=lambda c: c["x"])
         box.chars = inside
-
-
-# Same-place gate for the red-suppressed supplement, mirroring the backend's
-# duplicate-IoU contract: above it two boxes are the same physical line.
-_SUPPRESSED_SAME_PLACE_IOU = 0.5
-
-
-def _suppress_red_ink(image: Image.Image) -> Image.Image | None:
-    """Whiten seal-red pixels so det/rec can read print crushed under stamps.
-
-    The red definition reuses the project's canonical constants from
-    seal_detector (HSV hue window + RGB dominance); black print is untouched.
-    Returns None when the page carries no red ink, so stamp-free pages skip
-    the supplemental pass at zero cost.
-    """
-    try:
-        import cv2
-        import numpy as np
-
-        from app.services.vision import seal_detector as sd
-    except Exception as exc:
-        print(f"[OCR] red suppression unavailable: {exc}", flush=True)
-        return None
-    arr = np.array(image.convert("RGB"))
-    hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
-    red_hue = (hsv[:, :, 0] <= sd._RED_HUE_LOW_MAX) | (hsv[:, :, 0] >= sd._RED_HUE_HIGH_MIN)
-    saturated = hsv[:, :, 1] >= sd._RED_SAT_MIN
-    bright = hsv[:, :, 2] >= sd._RED_VAL_MIN
-    rgb_red = (
-        (arr[:, :, 0] >= sd._RED_RGB_R_MIN)
-        & (arr[:, :, 0] >= arr[:, :, 1] * sd._RED_RGB_R_OVER_G)
-        & (arr[:, :, 0] >= arr[:, :, 2] * sd._RED_RGB_R_OVER_B)
-    )
-    mask = red_hue & saturated & bright & rgb_red
-    if not bool(mask.any()):
-        return None
-    out = arr.copy()
-    out[mask] = (255, 255, 255)
-    return Image.fromarray(out)
-
-
-def _extract_suppressed_lines(image: Image.Image) -> tuple[list[OCRBox], list[dict[str, Any]]]:
-    """Word-engine pass over the red-suppressed image: line boxes + char boxes."""
-    engine = get_word_engine()
-    if engine is None:
-        return [], []
-    width, height = image.size
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
-        temp_path = file.name
-        image.save(file, format="PNG")
-    lines_raw: list[dict] = []
-    chars: list[dict[str, Any]] = []
-    try:
-        for result in engine.predict(temp_path):
-            texts = _first_value(result, "rec_texts")
-            polys = _first_value(result, "rec_polys", "dt_polys")
-            if _has_items(texts) and _has_items(polys):
-                for text, poly in zip(texts, polys, strict=False):
-                    _append_raw_box(lines_raw, str(text or ""), poly, "structure")
-            try:
-                line_chars = result["text_word"]
-                line_boxes = result["text_word_boxes"]
-            except (KeyError, TypeError):
-                continue
-            for words, boxes in zip(line_chars, line_boxes, strict=False):
-                for ch, box in zip(words, boxes, strict=False):
-                    x1, y1, x2, y2 = _char_box_xyxy(box)
-                    if x2 <= x1 or y2 <= y1:
-                        continue
-                    chars.append({
-                        "c": str(ch),
-                        "x": x1 / width,
-                        "y": y1 / height,
-                        "w": (x2 - x1) / width,
-                        "h": (y2 - y1) / height,
-                    })
-    except Exception as exc:
-        print(f"[OCR] red-suppressed extraction failed: {exc}", flush=True)
-    finally:
-        _remove_file(temp_path)
-    return _normalize_boxes(lines_raw, width, height), chars
-
-
-def _box_iou(a: OCRBox, b: OCRBox) -> float:
-    ax2, ay2 = a.x + a.width, a.y + a.height
-    bx2, by2 = b.x + b.width, b.y + b.height
-    x1, y1 = max(a.x, b.x), max(a.y, b.y)
-    x2, y2 = min(ax2, bx2), min(ay2, by2)
-    if x2 <= x1 or y2 <= y1:
-        return 0.0
-    inter = (x2 - x1) * (y2 - y1)
-    union = a.width * a.height + b.width * b.height - inter
-    return inter / union if union > 0 else 0.0
-
-
-def _merge_suppressed_supplement(
-    mapped: list[OCRBox],
-    sup_lines: list[OCRBox],
-    sup_chars: list[dict[str, Any]],
-) -> int:
-    """Fold the red-suppressed pass into the main result; only ever adds.
-
-    A suppressed-pass line sharing a place with an existing box is the same
-    physical line re-read — the original text stays authoritative. Lines with
-    no original counterpart (print the stamp hid from detection) are added
-    with their own char boxes. Existing boxes the original word pass left
-    without chars take the suppressed pass's chars instead, so value-level
-    cropping works on stamped lines too.
-    """
-    def center_inside(inner: OCRBox, outer: OCRBox) -> bool:
-        cx = inner.x + inner.width / 2
-        cy = inner.y + inner.height / 2
-        return (
-            outer.x <= cx <= outer.x + outer.width
-            and outer.y <= cy <= outer.y + outer.height
-        )
-
-    if sup_chars:
-        empty = [box for box in mapped if not box.chars]
-        if empty:
-            _attach_chars(empty, sup_chars)
-    added = 0
-    for line in sup_lines:
-        if any(_box_iou(line, existing) > _SUPPRESSED_SAME_PLACE_IOU for existing in mapped):
-            continue
-        # A suppressed-pass line anchored inside an existing box (its center
-        # point lies within one) is a re-read of an area the original pass
-        # already covers — the stamp hid nothing there. The IoU gate alone
-        # cannot catch it (a thin sliver inside a full line has near-zero IoU
-        # against it), and edge containment breaks on float boundary hairs;
-        # the center point is a topological test immune to both.
-        if any(center_inside(line, existing) for existing in mapped):
-            continue
-        _attach_chars([line], sup_chars)
-        mapped.append(line)
-        added += 1
-        print(
-            f"[OCR] red-suppressed line kept: {line.text!r} "
-            f"x={line.x:.4f} y={line.y:.4f} w={line.width:.4f} h={line.height:.4f}",
-            flush=True,
-        )
-    return added
 
 
 def extract_structure(image: Image.Image, request: StructureRequest) -> list[OCRBox]:
@@ -962,7 +885,6 @@ async def health() -> dict[str, Any]:
     except Exception:
         pass
 
-    gpu_only_mode = not _allow_cpu()
     runtime_mode = "gpu" if gpu_ok and str(device).lower().startswith("gpu") else "cpu"
     return {
         "status": "online" if _ready else "offline",
@@ -972,8 +894,8 @@ async def health() -> dict[str, Any]:
         "runtime_mode": runtime_mode,
         "gpu_available": gpu_ok,
         "device": device or "unknown",
-        "gpu_only_mode": gpu_only_mode,
-        "cpu_fallback_risk": (not gpu_only_mode) or runtime_mode != "gpu",
+        "gpu_only_mode": True,
+        "cpu_fallback_risk": runtime_mode != "gpu",
         "structure_ready": _structure is not None,
     }
 
@@ -1117,14 +1039,9 @@ async def structure_extract(request: StructureRequest) -> OCRResponse:
             else:
                 chars = await asyncio.to_thread(_extract_char_boxes, ocr_image)
             _attach_chars(mapped, chars)
+            await asyncio.to_thread(_reocr_wide_block_chars, mapped, ocr_image)
             _tc = time.perf_counter()
             print(f"[OCR-prof] structure={_tb-_ta:.2f}s char={_tc-_tb:.2f}s peer={'y' if char_future else 'n'}", flush=True)
-            suppressed = await asyncio.to_thread(_suppress_red_ink, ocr_image)
-            if suppressed is not None:
-                sup_lines, sup_chars = await asyncio.to_thread(_extract_suppressed_lines, suppressed)
-                added = _merge_suppressed_supplement(mapped, sup_lines, sup_chars)
-                if added:
-                    print(f"[OCR] red-suppressed supplement added {added} lines", flush=True)
             _drop_uncorroborated_overlaps(mapped)
         finally:
             release_structure_engine_if_configured()

@@ -16,6 +16,17 @@ export interface FieldReviewProgress {
   allReviewed: boolean;
 }
 
+/**
+ * Exact reason enums emitted by the backend semantic-inference merge
+ * (backend/app/services/structured_profile.py: "semantic_model" and
+ * "semantic_model_value"). Matched by full equality — no substring sniffing.
+ */
+const SEMANTIC_REASONS: ReadonlySet<string> = new Set(['semantic_model', 'semantic_model_value']);
+
+export function hasSemanticReason(reasons: readonly string[] | undefined): boolean {
+  return (reasons ?? []).some((reason) => SEMANTIC_REASONS.has(String(reason)));
+}
+
 export function orderColumnsForPolicyReview(columns: StructuredColumnProfile[]): StructuredColumnProfile[] {
   const riskWeight: Record<StructuredColumnProfile['risk_level'], number> = {
     critical: 4,
@@ -34,8 +45,8 @@ export function orderColumnsForPolicyReview(columns: StructuredColumnProfile[]):
       const rightRedacts = right.column.recommended_policy !== 'keep';
       if (leftRedacts !== rightRedacts) return leftRedacts ? -1 : 1;
 
-      const leftSemantic = (left.column.reasons ?? []).some((reason) => String(reason).includes('semantic'));
-      const rightSemantic = (right.column.reasons ?? []).some((reason) => String(reason).includes('semantic'));
+      const leftSemantic = hasSemanticReason(left.column.reasons);
+      const rightSemantic = hasSemanticReason(right.column.reasons);
       if (leftSemantic !== rightSemantic) return leftSemantic ? -1 : 1;
 
       if (left.column.confidence !== right.column.confidence) {

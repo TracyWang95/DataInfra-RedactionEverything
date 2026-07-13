@@ -1,0 +1,216 @@
+[
+  {
+    "id": "industry_finance_audit_sharing",
+    "name": "Industry - Financial services",
+    "kind": "full",
+    "selectedEntityTypeIds": [
+      "PERSON",
+      "ID_CARD",
+      "PHONE",
+      "ADDRESS",
+      "BANK_CARD",
+      "BANK_ACCOUNT",
+      "BANK_NAME",
+      "AMOUNT",
+      "FIN_CUSTOMER_ID",
+      "FIN_ACCOUNT_NAME",
+      "FIN_INSTITUTION",
+      "FIN_TRANSACTION_ID",
+      "FIN_MERCHANT_ID",
+      "FIN_RISK_RATING"
+    ],
+    "ocrHasTypes": [
+      "PERSON",
+      "ID_CARD",
+      "PHONE",
+      "ADDRESS",
+      "BANK_CARD",
+      "BANK_ACCOUNT",
+      "BANK_NAME",
+      "AMOUNT",
+      "FIN_CUSTOMER_ID",
+      "FIN_ACCOUNT_NAME",
+      "FIN_INSTITUTION",
+      "FIN_TRANSACTION_ID",
+      "FIN_MERCHANT_ID",
+      "FIN_RISK_RATING"
+    ],
+    "visualFeatureTypes": [
+      "face",
+      "id_card",
+      "bank_card",
+      "official_seal",
+      "signature",
+      "qr_code"
+    ],
+    "replacementMode": "structured",
+    "created_at": "2026-05-09T00:00:00+00:00",
+    "updated_at": "2026-05-09T00:00:00+00:00",
+    "dataDomains": [
+      "account_transaction",
+      "address_location",
+      "pii"
+    ],
+    "genericTargets": [
+      "GEN_ACCOUNT_TRANSACTION",
+      "GEN_ADDRESS_LOCATION",
+      "GEN_AMOUNT_VALUE",
+      "GEN_ATTRIBUTE_STATUS",
+      "GEN_CONTACT",
+      "GEN_NUMBER_CODE",
+      "GEN_ORGANIZATION_SUBJECT",
+      "GEN_PERSON_SUBJECT"
+    ],
+    "linkageGroups": [
+      "account_like",
+      "address_like",
+      "identifier_like",
+      "organization_like",
+      "person_like"
+    ]
+  },
+  {
+    "id": "industry_contract_legal_disclosure",
+    "name": "Industry - Legal case materials",
+    "kind": "full",
+    "selectedEntityTypeIds": [
+      "PERSON",
+      "ID_CARD",
+      "PHONE",
+      "ADDRESS",
+      "DATE",
+      "LEGAL_CASE_ID",
+      "LEGAL_PLAINTIFF",
+      "LEGAL_DEFENDANT",
+      "LEGAL_THIRD_PARTY",
+      "LEGAL_COURT",
+      "LEGAL_ATTORNEY",
+      "LEGAL_LAW_FIRM",
+      "LEGAL_CLAIM",
+      "CRIMINAL_RECORD"
+    ],
+    "ocrHasTypes": [
+      "PERSON",
+      "ID_CARD",
+      "PHONE",
+      "ADDRESS",
+      "DATE",
+      "LEGAL_CASE_ID",
+      "LEGAL_PLAINTIFF",
+      "LEGAL_DEFENDANT",
+      "LEGAL_THIRD_PARTY",
+      "LEGAL_COURT",
+      "LEGAL_ATTORNEY",
+      "LEGAL_LAW_FIRM",
+      "LEGAL_CLAIM",
+      "CRIMINAL_RECORD"
+    ],
+    "visualFeatureTypes": [
+      "face",
+      "id_card",
+      "passport",
+      "official_seal",
+      "signature",
+      "fingerprint"
+    ],
+    "replacementMode": "structured",
+    "created_at": "2026-05-09T00:00:00+00:00",
+    "updated_at": "2026-05-09T00:00:00+00:00",
+    "dataDomains": [
+      "address_location",
+      "document_record",
+      "organization_subject",
+      "pii",
+      "time_event"
+    ],
+    "genericTargets": [
+      "GEN_ADDRESS_LOCATION",
+      "GEN_ATTRIBUTE_STATUS",
+      "GEN_CONTACT",
+      "GEN_DATE_TIME",
+      "GEN_DOCUMENT_RECORD",
+      "GEN_NUMBER_CODE",
+      "GEN_ORGANIZATION_SUBJECT",
+      "GEN_PERSON_SUBJECT"
+    ],
+    "linkageGroups": [
+      "address_like",
+      "date_like",
+      "identifier_like",
+      "organization_like",
+      "person_like"
+    ]
+  },
+  {
+    "id": "industry_medical_record_release",
+    "name": "Industry - Medical records",
+    "kind": "full",
+    "selectedEntityTypeIds": [
+      "PERSON",
+      "ID_CARD",
+      "PHONE",
+      "ADDRESS",
+      "BIRTH_DATE",
+      "GENDER",
+      "AGE",
+      "SOCIAL_SECURITY",
+      "MED_RECORD_ID",
+      "REGISTRATION_NO",
+      "INPATIENT_NO",
+      "DATE",
+      "TIME",
+      "MED_INSTITUTION"
+    ],
+    "ocrHasTypes": [
+      "PERSON",
+      "ID_CARD",
+      "PHONE",
+      "ADDRESS",
+      "BIRTH_DATE",
+      "GENDER",
+      "AGE",
+      "SOCIAL_SECURITY",
+      "MED_RECORD_ID",
+      "REGISTRATION_NO",
+      "INPATIENT_NO",
+      "DATE",
+      "TIME",
+      "MED_INSTITUTION"
+    ],
+    "visualFeatureTypes": [
+      "face",
+      "id_card",
+      "official_seal",
+      "signature",
+      "medical_wristband",
+      "qr_code",
+      "barcode"
+    ],
+    "replacementMode": "structured",
+    "created_at": "2026-05-09T00:00:00+00:00",
+    "updated_at": "2026-05-09T00:00:00+00:00",
+    "dataDomains": [
+      "address_location",
+      "document_record",
+      "organization_subject",
+      "pii",
+      "time_event"
+    ],
+    "genericTargets": [
+      "GEN_ADDRESS_LOCATION",
+      "GEN_ATTRIBUTE_STATUS",
+      "GEN_CONTACT",
+      "GEN_DATE_TIME",
+      "GEN_NUMBER_CODE",
+      "GEN_ORGANIZATION_SUBJECT",
+      "GEN_PERSON_SUBJECT"
+    ],
+    "linkageGroups": [
+      "address_like",
+      "date_like",
+      "identifier_like",
+      "organization_like",
+      "person_like"
+    ]
+  }
+]

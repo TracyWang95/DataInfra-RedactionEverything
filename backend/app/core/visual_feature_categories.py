@@ -64,6 +64,43 @@ VISUAL_FEATURE_CATEGORIES: tuple[VisualFeatureCategory, ...] = (
     VisualFeatureCategory(21, "signature", "签字", "手写签名、签字笔迹"),
 )
 
+# Factory-default grounding query per fixed category — the wording actually
+# sent to the LocateAnything model when the user's 识别清单 has no positive
+# prompt row for the item. The user's checklist ALWAYS wins (勾选什么传入什么,
+# see _grounding_query); this table only supplies the out-of-box default, and
+# it lives here — next to the category definitions, in the user's own backend
+# — instead of inside the LA server where it silently overrode the checklist.
+# Wordings migrated verbatim from the LA server's curated table (kept short:
+# verbose "X or Y" phrases over-detect, e.g. a plain page matching "national
+# ID card"). fingerprint = the 2026-07-10 five-contract A/B winner: 7/7 true
+# red prints, 0 real-thumb hits, 0 red-seal false fires ("thumbprint" recalled
+# 0 at full frame and the tile retry then boxed the photographer's real thumb;
+# bare Chinese names A/B'd worse across the board — 指纹 recalled 0/7).
+SLUG_TO_DEFAULT_QUERY: dict[str, str] = {
+    "face": "human face",
+    "fingerprint": "red inked thumbprint mark",
+    "palmprint": "palmprint",
+    "id_card": "ID card",
+    "hk_macau_permit": "travel permit card",
+    "passport": "passport",
+    "employee_badge": "employee badge",
+    "license_plate": "license plate",
+    "bank_card": "bank card",
+    "physical_key": "physical key",
+    "receipt": "receipt",
+    "shipping_label": "shipping label",
+    "official_seal": "seal",
+    "whiteboard": "whiteboard",
+    "sticky_note": "sticky note",
+    "mobile_screen": "phone screen",
+    "monitor_screen": "computer monitor",
+    "medical_wristband": "medical wristband",
+    "qr_code": "QR code",
+    "barcode": "barcode",
+    "paper": "paper document",
+    "signature": "signature",
+}
+
 VISUAL_FEATURE_CLASS_COUNT = len(VISUAL_FEATURE_CATEGORIES)
 SLUG_TO_CLASS_ID: dict[str, int] = {item.id: item.class_id for item in VISUAL_FEATURE_CATEGORIES}
 CLASS_ID_TO_SLUG: dict[int, str] = {item.class_id: item.id for item in VISUAL_FEATURE_CATEGORIES}

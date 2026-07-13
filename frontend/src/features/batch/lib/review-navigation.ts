@@ -78,28 +78,6 @@ export function getNextReviewIndex(
   return null;
 }
 
-export function getNextReviewPageTarget(
-  pages: readonly ReviewPageSummary[],
-  currentPage: number,
-): NextReviewPageTarget | null {
-  const unvisitedIssue =
-    pages.find((page) => page.page > currentPage && page.issueCount > 0 && !page.visited) ??
-    pages.find((page) => page.issueCount > 0 && !page.visited);
-  if (unvisitedIssue) return { page: unvisitedIssue, kind: 'issue' };
-
-  const unvisitedHit =
-    pages.find((page) => page.page > currentPage && page.hitCount > 0 && !page.visited) ??
-    pages.find((page) => page.hitCount > 0 && !page.visited);
-  if (unvisitedHit) return { page: unvisitedHit, kind: 'hit' };
-
-  const unvisited =
-    pages.find((page) => page.page > currentPage && !page.visited) ??
-    pages.find((page) => !page.visited);
-  if (unvisited) return { page: unvisited, kind: 'unvisited' };
-
-  return null;
-}
-
 export function getNextRequiredReviewPageTarget(
   pages: readonly ReviewPageSummary[],
   currentPage: number,

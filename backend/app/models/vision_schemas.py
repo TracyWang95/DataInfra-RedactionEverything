@@ -21,6 +21,8 @@ class VisionResult(BaseModel):
     bounding_boxes: list[BoundingBox]
     warnings: list[str] = Field(default_factory=list)
     pipeline_status: dict[str, dict] = Field(default_factory=dict)
+    # 诊断字段：前端不读，仅供 curl/性能排查（各阶段耗时与视觉缓存命中状态）。
+    # 有真实运维价值（历次 5090/NPU 性能与缓存排查依赖），保留，勿删。
     duration_ms: dict[str, Any] = Field(default_factory=dict)
     cache_status: dict[str, Any] = Field(default_factory=dict)
     result_image: str | None = None  # 带检测框的图片 base64

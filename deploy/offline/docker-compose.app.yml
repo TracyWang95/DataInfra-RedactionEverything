@@ -1,0 +1,77 @@
+# ============================================================
+# 离线部署 - 前后端服务器 (CPU 机器，无需 GPU)
+# 包含: Backend (FastAPI) + Frontend (Nginx)
+# 模型服务通过 HTTP 指向远程 GPU 服务器
+#
+# 用法:
+#   docker compose -f docker-compose.app.yml up -d
+# ============================================================
+
+services:
+  backend:
+    image: redaction-backend:latest
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - DEBUG=${DEBUG:-false}
+      - DATA_DIR=/app/data
+      - UPLOAD_DIR=/app/uploads
+      - OUTPUT_DIR=/app/outputs
+      - AUTH_ENABLED=${AUTH_ENABLED:-true}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - VIRUS_SCAN_ENABLED=${VIRUS_SCAN_ENABLED:-false}
+      - OCR_REQUIRE_GPU=${OCR_REQUIRE_GPU:-false}
+      - JOB_CONCURRENCY=${JOB_CONCURRENCY:-3}
+      - BATCH_RECOGNITION_PAGE_CONCURRENCY=${BATCH_RECOGNITION_PAGE_CONCURRENCY:-1}
+      - HAS_NER_MAX_PARALLEL_REQUESTS=${HAS_NER_MAX_PARALLEL_REQUESTS:-1}
+      - VISUAL_FEATURES_CONCURRENCY=${VISUAL_FEATURES_CONCURRENCY:-1}
+      - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-false}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
+      # ---- 模型服务地址 (指向 GPU 服务器) ----
+      - OCR_BASE_URL=${OCR_BASE_URL:-http://<MODEL_SERVER_IP>:8082}
+      - HAS_TEXT_RUNTIME=${HAS_TEXT_RUNTIME:-vllm}
+      - HAS_TEXT_VLLM_BASE_URL=${HAS_TEXT_VLLM_BASE_URL:-http://<MODEL_SERVER_IP>:8080/v1}
+      - HAS_TEXT_MODEL_NAME=${HAS_TEXT_MODEL_NAME:-HaS_Text_0209_0.6B}
+      - VISUAL_FEATURES_BASE_URL=${VISUAL_FEATURES_BASE_URL:-http://<MODEL_SERVER_IP>:8090}
+      - HAS_IMAGE_URL=${HAS_IMAGE_URL:-http://<MODEL_SERVER_IP>:8081}
+    volumes:
+      - backend-data:/app/data
+      - backend-uploads:/app/uploads
+      - backend-outputs:/app/outputs
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    image: redaction-frontend:latest
+    ports:
+      - "${FRONTEND_PORT:-3000}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - app-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-uploads:
+  backend-outputs:
+
+networks:
+  app-net:
+    driver: bridge
