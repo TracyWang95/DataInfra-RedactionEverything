@@ -716,42 +716,55 @@ class LocateAnythingGroundingService:
         ]
 
     @staticmethod
+    @staticmethod
     def _verify_fingerprint_tile_boxes(
         tile_boxes: list[BoundingBox],
         image_data: bytes,
     ) -> list[BoundingBox]:
-        """Ink existence identity for tile-retry fingerprint candidates.
+        """Ink existence identity for tile-retry fingerprint candidates —
+        INTERIOR test, not intersection.
 
-        Same shape as the machine-code decode gate: a red thumbprint IS a
-        red-ink deposit, and a tile crop that loses page context hallucinates
-        "fingerprints" out of X-ray film texture (CT-report bench: 3 baseline
-        false boxes amplified to 8 under speculative tiles; all greyscale, so
-        the skin-hue gate's "no colour evidence -> keep" passed them). A tile
-        candidate is kept only if it intersects a colored ink component —
-        existence proven by measurement. MAIN-detect boxes never pass through
-        here (full-frame context is trusted; greyscale-scan prints stay), so
-        the failure direction is "tile supplement narrows back to main-detect
-        level", never below it. Analysis failure fails OPEN (over-mask).
+        A red thumbprint IS a red-ink deposit, so a candidate's own pixels
+        must contain colored ink. The earlier intersect-any-component version
+        was defeated by giant hallucination boxes (an X-ray-textured tile box
+        spanning far enough to touch the page's red stamp passed the gate; CT
+        report bench: 7 false fingerprints). Interior evidence is measured
+        directly: crop the candidate, chroma mask above the established
+        visible-ink floor, ANY hit keeps the box. Main-detect boxes never
+        pass through here (full-frame context trusted, greyscale-scan prints
+        stay). Failure direction: tile supplement narrows to main-detect
+        level. Analysis failure fails OPEN.
         """
-        if not any(t.type == "fingerprint" for t in tile_boxes):
+        fps = [t for t in tile_boxes if t.type == "fingerprint"]
+        if not fps:
             return tile_boxes
         try:
-            components = raw_colored_component_bboxes(image_data)
+            import numpy as np
+
+            from app.services.vision.seal_color_cascade import _CHROMA_FLOOR
+
+            image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+            width, height = image.size
+            arr = np.asarray(image).astype(np.int16)
+            chroma = arr.max(axis=2) - arr.min(axis=2)
         except Exception:
             logger.warning("fingerprint tile ink gate unavailable; keeping candidates", exc_info=True)
             return tile_boxes
         kept: list[BoundingBox] = []
         dropped = 0
         for t in tile_boxes:
-            if t.type == "fingerprint" and not any(
-                t.x < cx + cw and cx < t.x + t.width and t.y < cy + ch and cy < t.y + t.height
-                for cx, cy, cw, ch in components
-            ):
-                dropped += 1
-                continue
+            if t.type == "fingerprint":
+                x1 = max(0, int(t.x * width))
+                y1 = max(0, int(t.y * height))
+                x2 = min(width, int((t.x + t.width) * width) + 1)
+                y2 = min(height, int((t.y + t.height) * height) + 1)
+                region = chroma[y1:y2, x1:x2]
+                if region.size == 0 or not bool((region > _CHROMA_FLOOR).any()):
+                    dropped += 1
+                    continue
             kept.append(t)
         if dropped:
-            logger.info("Fingerprint ink gate dropped %d tile candidate(s) with no ink evidence", dropped)
+            logger.info("Fingerprint ink gate dropped %d tile candidate(s) with no interior ink", dropped)
         return kept
 
     def _verify_machine_code_tile_boxes(
