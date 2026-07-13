@@ -30,9 +30,6 @@ export const HISTORY_ACTIVE_POLL_MS = 900;
 /** First retry delay for empty batch/job history pages waiting for new result rows. */
 export const HISTORY_EMPTY_RESULT_POLL_MS = 300;
 
-/** Interval for checking if a popout window has been closed. */
-export const POPOUT_CLOSE_CHECK_MS = 1_000;
-
 // Debounce / delay
 
 /** Delay before showing the suspense spinner so quick loads feel instant. */
@@ -44,20 +41,11 @@ export const ROUTE_PREFETCH_DELAY_MS = 2_000;
 /** Minimum visible time for a "testing" spinner to avoid flash of state. */
 export const TEST_BUTTON_MIN_SPIN_MS = 300;
 
-/** Debounce delay for batch review auto-save drafts. */
-export const REVIEW_AUTOSAVE_DEBOUNCE_MS = 900;
-
-/** Debounce delay for preview-map / image-preview re-computation. */
-export const PREVIEW_DEBOUNCE_MS = 300;
-
 /** Duration of the highlight ring shown when scrolling to an entity. */
 export const ENTITY_HIGHLIGHT_DURATION_MS = 1_500;
 
 /** Duration of the highlight ring shown when jumping between result marks. */
 export const RESULT_MARK_HIGHLIGHT_MS = 2_500;
-
-/** Minimum visible time for the "submitting" state in batch step 3. */
-export const SUBMIT_BUTTON_MIN_SPIN_MS = 2_000;
 
 /** Tick interval for the local single-file processing timer. */
 export const PLAYGROUND_LOADING_TICK_MS = 1_000;

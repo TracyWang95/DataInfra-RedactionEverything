@@ -100,7 +100,7 @@ def mask_keep_edges(text: str, left: int, right: int) -> str:
 
 def generalize_value(text: str, *, entity_type: str) -> str:
     if entity_type == "DATE":
-        match = re.match(r"^(\d{4})[-/骞碷(\d{1,2})", text)
+        match = re.match(r"^(\d{4})[-/年](\d{1,2})", text)
         if match:
             return f"{match.group(1)}-{int(match.group(2)):02d}"
     if entity_type == "ADDRESS":
@@ -110,7 +110,7 @@ def generalize_value(text: str, *, entity_type: str) -> str:
 
 def bucket_value(text: str) -> str:
     try:
-        amount = Decimal(text.replace(",", "").replace("楼", ""))
+        amount = Decimal(text.replace(",", "").replace("¥", "").replace("￥", ""))
     except InvalidOperation:
         return "***"
     if amount < 1_000:

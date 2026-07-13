@@ -5,7 +5,6 @@ from app.services.vision.image_pipeline import (
     apply_redaction,
     draw_preview_boxes,
     draw_regions_on_image,
-    match_ocr_to_visual_regions,
 )
 from app.services.vision.ocr_pipeline import (
     expand_table_blocks,
@@ -29,7 +28,6 @@ __all__ = [
     "run_has_text_analysis",
     "match_entities_to_ocr",
     # image_pipeline
-    "match_ocr_to_visual_regions",
     "PreviewBox",
     "SourcePipeline",
     "draw_preview_boxes",

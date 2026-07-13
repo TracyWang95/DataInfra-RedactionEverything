@@ -11,7 +11,7 @@ from app.models.schemas import (
     RedactionConfig,
     ReplacementMode,
 )
-from app.models.type_mapping import canonical_type_id, cn_to_id
+from app.models.type_mapping import canonical_type_id
 
 logger = logging.getLogger(__name__)
 
@@ -190,12 +190,12 @@ class RedactionContext:
         index = self.type_counters[type_key]
 
         if type_key.lower().startswith("custom_"):
+            # The item's explicit tag_template (EntityTypeConfig, always set by
+            # normalize_custom_entity_type) is consumed earlier and returns
+            # before reaching here; this is the config-missing fallback. The
+            # old cn_terms name-guess ("a custom item NAMED 住址 probably wants
+            # the ADDRESS template") was a closed-set lexical guess — gone.
             label = self._get_type_label(type_key) or type_key
-            builtin_type_key = self._get_custom_builtin_type_key(type_key, set(structured_map))
-            builtin_type_name = structured_map.get(builtin_type_key or "")
-            if builtin_type_name:
-                _, path = builtin_type_name
-                return f"<{label}[{index:0{STRUCTURED_INDEX_WIDTH}d}].{path}>"
             return f"<{label}[{index:0{STRUCTURED_INDEX_WIDTH}d}].完整值>"
 
         type_name = structured_map.get(type_key)
@@ -228,23 +228,6 @@ class RedactionContext:
             return entity_types_db.get(type_key)
         except (ImportError, KeyError, AttributeError):
             return None
-
-    def _get_custom_builtin_type_key(self, type_key: str, supported_type_keys: set[str]) -> str | None:
-        cfg = self._get_type_config(type_key)
-        if not cfg:
-            return None
-
-        values = [
-            str(getattr(cfg, "name", "") or "").strip(),
-            str(getattr(cfg, "description", "") or "").strip(),
-        ]
-        for value in values:
-            if not value:
-                continue
-            mapped = cn_to_id(value)
-            if mapped in supported_type_keys:
-                return mapped
-        return None
 
     def _coref_key_for_entity(self, entity: Entity, type_key: str) -> str:
         coref_id = entity.coref_id

@@ -28,7 +28,6 @@ from app.models.schemas import (
     JobDeleteResponse,
     JobDetailResponse,
     JobExportReportResponse,
-    JobItemAddBody,
     JobItemResponse,
     JobListResponse,
     JobResponse,
@@ -147,7 +146,7 @@ async def create_job(
             title=body.title,
             config=body.config,
             skip_item_review=body.skip_item_review,
-            priority=body.priority,
+            priority=0,
             owner_id=owner_id,
         )
     except ValueError as exc:
@@ -303,24 +302,6 @@ async def export_job_data(
     )
     audit_log("export", "job_data", task.export_id, detail={"job_id": job_id})
     return task.public()
-
-
-@router.post("/{job_id}/items", response_model=JobItemResponse)
-async def add_job_item(
-    job_id: str,
-    body: JobItemAddBody,
-    store: JobStore = Depends(get_job_store),
-    owner_id: str = Depends(require_auth),
-) -> dict[str, Any]:
-    try:
-        _jms.assert_job_owner(store.get_job(job_id), owner_id)
-        from app.services.file_management_service import assert_file_owner
-        assert_file_owner(body.file_id, owner_id)
-        return _jms.add_item(store, job_id, body.file_id, sort_order=body.sort_order)
-    except NotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/{job_id}/submit", response_model=JobResponse)

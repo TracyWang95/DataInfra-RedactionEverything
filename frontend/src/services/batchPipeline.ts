@@ -1,52 +1,9 @@
 // Copyright 2026 DataInfra-RedactionEverything Contributors
 
-import type {
-  ParseResult,
-  NERResult,
-  VisionResult,
-  RedactionResult,
-  RedactionRequest,
-} from '../types';
-import { get, post, BATCH_TIMEOUT } from './api-client';
-
-export async function batchParse(fileId: string, signal?: AbortSignal): Promise<ParseResult> {
-  return get<ParseResult>(`/files/${fileId}/parse`, { signal, timeout: BATCH_TIMEOUT });
-}
-
-export async function batchHybridNer(
-  fileId: string,
-  body: { entity_type_ids: string[] },
-  signal?: AbortSignal,
-): Promise<NERResult> {
-  return post<NERResult>(`/files/${fileId}/ner/hybrid`, body, { signal, timeout: BATCH_TIMEOUT });
-}
-
-export async function batchVision(
-  fileId: string,
-  page: number,
-  selectedOcrHasTypes: string[],
-  selectedVisualFeatureTypes: string[],
-  signal?: AbortSignal,
-): Promise<VisionResult> {
-  return post<VisionResult>(
-    `/redaction/${fileId}/vision?page=${page}&include_result_image=false`,
-    {
-      selected_ocr_has_types: selectedOcrHasTypes,
-      selected_visual_feature_types: Array.from(new Set(selectedVisualFeatureTypes)),
-    },
-    {
-      signal,
-      timeout: BATCH_TIMEOUT,
-    },
-  );
-}
+import { get, post } from './api-client';
 
 export async function batchGetFileRaw(fileId: string): Promise<Record<string, unknown>> {
   return get<Record<string, unknown>>(`/files/${fileId}`);
-}
-
-export async function batchExecute(request: RedactionRequest): Promise<RedactionResult> {
-  return post<RedactionResult>('/redaction/execute', request, { timeout: BATCH_TIMEOUT });
 }
 
 export async function batchPreviewEntityMap(body: {

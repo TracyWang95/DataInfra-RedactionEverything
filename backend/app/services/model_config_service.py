@@ -42,7 +42,7 @@ def _visual_features_base_url() -> str:
 def _visual_features_model_name() -> str:
     return str(
         getattr(settings, "VISUAL_FEATURES_MODEL_NAME", None)
-        or "GLM-4.6V-Flash-FP8"
+        or "LocateAnything-3B"
     )
 
 
@@ -64,16 +64,18 @@ def _default_configs() -> ModelConfigList:
             ),
             ModelConfig(
                 id=VISUAL_FEATURES_SERVICE_ID,
-                name="GLM-4.6V-Flash Visual Features",
+                name="LocateAnything-3B Visual Features",
                 provider="local",
                 enabled=True,
                 base_url=_visual_features_base_url(),
                 model_name=_visual_features_model_name(),
-                temperature=0.1,
-                top_p=0.6,
+                # Official LocateAnything model-card sampling; 0.1 was a
+                # measured hard recall killer (see locate_grounding.py note).
+                temperature=0.7,
+                top_p=0.9,
                 max_tokens=max(8192, int(getattr(settings, "LOCATE_ANYTHING_MAX_NEW_TOKENS", 8192) or 8192)),
                 enable_thinking=False,
-                description="GLM-4.6V-Flash grounding unifies fixed visual classes and user-defined visual labels.",
+                description="LocateAnything-3B grounding unifies fixed visual classes and user-defined visual labels.",
             ),
         ],
         active_id=VISUAL_FEATURES_SERVICE_ID,
@@ -269,7 +271,7 @@ def _builtin_override(config: ModelConfig) -> ModelConfig:
     if config.id == VISUAL_FEATURES_SERVICE_ID:
         return config.model_copy(
             update={
-                "name": "GLM-4.6V-Flash Visual Features",
+                "name": "LocateAnything-3B Visual Features",
                 "enabled": True,
                 "base_url": config.base_url or _visual_features_base_url(),
                 "model_name": config.model_name or _visual_features_model_name(),

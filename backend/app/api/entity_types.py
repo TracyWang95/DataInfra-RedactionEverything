@@ -12,19 +12,11 @@ from app.services.entity_type_service import (
     CreateEntityTypeRequest,
     EntityTypeConfig,
     EntityTypesResponse,
-    RegexTestRequest,
-    RegexTestResult,
     TextTaxonomyResponse,
     UpdateEntityTypeRequest,
 )
 
 router = APIRouter()
-
-
-@router.post("/custom-types/regex-test", response_model=RegexTestResult)
-async def test_regex(request: RegexTestRequest):
-    """测试正则表达式匹配效果"""
-    return entity_type_service.test_regex(request.pattern, request.test_text)
 
 
 @router.get("/custom-types", response_model=EntityTypesResponse)
@@ -42,15 +34,6 @@ async def get_entity_types(
 async def get_text_taxonomy():
     """获取文本自定义识别项的 L1/L2 元数据分类树。"""
     return entity_type_service.get_text_taxonomy()
-
-
-@router.get("/custom-types/{type_id}", response_model=EntityTypeConfig)
-async def get_entity_type(type_id: str, owner_id: str = Depends(require_auth)):
-    """获取单个实体类型配置"""
-    result = entity_type_service.get_type(type_id, owner_id=owner_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="实体类型不存在")
-    return result
 
 
 @router.post("/custom-types", response_model=EntityTypeConfig)

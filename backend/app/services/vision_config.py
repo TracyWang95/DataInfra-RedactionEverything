@@ -24,30 +24,3 @@ def resolve_optional_type_list(config: Mapping[str, Any], *keys: str) -> list[st
     return None
 
 
-def merge_optional_type_lists(
-    primary: Sequence[str] | None,
-    legacy: Sequence[str] | None,
-) -> list[str] | None:
-    """Merge two optional selection lists while preserving explicit disable.
-
-    ``None`` means no selection was supplied and downstream defaults should be
-    used. ``[]`` means the user explicitly disabled that visual stage. Older
-    exported configs may still carry split visual fields; callers merge those
-    aliases into the unified visual feature list before scheduling work.
-    """
-
-    if primary is None and legacy is None:
-        return None
-
-    merged: list[str] = []
-    seen: set[str] = set()
-    for values in (primary, legacy):
-        if values is None:
-            continue
-        for item in values:
-            value = str(item)
-            if value in seen:
-                continue
-            seen.add(value)
-            merged.append(value)
-    return merged

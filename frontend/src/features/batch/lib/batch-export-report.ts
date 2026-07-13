@@ -5,7 +5,6 @@ import type {
   BatchExportReport,
   BatchExportReportFileDeliveryStatus,
   BatchExportReportSummaryDeliveryStatus,
-  BatchExportReportVisualEvidence,
   BatchExportReportVisualReview,
 } from '@/types';
 
@@ -58,63 +57,6 @@ function countByStatus(rows: readonly BatchRow[]): Record<string, number> {
 function normalizeCount(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : 0;
-}
-
-function recordCount(record: Record<string, number> | undefined, key: string): number {
-  return normalizeCount(record?.[key]);
-}
-
-function recordCountIncluding(
-  record: Record<string, number> | undefined,
-  pattern: string,
-): number {
-  if (!record) return 0;
-  return Object.entries(record).reduce(
-    (sum, [key, count]) => (key.includes(pattern) ? sum + normalizeCount(count) : sum),
-    0,
-  );
-}
-
-function firstPositiveCount(values: readonly number[]): number {
-  return values.find((value) => value > 0) ?? 0;
-}
-
-export function buildBatchExportVisualEvidenceEntries(
-  evidence?: BatchExportReportVisualEvidence | null,
-): BatchExportVisualEvidenceEntry[] {
-  if (!evidence) return [];
-
-  const fallbackCount = firstPositiveCount([
-    normalizeCount(evidence.local_fallback),
-    normalizeCount(evidence.fallback_detector),
-    recordCount(evidence.evidence_source_counts, 'local_fallback'),
-    recordCountIncluding(evidence.source_detail_counts, 'fallback'),
-  ]);
-  const visualFeatureCount = firstPositiveCount([
-    normalizeCount(evidence.visual_feature_model),
-    recordCount(evidence.evidence_source_counts, 'visual_feature_model'),
-    Math.max(0, recordCount(evidence.source_counts, 'visual_features') - fallbackCount),
-  ]);
-  const ocrHasCount = firstPositiveCount([
-    normalizeCount(evidence.ocr_has),
-    recordCount(evidence.evidence_source_counts, 'ocr_has'),
-    recordCount(evidence.source_counts, 'ocr_has'),
-  ]);
-  const tableCount = firstPositiveCount([
-    normalizeCount(evidence.table_structure),
-    recordCount(evidence.source_detail_counts, 'table_structure'),
-    recordCount(evidence.source_counts, 'table_structure'),
-    recordCountIncluding(evidence.warnings_by_key, 'table_structure'),
-  ]);
-
-  const entries: BatchExportVisualEvidenceEntry[] = [
-    { key: 'visualFeature', count: visualFeatureCount },
-    { key: 'fallback', count: fallbackCount },
-    { key: 'ocrHas', count: ocrHasCount },
-    { key: 'table', count: tableCount },
-  ];
-
-  return entries.filter((entry) => entry.count > 0);
 }
 
 function redactedExportSkipReason(row: Pick<BatchRow, 'has_output'>): string | null {

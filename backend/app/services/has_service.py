@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.gpu_inference_gate import shared_gpu_inference_slot
 from app.models.schemas import Entity
-from app.models.type_mapping import canonical_type_id, has_query_labels_for
+from app.models.type_mapping import canonical_type_id
 from app.services.has_client import HaSClient
 
 # 类型别名，兼容 EntityTypeConfig 和 CustomEntityType
@@ -28,8 +28,9 @@ EntityTypeConfig = Any
 _NER_CHARS_PER_TOKEN = 2
 # 每个中文类型名在请求中的固定 token 开销
 _NER_TOKENS_PER_TYPE = 8
-# 单批次目标 token 预算的最小下限
-_NER_MIN_TARGET_TOKENS = 128
+# 单批次目标 token 预算的最小下限（防呆：env 误配过小也不低于千级——
+# Tracy: 128 太小，预算按 8k 级跑）
+_NER_MIN_TARGET_TOKENS = 1024
 # HaS NER 命中实体的默认置信度
 _NER_DEFAULT_CONFIDENCE = 0.95
 
@@ -37,16 +38,10 @@ _NER_DEFAULT_CONFIDENCE = 0.95
 class HaSService:
     """HaS NER 服务 - 用于混合 NER 架构"""
 
-    # 统一引用 models/type_mapping.py 的单一数据源
-    from app.models.type_mapping import TYPE_ID_TO_CN as TYPE_MAPPING_ID_TO_CN
-
     BUILTIN_TYPE_GUIDANCE: dict[str, dict[str, Any]] = {
         "ADDRESS": {
             "description": "具体地点、住所地、道路、路口、交汇处、事故地点、办公地点。",
             "examples": ["南山区深南大道与科苑路交汇处", "广东省深圳市南山区科技园", "某某路88号"],
-            # Prompt-only aliases improve model recall for roads/intersections.
-            # Returned buckets still resolve to the single selected L3 ADDRESS id.
-            "query_aliases": ["地理位置", "道路地址"],
         },
         "BIRTH_DATE": {
             "description": "自然人的出生日期或生日；带“出生/生日/出生日期”的年月日属于此类，不属于年龄。",
@@ -70,16 +65,13 @@ class HaSService:
         entity_types: list[EntityTypeConfig]
     ) -> list[str]:
         """将实体类型配置转换为 HaS 需要的中文类型列表"""
+        # 勾选什么查什么: the item's user-facing name IS the model query —
+        # no registry translation (the enumerated id→label mapping silently
+        # diverged from the checklist and can never be complete).
         chinese_types = []
         seen = set()
         for et in entity_types:
-            # 优先使用映射
-            type_id = canonical_type_id(getattr(et, "id", ""))
-            if type_id in self.TYPE_MAPPING_ID_TO_CN:
-                chinese_type = self.TYPE_MAPPING_ID_TO_CN[type_id]
-            else:
-                # 自定义类型使用名称
-                chinese_type = et.name
+            chinese_type = str(getattr(et, "name", "") or "").strip() or str(getattr(et, "id", "") or "")
             if chinese_type and chinese_type not in seen:
                 seen.add(chinese_type)
                 chinese_types.append(chinese_type)
@@ -221,12 +213,7 @@ class HaSService:
             if name_text and name_text not in names:
                 names.append(name_text)
 
-        builtin_guidance = self.BUILTIN_TYPE_GUIDANCE.get(canonical_type_id(type_id)) or {}
-        aliases = [*(builtin_guidance.get("query_aliases") or []), *has_query_labels_for(type_id)]
-        for alias in aliases:
-            alias_text = str(alias or "").strip()
-            if alias_text and alias_text not in names:
-                names.append(alias_text)
+        # No hidden alias expansion: the checklist owns the query vocabulary.
         return names
 
     @staticmethod

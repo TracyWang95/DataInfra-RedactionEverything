@@ -48,13 +48,12 @@ class _HaSChunk:
     line_offsets: tuple[int, ...]
 
 
-_ORG_ALIAS_SUFFIX_RE = re.compile(
-    r"(?:有限责任公司|股份有限公司|有限公司|分公司|公司|集团|保险|银行|支行|人民法院|法院|医院|律师事务所)$"
-)
-_ORG_ALIAS_GENERIC_WORD_RE = re.compile(
-    r"(?:中国|中华|省|市|区|县|有限责任|股份|有限|公司|分公司|集团|控股|"
-    r"科技|技术|贸易|实业|资产|保险|银行|支行|人民|法院|医院|律师|事务所)"
-)
+# ORG alias coreference is a subsequence-COVERAGE decision, not a word-table
+# lookup: an alias links to a longer name when this fraction of the alias's
+# glyphs appear in order inside it, and only once the alias is long enough to be
+# distinctive evidence. Tunable structural bars, no enumerated org vocabulary.
+_ORG_ALIAS_MIN_LEN = 4
+_ORG_ALIAS_COVERAGE = 0.9
 
 
 class HybridNERService:
@@ -90,32 +89,10 @@ class HybridNERService:
         "MED_INSTITUTION",
         "BANK_NAME",
     }
-    ORG_ROLE_SUFFIXES = (
-        "法定代表人", "委托诉讼代理人", "诉讼代理人", "负责人", "代表人",
-        "联系人", "经办人", "董事长", "总经理", "经理", "主管",
-        "员工", "职员", "律师", "医生", "护士", "教师", "教授",
-        "工程师", "会计", "驾驶员", "审判员", "书记员", "检察官",
-        "代理人", "主任", "院长", "行长",
-    )
-    ORG_BOUNDARY_SUFFIXES = (
-        "有限责任公司", "股份有限公司", "有限公司", "分公司", "子公司",
-        "集团", "公司", "银行", "支行", "法院", "人民法院",
-        "检察院", "人民检察院", "律师事务所", "事务所", "委员会",
-        "医院", "学校", "学院", "中心", "研究院", "研究所",
-        "协会", "基金会", "机关", "局", "厅", "部", "处", "科",
-    )
-    ORG_REGION_PREFIX_RE = re.compile(
-        r"^(?:中国|中华|广东省|深圳市|北京市|上海市|广州市|天津市|重庆市|"
-        r"[一-龥]{2,8}(?:省|市|自治区|自治州|地区|盟|区|县))"
-    )
-
     @staticmethod
     def _is_org_like_type(type_id: str) -> bool:
         canonical = canonical_type_id(type_id)
         return canonical in HybridNERService.ORG_LIKE_TYPE_IDS or "organization_like" in linkage_groups_for_type(canonical)
-    ORG_GENERIC_STEM_RE = re.compile(
-        r"(?:贸易|科技|技术|实业|资产|控股|股份|有限责任|有限|集团|公司|分公司)$"
-    )
     ENTITY_EDGE_PUNCTUATION = " \t\r\n，。；：、,.!?！？;:()（）[]【】"
     MAX_HAS_TEXT_CHARS = 1_600
     MAX_HAS_CHUNKS = 12
@@ -520,18 +497,6 @@ class HybridNERService:
             score += 2
         return score
 
-    def _semantic_line_score(self, line: str) -> int:
-        score = 0
-        if any(hint in line for hint in self.SEMANTIC_LINE_HINTS):
-            score += 2
-        score += self._semantic_structure_score(line)
-        # Plain boilerplate often mentions dates, amounts and duties but has no
-        # semantic identifier. Keep it out of the small HaS context.
-        if score == 0:
-            return 0
-        if len(line) > self.MAX_HAS_LINE_CHARS and "：" not in line and ":" not in line:
-            score -= 1
-        return score
 
     def _cross_validate(
         self,
@@ -646,9 +611,7 @@ class HybridNERService:
 
         deduped = self._dedupe_conflicting_entities(list(entity_map.values()), type_priority, source_rank)
 
-        self._normalize_overbroad_org_role_entities(deduped, text, enabled_type_ids)
         deduped.extend(self._propagate_confirmed_semantic_mentions(deduped, text))
-        deduped.extend(self._infer_missing_org_alias_entities(deduped, text, enabled_type_ids))
         self._link_org_alias_corefs(deduped)
 
         # Assign the same coref id to repeated identical semantic text.
@@ -782,135 +745,6 @@ class HybridNERService:
 
         return propagated
 
-    def _normalize_overbroad_org_role_entities(
-        self,
-        entities: list[Entity],
-        text: str,
-        enabled_type_ids: set[str],
-    ) -> None:
-        """Trim organization-like spans such as "某公司员工" to "某公司".
-
-        This is a schema-boundary normalization, not a case-specific repair:
-        the generic schema needs the organization name as its own atom so later
-        redaction and coreference are stable.
-        """
-        for entity in entities:
-            current_type = canonical_type_id(getattr(entity, "type", ""))
-            if not self._is_org_like_type(current_type):
-                continue
-            if entity.source not in {"has", "llm"}:
-                continue
-            value = str(entity.text or "").strip()
-            split = self._split_org_role_text(value, enabled_type_ids)
-            if not split:
-                continue
-            org_text, _role_text = split
-            org_start = entity.start
-            org_end = org_start + len(org_text)
-            if org_start < 0 or org_end > len(text):
-                continue
-            if text[org_start:org_end] != org_text:
-                continue
-
-            entity.text = org_text
-            entity.type = current_type
-            entity.end = org_end
-            entity.confidence = min(float(getattr(entity, "confidence", 0.9)), 0.9)
-
-    @classmethod
-    def _split_org_role_text(
-        cls,
-        value: str,
-        enabled_type_ids: set[str],
-    ) -> tuple[str, str] | None:
-        compact = cls._compact_org_name(value)
-        if len(compact) < 4:
-            return None
-
-        for suffix in sorted(cls.ORG_BOUNDARY_SUFFIXES, key=len, reverse=True):
-            boundary = compact.rfind(suffix)
-            if boundary < 0:
-                continue
-            split_at = boundary + len(suffix)
-            if split_at >= len(compact):
-                continue
-            role_text = compact[split_at:]
-            if role_text not in cls.ORG_ROLE_SUFFIXES:
-                continue
-            org_text = compact[:split_at]
-            if len(org_text) < 3:
-                continue
-            return org_text, role_text
-        return None
-
-    def _infer_missing_org_alias_entities(
-        self,
-        entities: list[Entity],
-        text: str,
-        enabled_type_ids: set[str],
-    ) -> list[Entity]:
-        existing_ranges = [(entity.start, entity.end) for entity in entities]
-        inferred: list[Entity] = []
-
-        for canonical in entities:
-            canonical_type = canonical_type_id(getattr(canonical, "type", ""))
-            if not self._is_org_like_type(canonical_type) or canonical.source not in {"has", "llm"}:
-                continue
-            if canonical_type not in enabled_type_ids:
-                continue
-            for alias_text in self._org_alias_candidates(canonical.text):
-                start = 0
-                while True:
-                    pos = text.find(alias_text, start)
-                    if pos < 0:
-                        break
-                    end = pos + len(alias_text)
-                    if not any(not (end <= s or pos >= e) for s, e in existing_ranges):
-                        inferred.append(Entity(
-                            id=f"has_alias_{len(inferred)}",
-                            text=alias_text,
-                            type=canonical_type,
-                            start=pos,
-                            end=end,
-                            page=getattr(canonical, "page", 1),
-                            confidence=min(float(getattr(canonical, "confidence", 0.9)), 0.9),
-                            source="has",
-                            coref_id=canonical.coref_id or f"org_alias:{canonical.text}",
-                        ))
-                        existing_ranges.append((pos, end))
-                    start = end
-
-        return inferred
-
-    @classmethod
-    def _org_alias_candidates(cls, org_text: str) -> list[str]:
-        compact = cls._compact_org_name(org_text)
-        if len(compact) < 6:
-            return []
-
-        candidates: list[str] = []
-        for suffix in ("有限责任公司", "股份有限公司", "有限公司", "分公司", "公司", "集团", "医院", "银行", "支行"):
-            if not compact.endswith(suffix):
-                continue
-            stem = compact[: -len(suffix)]
-            stem = cls.ORG_REGION_PREFIX_RE.sub("", stem)
-            while True:
-                normalized = cls.ORG_GENERIC_STEM_RE.sub("", stem)
-                if normalized == stem:
-                    break
-                stem = normalized
-            if 2 <= len(stem) <= 8:
-                candidates.append(f"{stem}{suffix}")
-                if suffix in {"有限责任公司", "股份有限公司", "有限公司"}:
-                    candidates.append(f"{stem}公司")
-
-        seen: set[str] = set()
-        return [
-            candidate
-            for candidate in candidates
-            if candidate != compact and not (candidate in seen or seen.add(candidate))
-        ]
-
     def _link_org_alias_corefs(self, entities: list[Entity]) -> None:
         orgs = [
             entity for entity in entities
@@ -921,71 +755,39 @@ class HybridNERService:
 
         canonical_orgs = sorted(orgs, key=lambda entity: len(entity.text), reverse=True)
         for alias in sorted(orgs, key=lambda entity: len(entity.text)):
-            alias_key = self._org_alias_key(alias.text)
-            if not alias_key:
+            alias_compact = self._compact_org_name(alias.text)
+            if len(alias_compact) < _ORG_ALIAS_MIN_LEN:
                 continue
             for canonical in canonical_orgs:
                 if canonical is alias or len(canonical.text) <= len(alias.text):
                     continue
-                canonical_key = self._org_alias_key(canonical.text)
-                if not canonical_key:
-                    continue
-                if self._org_names_look_related(alias_key, canonical_key, alias.text, canonical.text):
+                if self._org_names_look_related(
+                    alias_compact, self._compact_org_name(canonical.text)
+                ):
                     shared_coref = canonical.coref_id or f"org_alias:{canonical.text}"
                     canonical.coref_id = shared_coref
                     alias.coref_id = shared_coref
                     break
 
-    @staticmethod
-    def _org_alias_key(text: str) -> str:
-        compact = re.sub(r"\s+", "", str(text or ""))
-        compact = compact.strip(" ，。；;、()（）[]【】")
-        return _ORG_ALIAS_SUFFIX_RE.sub("", compact)
-
     @classmethod
-    def _org_names_look_related(cls, alias_key: str, canonical_key: str, alias_text: str, canonical_text: str) -> bool:
-        alias_family = cls._org_suffix_family(alias_text)
-        canonical_family = cls._org_suffix_family(canonical_text)
-        if alias_family and canonical_family and alias_family != canonical_family:
-            return False
+    def _org_names_look_related(cls, alias_compact: str, canonical_compact: str) -> bool:
+        """Two organisations corefer iff the shorter compact name is a
+        high-coverage in-order SUBSEQUENCE of the longer one.
 
-        if len(alias_key) >= 4 and alias_key in cls._compact_org_name(canonical_text):
-            return True
-        if len(alias_key) >= 2 and alias_key in canonical_key:
-            return True
-
-        alias_compare = cls._org_compare_key(alias_key)
-        canonical_compare = cls._org_compare_key(canonical_key)
-        if len(alias_compare) < 2 or len(canonical_compare) < 2:
+        A short / registered form's glyphs all appear, in order, inside the full
+        name (深圳译科技公司 ⊂ 深圳译科技有限公司), so coverage is ~1.0. A differing
+        core (第一 vs 第二) or a different institution kind (医院 vs 保险) drops
+        distinctive glyphs and pushes coverage below the bar, so two orgs sharing
+        only a region prefix or a generic 公司 suffix never link. Pure structure —
+        no enumerated suffix / region / generic-word tables.
+        """
+        if len(alias_compact) < _ORG_ALIAS_MIN_LEN:
             return False
-        if alias_compare in canonical_compare:
-            return True
-        return cls._subsequence_ratio(alias_compare, canonical_compare) >= 0.8
+        return cls._subsequence_ratio(alias_compact, canonical_compact) >= _ORG_ALIAS_COVERAGE
 
     @staticmethod
     def _compact_org_name(text: str) -> str:
         return re.sub(r"\s+", "", str(text or "")).strip(" ，。；;、()（）[]【】")
-
-    @staticmethod
-    def _org_suffix_family(text: str) -> str | None:
-        compact = HybridNERService._compact_org_name(text)
-        if "法院" in compact or "检察院" in compact:
-            return "judicial"
-        if "医院" in compact:
-            return "medical"
-        if "律师事务所" in compact or compact.endswith("事务所"):
-            return "law_firm"
-        if "银行" in compact or "支行" in compact:
-            return "bank"
-        if "保险" in compact:
-            return "insurance"
-        if any(suffix in compact for suffix in ("公司", "集团", "有限", "股份")):
-            return "company"
-        return None
-
-    @staticmethod
-    def _org_compare_key(text: str) -> str:
-        return _ORG_ALIAS_GENERIC_WORD_RE.sub("", HybridNERService._compact_org_name(text))
 
     @staticmethod
     def _subsequence_ratio(short_text: str, long_text: str) -> float:

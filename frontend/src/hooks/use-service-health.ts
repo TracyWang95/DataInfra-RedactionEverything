@@ -9,7 +9,6 @@ export interface ServiceInfo {
   detail?: ServiceDetail | null;
 }
 
-export type ServiceStatus = ServiceInfo['status'];
 export type ServiceRuntimeMode = 'gpu' | 'cpu' | 'unknown';
 
 export interface ServiceDetail {
@@ -21,12 +20,6 @@ export interface ServiceDetail {
   cpu_fallback_risk?: boolean | null;
 }
 
-export interface GpuProcessInfo {
-  pid: number;
-  name: string;
-  used_mb?: number | null;
-}
-
 export interface ServicesHealth {
   all_online: boolean;
   probe_ms?: number;
@@ -35,7 +28,6 @@ export interface ServicesHealth {
   gpu_memory_all?: { index: number; used_mb: number; total_mb: number }[] | null;
   disk?: { total_gb: number; free_gb: number; used_ratio: number } | null;
   accelerator?: string | null;
-  gpu_processes?: GpuProcessInfo[];
   services: {
     paddle_ocr: ServiceInfo;
     has_ner: ServiceInfo;
@@ -137,22 +129,6 @@ function normalizeServiceDetail(value: unknown): ServiceDetail | undefined {
   return Object.keys(detail).length ? detail : undefined;
 }
 
-function normalizeGpuProcesses(value: unknown): GpuProcessInfo[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (!item || typeof item !== 'object') return [];
-    const raw = item as Partial<GpuProcessInfo>;
-    if (typeof raw.pid !== 'number') return [];
-    return [
-      {
-        pid: raw.pid,
-        name: typeof raw.name === 'string' ? raw.name : '',
-        used_mb: typeof raw.used_mb === 'number' ? raw.used_mb : null,
-      },
-    ];
-  });
-}
-
 function normalizeGpuMemoryAll(
   value: unknown,
 ): { index: number; used_mb: number; total_mb: number }[] | null {
@@ -205,7 +181,6 @@ export function normalizeHealthPayload(value: unknown): ServicesHealth {
     accelerator: typeof (data as { accelerator?: unknown }).accelerator === 'string'
       ? ((data as { accelerator?: string }).accelerator as string)
       : null,
-    gpu_processes: normalizeGpuProcesses((data as { gpu_processes?: unknown }).gpu_processes),
     services: normalizedServices,
   };
 }

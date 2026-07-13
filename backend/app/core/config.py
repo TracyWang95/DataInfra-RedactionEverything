@@ -11,7 +11,6 @@ import subprocess
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlparse, urlunparse
 
 from pydantic import field_validator, model_validator
@@ -177,6 +176,11 @@ class Settings(BaseSettings):
     APP_NAME: str = "DataShield 匿名化数据基础设施"
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
+    # Session/CSRF cookies carry the Secure flag by default (HTTPS-only). A
+    # plain-HTTP intranet deployment (e.g. accessed over an SSH-tunnelled
+    # http://localhost) MUST set COOKIE_SECURE=0, or the browser silently
+    # drops the Secure cookie and every mutating request fails CSRF (403).
+    COOKIE_SECURE: bool = True
 
     # API 配置
     API_PREFIX: str = "/api/v1"
@@ -213,23 +217,23 @@ class Settings(BaseSettings):
 
     # LocateAnything visual feature service
     VISUAL_FEATURES_BASE_URL: str = "http://127.0.0.1:9090"
-    VISUAL_FEATURES_MODEL_NAME: str = "GLM-4.6V-Flash-FP8"
+    VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
     VISUAL_FEATURES_TIMEOUT: float = 240.0
     VISUAL_FEATURES_CONF: float = 0.25
-    # GLM-backed visual grounding: one multi-category prompt per page (GLM has
-    # no multi-category recall collapse, unlike LocateAnything), and its
-    # full-frame recall is scale-immune, making the zero-recall tile retry
-    # redundant cost — disable it when this backend is active.
-    VISUAL_SINGLE_CALL: bool = False
+    # LocateAnything's recall collapses when categories share one prompt, so the
+    # detect stage always fans out one category per call; keep the zero-recall
+    # tile retry on to recover small / edge objects the full-frame pass drops.
     VISUAL_TILE_RETRY: bool = True
     # HaS-Image YOLO supplement service (empty = disabled). Runs every page
     # alongside the grounding model: native-resolution small-object recall
     # (stacked seal halves, watermark QR codes) at ~100ms.
     HAS_IMAGE_URL: str = ""
-    # Fold signature boxes centered inside a seal into the seal hull. Needed
-    # for LocateAnything (it misreads stamp content as phantom signatures);
-    # must be OFF for the GLM backend, which has no phantom class and whose
-    # real stamped-over signatures would be swallowed.
+    # Dedicated LocateAnything signature-only pass, higher recall on faint
+    # handwritten signatures than the shared multi-category detect. Scoped to
+    # signatures — seals/codes come from the main LA detect + YOLO. Empty = off.
+    LA_SIGNATURE_URL: str = ""
+    # Fold signature boxes centered inside a seal into the seal hull —
+    # LocateAnything misreads stamp content as phantom signatures, so absorb them.
     ABSORB_SIGNATURES_IN_SEALS: bool = True
     # Zoom pass for margin (binding) seals: at page scale the grounding model
     # boxes only the most stamp-like part of an edge sliver (star/characters,
@@ -243,15 +247,40 @@ class Settings(BaseSettings):
     # misses (page_04 is invisible to it at every zoom). Supersedes the margin
     # refine when on. Does NOT cover black-on-white photocopy seals (no red
     # signal) — that tier needs a trained detector.
-    VISUAL_SEAL_COLOR_CASCADE: bool = True
+    # Default OFF (2026-07-08): seals now come from PaddleOCR-VL-1.6 layout
+    # detection (document-aware, no red-text/banner FPs). The color cascade is a
+    # bare "any red region is a stamp candidate" heuristic that FPs on red
+    # hyperlink names (裁判文书网 洪赪颢 boxed as 公章) and over-grows LA boxes.
+    # Corpus A/B (21 imgs): cascade OFF keeps every real seal (VL-layout/LA) and
+    # only drops a red edge ANNOTATION on one page — net win. Kept as a flag for
+    # faint/photocopy red stamps VL-layout might miss; re-enable per deployment.
+    VISUAL_SEAL_COLOR_CASCADE: bool = False
+    # Merge the per-category visual fan-out into ONE /detect request when the
+    # LA server runs in vLLM prompt-embeds mode (single MoonViT vision encode
+    # shared across categories). Off by default; enable together with the
+    # vLLM deploy (LOCATE_ANYTHING_VLLM_URL) — in HF mode a merged request is
+    # SLOWER (server runs categories serially inside one lock slot; measured
+    # 5.4s vs 3.3s fan-out).
+    VISUAL_DETECT_BATCH_CATEGORIES: bool = False
+    # Physical seal arbiter: a 公章 is a sparse ink impression (paper shows
+    # through; colored coverage ≤0.18 on real stamps), while a printed
+    # masthead/banner/logo is a solid colored fill (≥0.59). Drop official_seal
+    # boxes that are majority-colored — kills the 中国裁判文书网 banner the
+    # cascade grows a seed into, source-independent. Real stamps always pass.
+    VISUAL_SEAL_SOLID_FILL_REJECT: bool = True
+    # Skin-hue arbitration for fingerprint boxes: stamp-pad ink absorbs green
+    # AND blue (hue ratio (G-B)/(R-G) ≤0.12 on all corpus prints) while real
+    # skin — the photographer's thumb holding the page, zoomed to salience by
+    # the grid-tile retry — is orange (≥0.57 on both corpus thumbs). Drop
+    # positively skin-hued fingerprint boxes; a box with no ink evidence is
+    # kept (a missed redaction outranks a false box). Assumes red stamp-pad
+    # prints (the domestic norm); disable for black-ink print corpora.
+    VISUAL_FINGERPRINT_INK_GATE: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
-    VISUAL_FEATURES_CONCURRENCY: int = 1
     LOCATE_ANYTHING_MAX_NEW_TOKENS: int = 8192
     LOCATE_ANYTHING_MAX_IMAGE_SIDE: int = 1408
-    LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
-    LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE: int = 1280
 
     # 本地持久化（空串 = 跟随 DATA_DIR 自动派生，见 model_validator）
     FILE_STORE_PATH: str = ""
@@ -315,7 +344,6 @@ class Settings(BaseSettings):
     OCR_STRUCTURE_TEXT_PRECISION_ENABLED: bool = False
     OCR_TEXT_BLOCK_CACHE_TTL_SEC: float = 300.0
     OCR_TEXT_BLOCK_CACHE_MAX_ITEMS: int = 128
-    OCR_REQUIRE_VL_FOR_VISUAL_REGIONS: bool = False
     # For born-digital PDFs, use the native text layer as OCR coordinates and
     # still let HaS Text decide semantics. Scanned PDFs automatically fall back
     # to the image OCR path when the text layer is too sparse.
@@ -333,9 +361,20 @@ class Settings(BaseSettings):
     HAS_TIMEOUT: float = 120.0
     HAS_NER_CONTEXT_TOKENS: int = 8192
     HAS_NER_MAX_TOKENS: int = 8192
+    # Second-pass HaS query label that extracts the bare value token from an
+    # AMOUNT entity（人民币每亩每年100元 → 100元）. Queried as 金额, HaS keeps
+    # the unit context (its training semantics); queried as 数值 it returns
+    # the value itself — so the narrowing is the model's own judgment, no
+    # hand-written token grammar. Verified stable on the 5090 corpus (5 cases
+    # x2 runs: business-context amounts, 保底 CJK amounts, 40% percents,
+    # thousands separators, multi-value spans). Empty string disables.
+    AMOUNT_VALUE_QUERY_LABEL: str = "数值"
     HAS_NER_MAX_TYPES_PER_REQUEST: int = 12
     HAS_NER_CUSTOM_MAX_TYPES_PER_REQUEST: int = 16
-    HAS_NER_TYPE_BATCH_TARGET_TOKENS: int = 900
+    # Owner decision (Tracy 2026-07-10): NER batch token budget runs at the
+    # model context scale — 900 split batches too aggressively and diluted
+    # recall; 8072 keeps one batch for typical pages (context ceiling 8192).
+    HAS_NER_TYPE_BATCH_TARGET_TOKENS: int = 8072
     HAS_NER_SINGLE_PASS_MAX_TYPES: int = 96
     HAS_NER_SINGLE_PASS_MAX_TEXT_CHARS: int = 1600
     HAS_NER_MAX_PARALLEL_REQUESTS: int = 4
@@ -375,7 +414,6 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
-    LOCAL_PASSWORD_HASH: str = ""  # PBKDF2 hash, set via setup endpoint
     AUTH_ENABLED: bool = os.environ.get("AUTH_ENABLED", "true").lower() == "true"
 
     # 企业目录（LDAP/AD）登录。默认关闭：登录行为与纯本地账号完全一致。
@@ -615,7 +653,6 @@ class Settings(BaseSettings):
         return max(1, min(10_000, v))
 
     # 后台工作循环 / 清理
-    WORKER_LOOP_INTERVAL_SEC: float = 2.0
     ORPHAN_CLEANUP_AGE_SEC: int = 3600
 
     REDACTION_PDF_JPEG_QUALITY: int = 88
@@ -637,11 +674,8 @@ class Settings(BaseSettings):
     def _validate_pdf_page_text_block_cache_pages(cls, v: int) -> int:
         return max(0, min(512, v))
 
-    # 匿名化配置
-    DEFAULT_REPLACEMENT_MODE: Literal["smart", "mask", "custom"] = "smart"
-
-    # 病毒扫描（需 ClamAV daemon 在 CLAMD_HOST:CLAMD_PORT 监听）
-    VIRUS_SCAN_ENABLED: bool = False
+    # 病毒扫描：True 时对上传文件跑 ClamAV（daemon 不在线则优雅降级放行）；False 显式跳过。
+    VIRUS_SCAN_ENABLED: bool = True
 
     # 可信代理 IP / CIDR（只有 request.client.host 匹配时才信任 X-Forwarded-For）。
     # 默认只信 loopback 与 172.16.0.0/12（docker compose 网桥网段，保证容器内

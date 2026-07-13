@@ -5,70 +5,12 @@
 // API layer, redaction pipeline, etc.).
 //
 // NOTE: The playground and batch features maintain lighter, context-specific
-// projections of some types here (Entity, BoundingBox, FileInfo,
-// EntityTypeConfig). See:
+// projections of some types here (FileInfo, EntityTypeConfig). See:
 //   - features/playground/types.ts  — UI-oriented playground slices
 //   - features/batch/types.ts       — batch wizard runtime types
 //
 // Do NOT blindly merge them: the field differences are intentional.
 // ---------------------------------------------------------------------------
-
-export enum EntityType {
-  PERSON = 'PERSON',
-  ID_CARD = 'ID_CARD',
-  PASSPORT = 'PASSPORT',
-  SOCIAL_SECURITY = 'SOCIAL_SECURITY',
-  DRIVER_LICENSE = 'DRIVER_LICENSE',
-  PHONE = 'PHONE',
-  EMAIL = 'EMAIL',
-  BANK_CARD = 'BANK_CARD',
-  BANK_ACCOUNT = 'BANK_ACCOUNT',
-  BANK_NAME = 'BANK_NAME',
-  WECHAT_ALIPAY = 'WECHAT_ALIPAY',
-  USERNAME_PASSWORD = 'USERNAME_PASSWORD',
-  AUTH_SECRET = 'AUTH_SECRET',
-  IP_ADDRESS = 'IP_ADDRESS',
-  MAC_ADDRESS = 'MAC_ADDRESS',
-  DEVICE_ID = 'DEVICE_ID',
-  BIOMETRIC = 'BIOMETRIC',
-  LEGAL_PARTY = 'LEGAL_PARTY',
-  LAWYER = 'LAWYER',
-  JUDGE = 'JUDGE',
-  WITNESS = 'WITNESS',
-
-  BIRTH_DATE = 'BIRTH_DATE',
-  AGE = 'AGE',
-  GENDER = 'GENDER',
-  NATIONALITY = 'NATIONALITY',
-  ETHNICITY = 'ETHNICITY',
-  MARITAL_STATUS = 'MARITAL_STATUS',
-  ADDRESS = 'ADDRESS',
-  POSTAL_CODE = 'POSTAL_CODE',
-  GPS_LOCATION = 'GPS_LOCATION',
-  EDUCATION = 'EDUCATION',
-  WORK_UNIT = 'WORK_UNIT',
-  DATE = 'DATE',
-  TIME = 'TIME',
-  LICENSE_PLATE = 'LICENSE_PLATE',
-  VIN = 'VIN',
-  CASE_NUMBER = 'CASE_NUMBER',
-  DOCUMENT_NUMBER = 'DOCUMENT_NUMBER',
-  CONTRACT_NO = 'CONTRACT_NO',
-  ORG = 'ORG',
-  COMPANY_CODE = 'COMPANY_CODE',
-
-  HEALTH_INFO = 'HEALTH_INFO',
-  MEDICAL_RECORD = 'MEDICAL_RECORD',
-  AMOUNT = 'AMOUNT',
-  PROPERTY = 'PROPERTY',
-  CRIMINAL_RECORD = 'CRIMINAL_RECORD',
-  POLITICAL = 'POLITICAL',
-  RELIGION = 'RELIGION',
-  SEXUAL_ORIENTATION = 'SEXUAL_ORIENTATION',
-  URL_WEBSITE = 'URL_WEBSITE',
-
-  CUSTOM = 'CUSTOM',
-}
 
 export enum FileType {
   DOC = 'doc',
@@ -82,39 +24,7 @@ export enum FileType {
 export enum ReplacementMode {
   SMART = 'smart',
   MASK = 'mask',
-  CUSTOM = 'custom',
   STRUCTURED = 'structured',
-}
-
-export type ImageRedactionMethod = 'mosaic' | 'blur' | 'fill';
-
-export interface Entity {
-  id: string;
-  text: string;
-  type: string;
-  start: number;
-  end: number;
-  page: number;
-  confidence: number;
-  replacement?: string;
-  selected: boolean;
-}
-
-export interface BoundingBox {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  page: number;
-  type: string;
-  text?: string;
-  selected: boolean;
-  confidence?: number;
-  source?: 'ocr_has' | 'visual_features' | 'manual';
-  evidence_source?: 'ocr_has' | 'visual_feature_model' | 'local_fallback' | 'manual';
-  source_detail?: string;
-  warnings?: string[];
 }
 
 export interface FileInfo {
@@ -312,60 +222,6 @@ export interface FileListResponse {
     };
   }
 
-export interface ParseResult {
-  file_id: string;
-  file_type: FileType;
-  content: string;
-  page_count: number;
-  pages: string[];
-  is_scanned: boolean;
-}
-
-export interface NERResult {
-  file_id: string;
-  entities: Entity[];
-  entity_count: number;
-  entity_summary: Record<string, number>;
-  warnings?: string[];
-}
-
-export interface VisionResult {
-  file_id: string;
-  page: number;
-  bounding_boxes: BoundingBox[];
-  result_image?: string;
-  warnings?: string[];
-  pipeline_status?: Record<string, Record<string, unknown>>;
-}
-
-export interface RedactionConfig {
-  replacement_mode: ReplacementMode;
-  entity_types: EntityType[];
-  custom_replacements: Record<string, string>;
-  custom_entity_types?: string[];
-
-  image_redaction_method?: ImageRedactionMethod;
-  image_redaction_strength?: number;
-  image_fill_color?: string;
-  /** 成品水印文案（图像/PDF 输出平铺半透明叠加）；空=不加 */
-  watermark_text?: string;
-}
-
-export interface RedactionRequest {
-  file_id: string;
-  entities: Entity[];
-  bounding_boxes: BoundingBox[];
-  config: RedactionConfig;
-}
-
-export interface RedactionResult {
-  file_id: string;
-  output_file_id: string;
-  redacted_count: number;
-  entity_map: Record<string, string>;
-  download_url: string;
-}
-
 export interface CompareData {
   file_id: string;
   original_content: string;
@@ -396,18 +252,6 @@ export interface EntityTypeConfig {
   tag_template?: string;
 }
 
-export interface EntityTypeConfigSimple {
-  value: EntityType;
-  label: string;
-  color: string;
-}
-
-export interface ReplacementModeConfig {
-  value: ReplacementMode;
-  label: string;
-  description: string;
-}
-
 export interface VersionHistoryEntry {
   output_file_id: string;
   output_path?: string;
@@ -416,5 +260,3 @@ export interface VersionHistoryEntry {
   mode: string;
   created_at: string;
 }
-
-export type AppStage = 'upload' | 'preview' | 'edit' | 'compare';

@@ -12,10 +12,6 @@ __all__ = [
     "CustomEntityType",
     "CustomEntityTypeCreate",
     "CustomEntityTypeUpdate",
-    "EntityTypeItem",
-    "EntityTypeListResponse",
-    "ReplacementModeItem",
-    "ReplacementModeListResponse",
 ]
 
 
@@ -127,29 +123,4 @@ class BoundingBox(BaseModel):
         return value
 
 
-class EntityTypeItem(BaseModel):
-    """Entity type option item."""
 
-    value: str
-    label: str
-    color: str
-
-
-class EntityTypeListResponse(BaseModel):
-    """Entity type option response."""
-
-    entity_types: list[EntityTypeItem]
-
-
-class ReplacementModeItem(BaseModel):
-    """Replacement mode option item."""
-
-    value: str
-    label: str
-    description: str
-
-
-class ReplacementModeListResponse(BaseModel):
-    """Replacement mode option response."""
-
-    replacement_modes: list[ReplacementModeItem]

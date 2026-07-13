@@ -5,6 +5,11 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
+from app.core.visual_feature_categories import (
+    VISUAL_FEATURE_SLUGS,
+    VISUAL_ONLY_ENTITY_TYPES,
+)
+
 # Left-edge artifact: max normalized x-offset and min normalized width.
 _LEFT_EDGE_MAX_X = 0.015
 _LEFT_EDGE_MIN_WIDTH = 0.08
@@ -37,22 +42,14 @@ _SMALL_REGION_AREA_RATIO = 0.006
 _SMALL_REGION_MIN_DENSITY = 0.004
 _DEFAULT_MIN_DENSITY = 0.008
 
-VISUAL_OCR_TYPES = {
-    "BARCODE",
-    "FACE",
-    "FINGERPRINT",
-    "HANDWRITING",
-    "HANDWRITTEN_SIGNATURE",
-    "OFFICIAL_SEAL",
-    "PHOTO",
-    "PORTRAIT",
-    "QR_CODE",
-    "QRCODE",
-    "SEAL",
-    "SIGNATURE",
-    "STAMP",
-    "WATERMARK",
-}
+# Visual-region exemption for the page-edge/ink artifact filters, derived from
+# the canonical visual registries instead of a hand-maintained parallel word
+# list: the visual-only entity type ids plus the fixed visual category slugs
+# uppercased. Regions of these types carry no OCR text evidence, so the
+# edge/ink heuristics must never drop them.
+VISUAL_OCR_TYPES = frozenset(VISUAL_ONLY_ENTITY_TYPES) | frozenset(
+    slug.upper() for slug in VISUAL_FEATURE_SLUGS
+)
 
 
 def is_visual_ocr_type(entity_type: str | None) -> bool:

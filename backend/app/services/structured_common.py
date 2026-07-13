@@ -5,7 +5,6 @@ public import surface and re-exports everything defined here.
 """
 from __future__ import annotations
 
-import base64
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -93,7 +92,7 @@ def is_number_like(value: Any) -> bool:
         return False
     if isinstance(value, int | float | Decimal):
         return True
-    text = str(value).strip().replace(",", "").replace("楼", "")
+    text = str(value).strip().replace(",", "").replace("¥", "").replace("￥", "")
     if not text:
         return False
     try:
@@ -115,5 +114,3 @@ def compact_text(value: Any) -> str:
     return re.sub(r"\s+", "", normalize_value(value))
 
 
-def base64_preview(value: bytes) -> str:
-    return base64.b64encode(value[:24]).decode("ascii")

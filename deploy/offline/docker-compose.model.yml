@@ -1,13 +1,19 @@
-# A100 模型服务器 - 只部署 GPU 模型服务
-# 启动命令: docker compose -f docker-compose.model.yml up -d
+# ============================================================
+# 离线部署 - 模型服务器 (GPU 机器)
+# 包含: OCR / Visual-Features (GLM 适配器) / YOLO (HaS-Image)
+# 注意: NER(vLLM) 和 GLM-vLLM 均已移除，需使用外部已部署的 vLLM 服务
+#       GLM 模型文件也不包含，需在外部 vLLM 服务器上自行部署
+#
+# 用法:
+#   docker compose -f docker-compose.model.yml up -d
+# ============================================================
 
 services:
+  # PP-StructureV3 OCR (GPU)
   ocr:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.ocr
+    image: redaction-ocr:latest
     ports:
-      - "8082:8082"
+      - "${OCR_PORT:-8082}:8082"
     deploy:
       resources:
         reservations:
@@ -25,79 +31,15 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  ner:
-    image: vllm/vllm-openai:v0.19.1
-    ipc: host
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./backend/models:/models
-    command:
-      - --model
-      - /models/has/HaS_Text_0209_0.6B
-      - --served-model-name
-      - HaS_Text_0209_0.6B
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8080"
-      - --trust-remote-code
-      - --dtype
-      - bfloat16
-      - --max-model-len
-      - "4096"
-      - --max-num-batched-tokens
-      - "4096"
-      - --gpu-memory-utilization
-      - "0.18"
-      - --kv-cache-memory-bytes
-      - "671088640"
-      - --no-enable-prefix-caching
-      - --enforce-eager
-      - --default-chat-template-kwargs
-      - '{"enable_thinking":false}'
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    networks:
-      - model-net
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    restart: unless-stopped
-
+  # GLM visual-grounding adapter: /detect -> 外部 GLM vLLM chat/completions
   visual-features:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.locateanything
+    image: redaction-visual-features:latest
     ports:
-      - "8090:8090"
+      - "${VISUAL_FEATURES_PORT:-8090}:8090"
     environment:
-      - LOCATE_ANYTHING_MODEL=/models/locateanything/LocateAnything-3B-HF
-      - LOCATE_ANYTHING_BACKEND=hf
-      - LOCATE_ANYTHING_DTYPE=bfloat16
-      - LOCATE_ANYTHING_PORT=8090
-      - LOCATE_ANYTHING_MAX_IMAGE_SIDE=1280
-      - LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE=1280
-      - LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE=1280
-      - LOCATE_ANYTHING_MAX_NEW_TOKENS=8192
-      - LOCATE_ANYTHING_GENERATION_MODE=hybrid
-    volumes:
-      - ./backend/models:/models
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      - GLM_BASE_URL=${GLM_BASE_URL:-http://<MODEL_SERVER_IP>:8120/v1}
+      - GLM_MODEL_NAME=${GLM_MODEL_NAME:-GLM-4.6V-Flash}
+      - GLM_VISUAL_PORT=8090
     networks:
       - model-net
     healthcheck:
@@ -105,7 +47,35 @@ services:
       interval: 30s
       timeout: 15s
       retries: 5
-      start_period: 120s
+      start_period: 60s
+    restart: unless-stopped
+
+  # HaS-Image YOLO11 small-object supplement detector
+  has-image:
+    image: redaction-has-image:latest
+    ports:
+      - "${HAS_IMAGE_PORT:-8081}:8081"
+    environment:
+      - HAS_IMAGE_PORT=8081
+      - HAS_IMAGE_DEVICE=${HAS_IMAGE_DEVICE:-0}
+      - HAS_IMAGE_WEIGHTS=${HAS_IMAGE_WEIGHTS:-/models/has_image/sensitive_seg_best.pt}
+    volumes:
+      - ./models:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - model-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8081/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
 networks:

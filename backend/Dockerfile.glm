@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Minimal deps: the GLM adapter is a pure HTTP proxy (no torch/transformers).
+COPY requirements-glm.txt .
+RUN pip install -r requirements-glm.txt
+
+COPY scripts/glm_visual_server.py .
+
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8090
+
+CMD ["python", "glm_visual_server.py"]

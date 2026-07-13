@@ -21,14 +21,12 @@ from app.core.visual_feature_categories import has_only_ocr_fallback_visual_slug
 from app.models.schemas import (
     BoundingBox,
     CompareData,
-    EntityType,
     PreviewEntityMapResponse,
     PreviewImageResponse,
     RedactionConfig,
     RedactionReport,
     RedactionRequest,
     RedactionResult,
-    ReplacementMode,
     VisionResult,
 )
 from app.services.redaction.image_redactor import prepare_image_redaction
@@ -626,50 +624,3 @@ def get_report(file_id: str) -> RedactionReport:
         redaction_mode=str(file_info.get("replacement_mode", "")),
         created_at=file_info.get("created_at", ""),
     )
-
-
-# ---------------------------------------------------------------------------
-# Entity types / replacement modes reference data
-# ---------------------------------------------------------------------------
-
-def get_entity_types_list() -> list[dict[str, Any]]:
-    """Return the built-in entity type reference list."""
-    return [
-        {"value": EntityType.PERSON.value, "label": "人名", "color": "#F59E0B"},
-        {"value": EntityType.ORG.value, "label": "机构/公司", "color": "#3B82F6"},
-        {"value": EntityType.ID_CARD.value, "label": "身份证号", "color": "#EF4444"},
-        {"value": EntityType.PHONE.value, "label": "电话号码", "color": "#10B981"},
-        {"value": EntityType.ADDRESS.value, "label": "地址", "color": "#8B5CF6"},
-        {"value": EntityType.BANK_CARD.value, "label": "银行卡号", "color": "#EC4899"},
-        {"value": EntityType.CASE_NUMBER.value, "label": "案件编号", "color": "#6366F1"},
-        {"value": EntityType.DATE.value, "label": "日期", "color": "#14B8A6"},
-        {"value": EntityType.AMOUNT.value, "label": "金额", "color": "#F97316"},
-        {"value": EntityType.CUSTOM.value, "label": "自定义", "color": "#6B7280"},
-    ]
-
-
-def get_replacement_modes_list() -> list[dict[str, Any]]:
-    """Return the built-in replacement mode reference list."""
-    return [
-        {
-            "value": ReplacementMode.SMART.value,
-            "label": "智能替换",
-            "description": "将敏感信息替换为语义化的标识，如 '当事人甲'、'公司A'",
-        },
-        {
-            "value": ReplacementMode.STRUCTURED.value,
-            "label": "结构化语义标签",
-            "description": "用结构化标签替换敏感信息，保留层级语义与指代关系",
-        },
-        {
-            "value": ReplacementMode.MASK.value,
-            "label": "掩码替换",
-            "description": "将敏感信息替换为 *** 或部分隐藏，如 '张**'、'138****1234'",
-        },
-        {
-            "value": ReplacementMode.CUSTOM.value,
-            "label": "自定义替换",
-            "description": "手动指定每个敏感信息的替换文本",
-        },
-    ]
-

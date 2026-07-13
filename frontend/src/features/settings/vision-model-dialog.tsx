@@ -111,7 +111,7 @@ export function VisionModelDialog({
                 onChange={(e) => onUpdateForm({ model_name: e.target.value })}
                 className="font-mono text-sm"
                 placeholder={
-                  form.provider === 'local' ? 'LocateAnything-3B' : 'gpt-4-vision-preview'
+                  form.provider === 'local' ? 'GLM-4.6V-Flash' : 'gpt-4-vision-preview'
                 }
                 data-testid="vision-model-model-name"
               />
@@ -127,7 +127,7 @@ export function VisionModelDialog({
                   onChange={(e) => onUpdateForm({ base_url: e.target.value })}
                   className="font-mono text-sm"
                   placeholder={
-                    form.provider === 'local' ? 'http://127.0.0.1:8090' : 'https://api.openai.com'
+                    form.provider === 'local' ? 'http://127.0.0.1:9090' : 'https://api.openai.com'
                   }
                   data-testid="vision-model-base-url"
                 />

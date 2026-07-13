@@ -25,7 +25,10 @@ export const REVIEW_BOX_QUALITY_ISSUE_ORDER: readonly ReviewBoxQualityIssue[] = 
   'warning',
 ];
 
-const LOW_CONFIDENCE_THRESHOLD = 0.55;
+// Single frontend copy of the low-confidence review threshold. Must stay in
+// sync with backend job_visual_evidence.py (LOW_CONFIDENCE = 0.55) — the
+// backend flags the same threshold when building visual evidence.
+export const LOW_CONFIDENCE_THRESHOLD = 0.55;
 const LARGE_OCR_AREA_THRESHOLD = 0.2;
 const LARGE_OCR_WIDTH_THRESHOLD = 0.6;
 const LARGE_OCR_HEIGHT_THRESHOLD = 0.25;

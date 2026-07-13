@@ -22,20 +22,7 @@ OCR_VISUAL_ENTITY_TYPES = VISUAL_ONLY_ENTITY_TYPES
 # Window (seconds) for treating a recent negative HaS health check as still valid.
 _HAS_NEGATIVE_HEALTH_TTL_SEC = 5.0
 
-# Default fallback median text-line height (px) when no block heights are known.
-# Amount-pair lookback: scan this many chars before the entity for 大写/小写 markers.
-_AMOUNT_PAIR_LOOKBACK_CHARS = 48
-# Sentinel "infinitely far" tail distance when no 小写 marker is present.
-_AMOUNT_PAIR_NO_LOWER_MARKER_UNITS = 999.0
-# Max visual units between 小写 marker and amount to treat as one upper/lower pair.
-_AMOUNT_PAIR_MAX_LOWER_TAIL_UNITS = 8.0
 
-# Standalone-amount digit-count bounds.
-_STANDALONE_AMOUNT_MIN_DIGITS = 4
-_STANDALONE_AMOUNT_MAX_DIGITS = 14
-# Probable amount-token digit-count bounds (with/without thousands separators).
-# An amount value signature drops a trailing ".00"; require more than this many digits first.
-_AMOUNT_TRAILING_ZEROS_MIN_DIGITS = 2
 
 # Visual-row grouping tolerance: fraction of median block height, with a floor.
 # Amount-table column detection needs at least this many cells in a header row.
@@ -74,13 +61,6 @@ _BLANK_PAGE_INK_PIXEL_MAX = 230
 _BLANK_PAGE_DARK_RATIO_MAX = 0.00002
 _BLANK_PAGE_INK_RATIO_MAX = 0.0001
 
-# Table-line heuristic: downsample size, dimension floor, darkness and line-count thresholds.
-_TABLE_HEURISTIC_THUMBNAIL_PX = 640
-_TABLE_HEURISTIC_MIN_DIM_PX = 80
-_TABLE_HEURISTIC_DARK_PIXEL_MAX = 90
-_TABLE_HEURISTIC_HORIZONTAL_DARK_RATIO = 0.35
-_TABLE_HEURISTIC_VERTICAL_DARK_RATIO = 0.25
-_TABLE_HEURISTIC_MIN_LINES = 3
 
 # Coarse multi-line block detection.
 _COARSE_MULTILINE_MIN_COMPACT_LEN = 40
@@ -117,36 +97,8 @@ _NER_MIN_LEN_BY_TYPE = {
     "ADDRESS": 4,
 }
 
-# Document-title visual suffix lookahead (chars) for PROPERTY entities.
-_PROPERTY_TITLE_TAIL_LOOKAHEAD_CHARS = 12
 
-# Semantic vocabulary (data, not tuning): a table cell whose text IS one of
-# these labels — optionally with a parenthesized unit suffix such as 单价（元）
-# — declares its column to contain amount values.
-AMOUNT_HEADER_LABELS = (
-    "金额",
-    "单价",
-    "合价",
-    "总价",
-    "价格",
-    "价款",
-    "费用",
-)
-# Full- and half-width parentheses accepted around a header unit suffix.
-_PAREN_OPEN_CHARS = "（("
-_PAREN_CLOSE_CHARS = "）)"
-# Characters allowed in an amount-formatted value (digits plus separators,
-# currency symbols and grouping decoration). Shared by the standalone-amount
-# block test and the table-cell amount-format test.
-_AMOUNT_FORMAT_ALLOWED_CHARS = set("0123456789.,，￥¥$€£-()（）[] ")
 
-# Per-character visual-unit weights.
-_CHAR_UNIT_SPACE = 0.25
-_CHAR_UNIT_CJK = 1.0
-_CHAR_UNIT_ALNUM = 0.56
-_CHAR_UNIT_PUNCT = 0.35
-_CHAR_UNIT_OTHER = 0.65
-_CHAR_UNIT_MIN_TOTAL = 0.01
 
 # Form-field label/value width tuning.
 # Visual-wrap break search window and scoring.

@@ -32,7 +32,6 @@ __all__ = [
     "JobExportReportZipSkipped",
     "ReviewDraftResponse",
     "JobCreateBody",
-    "JobItemAddBody",
     "JobUpdateBody",
     "ReviewDraftBody",
     "ReviewCommitBody",
@@ -100,15 +99,7 @@ class NavHints(BaseModel):
     batch_step1_configured: bool = False
     wizard_furthest_step: int | None = None
     redacted_count: int = Field(default=0, description="Items with a usable redacted output.")
-    awaiting_review_count: int = Field(default=0, description="Backward-compatible alias for reviewable_count.")
-    reviewable_count: int = Field(default=0, description="Items currently ready for manual review.")
-    processing_count: int = Field(default=0, description="Items still pending, queued, processing, or redacting.")
-    export_ready_count: int = Field(default=0, description="Items that are currently export-ready.")
-    export_blocked_count: int = Field(default=0, description="Items that still prevent whole-job export.")
-    can_review_now: bool = Field(default=False, description="True when at least one item can be reviewed now.")
-    can_export_now: bool = Field(default=False, description="True when every item is ready for export.")
-    metadata_degraded: bool = False
-    metadata_degraded_count: int = 0
+    awaiting_review_count: int = Field(default=0, description="Items currently ready for manual review.")
 
 
 class JobResponse(BaseModel):
@@ -119,7 +110,6 @@ class JobResponse(BaseModel):
     job_type: str
     title: str
     status: str
-    priority: int = 0
     skip_item_review: bool = False
     config: dict = Field(default_factory=dict)
     config_json: str | None = None
@@ -817,19 +807,12 @@ class JobCreateBody(BaseModel):
     title: str = ""
     config: dict[str, Any] = Field(default_factory=dict)
     skip_item_review: bool = False
-    priority: int = 0
-
-
-class JobItemAddBody(BaseModel):
-    file_id: str = Field(..., min_length=1)
-    sort_order: int = 0
 
 
 class JobUpdateBody(BaseModel):
     title: str | None = None
     config: dict[str, Any] | None = None
     skip_item_review: bool | None = None
-    priority: int | None = None
 
 
 class ReviewDraftBody(BaseModel):

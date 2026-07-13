@@ -183,7 +183,7 @@ class SftpSourceRequest(BaseModel):
     port: int = 22
     username: str
     password: str | None = None
-    private_key: str | None = None
+    private_key: str | None = None  # UI 缺口：import-inbox 表单仅密码字段；密钥认证链后端完整(sftp_import.py)，仅 API 可达，保留运维能力
     root_path: str = "/"
 
 

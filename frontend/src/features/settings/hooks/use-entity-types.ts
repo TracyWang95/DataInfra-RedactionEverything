@@ -86,29 +86,6 @@ export interface PipelineConfig {
   types: PipelineTypeConfig[];
 }
 
-export type RegexModalCheck =
-  | 'empty_pattern'
-  | 'invalid_pattern'
-  | 'matches_empty'
-  | 'no_sample'
-  | 'pass'
-  | 'fail';
-
-export function getRegexModalCheck(pattern: string, sample: string): RegexModalCheck {
-  const p = pattern.trim();
-  if (!p) return 'empty_pattern';
-  let regex: RegExp;
-  try {
-    regex = new RegExp(p);
-  } catch {
-    return 'invalid_pattern';
-  }
-  if (regex.test('')) return 'matches_empty';
-  const s = sample.trim();
-  if (!s) return 'no_sample';
-  return regex.test(s) ? 'pass' : 'fail';
-}
-
 export function getEntityTypeTone(useLlm: boolean): SelectionTone {
   return useLlm ? 'semantic' : 'regex';
 }

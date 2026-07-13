@@ -3,9 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
-import json
 import logging
-import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -17,86 +15,68 @@ from PIL import Image, ImageOps
 from app.core.config import settings
 from app.core.retry import RETRYABLE_HTTPX, retry_async
 from app.core.visual_feature_categories import (
-    DEFAULT_VISUAL_FEATURE_SLUGS,
     SLUG_TO_NAME_ZH,
-    filter_visual_feature_slugs,
-    is_visual_feature_slug,
     normalize_visual_slug,
 )
 from app.models.schemas import BoundingBox
 from app.services import model_config_service
-from app.services.vision.seal_color_cascade import propose_colored_seal_regions
+from app.services.vision.locate_payload import (
+    _COORD_MODE_TOLERANCE,  # noqa: F401  # re-exported for API stability
+    _JPEG_QUALITY,
+    _clamp_box,
+    _extract_json_payload,
+    _image_data_url,
+    _json_endpoint,
+    _normalize_box,
+    _prepare_jpeg,
+)
+from app.services.vision.locate_requests import (
+    _checklist_prompt,
+    _detect_requests,
+)
+from app.services.vision.locate_tiles import (
+    _TILE_RETRY_BOTTOM_SLUGS,
+    _TILE_RETRY_GRID_SLUGS,
+    _TILE_RETRY_MARGIN_SLUGS,
+    _axis_positions,  # noqa: F401  # re-exported for API stability
+    _bottom_tiles,
+    _grid_tiles,
+    _margin_tiles,
+)
+from app.services.vision.machine_code_detector import (
+    BARCODE_SLUG,
+    QR_CODE_SLUG,
+    detect_machine_code_regions,
+)
+from app.services.vision.seal_color_cascade import (
+    propose_colored_seal_regions,
+    raw_colored_component_bboxes,
+)
 
 logger = logging.getLogger(__name__)
 
-# JPEG encode quality for the image sent to the chat model
-_JPEG_QUALITY = 92
 # Smallest allowed longest-side (px) when downscaling the chat request image
 _MIN_IMAGE_SIDE = 256
 # Fallback longest-side cap (px) when no setting is configured
 _DEFAULT_MAX_IMAGE_SIDE = 2048
-# Slack multiplier deciding whether boxes are normalized (0..coord) vs absolute pixels
-_COORD_MODE_TOLERANCE = 1.05
 # Retry budget / base backoff (s) for the detect HTTP call
 _DETECT_MAX_RETRIES = 2
 _DETECT_BASE_DELAY = 1.0
 # Fallback max-new-tokens cap when no setting is configured
 _DEFAULT_MAX_NEW_TOKENS = 8192
 # Sampling defaults / caps for the chat request
-_DEFAULT_TEMPERATURE = 0.1
-_MAX_TEMPERATURE = 0.2
-_DEFAULT_TOP_P = 0.6
+# Official model-card sampling (temperature=0.7/top_p=0.9). The old 0.1
+# override was measured as a HARD RECALL KILLER on the per-GPU A/B
+# (5 truth images x3 runs: fingerprints farm 0/0/0 vs 2/2/2, house 1/1/1 vs
+# 4/4/4 at GT=4; zero new false positives on the CT-report negatives) — the
+# long-standing "0/2 sampling flake" was actually the lb alternating between
+# a 0.1 GPU (missing) and an official-default GPU (hitting).
+_DEFAULT_TEMPERATURE = 0.7
+_MAX_TEMPERATURE = 0.7
+_DEFAULT_TOP_P = 0.9
 # Default confidence when the model omits one
 _DEFAULT_DETECT_CONFIDENCE = 0.8
 _DEFAULT_CHECKLIST_CONFIDENCE = 0.82
-
-# Zero-recall tile retry: LA's input is downscaled to its max side, so small
-# page artifacts (binding-seal slivers on the margins, watermark QR codes at
-# the page foot) can vanish at full-page scale while detecting reliably on a
-# native-resolution crop. When a requested category yields nothing on the
-# full frame, re-run just that category on a validated tile set. Window
-# geometry is start/center/end anchoring with half-size windows: any object
-# smaller than half a window lies fully inside at least one tile, so nothing
-# that size can be lost to a tile seam. Tile hits are pure gap-filling: any
-# tile box intersecting a full-frame box is discarded (the full frame
-# outranks the zoom - a zoomed handwritten signature must not come back as a
-# phantom "seal" on top of the signature the full frame already found).
-_TILE_RETRY_MARGIN_SLUGS = frozenset({"official_seal"})
-_TILE_RETRY_BOTTOM_SLUGS = frozenset({"qr_code"})
-# LA reads degraded machine codes as either sibling; both mask identically.
-_MACHINE_CODE_SIBLINGS = frozenset({"qr_code", "barcode"})
-
-
-def _axis_positions(total: int, window: int) -> list[int]:
-    """start / center / end anchor offsets for a sliding window."""
-    last = max(0, total - window)
-    return sorted({0, last // 2, last})
-
-
-def _margin_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
-    """L/R margin strips: binding seals sit on page edges by definition.
-    Strip width W//3 - validated on real binding-seal pages: narrower strips
-    starve the model of page context and edge slivers stop being recognised
-    as stamps."""
-    strip = max(1, width // 3)
-    window = max(1, height // 2)
-    tiles = []
-    for x0 in (0, width - strip):
-        for y0 in _axis_positions(height, window):
-            tiles.append((x0, y0, x0 + strip, min(height, y0 + window)))
-    return tiles
-
-
-def _bottom_tiles(width: int, height: int) -> list[tuple[int, int, int, int]]:
-    """Bottom H//4 row in three overlapped half-width windows: scanner
-    watermark QR codes live at the page foot; QR codes elsewhere are
-    body-scale and the full frame sees them."""
-    row_top = height - max(1, height // 4)
-    window = max(1, width // 2)
-    return [
-        (x0, row_top, min(width, x0 + window), height)
-        for x0 in _axis_positions(width, window)
-    ]
 
 
 @dataclass
@@ -119,125 +99,17 @@ def _elapsed_ms(start: float) -> int:
     return max(0, round((time.perf_counter() - start) * 1000))
 
 
-def _json_endpoint(base_url: str, suffix: str) -> str:
-    base = (base_url or "").rstrip("/")
-    if base.endswith("/v1"):
-        return f"{base}/{suffix.lstrip('/')}"
-    return f"{base}/v1/{suffix.lstrip('/')}"
+def _normalize_detect_tag(value: object) -> str:
+    """Mirror locate_anything_server._normalize_slug byte for byte: /detect
+    tags each box with the NORMALIZED requested category, so batched-request
+    demultiplexing must apply the same fold. CJK passes through untouched."""
+    return str(value or "").strip().lower().replace("-", "_")
 
 
-def _extract_json_payload(text: str) -> dict[str, Any]:
-    raw = str(text or "").strip()
-    if not raw:
-        return {"objects": []}
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I)
-        raw = re.sub(r"\s*```$", "", raw)
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"(\{.*\}|\[.*\])", raw, re.S)
-        if not match:
-            return {"objects": [], "raw_response": text}
-        try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            return {"objects": [], "raw_response": text}
-    if isinstance(data, list):
-        return {"objects": data}
-    if isinstance(data, dict) and isinstance(data.get("objects"), list):
-        return data
-    return {"objects": [], "raw_response": text}
-
-
-def _image_data_url(image_data: bytes) -> str:
-    return f"data:image/jpeg;base64,{base64.b64encode(image_data).decode('ascii')}"
-
-
-def _prepare_jpeg(image_data: bytes, max_side: int) -> tuple[bytes, tuple[int, int]]:
-    image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
-    if max(image.size) > max_side:
-        image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-    encoded = io.BytesIO()
-    image.save(encoded, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
-    return encoded.getvalue(), image.size
-
-
-def _clamp_box(x: float, y: float, width: float, height: float) -> tuple[float, float, float, float] | None:
-    x = max(0.0, min(1.0, x))
-    y = max(0.0, min(1.0, y))
-    width = max(0.0, min(1.0 - x, width))
-    height = max(0.0, min(1.0 - y, height))
-    if width <= 0.0 or height <= 0.0:
-        return None
-    return x, y, width, height
-
-
-def _normalize_box(raw_box: Any, width: int, height: int) -> tuple[float, float, float, float] | None:
-    if not isinstance(raw_box, list | tuple) or len(raw_box) != 4:
-        return None
-    try:
-        x1, y1, x2, y2 = [float(value) for value in raw_box]
-    except (TypeError, ValueError):
-        return None
-    coord = max(1.0, float(settings.VISUAL_FEATURES_COORD_MODE))
-    if max(x1, y1, x2, y2) <= coord * _COORD_MODE_TOLERANCE:
-        x1, x2 = x1 / coord * width, x2 / coord * width
-        y1, y2 = y1 / coord * height, y2 / coord * height
-    x1, x2 = sorted((max(0.0, min(float(width), x1)), max(0.0, min(float(width), x2))))
-    y1, y2 = sorted((max(0.0, min(float(height), y1)), max(0.0, min(float(height), y2))))
-    if x2 <= x1 or y2 <= y1:
-        return None  # degenerate (non-positive area); trust LA for everything else
-    return x1 / width, y1 / height, (x2 - x1) / width, (y2 - y1) / height
-
-
-def _type_rules(type_config: Any) -> list[str]:
-    checklist = getattr(type_config, "checklist", None) or []
-    rules: list[str] = []
-    for item in checklist:
-        if isinstance(item, dict):
-            for key in ("rule", "positive_prompt"):
-                value = str(item.get(key) or "").strip()
-                if value:
-                    rules.append(value)
-        else:
-            for key in ("rule", "positive_prompt"):
-                value = str(getattr(item, key, "") or "").strip()
-                if value:
-                    rules.append(value)
-    if not rules:
-        rules = [str(rule).strip() for rule in (getattr(type_config, "rules", None) or []) if str(rule).strip()]
-    description = str(getattr(type_config, "description", "") or "").strip()
-    if description:
-        rules.append(description)
-    name = str(getattr(type_config, "name", "") or getattr(type_config, "id", "")).strip()
-    if name:
-        rules.append(name)
-    return list(dict.fromkeys(rules))
-
-
-def _checklist_prompt(type_configs: list[Any]) -> str:
-    lines = [
-        "Task: locate visual features in this document image.",
-        "Use actual visible visual evidence only; do not infer from labels, blank fields, table lines, or surrounding text.",
-        "Return JSON only.",
-        'Schema: {"objects":[{"type_id":"<allowed type_id>","label":"<label>","box_2d":[xmin,ymin,xmax,ymax],"confidence":0.8,"rule_matched":"<type_id>#<rule_index>","text":""}]}',
-        f"Coordinates are integers in 0..{settings.VISUAL_FEATURES_COORD_MODE}, origin top-left.",
-        "Use one tight box per visible instance.",
-        f"Allowed type_id: {', '.join(str(getattr(item, 'id', '')).strip() for item in type_configs)}",
-        "Configured visual checklist:",
-    ]
-    for item in type_configs:
-        type_id = str(getattr(item, "id", "")).strip()
-        name = str(getattr(item, "name", "") or type_id).strip()
-        lines.append(f"- type_id={type_id}; name={name}")
-        for index, rule in enumerate(_type_rules(item), start=1):
-            lines.append(f"  {index}. Check: {rule}")
-        negative = str(getattr(item, "negative_prompt", "") or "").strip()
-        if bool(getattr(item, "negative_prompt_enabled", False)) and negative:
-            lines.append(f"  Exclude: {negative}")
-    lines.append('If none, return {"objects":[]}.')
-    return "\n".join(lines)
+def _both_margins(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
+    """Full-height outer-third margin strips (binding-seal probe geometry)."""
+    strip = max(1, width // 3)
+    return [(0, 0, strip, height), (width - strip, 0, width, height)]
 
 
 class LocateAnythingGroundingService:
@@ -254,76 +126,179 @@ class LocateAnythingGroundingService:
     ) -> tuple[list[BoundingBox], dict[str, int]]:
         total_start = time.perf_counter()
         timings = LocateGroundingTimings()
-        slugs = None if pipeline_types is None else [str(getattr(item, "id", item)) for item in pipeline_types]
-        model_slugs = filter_visual_feature_slugs(slugs if slugs is not None else list(DEFAULT_VISUAL_FEATURE_SLUGS))
-        if model_slugs is not None and not model_slugs:
+        # One detect request per target, each carrying its grounding query as
+        # free text: a fixed category sends the user's 识别清单 wording (or its
+        # factory default, _grounding_query), a custom label its human name
+        # verbatim — the LA server holds no prompt table. Each is one
+        # single-category call — LocateAnything's recall collapses when categories
+        # share a prompt — round-robined across both GPUs. The box is tagged by the
+        # REQUESTED target, never LA's echoed category, so a 中文 label is not
+        # normalize-stripped and fixed + custom tags flow through ONE path.
+        requests, model_slugs = _detect_requests(pipeline_types)
+        if not requests:
             timings.total = _elapsed_ms(total_start)
-            logger.info("LocateAnything visual category stage skipped: no supported fixed visual categories")
+            logger.info("LocateAnything visual category stage skipped: no visual categories")
             return [], timings.as_dict()
+        # The user's grounding query per fixed slug, so every supplement pass
+        # (tile retry, edge refine, signature) sends the same wording the main
+        # detect sent — the 清单 owns the wording end to end.
+        slug_set = set(model_slugs)
+        query_by_slug = {rtype: tag for tag, rtype, _text in requests if rtype in slug_set}
+
+        # P0 无损重排: the YOLO supplement and the edge-seal margin probe used
+        # to run as strictly serial stages AFTER the main gather (each its own
+        # barrier). Both depend only on image_data/settings, and the services
+        # are stateless, so they are FIRED here and AWAITED at their original
+        # positions — the merge order (and therefore the output) is identical,
+        # only the wall-clock overlaps. Gates mirror the original branches
+        # verbatim; a task is created only when its branch would run.
+        has_image_url = str(getattr(settings, "HAS_IMAGE_URL", "") or "").strip()
+        has_task = (
+            asyncio.create_task(self._detect_has_image(has_image_url, image_data, page, model_slugs))
+            if has_image_url and model_slugs
+            else None
+        )
+        refine_task = (
+            asyncio.create_task(self._detect_on_tiles(
+                image_data,
+                page,
+                ["official_seal"],
+                tiles_for=_both_margins,
+                source_detail="locate_anything:edge_refine",
+                queries=query_by_slug,
+            ))
+            if (
+                not bool(getattr(settings, "VISUAL_SEAL_COLOR_CASCADE", True))
+                and bool(getattr(settings, "VISUAL_EDGE_SEAL_REFINE", True))
+                and model_slugs
+                and "official_seal" in model_slugs
+            )
+            else None
+        )
+        # Exception safety on every exit path: if code between here and the
+        # consuming await raises, the prefired task would hold a never-retrieved
+        # exception. The callback retrieves it immediately on completion, so no
+        # orphan noise and no dangling error regardless of how we exit.
+        for prefired in (has_task, refine_task):
+            if prefired is not None:
+                prefired.add_done_callback(
+                    lambda t: t.exception() if not t.cancelled() else None
+                )
+
+        # P1 speculative tile fire: a tile-retriable slug whose OWN main
+        # detect came back empty starts its tile pass immediately (the
+        # earliest possible signal) instead of waiting for the strictly
+        # serial retry stage — 11-17 tiles over 2 GPU slots used to run as a
+        # tail. The DECISION to keep tile boxes is unchanged: the retry
+        # section below still recomputes retry_slugs against the FINAL merged
+        # boxes and awaits (or discards) these tasks — output is identical,
+        # only the wall-clock overlaps. Gated on the same VISUAL_TILE_RETRY
+        # flag as the consumer (kill switch works in both places).
+        tile_retry_enabled = bool(getattr(settings, "VISUAL_TILE_RETRY", True))
+        _retriable = _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
+        spec_tile_tasks: dict[str, asyncio.Task] = {}
+
+        async def _detect_one(tag: str, rtype: str) -> list[dict[str, Any]]:
+            res = await self._post_detect(image_data, [tag])
+            if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
+                spec_task = asyncio.create_task(
+                    self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
+                )
+                spec_task.add_done_callback(
+                    lambda t: t.exception() if not t.cancelled() else None
+                )
+                spec_tile_tasks[rtype] = spec_task
+            return res
 
         model_start = time.perf_counter()
-        # Parallel inference across both GPUs: fan out one request per category
-        # so the load balancer round-robins them onto GPU0/GPU1 concurrently.
-        # Each LA call then does exactly one MoonViT encode + one generation, so
-        # the default {signature, official_seal} pair finishes in ~one category's
-        # time (~2s) instead of two sequential passes (~4s) on a single card.
-        # VISUAL_SINGLE_CALL (GLM backend): multi-category recall does NOT
-        # collapse there, so one prompt covers every category in one call.
-        single_call = bool(getattr(settings, "VISUAL_SINGLE_CALL", False))
-        if model_slugs is not None and len(model_slugs) > 1 and not single_call:
+        if bool(getattr(settings, "VISUAL_DETECT_BATCH_CATEGORIES", False)) and len(requests) > 1:
+            # vLLM prompt-embeds mode: ONE request carries every category; the
+            # server encodes the image once (MoonViT) and runs per-category
+            # generations batched. Boxes come back tagged with the NORMALIZED
+            # requested category (server-side per-category prompts — not a
+            # model echo), demuxed here by the mirrored fold. Any tag that
+            # fails to demux is a contract break: fail LOUD per category
+            # (empty result), never silently retag.
+            demux = {_normalize_detect_tag(tag): index for index, (tag, _r, _t) in enumerate(requests)}
+            try:
+                batch_raw = await self._post_detect(
+                    image_data, [tag for tag, _r, _t in requests]
+                )
+            except Exception as exc:
+                logger.warning("batched visual detect failed, falling back to fan-out: %s", exc)
+                batch_raw = None
+            if batch_raw is None:
+                results = await asyncio.gather(
+                    *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
+                    return_exceptions=True,
+                )
+            else:
+                per_request: list[list[dict[str, Any]]] = [[] for _ in requests]
+                for raw in batch_raw:
+                    index = demux.get(_normalize_detect_tag(raw.get("category")))
+                    if index is None:
+                        logger.warning(
+                            "batched detect returned unmappable category %r; box dropped from demux",
+                            raw.get("category"),
+                        )
+                        continue
+                    per_request[index].append(raw)
+                results = per_request
+                # speculative tiles for empty retriable slugs (same as _detect_one)
+                for _tag, rtype, _t in requests:
+                    if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
+                        spec_task = asyncio.create_task(
+                            self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
+                        )
+                        spec_task.add_done_callback(
+                            lambda t: t.exception() if not t.cancelled() else None
+                        )
+                        spec_tile_tasks[rtype] = spec_task
+        else:
             results = await asyncio.gather(
-                *[self._post_detect(image_data, [slug]) for slug in model_slugs],
+                *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
                 return_exceptions=True,
             )
-            raw_boxes = []
-            for slug, res in zip(model_slugs, results, strict=False):
-                if isinstance(res, BaseException):
-                    logger.warning("LocateAnything category %s failed, skipping: %s", slug, res)
-                    continue
-                raw_boxes.extend(res)
-        else:
-            raw_boxes = await self._post_detect(image_data, model_slugs)
         timings.model = _elapsed_ms(model_start)
 
         boxes: list[BoundingBox] = []
-        for index, raw in enumerate(raw_boxes):
-            slug = normalize_visual_slug(raw.get("category", ""))
-            if not is_visual_feature_slug(slug):
-                logger.debug("Skipping unsupported LocateAnything category: %s", raw.get("category"))
+        for (tag, result_type, result_text), res in zip(requests, results, strict=True):
+            if isinstance(res, BaseException):
+                logger.warning("LocateAnything category %r failed, skipping: %s", tag, res)
                 continue
-            try:
-                normalized = _clamp_box(
-                    float(raw.get("x") or 0),
-                    float(raw.get("y") or 0),
-                    float(raw.get("width") or 0),
-                    float(raw.get("height") or 0),
+            for raw in res:
+                try:
+                    normalized = _clamp_box(
+                        float(raw.get("x") or 0),
+                        float(raw.get("y") or 0),
+                        float(raw.get("width") or 0),
+                        float(raw.get("height") or 0),
+                    )
+                except (TypeError, ValueError):
+                    normalized = None
+                if normalized is None:
+                    continue
+                x, y, width, height = normalized
+                boxes.append(
+                    BoundingBox(
+                        id=f"locate_{uuid.uuid4().hex[:8]}",
+                        x=x,
+                        y=y,
+                        width=width,
+                        height=height,
+                        type=result_type,
+                        text=result_text,
+                        page=page,
+                        confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                        source="visual_features",
+                        source_detail="locate_anything:detect",
+                        evidence_source="visual_feature_model",
+                    )
                 )
-            except (TypeError, ValueError):
-                normalized = None
-            if normalized is None:
-                continue
-            x, y, width, height = normalized
-            boxes.append(
-                BoundingBox(
-                    id=f"locate_{index}_{uuid.uuid4().hex[:8]}",
-                    x=x,
-                    y=y,
-                    width=width,
-                    height=height,
-                    type=slug,
-                    text=SLUG_TO_NAME_ZH.get(slug, slug),
-                    page=page,
-                    confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
-                    source="visual_features",
-                    source_detail="locate_anything:detect",
-                    evidence_source="visual_feature_model",
-                )
-            )
-        has_image_url = str(getattr(settings, "HAS_IMAGE_URL", "") or "").strip()
-        if has_image_url and model_slugs:
+        if has_task is not None:
             supplement_start = time.perf_counter()
             try:
-                yolo_boxes = await self._detect_has_image(has_image_url, image_data, page, model_slugs)
+                yolo_boxes = await has_task
             except Exception as exc:
                 yolo_boxes = []
                 logger.warning("HaS-Image supplement failed: %s", exc)
@@ -332,6 +307,28 @@ class LocateAnythingGroundingService:
                 "HaS-Image supplement added %d box(es) in %dms",
                 len(yolo_boxes),
                 _elapsed_ms(supplement_start),
+            )
+
+        la_sig_url = str(getattr(settings, "LA_SIGNATURE_URL", "") or "").strip()
+        if la_sig_url and model_slugs and "signature" in model_slugs:
+            # Dedicated LocateAnything signature-only pass — higher recall on
+            # faint handwritten signatures (the shared multi-category detect
+            # missed the court-form 办案人 signature). Scoped to signature so the
+            # validated seal/code behavior is untouched; its boxes union with the
+            # main detect's in the merge layer (IoU dedup).
+            la_start = time.perf_counter()
+            try:
+                la_boxes = await self._detect_la_signature(
+                    la_sig_url, image_data, page, query_by_slug.get("signature", "signature")
+                )
+            except Exception as exc:
+                la_boxes = []
+                logger.warning("LocateAnything signature supplement failed: %s", exc)
+            boxes.extend(la_boxes)
+            logger.info(
+                "LocateAnything signature supplement added %d box(es) in %dms",
+                len(la_boxes),
+                _elapsed_ms(la_start),
             )
 
         if (
@@ -368,14 +365,38 @@ class LocateAnythingGroundingService:
                 ]
 
             # Route each proposal by how many found seals sit on it:
-            # - exactly one, figure-sized: the stamp is found but the ink
-            #   cluster is free evidence of the impression's FULL reach
-            #   (page_03's numbering arc sits below the detected box) — grow
-            #   the found box to the union, grow-only, no extra call. Flooded
-            #   clusters (colored scene background) must not grow anything.
-            # - none, or >=2 (the shard path: GLM flakily segments page_02's
+            # - exactly one, figure-sized: the stamp is found, and the
+            #   cluster's ink may extend past the found box (page_03's
+            #   numbering arc below it) — grow the box over the cluster's
+            #   ACTUAL ink components (not the bridged extent: the Yueyang
+            #   photo bridged three red underlines into the seal's cluster
+            #   and the raw extent painted a page-wide box). Flooded clusters
+            #   (colored scene background) must not grow anything.
+            # - none, or >=2 (the shard path: the grounding model flakily segments page_02's
             #   binding-seal column; the color connected-component says they
             #   are one impression): send to the confirm crop.
+            try:
+                image = ImageOps.exif_transpose(
+                    Image.open(io.BytesIO(image_data))
+                ).convert("RGB")
+            except Exception:
+                logger.warning("Seal color cascade: image decode failed", exc_info=True)
+                image = None
+            raw_comps: list[tuple[float, float, float, float]] | None = None
+
+            def _cluster_ink(proposal: tuple[float, float, float, float]) -> list[tuple[float, float, float, float]]:
+                nonlocal raw_comps
+                if raw_comps is None:
+                    try:
+                        raw_comps = raw_colored_component_bboxes(image_data)
+                    except Exception:
+                        raw_comps = []
+                px, py, pw, ph = proposal
+                return [
+                    c for c in raw_comps
+                    if px <= c[0] + c[2] / 2 <= px + pw and py <= c[1] + c[3] / 2 <= py + ph
+                ]
+
             grown = 0
             to_confirm = []
             for p in proposals:
@@ -387,28 +408,27 @@ class LocateAnythingGroundingService:
                 if pw * ph >= 0.5:
                     continue
                 s = on_it[0]
-                x1, y1 = min(s.x, px), min(s.y, py)
-                x2 = max(s.x + s.width, px + pw)
-                y2 = max(s.y + s.height, py + ph)
-                if (x2 - x1) * (y2 - y1) > s.width * s.height:
+                gx, gy, gw, gh = self._grow_seal_over_cluster_ink(
+                    (s.x, s.y, s.width, s.height), _cluster_ink(p)
+                )
+                if gw * gh > s.width * s.height:
+                    clamped = _clamp_box(gx, gy, gw, gh)
+                    if clamped is None:
+                        continue
                     for i, b in enumerate(boxes):
                         if b is s:
                             boxes[i] = s.model_copy(update={
-                                "x": x1, "y": y1,
-                                "width": x2 - x1, "height": y2 - y1,
+                                "x": clamped[0], "y": clamped[1],
+                                "width": clamped[2], "height": clamped[3],
                             })
                             grown += 1
                             break
-            try:
-                image = ImageOps.exif_transpose(
-                    Image.open(io.BytesIO(image_data))
-                ).convert("RGB")
+            if image is not None:
                 results = await asyncio.gather(
                     *[self._confirm_seal_crop(image, p) for p in to_confirm],
                     return_exceptions=True,
                 )
-            except Exception:
-                logger.warning("Seal color cascade failed", exc_info=True)
+            else:
                 results = []
             code_boxes = [b for b in boxes if b.type in ("qr_code", "barcode")]
             added = 0
@@ -438,11 +458,14 @@ class LocateAnythingGroundingService:
                 elif pw * ph < 0.5 and len(confirmed) == 1:
                     # Figure cluster holding ONE impression (minority-of-page
                     # ink, and the VLM sees exactly one stamp in the crop):
-                    # the connected ink extent IS the stamp — redact all of
-                    # it. (The VLM's own box under-covers tall/fragmented
-                    # ink: it boxed only the middle of page_02's binding-seal
-                    # column.)
-                    keep = [(px, py, pw, ph)]
+                    # grow the VLM's box over the cluster's actual ink — the
+                    # VLM box under-covers tall/fragmented ink (page_02's
+                    # column), while the bridged extent over-covers when
+                    # non-seal ink got pulled into the cluster (the Yueyang
+                    # underlines). Component-wise growth takes both sides.
+                    keep = [self._grow_seal_over_cluster_ink(
+                        confirmed[0], _cluster_ink((px, py, pw, ph))
+                    )]
                 else:
                     # Otherwise the cluster extent is not one stamp's ink:
                     # either chroma flooded a majority of the page (colored
@@ -480,7 +503,7 @@ class LocateAnythingGroundingService:
             and model_slugs
             and "official_seal" in model_slugs
         ):
-            # Binding (margin) seals: GLM's FULL-FRAME seal recall on thin edge
+            # Binding (margin) seals: the grounding model's FULL-FRAME seal recall on thin edge
             # slivers is unreliable AND non-monotonic in the requested category
             # count — page_02's right binding column is found with 4 categories,
             # missed entirely with 7 (what the medical/full preset sends, the
@@ -492,19 +515,8 @@ class LocateAnythingGroundingService:
             # stable: page_02 right 5/5 hit, seal-less edges 0/0) and union the
             # result with the full-frame seals.
             refine_start = time.perf_counter()
-
-            def _both_margins(slug: str, width: int, height: int) -> list[tuple[int, int, int, int]]:
-                strip = max(1, width // 3)
-                return [(0, 0, strip, height), (width - strip, 0, width, height)]
-
-            refine_boxes = await self._detect_on_tiles(
-                image_data,
-                page,
-                ["official_seal"],
-                tiles_for=_both_margins,
-                source_detail="locate_anything:edge_refine",
-            )
-            # GLM reads a barcode/QR in the margin as a seal (med's top
+            refine_boxes = await refine_task if refine_task is not None else []
+            # the grounding model reads a barcode/QR in the margin as a seal (med's top
             # barcode). Drop any margin-seal box overlapping a machine-code
             # box — the code is already covered by its own detection. Same
             # cross-detector arbitration as _prefer_yolo_machine_codes.
@@ -559,31 +571,45 @@ class LocateAnythingGroundingService:
                 folded, added, _elapsed_ms(refine_start),
             )
 
+        # Tile pass runs for EVERY requested retriable slug, not only 0-box
+        # ones: the old miss-rescue gate lost partial-recall pages — 立案告知书
+        # 实证: full-frame found 1 of 3 signatures, so the gate skipped tiles
+        # even though the grid tiles find all 3. A page carries no prior on
+        # its instance count; the only non-magic dedup is geometric — a tile
+        # box overlapping a same-type full-frame box is the zoom re-stating
+        # the page-scale call (dropped by _filter_tile_candidates), a
+        # non-overlapping one is a NEW instance the full frame missed.
         retry_slugs = [
             slug
             for slug in (model_slugs or [])
-            if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS
-            and not any(b.type == slug for b in boxes)
+            if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
         ]
-        if retry_slugs and not bool(getattr(settings, "VISUAL_TILE_RETRY", True)):
+        if retry_slugs and not tile_retry_enabled:
+            # Kill switch: the flag gates BOTH the speculative fire above and
+            # this consumer — with it off, zero tile passes run anywhere.
             retry_slugs = []
         if retry_slugs:
             retry_start = time.perf_counter()
-            tile_boxes = await self._detect_on_tiles(image_data, page, retry_slugs)
-            # Gap-filling only: a tile hit that touches anything the full
-            # frame already found is the zoom second-guessing the page-scale
-            # call - discard it.
-            tile_boxes = [
-                t
-                for t in tile_boxes
-                if not any(
-                    t.x < b.x + b.width
-                    and b.x < t.x + t.width
-                    and t.y < b.y + b.height
-                    and b.y < t.y + t.height
-                    for b in boxes
+            tile_boxes = []
+            live_slugs = []
+            for slug in retry_slugs:
+                spec = spec_tile_tasks.get(slug)
+                if spec is not None:
+                    try:
+                        tile_boxes.extend(await spec)
+                    except Exception as exc:
+                        logger.warning("speculative tile retry %s failed: %s", slug, exc)
+                else:
+                    live_slugs.append(slug)
+            if live_slugs:
+                # a slug whose main detect had raw boxes that all got dropped
+                # later (clamp/physical gates) never fired a spec — run it now
+                tile_boxes.extend(
+                    await self._detect_on_tiles(image_data, page, live_slugs, queries=query_by_slug)
                 )
-            ]
+            tile_boxes = self._filter_tile_candidates(tile_boxes, boxes)
+            tile_boxes = self._verify_machine_code_tile_boxes(tile_boxes, image_data)
+            tile_boxes = self._verify_fingerprint_tile_boxes(tile_boxes, image_data)
             boxes.extend(tile_boxes)
             logger.info(
                 "LocateAnything tile retry for %s kept %d box(es) in %dms",
@@ -592,9 +618,215 @@ class LocateAnythingGroundingService:
                 _elapsed_ms(retry_start),
             )
 
+        leftover_specs = [
+            t for slug, t in spec_tile_tasks.items() if slug not in retry_slugs
+        ]
+        if leftover_specs:
+            # A supplement (YOLO/refine/cascade) filled these types after the
+            # spec fired: await the tasks to completion and DISCARD the boxes
+            # — exactly today's semantics (tile boxes never join when the type
+            # already has one). Never cancel: the HTTP is in flight and the
+            # done-callback already consumes any exception.
+            await asyncio.gather(*leftover_specs, return_exceptions=True)
+
+        boxes = self._drop_solid_fill_seals(boxes, image_data)
+        boxes = self._drop_skin_hue_fingerprints(boxes, image_data)
+        boxes = self._snap_fingerprints_to_ink(boxes, image_data)
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
+
+    @staticmethod
+    def _snap_fingerprints_to_ink(
+        boxes: list[BoundingBox],
+        image_data: bytes,
+    ) -> list[BoundingBox]:
+        """Snap each fingerprint box to its own ink extent (pure measurement).
+
+        A red thumbprint IS a red-ink deposit; the visible deposit is what
+        must be covered, and its extent is MEASURED, not predicted: the hull
+        of the undilated colored components (chroma above the established
+        visible-ink floor) that intersect the model's box. LA's box is only
+        the existence assertion + which components belong to this print — its
+        geometry is discarded, because it measurably under-covers (0710 农业
+        合同: box bottom 0.247 vs ink bottom 0.259), over-covers (loose hull
+        run to run), and no query wording fixes it (8-label A/B: best
+        coverage 0.93, counts unstable, 中文 labels false-positive on the
+        CT-report negatives). Label A/B data killed the wording route; the
+        physical measurement IS the perfect-fit box the owner asked for.
+        No intersecting component (greyscale scan) or analysis failure ->
+        box unchanged (fail open, over-mask direction).
+        """
+        fps = [b for b in boxes if b.type == "fingerprint"]
+        if not fps:
+            return boxes
+        try:
+            components = raw_colored_component_bboxes(image_data)
+        except Exception:
+            logger.warning("fingerprint ink snap unavailable; keeping boxes", exc_info=True)
+            return boxes
+        if not components:
+            return boxes
+        out: list[BoundingBox] = []
+        snapped = 0
+        for b in boxes:
+            if b.type != "fingerprint":
+                out.append(b)
+                continue
+            touched = [
+                (cx, cy, cw, ch)
+                for cx, cy, cw, ch in components
+                if b.x < cx + cw and cx < b.x + b.width and b.y < cy + ch and cy < b.y + b.height
+            ]
+            if not touched:
+                out.append(b)
+                continue
+            # One box PER ink deposit, never their union: a connected
+            # component IS a separate deposit by definition, so a loose LA box
+            # straddling two prints (0710 农业合同: one box spanned both the
+            # 甲方 and 刘悦 prints plus the signature between them) splits
+            # into one exact box per print.
+            for index, (cx, cy, cw, ch) in enumerate(touched):
+                out.append(b.model_copy(update={
+                    "id": f"{b.id}_ink{index}" if len(touched) > 1 else b.id,
+                    "x": cx, "y": cy, "width": cw, "height": ch,
+                }))
+            snapped += 1
+        if snapped:
+            logger.info("Snapped %d fingerprint box(es) to their measured ink extent", snapped)
+        return out
+
+    @staticmethod
+    def _filter_tile_candidates(
+        tile_boxes: list[BoundingBox],
+        existing: list[BoundingBox],
+    ) -> list[BoundingBox]:
+        """Gap-filling only, scoped to the SAME type: a tile hit touching a
+        full-frame box of the same type is the zoom second-guessing the
+        page-scale call - discard it. A tile hit overlapping a box of a
+        DIFFERENT type is a different entity sharing pixels (a thumbprint
+        pressed onto a handwritten name, 0710 农业合同实证) and must be kept;
+        type equality is a string identity, so custom types participate with
+        no enumeration.
+        """
+        return [
+            t
+            for t in tile_boxes
+            if not any(
+                b.type == t.type
+                and t.x < b.x + b.width
+                and b.x < t.x + t.width
+                and t.y < b.y + b.height
+                and b.y < t.y + t.height
+                for b in existing
+            )
+        ]
+
+    @staticmethod
+    @staticmethod
+    def _verify_fingerprint_tile_boxes(
+        tile_boxes: list[BoundingBox],
+        image_data: bytes,
+    ) -> list[BoundingBox]:
+        """Ink existence identity for tile-retry fingerprint candidates —
+        INTERIOR test, not intersection.
+
+        A red thumbprint IS a red-ink deposit, so a candidate's own pixels
+        must contain colored ink. The earlier intersect-any-component version
+        was defeated by giant hallucination boxes (an X-ray-textured tile box
+        spanning far enough to touch the page's red stamp passed the gate; CT
+        report bench: 7 false fingerprints). Interior evidence is measured
+        directly: crop the candidate, chroma mask above the established
+        visible-ink floor, ANY hit keeps the box. Main-detect boxes never
+        pass through here (full-frame context trusted, greyscale-scan prints
+        stay). Failure direction: tile supplement narrows to main-detect
+        level. Analysis failure fails OPEN.
+        """
+        fps = [t for t in tile_boxes if t.type == "fingerprint"]
+        if not fps:
+            return tile_boxes
+        try:
+            import numpy as np
+
+            from app.services.vision.seal_color_cascade import _CHROMA_FLOOR
+
+            image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+            width, height = image.size
+            arr = np.asarray(image).astype(np.int16)
+            chroma = arr.max(axis=2) - arr.min(axis=2)
+        except Exception:
+            logger.warning("fingerprint tile ink gate unavailable; keeping candidates", exc_info=True)
+            return tile_boxes
+        kept: list[BoundingBox] = []
+        dropped = 0
+        for t in tile_boxes:
+            if t.type == "fingerprint":
+                x1 = max(0, int(t.x * width))
+                y1 = max(0, int(t.y * height))
+                x2 = min(width, int((t.x + t.width) * width) + 1)
+                y2 = min(height, int((t.y + t.height) * height) + 1)
+                region = chroma[y1:y2, x1:x2]
+                if region.size == 0 or not bool((region > _CHROMA_FLOOR).any()):
+                    dropped += 1
+                    continue
+            kept.append(t)
+        if dropped:
+            logger.info("Fingerprint ink gate dropped %d tile candidate(s) with no interior ink", dropped)
+        return kept
+
+    def _verify_machine_code_tile_boxes(
+        self,
+        tile_boxes: list[BoundingBox],
+        image_data: bytes,
+    ) -> list[BoundingBox]:
+        """Machine-code existence identity for tile-retry candidates.
+
+        A QR code / barcode IS machine-decodable by definition. A tile crop
+        loses page context and makes the grounding model hallucinate codes out
+        of watermark logos and film texture (0712 医院CT报告单: a bottom tile
+        returned the NetEase watermark logo as qr_code, and another returned
+        itself as one giant code). So a tile-retry candidate of a machine-code
+        type is kept only where the deterministic decoder proves a code exists:
+        it must intersect a decoded region (payload decoded = existence
+        proven, box exact). An undecodable "code" carries no extractable
+        payload, so dropping it cannot leak information — the failure
+        direction is safe by the definition of the object itself. Non-code
+        types pass through untouched; the full-frame detect and the YOLO
+        supplement are not gated (this identity check covers only the
+        context-starved tile path). Decoder breakage fails OPEN (keep the
+        candidates): over-mask, never silently un-cover.
+        """
+        code_types = {QR_CODE_SLUG, BARCODE_SLUG}
+        if not any(t.type in code_types for t in tile_boxes):
+            return tile_boxes
+        try:
+            with Image.open(io.BytesIO(image_data)) as img:
+                decoded = detect_machine_code_regions(img)
+        except Exception:
+            logger.warning(
+                "machine-code identity check unavailable; keeping tile candidates",
+                exc_info=True,
+            )
+            return tile_boxes
+        kept: list[BoundingBox] = []
+        dropped = 0
+        for t in tile_boxes:
+            if t.type in code_types and not any(
+                t.x < r.x + r.width
+                and r.x < t.x + t.width
+                and t.y < r.y + r.height
+                and r.y < t.y + t.height
+                for r in decoded
+            ):
+                dropped += 1
+                continue
+            kept.append(t)
+        if dropped:
+            logger.info(
+                "Machine-code identity dropped %d tile-retry candidate(s) with no decodable code",
+                dropped,
+            )
+        return kept
 
     async def _detect_has_image(
         self,
@@ -649,6 +881,57 @@ class LocateAnythingGroundingService:
                     confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
                     source="visual_features",
                     source_detail="has_image:yolo",
+                    evidence_source="visual_feature_model",
+                )
+            )
+        return boxes
+
+    async def _detect_la_signature(
+        self,
+        base_url: str,
+        image_data: bytes,
+        page: int,
+        query: str = "signature",
+    ) -> list[BoundingBox]:
+        """LocateAnything signature-only pass. Same /detect contract as the main
+        detect; we request just the signature query — the user's 清单 wording —
+        so nothing else changes. Single-category call, so boxes are tagged by
+        the request (no echo filtering, which a custom wording would fail)."""
+        body = {
+            "image_base64": base64.b64encode(image_data).decode("utf-8"),
+            "conf": settings.VISUAL_FEATURES_CONF,
+            "categories": [query],
+        }
+        async with httpx.AsyncClient(timeout=settings.VISUAL_FEATURES_TIMEOUT, trust_env=False) as client:
+            response = await client.post(f"{base_url.rstrip('/')}/detect", json=body)
+            response.raise_for_status()
+        boxes: list[BoundingBox] = []
+        for raw in response.json().get("boxes") or []:
+            try:
+                normalized = _clamp_box(
+                    float(raw.get("x") or 0),
+                    float(raw.get("y") or 0),
+                    float(raw.get("width") or 0),
+                    float(raw.get("height") or 0),
+                )
+            except (TypeError, ValueError):
+                normalized = None
+            if normalized is None:
+                continue
+            x, y, width, height = normalized
+            boxes.append(
+                BoundingBox(
+                    id=f"la_sig_{uuid.uuid4().hex[:8]}",
+                    x=x,
+                    y=y,
+                    width=width,
+                    height=height,
+                    type="signature",
+                    text=SLUG_TO_NAME_ZH.get("signature", "signature"),
+                    page=page,
+                    confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                    source="visual_features",
+                    source_detail="locate_anything:signature",
                     evidence_source="visual_feature_model",
                 )
             )
@@ -720,7 +1003,6 @@ class LocateAnythingGroundingService:
         "如果墨迹是水平直线排列的（如日期、编号、文字行、logo图标），它不是圆章残迹，输出 否。\n"
         "只输出一个字：是 或 否"
     )
-
     async def _confirm_seal_fragment(
         self, image: Image.Image, region: tuple[float, float, float, float]
     ) -> bool:
@@ -768,6 +1050,165 @@ class LocateAnythingGroundingService:
             return False
         return "是" in content
 
+    def _drop_solid_fill_seals(
+        self, boxes: list[BoundingBox], image_data: bytes
+    ) -> list[BoundingBox]:
+        """Reject 'seals' that are solid colored fills, not stamp impressions.
+
+        A 公章 is a sparse ink OUTLINE — border ring, star, arced text — with
+        paper showing through: the colored-pixel coverage inside its box is low
+        (measured ≤0.18 on every real stamp across the GT set). A printed
+        masthead/banner/logo fill is majority-colored (中国裁判文书网 ribbon
+        0.59, court emblem 0.83). The gap is ~3x, so the impression-vs-fill cut
+        is insensitive to its exact position — a physical property of what a
+        stamp IS, not a tuned score. Source-independent: catches the banner the
+        color cascade grows a seed into, and any detector's solid-fill FP.
+        Real stamps (sparse) always pass.
+        """
+        if not bool(getattr(settings, "VISUAL_SEAL_SOLID_FILL_REJECT", True)):
+            return boxes
+        seals = [b for b in boxes if b.type == "official_seal"]
+        if not seals:
+            return boxes
+        try:
+            import numpy as np
+
+            img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+            arr = np.asarray(img).astype(np.int16)
+            chroma = arr.max(axis=2) - arr.min(axis=2)  # same chroma as the color cascade
+            height, width = chroma.shape[:2]
+        except Exception:
+            return boxes
+        drop_ids: set[str] = set()
+        for s in seals:
+            x0, y0 = int(s.x * width), int(s.y * height)
+            x1, y1 = int((s.x + s.width) * width), int((s.y + s.height) * height)
+            region = chroma[max(0, y0):min(height, y1), max(0, x0):min(width, x1)]
+            if region.size == 0:
+                continue
+            # majority of the box is colored ink -> a printed fill (banner/logo),
+            # never a stamp impression (which leaves most of its box as paper).
+            if float((region > 45).mean()) > 0.45:
+                drop_ids.add(s.id)
+        if drop_ids:
+            logger.info("Dropped %d solid-fill (banner/logo) seal box(es)", len(drop_ids))
+            return [b for b in boxes if b.id not in drop_ids]
+        return boxes
+
+    def _drop_skin_hue_fingerprints(
+        self, boxes: list[BoundingBox], image_data: bytes
+    ) -> list[BoundingBox]:
+        """Reject 'fingerprint' boxes on REAL skin (the photographer's thumb
+        holding the page), keep crimson stamp-pad impressions.
+
+        Grid-tile retry zooms a page-holding thumb to salience and every
+        grounding wording then boxes it — geometry cannot separate the two
+        (the house photo's thumb reaches 24% into the frame). Pigment vs skin
+        spectra can: stamp-pad ink absorbs BOTH green and blue, so inside a
+        real print the colored pixels (same chroma>45 identity as the seal
+        cascade) have G≈B — hue ratio (G-B)/(R-G) ≤ 0.12 on all 7 corpus
+        prints. Skin is orange, G well above B — ratio ≥ 0.57 on both corpus
+        thumbs. 0.35 is the geometric middle of that 5x gap, a property of
+        what stamp ink IS, not a tuned score. Naive redness does NOT separate
+        (thumb R-G 47-53 vs print 55-76 overlap: warm light makes skin red).
+        Evidence-gated in the safe direction: a box whose pixels show no
+        colored ink at all (a faint print) is KEPT — a missed redaction
+        outranks a false box, so only a positively-skin-hued box is dropped.
+        """
+        if not bool(getattr(settings, "VISUAL_FINGERPRINT_INK_GATE", True)):
+            return boxes
+        prints = [b for b in boxes if b.type == "fingerprint"]
+        if not prints:
+            return boxes
+        try:
+            import numpy as np
+
+            img = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
+            arr = np.asarray(img).astype(np.int16)
+            height, width = arr.shape[:2]
+        except Exception:
+            return boxes
+        drop_ids: set[str] = set()
+        for b in prints:
+            x0, y0 = int(b.x * width), int(b.y * height)
+            x1, y1 = int((b.x + b.width) * width), int((b.y + b.height) * height)
+            region = arr[max(0, y0):min(height, y1), max(0, x0):min(width, x1)]
+            if region.size == 0:
+                continue
+            red = region[..., 0].astype(float)
+            green = region[..., 1].astype(float)
+            blue = region[..., 2].astype(float)
+            colored = (region.max(axis=2) - region.min(axis=2)) > 45
+            # hue is only meaningful on red-dominant colored pixels; a box with
+            # none carries no ink evidence either way and is kept.
+            reddish = colored & (red > green)
+            if not reddish.any():
+                continue
+            ratio = float(np.median(((green - blue) / np.maximum(red - green, 1.0))[reddish]))
+            if ratio > 0.35:
+                drop_ids.add(b.id)
+        if drop_ids:
+            logger.info("Dropped %d skin-hued fingerprint box(es) (real thumb)", len(drop_ids))
+            return [b for b in boxes if b.id not in drop_ids]
+        return boxes
+
+    def _grow_seal_over_cluster_ink(
+        self,
+        anchor: tuple[float, float, float, float],
+        ink_comps: list[tuple[float, float, float, float]],
+    ) -> tuple[float, float, float, float]:
+        """Grow a confirmed seal box over its cluster's actual ink, grow-only.
+
+        Components TOUCHING the anchor are the stamp's own ink — free union,
+        to a fixpoint (fragments chain outward). DETACHED components join only
+        from within the stamp's footprint shadow (span containment): page_03's
+        numbering arc sits inside the stamp's x-span and joins; the Yueyang
+        photo's red text underlines (bridged into the seal's cluster) extend
+        far beyond the stamp's footprint and stay out — inheriting the whole
+        bridged extent there painted a page-wide box.
+        """
+        grown = anchor
+
+        def _union(a: tuple[float, float, float, float], b: tuple[float, float, float, float]):
+            x1, y1 = min(a[0], b[0]), min(a[1], b[1])
+            x2 = max(a[0] + a[2], b[0] + b[2])
+            y2 = max(a[1] + a[3], b[1] + b[3])
+            return (x1, y1, x2 - x1, y2 - y1)
+
+        def _touches(c: tuple[float, float, float, float], box: tuple[float, float, float, float]) -> bool:
+            return (
+                c[0] < box[0] + box[2] and box[0] < c[0] + c[2]
+                and c[1] < box[1] + box[3] and box[1] < c[1] + c[3]
+            )
+
+        pending = list(ink_comps)
+        changed = True
+        while changed:
+            changed = False
+            rest = []
+            for c in pending:
+                if _touches(c, grown):
+                    grown = _union(grown, c)
+                    changed = True
+                else:
+                    rest.append(c)
+            pending = rest
+        for c in pending:
+            # A stamp's own detached remnants (numbering row, rim fragments)
+            # sit within the stamp's FOOTPRINT SHADOW: their x-span (or
+            # y-span) is contained in the anchor's. Page-furniture ink that
+            # bridging pulled into the cluster (the Yueyang text underlines)
+            # extends beyond the stamp's footprint and stays out. Topological
+            # containment — no model call, no thresholds. (The rubric cannot
+            # arbitrate here: a numbering row and an underline are both
+            # near-straight strips, and every marked/unmarked window variant
+            # judged them alike.)
+            x_within = c[0] >= anchor[0] and c[0] + c[2] <= anchor[0] + anchor[2]
+            y_within = c[1] >= anchor[1] and c[1] + c[3] <= anchor[1] + anchor[3]
+            if x_within or y_within:
+                grown = _union(grown, c)
+        return grown
+
     async def _detect_on_tiles(
         self,
         image_data: bytes,
@@ -775,6 +1216,7 @@ class LocateAnythingGroundingService:
         slugs: list[str],
         tiles_for=None,
         source_detail: str = "locate_anything:tile_retry",
+        queries: dict[str, str] | None = None,
     ) -> list[BoundingBox]:
         """Re-run categories on native-resolution tiles.
 
@@ -798,15 +1240,17 @@ class LocateAnythingGroundingService:
             if tiles_for is not None:
                 tiles = tiles_for(slug, width, height)
             else:
-                tiles = (
-                    _margin_tiles(width, height)
-                    if slug in _TILE_RETRY_MARGIN_SLUGS
-                    else _bottom_tiles(width, height)
-                )
+                if slug in _TILE_RETRY_MARGIN_SLUGS:
+                    tiles = _margin_tiles(width, height)
+                elif slug in _TILE_RETRY_GRID_SLUGS:
+                    tiles = _grid_tiles(width, height)
+                else:
+                    tiles = _bottom_tiles(width, height)
             for x0, y0, x1, y1 in tiles:
                 encoded = io.BytesIO()
                 image.crop((x0, y0, x1, y1)).save(encoded, format="JPEG", quality=_JPEG_QUALITY)
-                tasks.append(self._post_detect(encoded.getvalue(), [slug]))
+                # Same wording as the full-frame pass — the 清单 owns it.
+                tasks.append(self._post_detect(encoded.getvalue(), [(queries or {}).get(slug, slug)]))
                 metas.append((slug, x0, y0, x1 - x0, y1 - y0))
         results = await asyncio.gather(*tasks, return_exceptions=True)
         boxes: list[BoundingBox] = []
@@ -815,11 +1259,17 @@ class LocateAnythingGroundingService:
                 logger.warning("tile retry %s failed on one tile: %s", slug, result)
                 continue
             for raw in result:
-                raw_slug = normalize_visual_slug(str(raw.get("category", "")))
-                if raw_slug != slug and not (
-                    slug in _MACHINE_CODE_SIBLINGS and raw_slug in _MACHINE_CODE_SIBLINGS
-                ):
-                    continue
+                # Tag-by-request, no echo filtering: this tile carried exactly
+                # ONE query (the checklist wording for `slug`), so every box in
+                # the response belongs to that slug by construction. The old
+                # echo check compared the server-normalized QUERY WORDING with
+                # the slug — a tautology while query==slug, but the moment the
+                # checklist wording diverged ("handwritten name signature" for
+                # signature, "red inked thumbprint mark" for fingerprint) it
+                # silently swallowed EVERY tile box of those types (contract 19
+                # 实证: both grid tiles hit a signature each, pipeline kept 0;
+                # the historical "fingerprint,qr_code kept 0/6" waste was this
+                # bug, not model misses).
                 try:
                     normalized = _clamp_box(
                         float(raw.get("x") or 0),
@@ -951,6 +1401,7 @@ class LocateAnythingGroundingService:
             "top_p": float(config.top_p or _DEFAULT_TOP_P),
             "max_tokens": max_tokens,
             "stream": False,
+            "response_format": {"type": "json_object"},
             "chat_template_kwargs": {"enable_thinking": False},
             "thinking": {"type": "disabled"},
             "enable_thinking": False,

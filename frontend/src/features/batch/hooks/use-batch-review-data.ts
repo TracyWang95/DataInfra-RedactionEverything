@@ -14,8 +14,6 @@ import { useReviewOrigImage } from './use-batch-review-orig-image';
 import { useReviewImagePreview, useReviewTextPreviewMap } from './use-batch-review-preview';
 import { useReviewRerun } from './use-batch-review-rerun';
 
-export { sanitizeReviewBoxSelection } from './use-batch-review-normalize';
-
 export interface ReviewDataDeps {
   step: Step;
   reviewFile: BatchRow | null;

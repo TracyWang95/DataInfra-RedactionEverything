@@ -158,6 +158,9 @@ async def delete_connection(
     return {"id": connection_id, "deleted": True}
 
 
+# 回收站三件套（trash/restore/软删 DELETE 默认）为 R4 刻意能力：deleteStructuredDataset 默认软删进此处，
+# 到期自动清；前端暂无 trash/restore UI（文件侧 trash-dialog.tsx 有完整对照，待接同款）。
+# 勿删端点：删除将使软删数据集在保留期内不可恢复（唯一恢复通道）。
 @router.get("/datasets/trash")
 async def list_trashed_datasets(
     owner_id: str = Depends(require_auth),

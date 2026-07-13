@@ -278,8 +278,6 @@ export async function fetchBatchPreviewMap(
       : replacementMode === 'mask'
         ? ReplacementMode.MASK
         : ReplacementMode.STRUCTURED;
-  const modeKey: 'structured' | 'smart' | 'mask' =
-    replacementMode === 'smart' ? 'smart' : replacementMode === 'mask' ? 'mask' : 'structured';
   try {
     const map = await batchPreviewEntityMap({
       entities: payload,
@@ -287,15 +285,9 @@ export async function fetchBatchPreviewMap(
     });
     if (map && Object.keys(map).length > 0) return map;
   } catch {
-    return buildFallbackPreviewEntityMap(
-      payload.map((item) => ({ text: item.text, type: item.type, selected: item.selected })),
-      modeKey,
-    );
+    return buildFallbackPreviewEntityMap(payload);
   }
-  return buildFallbackPreviewEntityMap(
-    payload.map((p) => ({ text: p.text, type: p.type, selected: p.selected })),
-    modeKey,
-  );
+  return buildFallbackPreviewEntityMap(payload);
 }
 
 // ── Cached preview map fetch (React Query) ──

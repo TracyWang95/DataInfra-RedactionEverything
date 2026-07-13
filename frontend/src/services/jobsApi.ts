@@ -504,7 +504,6 @@ export function createJob(body: {
   title?: string;
   config?: Record<string, unknown>;
   skip_item_review?: boolean;
-  priority?: number;
 }): Promise<JobSummary> {
   return post('/jobs', body).then(normalizeJobSummary);
 }
@@ -605,20 +604,6 @@ export function deleteJobItem(
   itemId: string,
 ): Promise<{ deleted: boolean; item_id: string; file_id: string | null }> {
   return del(`/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}`);
-}
-
-export function approveItemReview(jobId: string, itemId: string): Promise<JobItemRow> {
-  return post<JobItemRow>(
-    `/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/review/approve`,
-    {},
-  );
-}
-
-export function rejectItemReview(jobId: string, itemId: string): Promise<JobItemRow> {
-  return post<JobItemRow>(
-    `/jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/review/reject`,
-    {},
-  );
 }
 
 export function getItemReviewDraft(jobId: string, itemId: string): Promise<JobItemReviewDraft> {

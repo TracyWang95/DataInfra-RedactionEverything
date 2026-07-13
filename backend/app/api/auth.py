@@ -82,7 +82,7 @@ def _build_token_response(token: str) -> JSONResponse:
         value=token,
         httponly=True,
         samesite="strict",
-        secure=not settings.DEBUG,
+        secure=settings.COOKIE_SECURE and not settings.DEBUG,
         max_age=expires_seconds,
         path="/",
     )

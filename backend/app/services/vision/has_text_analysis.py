@@ -12,15 +12,15 @@ import time
 from typing import Any
 
 from app.core.config import settings
-from app.models.type_mapping import TYPE_ID_TO_CN, has_query_labels_for
 from app.services.ocr_has_vision_service import OCRTextBlock
 from app.services.vision.has_text_payload import (
-    DEFAULT_HAS_TEXT_TYPE_IDS,
     _build_has_text_payload,
     _build_has_text_type_names,
     _canonical_image_text_type,
     _compact_text,
+    _default_has_text_items,
     _filter_blocks_for_has_text,
+    _item_query_labels,
 )
 from app.services.vision.ocr_cache import (
     _add_has_text_duration,
@@ -30,12 +30,6 @@ from app.services.vision.ocr_cache import (
     _has_recent_negative_health,
     _has_text_ner_inflight_key,
     _record_has_text_metric,
-)
-from app.services.vision.ocr_table_semantics import (
-    _merge_form_field_document_entities,
-    _merge_table_amount_entities,
-    recall_form_field_document_numbers,
-    recall_table_amount_entities,
 )
 from app.services.vision.ocr_tuning import (
     _BRIDGE_PAYLOAD_MAX_CHARS,
@@ -54,8 +48,54 @@ logger = logging.getLogger(__name__)
 # and leave 汉族 out — 找到就找到，找不到就没有。Tradeoff: the model dilutes recall on a
 # long page and may drop an entity near the very end (e.g. a standalone signature
 # date). Reordering/chunking to recover it reintroduces the force-fit, because this
-# model classifies sequentially — order and recall are coupled. So a date-format
-# backstop (below) catches those dropped dates — see _STANDALONE_DATE_RE.
+# model classifies sequentially — order and recall are coupled. Dates were once
+# force-recalled by a 年月日 regex backstop (both digit systems); a 5/5 reliability
+# probe — including the CJK-digit "一九五八年九月十日" the backstop was written for —
+# showed HaS now returns every date deterministically, so the regex was deleted.
+# The model judges what is a date; no hand-written pattern enumerates them.
+
+
+async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: Any) -> None:
+    """Model-driven AMOUNT value narrowing（人民币每亩每年100元 → 100元）.
+
+    The sensitive ink on the page is the value token, but HaS queried as 金额
+    returns the span WITH its business context — that is its training
+    semantics, not an error. Queried as 数值 (settings.AMOUNT_VALUE_QUERY_LABEL)
+    on the entity text alone, the same model extracts the value itself, so the
+    narrowing is the model's own judgment end to end — no token grammar, no
+    word lists. One value that is a proper substring -> the span narrows to
+    it. SEVERAL values (a dual-numeral span such as '人民币陆7元整(￥360000元)'
+    — the 大写 reading plus the bracketed figure, 0712 房屋合同实证) -> the
+    entity SPLITS into one AMOUNT entity per value, each hunting its own box;
+    the old single-value-only rule silently dropped every extra numeral
+    (360000 went unmasked). No answer / model failure keeps the whole span,
+    so narrowing still only ever trims label context, never uncovers a value.
+    """
+    label = str(getattr(settings, "AMOUNT_VALUE_QUERY_LABEL", "") or "").strip()
+    if not label or not has_client:
+        return
+    split_entities: list[dict[str, str]] = []
+    for entity in entities:
+        if entity.get("type") != "AMOUNT":
+            continue
+        original = str(entity.get("text") or "")
+        if not original:
+            continue
+        try:
+            result = await asyncio.to_thread(has_client.ner, original, [label])
+        except Exception as exc:
+            logger.debug("amount value narrowing skipped for %r: %s", original, exc)
+            continue
+        values = [str(v).strip() for v in (result or {}).get(label, []) if str(v).strip()]
+        values = list(dict.fromkeys(v for v in values if v != original and v in original))
+        if not values:
+            continue
+        logger.debug("amount narrowed by model: %r -> %r", original, values)
+        entity["text"] = values[0]
+        for extra in values[1:]:
+            split_entities.append({**entity, "text": extra})
+    entities.extend(split_entities)
+
 
 async def run_has_text_analysis(
     ocr_blocks: list[OCRTextBlock],
@@ -90,41 +130,6 @@ async def run_has_text_analysis(
         )
         return []
 
-    # Structural AMOUNT recall from table semantics. Computed before any HaS
-    # availability checks: it needs no model, and table amounts must surface
-    # even when NER is skipped, fails, or returns nothing.
-    amount_in_schema = vision_types is None or any(
-        _canonical_image_text_type(getattr(vt, "id", "")) == "AMOUNT" for vt in vision_types
-    )
-    table_amount_entities = recall_table_amount_entities(ocr_blocks) if amount_in_schema else []
-    if table_amount_entities:
-        logger.info(
-            "Table semantic AMOUNT recall: %s",
-            [entity["text"] for entity in table_amount_entities],
-        )
-    _record_has_text_metric(
-        stage_status, "has_text_table_amount_entities", len(table_amount_entities)
-    )
-
-    # Structural DOCUMENT_NUMBER recall from form-field labels (标签：值 and
-    # label-cell layouts). Same contract as the table AMOUNT recall: computed
-    # before any HaS availability checks and surfaced even when NER is skipped
-    # or fails. Only active when DOCUMENT_NUMBER is selected in the schema.
-    document_number_in_schema = vision_types is not None and any(
-        _canonical_image_text_type(getattr(vt, "id", "")) == "DOCUMENT_NUMBER" for vt in vision_types
-    )
-    form_document_entities = (
-        recall_form_field_document_numbers(ocr_blocks) if document_number_in_schema else []
-    )
-    if form_document_entities:
-        logger.info(
-            "Form-field DOCUMENT_NUMBER recall: %s",
-            [entity["text"] for entity in form_document_entities],
-        )
-    _record_has_text_metric(
-        stage_status, "has_text_form_document_entities", len(form_document_entities)
-    )
-    structural_entities = [*table_amount_entities, *form_document_entities]
 
     # Lazy re-init if client was not available at startup
     if not has_client:
@@ -139,7 +144,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
     if _has_recent_negative_health(has_client):
         logger.warning("HaS service recently reported unavailable, skipping NER")
@@ -149,7 +154,7 @@ async def run_has_text_analysis(
             "has_text_total_ms",
             round((time.perf_counter() - total_start) * 1000),
         )
-        return list(structural_entities)
+        return []
 
     try:
         prepare_start = time.perf_counter()
@@ -190,7 +195,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
         min_text_chars = int(settings.HAS_VISION_MIN_TEXT_CHARS_FOR_NER)
         compact_chars = len(_compact_text(text_content))
@@ -208,7 +213,7 @@ async def run_has_text_analysis(
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
         logger.info(
             (
@@ -240,7 +245,7 @@ async def run_has_text_analysis(
                     "has_text_total_ms",
                     round((time.perf_counter() - total_start) * 1000),
                 )
-                return list(structural_entities)
+                return []
             logger.info("HaS using types for NER: %s", chinese_types)
         else:
             chinese_types = _build_has_text_type_names()
@@ -298,21 +303,26 @@ async def run_has_text_analysis(
 
         if not ner_result or not isinstance(ner_result, dict):
             logger.info("HaS: no entities found by NER")
-            _record_has_text_metric(stage_status, "has_text_entity_count", len(structural_entities))
+            _record_has_text_metric(stage_status, "has_text_entity_count", 0)
             _record_has_text_metric(
                 stage_status,
                 "has_text_total_ms",
                 round((time.perf_counter() - total_start) * 1000),
             )
-            return list(structural_entities)
+            return []
 
         logger.info("HaS NER result: %s", ner_result)
 
         # ----- reverse mapping: Chinese -> type ID -----
         # Every label the prompt asked for on an item's behalf maps back to
-        # that item (has_query_labels_for is the same source the prompt was
+        # that item (the request's own labels are the same source the prompt was
         # built from, so query and answer stay symmetric — 大写金额 -> AMOUNT).
         if vision_types:
+            # Tag-by-request (same principle as the LA chain): every result
+            # bucket key is a label WE sent for a checked item, so the map is
+            # built purely from the request — item name, item id, and the
+            # item's own query labels. No registry lookups: the checklist owns
+            # the vocabulary end to end.
             chinese_to_id = {}
             for vt in vision_types:
                 normalized_id = _canonical_image_text_type(vt.id)
@@ -320,17 +330,18 @@ async def run_has_text_analysis(
                     continue
                 chinese_to_id[vt.name] = normalized_id
                 chinese_to_id[normalized_id] = normalized_id
-                canonical_name = TYPE_ID_TO_CN.get(normalized_id)
-                if canonical_name:
-                    chinese_to_id[canonical_name] = normalized_id
-                for query_label in has_query_labels_for(normalized_id):
+                for query_label in _item_query_labels(vt):
                     chinese_to_id[query_label] = normalized_id
         else:
             chinese_to_id = {}
-            for type_id in DEFAULT_HAS_TEXT_TYPE_IDS:
-                chinese_to_id[TYPE_ID_TO_CN.get(type_id, type_id)] = type_id
-                for query_label in has_query_labels_for(type_id):
-                    chinese_to_id[query_label] = type_id
+            for item in _default_has_text_items():
+                normalized_id = _canonical_image_text_type(item.id)
+                if not normalized_id:
+                    continue
+                chinese_to_id[item.name] = normalized_id
+                chinese_to_id[normalized_id] = normalized_id
+                for query_label in _item_query_labels(item):
+                    chinese_to_id[query_label] = normalized_id
 
         bridge_ner_result: dict[str, list[str]] = {}
         bridge_blocks = reconstruct_visual_line_blocks(candidate_blocks)
@@ -376,6 +387,64 @@ async def run_has_text_analysis(
                 if clean_text and clean_text not in merged_ner_result[entity_type]:
                     merged_ner_result[entity_type].append(clean_text)
 
+        # ---- Residual re-ask pass (0712 海关发票实证) ----
+        # 长 payload 召回稀释: 161块×38标签一次NER, 金额桶16值恰好漏掉
+        # USD 4,700.00/USD 125.00(同标签块级14/14全召回; temp=0确定性; 收窄/
+        # 匹配无辜)。"已消费"恒等式=模型自己的答案: 任一已返回值(不短于其
+        # 类型 min-len——防'男'把整块标已消费、防多值块部分召回逃逸)与块文本
+        # compact 后互为子串 → 该块已消费。未消费块按原序拼残差 payload
+        # (同 caps 同标签集)再问一次——同一模型在短上下文召回完美(实测)。
+        # 附加式合并只增不减: force-fit 最坏=表头多遮一块; 返回空=与现状全等。
+        consumed_values: list[str] = []
+        for entity_type, entity_list in merged_ner_result.items():
+            normalized_type = chinese_to_id.get(entity_type, entity_type)
+            value_min_len = _NER_MIN_LEN_BY_TYPE.get(normalized_type, _NER_DEFAULT_MIN_LEN)
+            for value in entity_list:
+                compact_value = _compact_text(value)
+                if compact_value and len(compact_value) >= value_min_len:
+                    consumed_values.append(compact_value)
+        residual_blocks = []
+        for block in candidate_blocks:
+            block_compact = _compact_text(str(getattr(block, "text", "") or ""))
+            if not block_compact:
+                continue
+            consumed = any(
+                value in block_compact or block_compact in value for value in consumed_values
+            )
+            if not consumed:
+                residual_blocks.append(block)
+        if residual_blocks:
+            residual_payload = _build_has_text_payload(
+                residual_blocks,
+                max_chars=settings.HAS_VISION_MAX_TEXT_CHARS,
+                max_block_chars=settings.HAS_VISION_MAX_BLOCK_CHARS,
+            )
+            residual_text = residual_payload.content
+            if residual_text.strip() and residual_text != text_content:
+                residual_ner_result = _get_cached_has_text_ner(has_client, residual_text, chinese_types)
+                if residual_ner_result is None:
+                    from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
+                    async with shared_gpu_inference_slot("OCR HaS Text residual NER"):
+                        residual_ner_result = _get_cached_has_text_ner(has_client, residual_text, chinese_types)
+                        if residual_ner_result is None:
+                            model_start = time.perf_counter()
+                            result = await asyncio.to_thread(has_client.ner, residual_text, chinese_types)
+                            _add_has_text_duration(
+                                stage_status,
+                                "has_text_model_ms",
+                                round((time.perf_counter() - model_start) * 1000),
+                            )
+                            residual_ner_result = result if isinstance(result, dict) else {}
+                for entity_type, entity_list in (residual_ner_result or {}).items():
+                    if not entity_list:
+                        continue
+                    merged_ner_result.setdefault(entity_type, [])
+                    for text in entity_list:
+                        clean_text = _compact_text(text)
+                        if clean_text and clean_text not in merged_ner_result[entity_type]:
+                            merged_ner_result[entity_type].append(clean_text)
+
         for entity_type, entity_list in merged_ner_result.items():
             if not entity_list:
                 continue
@@ -404,12 +473,7 @@ async def run_has_text_analysis(
                 })
                 logger.debug("HaS found entity: %s (%s)", text, normalized_type)
 
-        # Structural table amounts the NER did not already return (value-level
-        # dedupe via _amount_value_signature, same as the matcher uses).
-        entities = _merge_table_amount_entities(entities, table_amount_entities)
-
-        # Form-field document numbers the NER did not already return.
-        entities = _merge_form_field_document_entities(entities, form_document_entities)
+        await _narrow_amount_entities(entities, has_client)
 
         # Boxes come from matching these values back to OCR blocks; mIoU is the
         # only merge step.
@@ -431,4 +495,4 @@ async def run_has_text_analysis(
             round((time.perf_counter() - total_start) * 1000),
         )
         # NER failed; structural table-amount / form-field recalls are still valid.
-        return list(structural_entities)
+        return []

@@ -35,28 +35,26 @@ const PUBLIC_STARTUP_MESSAGES = {
 // both together). Patterns match process features instead of absolute venv
 // paths so they work on any machine. The [x] first-character bracket prevents
 // pkill -f from matching this very `bash -lc` command line (a self-kill would
-// abort the sequence midway). "[v]llm serve" covers all three vLLM servers
-// (8118 paddle / 8080 has-text / 8091 locate-lm).
+// abort the sequence midway). "[v]llm serve" covers all vLLM servers
+// (8118 paddle / 8080 has-text / 8120 glm-vllm).
 const WSL_KILL_SEQUENCE = [
   'set +e',
   'pkill -TERM -f "[v]llm serve" >/dev/null 2>&1 || true',
   'pkill -TERM -f "[P]addlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
   'pkill -TERM -f "[H]aS_4.0_0.6B" >/dev/null 2>&1 || true',
-  'pkill -TERM -f "[l]ocate_qwen2_model" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[g]lm-fp8" >/dev/null 2>&1 || true',
   'pkill -TERM -f "[s]cripts/ocr_server.py" >/dev/null 2>&1 || true',
-  'pkill -TERM -f "[l]ocate_anything_server.py" >/dev/null 2>&1 || true',
-  'pkill -TERM -f "[l]ocate_anything_eval.py" >/dev/null 2>&1 || true',
-  'pkill -TERM -f "[l]ocate_anything_tile_eval.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[g]lm_visual_server.py" >/dev/null 2>&1 || true',
+  'pkill -TERM -f "[h]as_image_server.py" >/dev/null 2>&1 || true',
   'sleep 2',
   'pkill -KILL -f "[v]llm serve" >/dev/null 2>&1 || true',
   'pkill -KILL -f "[P]addlePaddle/PaddleOCR-VL" >/dev/null 2>&1 || true',
   'pkill -KILL -f "[H]aS_4.0_0.6B" >/dev/null 2>&1 || true',
-  'pkill -KILL -f "[l]ocate_qwen2_model" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[g]lm-fp8" >/dev/null 2>&1 || true',
   'pkill -KILL -f "[s]cripts/ocr_server.py" >/dev/null 2>&1 || true',
-  'pkill -KILL -f "[l]ocate_anything_server.py" >/dev/null 2>&1 || true',
-  'pkill -KILL -f "[l]ocate_anything_eval.py" >/dev/null 2>&1 || true',
-  'pkill -KILL -f "[l]ocate_anything_tile_eval.py" >/dev/null 2>&1 || true',
-  'for port in 8080 8082 8090 8091 8118; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
+  'pkill -KILL -f "[g]lm_visual_server.py" >/dev/null 2>&1 || true',
+  'pkill -KILL -f "[h]as_image_server.py" >/dev/null 2>&1 || true',
+  'for port in 8080 8081 8082 8090 8120 8130; do command -v fuser >/dev/null 2>&1 && fuser -k "${port}/tcp" >/dev/null 2>&1 || true; done',
 ].join('; ');
 
 function parseEnv(filePath) {
@@ -158,9 +156,9 @@ let vllmBin = '';
 
 const windowsVenv = env.WINDOWS_VENV_DIR || '.venv';
 const windowsPython = env.WINDOWS_PYTHON || path.join(repoRoot, windowsVenv, 'Scripts', 'python.exe');
-const locatePort = env.LOCATE_ANYTHING_PORT || '8090';
+const glmVisualPort = env.GLM_VISUAL_PORT || '8130';
 // PaddleOCR-VL is optional. Default OFF: the text path uses PP-StructureV3,
-// so the heavy VL model is not started, freeing GPU memory for HaS / LocateAnything.
+// so the heavy VL model is not started, freeing GPU memory for HaS / GLM.
 const ocrVlEnabled = !['0', 'false', 'no', 'off', ''].includes(
   String(env.OCR_VL_ENABLED ?? '0').trim().toLowerCase(),
 );
@@ -184,8 +182,8 @@ function initRuntimeConfig() {
   env.HAS_TEXT_RUNTIME = env.HAS_TEXT_RUNTIME || 'vllm';
   env.HAS_TEXT_VLLM_BASE_URL = preferWslUrl(env.HAS_TEXT_VLLM_BASE_URL, 8080, '/v1');
   env.OCR_BASE_URL = preferWslUrl(env.OCR_BASE_URL, 8082);
-  env.LOCATE_ANYTHING_ENABLED = env.LOCATE_ANYTHING_ENABLED || '1';
-  env.VISUAL_FEATURES_BASE_URL = preferWslUrl(env.VISUAL_FEATURES_BASE_URL, Number(env.LOCATE_ANYTHING_PORT || 8090));
+  env.GLM_VISUAL_ENABLED = env.GLM_VISUAL_ENABLED || '1';
+  env.VISUAL_FEATURES_BASE_URL = preferWslUrl(env.VISUAL_FEATURES_BASE_URL, Number(env.GLM_VISUAL_PORT || 8130));
   appPython = path.posix.join(required('VENV_DIR'), 'bin', 'python');
   vllmPython = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'python');
   vllmBin = path.posix.join(required('VLLM_VENV_DIR'), 'bin', 'vllm');
@@ -336,14 +334,12 @@ async function startVllmServices() {
   );
   await waitJson(`http://${wslHost}:8080/v1/models`, (body) => Array.isArray(body.data), 'has-text-vllm', 720000, hasTextVllm);
 
-  // LocateAnything Qwen2 text backbone served by vLLM (prompt-embeds). The
-  // LocateAnything service (8090) runs the MoonViT vision tower locally and
-  // posts stitched image+text embeds here. Only started in vLLM mode.
-  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0' && (env.LOCATE_ANYTHING_VLLM_URL || '').trim()) {
-    const locateLmModel = env.LOCATE_ANYTHING_LM_MODEL_DIR || '/mnt/d/has_models/locate_qwen2_model';
-    await ensurePortFree(8091, 'locate-lm-vllm', wslHost);
-    const locateLmVllm = spawnWsl(
-      'locate-lm-vllm',
+  // GLM-4.6V-Flash vLLM: OpenAI-compatible visual grounding model.
+  if ((env.GLM_VISUAL_ENABLED || '1') !== '0') {
+    const glmModelPath = env.GLM_MODEL_PATH || '/mnt/d/has_models/glm-fp8';
+    await ensurePortFree(8120, 'glm-vllm', wslHost);
+    const glmVllm = spawnWsl(
+      'glm-vllm',
       [
         `cd ${shellQuote(wslRoot)} &&`,
         `CUDA_VISIBLE_DEVICES=${cuda}`,
@@ -352,18 +348,18 @@ async function startVllmServices() {
         shellQuote(vllmPython),
         shellQuote(vllmBin),
         'serve',
-        shellQuote(locateLmModel),
-        `--served-model-name ${shellQuote(env.LOCATE_ANYTHING_VLLM_MODEL || 'locate_qwen2_model')}`,
-        '--host 0.0.0.0 --port 8091',
-        '--enable-prompt-embeds',
-        ...splitArgs(env.LOCATE_ANYTHING_LM_VLLM_EXTRA_ARGS).map(shellQuote),
+        shellQuote(glmModelPath),
+        `--served-model-name ${shellQuote(env.GLM_MODEL_NAME || 'glm-fp8')}`,
+        '--host 0.0.0.0 --port 8120',
+        '--trust-remote-code',
+        ...splitArgs(env.GLM_VLLM_EXTRA_ARGS).map(shellQuote),
       ].join(' '),
     );
-    await waitJson(`http://${wslHost}:8091/v1/models`, (body) => Array.isArray(body.data), 'locate-lm-vllm', 720000, locateLmVllm);
+    await waitJson(`http://${wslHost}:8120/v1/models`, (body) => Array.isArray(body.data), 'glm-vllm', 720000, glmVllm);
   }
 
   // PaddleOCR-VL last: vLLM's KV sizing charges concurrent residents against
-  // its own budget window, and the LocateAnything LM (the largest engine) only
+  // its own budget window, and the GLM model (the largest engine) only
   // initializes cleanly when 8118 is not yet resident. The steady-state mix
   // fits; the order is what makes the cold start deterministic.
   if (ocrVlEnabled) {
@@ -417,48 +413,44 @@ async function startOcrWrapper() {
   await waitJson(`http://${wslHost}:8082/health`, (body) => body.ready === true, 'ocr-wrapper', 720000, ocrWrapper);
 }
 
-async function startLocateAnything() {
+async function startGlmVisual() {
   const wslRoot = winToWsl(repoRoot);
   const wslBackend = winToWsl(backendDir);
   const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
-  const locateDeps = env.LOCATE_ANYTHING_DEPS || '/home/tracy/.cache/datainfra-redaction/locateanything-hf-deps';
-  const locatePythonPath = [locateDeps, path.posix.join(wslBackend, 'scripts'), wslBackend].join(':');
-  await ensurePortFree(Number(locatePort), 'locateanything', wslHost);
-  const locateAnything = spawnWsl(
-    'locateanything',
+  await ensurePortFree(Number(glmVisualPort), 'glm-visual', wslHost);
+  const glmVisual = spawnWsl(
+    'glm-visual',
     [
       `cd ${shellQuote(wslRoot)} &&`,
       `CUDA_VISIBLE_DEVICES=${cuda}`,
-      'HF_HUB_OFFLINE=1',
-      'PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True',
-      wslEnvVar('LOCATE_ANYTHING_MODEL_NAME', 'LocateAnything-3B'),
-      wslEnvVar('LOCATE_ANYTHING_MAX_IMAGE_SIDE', '1280'),
-      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_MAX_IMAGE_SIDE', '1280'),
-      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE', '1280'),
-      wslEnvVar('LOCATE_ANYTHING_MAX_NEW_TOKENS', '8192'),
-      wslEnvVar('LOCATE_ANYTHING_GENERATION_MODE', 'hybrid'),
-      wslEnvVar('LOCATE_ANYTHING_FAST_FIRST', '1'),
-      wslEnvVar('LOCATE_ANYTHING_FAST_FIRST_FALLBACK_ON_EMPTY', '1'),
-      wslEnvVar('LOCATE_ANYTHING_SIGNATURE_TILE_FALLBACK_MAX_TILES', '1'),
-      wslEnvVar('LOCATE_ANYTHING_TEMPERATURE', '0.7'),
-      wslEnvVar('LOCATE_ANYTHING_VLLM_URL', ''),
-      wslEnvVar('LOCATE_ANYTHING_VLLM_MODEL', 'locate_qwen2_model'),
-      `PYTHONPATH=${shellQuote(locatePythonPath)}`,
-      shellQuote(vllmPython),
-      'backend/scripts/locate_anything_server.py',
-      '--model',
-      shellQuote(env.LOCATE_ANYTHING_MODEL || '/mnt/d/has_models/LocateAnything-3B-HF'),
-      '--backend',
-      shellQuote(env.LOCATE_ANYTHING_BACKEND || 'hf'),
-      '--host',
-      '0.0.0.0',
-      '--port',
-      shellQuote(locatePort),
-      '--dtype',
-      shellQuote(env.LOCATE_ANYTHING_DTYPE || 'bfloat16'),
+      wslEnvVar('GLM_BASE_URL', `http://127.0.0.1:8120/v1`),
+      wslEnvVar('GLM_MODEL_NAME', env.GLM_MODEL_NAME || 'glm-fp8'),
+      wslEnvVar('GLM_VISUAL_PORT', glmVisualPort),
+      shellQuote(appPython),
+      'backend/scripts/glm_visual_server.py',
     ].join(' '),
   );
-  await waitJson(`http://${wslHost}:${locatePort}/health`, (body) => body.ready === true, 'locateanything', 720000, locateAnything);
+  await waitJson(`http://${wslHost}:${glmVisualPort}/health`, (body) => body.ready === true, 'glm-visual', 720000, glmVisual);
+}
+
+async function startHasImage() {
+  const wslRoot = winToWsl(repoRoot);
+  const wslBackend = winToWsl(backendDir);
+  const cuda = shellQuote(env.CUDA_VISIBLE_DEVICES || '0');
+  const hasImagePort = Number(env.HAS_IMAGE_PORT || '8081');
+  await ensurePortFree(hasImagePort, 'has-image', wslHost);
+  const hasImage = spawnWsl(
+    'has-image',
+    [
+      `cd ${shellQuote(wslRoot)} &&`,
+      `CUDA_VISIBLE_DEVICES=${cuda}`,
+      wslEnvVar('HAS_IMAGE_PORT', String(hasImagePort)),
+      wslEnvVar('HAS_IMAGE_WEIGHTS', env.HAS_IMAGE_WEIGHTS || ''),
+      shellQuote(appPython),
+      'backend/scripts/has_image_server.py',
+    ].join(' '),
+  );
+  await waitJson(`http://${wslHost}:${hasImagePort}/health`, (body) => body.ready === true, 'has-image', 720000, hasImage);
 }
 
 async function runWarmup() {
@@ -466,7 +458,7 @@ async function runWarmup() {
   const child = spawnLogged('warmup', windowsPython, ['scripts/warmup_models.py'], { cwd: backendDir, env: winEnv });
   // Warmup is a pre-load optimization, not a readiness gate: every service was
   // already confirmed online via waitJson before this. A slow cold inference
-  // (e.g. the 3B LocateAnything first /detect) must NOT tear down a healthy
+  // (e.g. the GLM first /detect) must NOT tear down a healthy
   // stack, so treat warmup as best-effort and continue regardless of exit code.
   await new Promise((resolve) => {
     child.on('exit', (code) => {
@@ -494,14 +486,21 @@ async function main() {
 
   await startVllmServices();
 
-  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0') {
-    await startLocateAnything();
+  if ((env.GLM_VISUAL_ENABLED || '1') !== '0') {
+    await startGlmVisual();
+  }
+
+  const hasImageEnabled = !['0', 'false', 'no', 'off', ''].includes(
+    String(env.HAS_IMAGE_ENABLED ?? '0').trim().toLowerCase(),
+  );
+  if (hasImageEnabled) {
+    await startHasImage();
   }
 
   await startOcrWrapper();
 
-  if ((env.LOCATE_ANYTHING_ENABLED || '1') !== '0') {
-    await waitJson(`${env.VISUAL_FEATURES_BASE_URL || `http://127.0.0.1:${locatePort}`}/health`, (body) => body.ready === true, 'visual-features', 180000);
+  if ((env.GLM_VISUAL_ENABLED || '1') !== '0') {
+    await waitJson(`${env.VISUAL_FEATURES_BASE_URL || `http://127.0.0.1:${glmVisualPort}`}/health`, (body) => body.ready === true, 'visual-features', 180000);
   }
 
   await ensurePortFree(8000, 'backend');

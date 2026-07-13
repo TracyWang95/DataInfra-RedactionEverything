@@ -28,6 +28,7 @@ import { getActionOptions, EMPTY_STRUCTURED_COLUMNS, FIELD_POLICY_PAGE_SIZE } fr
 import { displayValue } from '../lib/dataset-utils';
 import {
   defaultEnabledPolicyAction,
+  hasSemanticReason,
   isPolicyAdjusted,
   matchesPolicyColumnQuery,
   orderColumnsForPolicyReview,
@@ -401,12 +402,8 @@ function PolicySummaryStrip({
   const retained = columns.length - redacted;
   const highRiskTotal = highRiskRows.length;
   const highRiskRedacted = highRiskRows.filter(({ current }) => current.enabled && current.action !== 'keep').length;
-  const semanticRows = policyRows.filter(({ column }) =>
-    (column.reasons ?? []).some((reason) => String(reason).includes('semantic')),
-  );
-  const semanticRedacted = redactedRows.filter(({ column }) =>
-    (column.reasons ?? []).some((reason) => String(reason).includes('semantic')),
-  ).length;
+  const semanticRows = policyRows.filter(({ column }) => hasSemanticReason(column.reasons));
+  const semanticRedacted = redactedRows.filter(({ column }) => hasSemanticReason(column.reasons)).length;
   const semanticTotal = semanticRows.length;
   const adjustedCount = policyRows.filter(({ column, current }) => isPolicyAdjusted(column, current)).length;
   const total = Math.max(columns.length, 1);

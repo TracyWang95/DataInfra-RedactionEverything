@@ -20,7 +20,6 @@ from app.services.structured_common import (
     MAX_PROFILE_ROWS,
     SUPPORTED_FILE_EXTENSIONS,
     LoadedTable,
-    base64_preview,
     cell_to_json,
     compact_text,
     infer_runtime_type,
@@ -57,10 +56,6 @@ from app.services.structured_delivery import (
     sql_literal,
     structured_item_meta,
     unique_export_filename,
-    write_csv,
-    write_sql,
-    write_sqlite,
-    write_xlsx,
 )
 from app.services.structured_files import (
     copy_stream_with_limit,
@@ -79,7 +74,6 @@ from app.services.structured_files import (
     read_sqlite_table,
     read_xlsx_sheet,
     register_file_source,
-    save_structured_upload,
     save_structured_upload_stream,
 )
 from app.services.structured_masking import (
@@ -131,7 +125,6 @@ __all__ = [
     "SUPPORTED_FILE_EXTENSIONS",
     "StructuredStore",
     "annotate_discovered_connection_datasets",
-    "base64_preview",
     "blocks_business_descriptor",
     "bucket_value",
     "build_job_export_zip",
@@ -201,7 +194,6 @@ __all__ = [
     "safe_filename",
     "sample_looks_semantic",
     "save_policy",
-    "save_structured_upload",
     "save_structured_upload_stream",
     "settings",
     "should_apply_semantic_profile",
@@ -216,8 +208,4 @@ __all__ = [
     "unique_export_filename",
     "utc_iso",
     "validate_policy_columns",
-    "write_csv",
-    "write_sql",
-    "write_sqlite",
-    "write_xlsx",
 ]

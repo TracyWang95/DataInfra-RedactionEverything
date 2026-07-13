@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import time
+from types import SimpleNamespace
 from typing import Any
 
-import numpy as np
 from PIL import Image
 
 from app.core.config import settings
@@ -20,6 +20,7 @@ from app.services.vision.has_text_payload import (
     _canonical_image_text_type,
     _compact_text,
 )
+from app.services.vision.locate_tiles import _axis_positions
 from app.services.vision.ocr_block_merge import (
     _is_coarse_markup_block,
     _merge_ocr_blocks,
@@ -41,18 +42,23 @@ from app.services.vision.ocr_tuning import (
     _COARSE_MULTILINE_MIN_COMPACT_LEN,
     _DEFAULT_OCR_ITEM_CONFIDENCE,
     _SEAL_REGION_COLOR,
-    _TABLE_HEURISTIC_DARK_PIXEL_MAX,
-    _TABLE_HEURISTIC_HORIZONTAL_DARK_RATIO,
-    _TABLE_HEURISTIC_MIN_DIM_PX,
-    _TABLE_HEURISTIC_MIN_LINES,
-    _TABLE_HEURISTIC_THUMBNAIL_PX,
-    _TABLE_HEURISTIC_VERTICAL_DARK_RATIO,
     OCR_VISUAL_ENTITY_TYPES,
     TABLE_PRECISION_ENTITY_TYPES,
 )
 from app.services.vision.ocr_visual_lines import _infer_typical_textline_height
 
 logger = logging.getLogger(__name__)
+
+# Seal sentinel — cross-service contract with backend/scripts/ocr_server.py
+# (SEAL_TEXT + the VL layout 'seal' class label): the OCR service emits a seal
+# block as label="seal" with text=SEAL_TEXT. Single-sourced here for the two
+# consumer sites below; keep in sync with ocr_server.py:SEAL_TEXT.
+_OCR_SEAL_LABEL = "seal"
+_OCR_SEAL_TEXT = "[公章]"
+
+
+def _is_seal_ocr_item(label: object, text: object) -> bool:
+    return str(label or "") == _OCR_SEAL_LABEL or str(text or "").strip() == _OCR_SEAL_TEXT
 
 
 def run_paddle_ocr(
@@ -101,24 +107,24 @@ def run_paddle_ocr(
     selected = {_canonical_image_text_type(type_id) for type_id in (selected_entity_types or [])}
     adaptive_mode = selected_entity_types is not None
 
-    # 惰性计算：structure-primary 提前 return 的路径无需扫描整页像素。
-    table_like_cache: bool | None = None
-
-    def table_like() -> bool:
-        nonlocal table_like_cache
-        if table_like_cache is None:
-            table_like_cache = _looks_like_table(image) if adaptive_mode else False
-        return table_like_cache
     needs_table_precision = bool(selected & TABLE_PRECISION_ENTITY_TYPES)
     needs_ocr_visual_regions = bool(selected & OCR_VISUAL_ENTITY_TYPES)
     needs_text_precision = adaptive_mode and bool(selected - OCR_VISUAL_ENTITY_TYPES)
 
     vl_disabled = not bool(getattr(settings, "OCR_VL_ENABLED", True))
+    # PP-StructureV3 is the ONLY source of per-char boxes, and those boxes are
+    # what narrows a redaction crop to the entity instead of masking the whole
+    # OCR line. So it must run whenever text precision is needed — even when
+    # visual regions are also requested (selecting a seal/signature set
+    # require_visual_regions without needing OCR-derived visual regions). Skipping
+    # it there left only VL's whole-line, char-box-less blocks, so every text
+    # entity boxed as a full-width slab (phone-photo judgment: 龙继临/和勃 full
+    # line, addresses collapsed flat).
     use_structure_primary = settings.OCR_STRUCTURE_ENABLED and (
         vl_disabled
         or (
             settings.OCR_STRUCTURE_PRIMARY
-            and (not require_visual_regions or needs_ocr_visual_regions)
+            and (not require_visual_regions or needs_ocr_visual_regions or needs_text_precision)
         )
     )
 
@@ -156,6 +162,7 @@ def run_paddle_ocr(
                 merged_blocks = _merge_ocr_blocks(
                     primary_structure_blocks, vl_blocks, prefer_extra_text=True
                 )
+                merged_blocks = _attach_chars_to_charless_blocks(merged_blocks, image, ocr_service)
                 logger.info(
                     "PP-StructureV3 primary OCR kept %d blocks; PaddleOCR-VL supplement merged %d VL blocks (%d -> %d)",
                     len(primary_structure_blocks),
@@ -181,6 +188,7 @@ def run_paddle_ocr(
                 merged_blocks = _merge_ocr_blocks(
                     primary_structure_blocks, vl_blocks, prefer_extra_text=True
                 )
+                merged_blocks = _attach_chars_to_charless_blocks(merged_blocks, image, ocr_service)
                 logger.info(
                     "PP-StructureV3 primary OCR found %d blocks but no visual regions; "
                     "PaddleOCR-VL supplied %d visual regions, merged %d VL blocks (%d -> %d)",
@@ -199,10 +207,9 @@ def run_paddle_ocr(
                     )
                 else:
                     logger.info(
-                        "Using PP-StructureV3 primary OCR path: %d blocks (min=%d, table_like=%s, table_types=%s)",
+                        "Using PP-StructureV3 primary OCR path: %d blocks (min=%d, table_types=%s)",
                         len(primary_structure_blocks),
                         min_blocks,
-                        table_like(),
                         needs_table_precision,
                     )
                 return primary_structure_blocks, primary_structure_visual_regions
@@ -230,9 +237,8 @@ def run_paddle_ocr(
     should_structure_fallback = (
         settings.OCR_STRUCTURE_ENABLED
         and (
-            _should_run_structure_fallback(image, blocks)
+            _should_run_structure_fallback(blocks)
             or _has_coarse_markup_blocks(blocks)
-            or (adaptive_mode and needs_table_precision and table_like())
             or (needs_table_precision and _has_coarse_multiline_blocks(blocks))
             or (needs_text_precision and bool(primary_structure_blocks))
             or (needs_text_precision and bool(settings.OCR_STRUCTURE_TEXT_PRECISION_ENABLED))
@@ -269,26 +275,13 @@ def run_paddle_ocr(
     return blocks, visual_regions
 
 
-def _looks_like_table(image: Image.Image) -> bool:
-    gray = image.convert("L")
-    # Downsample for a cheap table-line heuristic.
-    gray.thumbnail((_TABLE_HEURISTIC_THUMBNAIL_PX, _TABLE_HEURISTIC_THUMBNAIL_PX))
-    width, height = gray.size
-    if width < _TABLE_HEURISTIC_MIN_DIM_PX or height < _TABLE_HEURISTIC_MIN_DIM_PX:
-        return False
-    dark = np.asarray(gray) < _TABLE_HEURISTIC_DARK_PIXEL_MAX
-    horizontal = int(np.count_nonzero(dark.sum(axis=1) / width > _TABLE_HEURISTIC_HORIZONTAL_DARK_RATIO))
-    vertical = int(np.count_nonzero(dark.sum(axis=0) / height > _TABLE_HEURISTIC_VERTICAL_DARK_RATIO))
-    return horizontal >= _TABLE_HEURISTIC_MIN_LINES and vertical >= _TABLE_HEURISTIC_MIN_LINES
-
-
-def _should_run_structure_fallback(image: Image.Image, blocks: list[OCRTextBlock]) -> bool:
+def _should_run_structure_fallback(blocks: list[OCRTextBlock]) -> bool:
     sparse = len(blocks) < max(1, int(settings.OCR_STRUCTURE_MIN_VL_BOXES))
     if not sparse:
         return False
-    if any(block.text.lstrip().lower().startswith(("<table", "<html", "<div")) for block in blocks):
-        return True
-    return _looks_like_table(image)
+    # OCR 产物即真相源：VL 版面把表格块以 <table html 回传，稀疏页只要携带任一
+    # 标记块就补跑 PP-StructureV3——不再用像素启发预判表格。
+    return any(block.text.lstrip().lower().startswith(("<table", "<html", "<div")) for block in blocks)
 
 
 def _has_coarse_multiline_blocks(blocks: list[OCRTextBlock]) -> bool:
@@ -330,9 +323,9 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
         if str(label).strip().lower() in {"figure", "image", "picture", "diagram", "chart"}:
             continue
         text = str(getattr(item, "text", "") or "").strip()
-        if label == "seal" or text == "[公章]":
+        if _is_seal_ocr_item(label, text):
             region = SensitiveRegion(
-                text="[公章]",
+                text=_OCR_SEAL_TEXT,
                 entity_type="SEAL",
                 left=left,
                 top=top,
@@ -363,6 +356,118 @@ def _ocr_items_to_blocks(items: list[Any], image: Image.Image) -> tuple[list[OCR
             chars=char_boxes,
         ))
     return blocks, visual_regions
+
+
+def _reading_order(blocks: list[OCRTextBlock]) -> list[OCRTextBlock]:
+    """Sort line blocks/segments into reading order: rows top-to-bottom, row
+    members left-to-right. Rows are discovered by the y identity — a segment
+    belongs to a row when its y-center falls inside the row's y band (same-row
+    segments overlap in y; distinct physical rows do not) — so a tilted line's
+    segments stay one row even when their integer tops differ."""
+    rows: list[list] = []  # [row_top, row_bottom, [segments]]
+    for segment in sorted(blocks, key=lambda item: item.top + item.height / 2.0):
+        center_y = segment.top + segment.height / 2.0
+        for row in rows:
+            if row[0] <= center_y <= row[1]:
+                row[2].append(segment)
+                row[0] = min(row[0], segment.top)
+                row[1] = max(row[1], segment.top + segment.height)
+                break
+        else:
+            rows.append([segment.top, segment.top + segment.height, [segment]])
+    rows.sort(key=lambda row: row[0])
+    return [seg for row in rows for seg in sorted(row[2], key=lambda item: item.left)]
+
+
+def _attach_chars_to_charless_blocks(
+    blocks: list[OCRTextBlock],
+    image: Image.Image,
+    ocr_service: Any,
+) -> list[OCRTextBlock]:
+    """Recover per-char boxes for whole-line blocks that carry none.
+
+    A charless block is a PaddleOCR-VL paragraph for a line PP-StructureV3
+    skipped (faint phone-photo lines): with no char boxes, every text entity on
+    it is masked as a full-width slab. Its crop, re-OCR'd on its own, gives the
+    structure engine a clean single line to box per character; the recovered
+    boxes are mapped back to full-image pixels. Only charless blocks are touched
+    — a fully structure-covered page pays nothing (in the supplement path a
+    handful of lines at most). Recovery is best-effort AND text-preserving: the
+    re-OCR only contributes char boxes, never the block's authoritative text, so
+    a crop misread cannot drop the entity; an empty/failed re-OCR leaves the
+    block as a safe whole-block mask.
+    """
+    if not ocr_service or not hasattr(ocr_service, "extract_structure_boxes"):
+        return blocks
+    width, height = image.size
+    for block in blocks:
+        if getattr(block, "chars", None):
+            continue
+        left, top = max(0, int(block.left)), max(0, int(block.top))
+        right = min(width, int(block.left + block.width))
+        bottom = min(height, int(block.top + block.height))
+        if right - left < 4 or bottom - top < 4:
+            continue
+        # Whole-block crop first, then three anchored half-width sweep windows:
+        # the engine's det collapses on an underline+handwriting row at block
+        # width (the 农业 row-1 printed label AND handwritten value both vanish)
+        # yet reads the same pixels inside a half-width window. Same
+        # start/center/end half-size anchoring identity as the tile retry
+        # (_axis_positions): anything narrower than half a window is whole
+        # inside at least one sweep.
+        crops = [(left, top, right, bottom)]
+        window = max(1, (right - left) // 2)
+        crops.extend(
+            (left + x0, top, min(right, left + x0 + window), bottom)
+            for x0 in _axis_positions(right - left, window)
+        )
+        kept_segments: list = []  # (page-coord bbox, page-coord chars)
+        for crop_left, crop_top, crop_right, crop_bottom in crops:
+            try:
+                crop_blocks, _ = _run_structure_service_with_visuals(
+                    image.crop((crop_left, crop_top, crop_right, crop_bottom)), ocr_service
+                )
+            except Exception as exc:
+                logger.info("charless-block re-OCR failed: %s", exc)
+                continue
+            for cb in crop_blocks:
+                chars = [
+                    {"c": ch["c"], "x1": crop_left + ch["x1"], "y1": crop_top + ch["y1"],
+                     "x2": crop_left + ch["x2"], "y2": crop_top + ch["y2"]}
+                    for ch in (getattr(cb, "chars", None) or [])
+                ]
+                if not chars:
+                    continue
+                x1 = min(c["x1"] for c in chars)
+                y1 = min(c["y1"] for c in chars)
+                x2 = max(c["x2"] for c in chars)
+                y2 = max(c["y2"] for c in chars)
+                # Region-overlap identity dedupe: a segment overlapping an
+                # already-kept one in BOTH x and y is the same physical text
+                # re-detected through another window — first seen (the
+                # whole-block crop) wins. A same-row segment at a new x range
+                # is genuinely new content and joins.
+                if any(
+                    x1 < kx2 and kx1 < x2 and y1 < ky2 and ky1 < y2
+                    for (kx1, ky1, kx2, ky2), _kc in kept_segments
+                ):
+                    continue
+                kept_segments.append(((x1, y1, x2, y2), chars))
+        if not kept_segments:
+            continue
+        # Reading order across all kept segments: same row identity as
+        # _reading_order (rows do not overlap in y; same-row segments do),
+        # then left-to-right inside a row.
+        segment_blocks = [
+            SimpleNamespace(
+                top=bbox[1], left=bbox[0], height=bbox[3] - bbox[1], width=bbox[2] - bbox[0], chars=chars
+            )
+            for bbox, chars in kept_segments
+        ]
+        block.chars = [
+            ch for seg in _reading_order(segment_blocks) for ch in seg.chars
+        ]
+    return blocks
 
 
 def _run_structure_service_with_visuals(
@@ -481,9 +586,9 @@ def _run_ocr_service(
 
             # seals -> direct sensitive region
             label = getattr(item, 'label', 'text') or 'text'
-            if label == "seal" or item.text.strip() == "[公章]":
+            if _is_seal_ocr_item(label, item.text):
                 region = SensitiveRegion(
-                    text="[公章]",
+                    text=_OCR_SEAL_TEXT,
                     entity_type="SEAL",
                     left=left,
                     top=top,

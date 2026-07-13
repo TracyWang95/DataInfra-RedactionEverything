@@ -8,14 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sqlite3
-import time
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Any
 
-from app.core.config import settings
 from app.core.persistence import to_jsonable
 from app.core.sqlite_base import connect_sqlite
 from app.models.errors import ConflictError, NotFoundError, ValidationError
@@ -24,12 +20,38 @@ from app.models.schemas import (
     RedactionConfig,
 )
 from app.services.batch_mode_validation import validate_file_allowed_for_job_type
+from app.services.job_metadata import (
+    _is_structured_job,
+    _recognition_queue_meta_for_item,
+    _recognition_queue_sort_key,
+    _redacted_output_state,
+    _safe_entity_count,
+    _safe_file_info,
+    _safe_int,
+    _status_value,
+    assert_job_owner,
+    item_to_out,
+    job_config_dict,
+    job_type_from_str,
+    lock_job_config,
+)
+
+# file_meta_for_item 未被父模块内部调用，但属公共 API，显式再导出（保持 _jms.file_meta_for_item 可用）。
+from app.services.job_metadata import file_meta_for_item as file_meta_for_item
 from app.services.job_store import (
     InvalidStatusTransition,
     JobItemStatus,
     JobStatus,
     JobStore,
     JobType,
+)
+from app.services.job_visual_evidence import (
+    _empty_visual_evidence,
+    _iter_bounding_boxes,
+    _merge_visual_evidence,
+    _sorted_visual_evidence,
+    _visual_evidence_summary,
+    _visual_review_quality,
 )
 from app.services.wizard_furthest import coerce_wizard_furthest_step, infer_batch_step1_configured
 
@@ -46,17 +68,6 @@ DELETABLE_JOB_STATUSES = frozenset(
 )
 
 REVIEWABLE_ITEM_STATUSES = frozenset({JobItemStatus.AWAITING_REVIEW.value})
-PROCESSING_NAV_ITEM_STATUSES = frozenset(
-    {
-        JobItemStatus.PENDING.value,
-        JobItemStatus.QUEUED.value,
-        JobItemStatus.PROCESSING.value,
-        JobItemStatus.PARSING.value,
-        JobItemStatus.NER.value,
-        JobItemStatus.VISION.value,
-        JobItemStatus.REDACTING.value,
-    }
-)
 
 # ---------------------------------------------------------------------------
 # Job status inference
@@ -116,58 +127,6 @@ def progress_from_items(items: list[dict[str, Any]]) -> dict[str, int]:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def job_type_from_str(s: str) -> JobType:
-    """Parse job type string to enum. Raises ValueError on invalid input."""
-    try:
-        return JobType(s)
-    except ValueError:
-        raise ValueError(f"invalid job_type: {s}")
-
-
-def job_config_dict(job_row: dict[str, Any]) -> dict[str, Any]:
-    try:
-        raw = job_row.get("config_json") or "{}"
-        data = json.loads(raw) if isinstance(raw, str) else raw
-        return data if isinstance(data, dict) else {}
-    except (TypeError, json.JSONDecodeError):
-        return {}
-
-
-def assert_job_owner(row: dict[str, Any] | None, owner_id: str | None) -> None:
-    if not row:
-        raise NotFoundError("job not found")
-    if owner_id and str(row.get("owner_id") or "local_user") != owner_id:
-        raise NotFoundError("job not found")
-
-
-def _status_value(value: Any, *, fallback: str = "unknown") -> str:
-    if isinstance(value, Enum):
-        value = value.value
-    if value is None:
-        return fallback
-    text = str(value).strip()
-    return text or fallback
-
-
-def _safe_int(value: Any, *, default: int = 0) -> int:
-    if value is None or value == "":
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _file_type_value(value: Any) -> str:
-    value = getattr(value, "value", value)
-    return str(value or "").strip().lower()
-
-
-_FILE_STORE_RETRYABLE_MESSAGES = (
-    "unable to open database file",
-    "database is locked",
-    "disk i/o error",
-)
 _JOB_STORE_RETRYABLE_MESSAGES = (
     "database is locked",
     "database table is locked",
@@ -195,251 +154,6 @@ def _empty_review_draft_response(*, degraded: bool = False) -> dict[str, Any]:
     return response
 
 
-def _safe_file_info(file_id: str) -> tuple[dict[str, Any] | None, str | None]:
-    from app.services.file_management_service import file_store
-
-    last_exc: Exception | None = None
-    for attempt in range(2):
-        try:
-            info = file_store.get(file_id)
-            if info is None:
-                return None, "file_not_found"
-            if not isinstance(info, dict):
-                return None, "invalid_file_metadata"
-            return info, None
-        except sqlite3.OperationalError as exc:
-            last_exc = exc
-            msg = str(exc).lower()
-            if attempt == 0 and any(token in msg for token in _FILE_STORE_RETRYABLE_MESSAGES):
-                time.sleep(0.05)
-                continue
-            break
-        except Exception as exc:
-            last_exc = exc
-            break
-
-    db_path = getattr(file_store, "db_path", None)
-    logger.warning(
-        "job file metadata unavailable for file %s: %s; file_store_db=%s data_dir=%s cwd=%s",
-        file_id,
-        last_exc,
-        db_path,
-        settings.DATA_DIR,
-        os.getcwd(),
-        exc_info=True,
-    )
-    return None, "file_metadata_unavailable"
-
-
-def _pdf_page_count_from_path(info: dict[str, Any]) -> int:
-    file_path = info.get("file_path")
-    if not isinstance(file_path, str) or not file_path.strip():
-        return 0
-    try:
-        import fitz
-
-        doc = fitz.open(file_path)
-        try:
-            return max(0, int(len(doc)))
-        finally:
-            doc.close()
-    except Exception:
-        logger.debug("unable to inspect PDF page count for recognition queue ordering", exc_info=True)
-        return 0
-
-
-def _recognition_priority_meta(file_info: dict[str, Any] | None) -> dict[str, int]:
-    info = file_info if isinstance(file_info, dict) else {}
-    ft = _file_type_value(info.get("file_type"))
-    pages = _safe_int(info.get("page_count"), default=0)
-    if pages <= 0 and ft in {"pdf", "pdf_scanned"}:
-        pages = _pdf_page_count_from_path(info)
-    pages = max(1, pages)
-
-    if ft in {"txt", "doc", "docx"}:
-        priority_class = 0
-        work_units = max(1, _safe_int(info.get("file_size"), default=1) // 16_384)
-    elif ft == "image":
-        priority_class = 1
-        work_units = 1
-    elif ft in {"pdf", "pdf_scanned"}:
-        priority_class = 1 if pages == 1 and not bool(info.get("is_scanned")) else 2
-        work_units = pages
-    else:
-        priority_class = 3
-        work_units = pages
-
-    return {
-        "priority_class": priority_class,
-        "estimated_work_units": max(1, work_units),
-        "estimated_pages": pages,
-    }
-
-
-def _recognition_queue_sort_key(item: dict[str, Any]) -> tuple[int, int, int]:
-    info, _warning = _safe_file_info(str(item.get("file_id") or ""))
-    meta = _recognition_priority_meta(info)
-    return (
-        int(meta["priority_class"]),
-        int(meta["estimated_work_units"]),
-        _safe_int(item.get("sort_order")),
-    )
-
-
-def _recognition_queue_meta_for_item(item: dict[str, Any]) -> dict[str, int]:
-    info, _warning = _safe_file_info(str(item.get("file_id") or ""))
-    return _recognition_priority_meta(info)
-
-
-def _redacted_output_state(info: dict[str, Any] | None) -> tuple[bool, str | None]:
-    from app.services.file_management_service import safe_path_in_dir
-
-    if not info:
-        return False, "file_not_found"
-    output_path = info.get("output_path")
-    if not isinstance(output_path, str) or not output_path.strip():
-        return False, "missing_redacted_output"
-    if not safe_path_in_dir(output_path, settings.OUTPUT_DIR):
-        return False, "unsafe_path"
-    if not os.path.isfile(output_path):
-        return False, "missing_redacted_output"
-    return True, None
-
-
-def _safe_entity_count(info: dict[str, Any] | None) -> int:
-    if not info:
-        return 0
-    try:
-        from app.services.file_management_service import entity_count
-
-        return _safe_int(entity_count(info))
-    except Exception:
-        logger.warning("job file entity count unavailable", exc_info=True)
-        return 0
-
-
-def _is_structured_job(row_or_type: dict[str, Any] | str | None) -> bool:
-    if isinstance(row_or_type, dict):
-        row_or_type = row_or_type.get("job_type")
-    return str(row_or_type or "") == JobType.STRUCTURED_BATCH.value
-
-
-def _structured_file_meta(
-    file_id: str,
-    *,
-    owner_id: str | None,
-    job_id: str | None = None,
-) -> dict[str, Any] | None:
-    if not owner_id:
-        return None
-    try:
-        from app.services.structured_service import structured_item_meta
-        from app.services.structured_store import get_structured_store
-
-        meta = structured_item_meta(file_id, owner_id=owner_id)
-        if not meta:
-            return None
-        if job_id:
-            exports = get_structured_store().list_exports(owner_id=owner_id, job_id=job_id)
-            meta["has_output"] = any(str(export.get("dataset_id")) == file_id for export in exports)
-        return meta
-    except Exception:
-        logger.warning("structured dataset metadata unavailable for dataset %s", file_id, exc_info=True)
-        return None
-
-
-def lock_job_config(store: JobStore, job_id: str, row: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Persist immutable config metadata before a job leaves draft state."""
-    current_row = row or store.get_job(job_id)
-    if not current_row:
-        raise NotFoundError("job not found")
-    cfg = job_config_dict(current_row)
-    if cfg.get("config_locked_at"):
-        return cfg
-    current_version = cfg.get("config_version")
-    try:
-        next_version = int(current_version) if current_version is not None else 1
-    except (TypeError, ValueError):
-        next_version = 1
-    if next_version < 1:
-        next_version = 1
-    cfg["config_version"] = next_version
-    cfg["config_locked_at"] = datetime.now(UTC).isoformat()
-    if not store.update_job_draft(job_id, {"config": cfg}):
-        raise ConflictError("job config is locked")
-    store.touch_job_updated(job_id)
-    return cfg
-
-
-def file_meta_for_item(
-    file_id: str,
-    *,
-    owner_id: str | None = None,
-    job_id: str | None = None,
-) -> dict[str, Any]:
-    """Get file metadata for a job item."""
-    info, metadata_warning = _safe_file_info(file_id)
-    if not info:
-        structured_meta = _structured_file_meta(file_id, owner_id=owner_id, job_id=job_id)
-        if structured_meta:
-            return structured_meta
-        return {
-            "filename": None,
-            "file_type": None,
-            "has_output": False,
-            "entity_count": 0,
-            "metadata_warning": metadata_warning,
-        }
-
-    raw_file_type = info.get("file_type")
-    file_type = getattr(raw_file_type, "value", raw_file_type)
-    has_output, _ = _redacted_output_state(info)
-    return {
-        "filename": info.get("original_filename"),
-        "file_type": _status_value(file_type, fallback=""),
-        "has_output": has_output,
-        "entity_count": _safe_entity_count(info),
-        "metadata_warning": metadata_warning,
-    }
-
-
-def item_to_out(row: dict[str, Any], *, owner_id: str | None = None, job_id: str | None = None) -> dict[str, Any]:
-    """Convert a job item row to output dict with file metadata."""
-    file_meta = file_meta_for_item(str(row["file_id"]), owner_id=owner_id, job_id=job_id or str(row["job_id"]))
-    return {
-        "id": row["id"],
-        "job_id": row["job_id"],
-        "file_id": row["file_id"],
-        "sort_order": _safe_int(row.get("sort_order")),
-        "status": _status_value(row.get("status")),
-        "error_message": row.get("error_message"),
-        "reviewed_at": row.get("reviewed_at"),
-        "reviewer": row.get("reviewer"),
-        "created_at": row["created_at"],
-        "updated_at": row["updated_at"],
-        "filename": file_meta["filename"],
-        "file_type": file_meta["file_type"],
-        "has_output": file_meta["has_output"],
-        "entity_count": file_meta["entity_count"],
-        "metadata_warning": file_meta.get("metadata_warning"),
-        "has_review_draft": bool(row.get("review_draft_json")),
-        "review_draft_updated_at": row.get("review_draft_updated_at"),
-        "progress_stage": row.get("progress_stage"),
-        "progress_current": _safe_int(row.get("progress_current")),
-        "progress_total": _safe_int(row.get("progress_total")),
-        "progress_message": row.get("progress_message"),
-        "progress_updated_at": row.get("progress_updated_at"),
-    }
-
-
-def _nav_review_confirmed(item: dict[str, Any], has_output: bool, skip_item_review: bool) -> bool:
-    if skip_item_review and has_output:
-        return True
-    status = _status_value(item.get("status"))
-    if status == JobItemStatus.COMPLETED.value:
-        return has_output
-    return status in (JobItemStatus.REVIEW_APPROVED.value, JobItemStatus.REDACTING.value)
-
 
 def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
     """Build job summary dict including progress and nav hints."""
@@ -463,37 +177,21 @@ def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
     first_awaiting: str | None = None
     redacted_count = 0
     reviewable_count = 0
-    processing_count = 0
-    export_ready_count = 0
-    metadata_degraded_count = 0
     skip_item_review = bool(row.get("skip_item_review"))
     for i in items:
         fid = str(i["file_id"])
         status = _status_value(i.get("status"))
         if is_structured:
-            metadata_warning = None
             has_output = status == JobItemStatus.COMPLETED.value or fid in structured_export_dataset_ids
-            redacted_skip_reason = None if has_output else "missing_structured_export"
         else:
-            info, metadata_warning = _safe_file_info(fid)
-            if metadata_warning == "file_metadata_unavailable":
-                metadata_degraded_count += 1
-            has_output, redacted_skip_reason = _redacted_output_state(info)
+            info, _ = _safe_file_info(fid)
+            has_output, _ = _redacted_output_state(info)
         if has_output:
             redacted_count += 1
         if status in REVIEWABLE_ITEM_STATUSES:
             reviewable_count += 1
             if first_awaiting is None:
                 first_awaiting = str(i["id"])
-        if status in PROCESSING_NAV_ITEM_STATUSES:
-            processing_count += 1
-        if (
-            status not in (JobItemStatus.FAILED.value, JobItemStatus.CANCELLED.value)
-            and has_output
-            and _nav_review_confirmed(i, has_output, skip_item_review)
-            and redacted_skip_reason is None
-        ):
-            export_ready_count += 1
     cfg = job_config_dict(row)
     item_count = len(items)
     nav_hints: dict[str, Any] = {
@@ -502,14 +200,6 @@ def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
         "batch_step1_configured": infer_batch_step1_configured(cfg, str(row["job_type"])),
         "redacted_count": redacted_count,
         "awaiting_review_count": reviewable_count,
-        "reviewable_count": reviewable_count,
-        "processing_count": processing_count,
-        "export_ready_count": export_ready_count,
-        "export_blocked_count": max(0, item_count - export_ready_count),
-        "can_review_now": reviewable_count > 0,
-        "can_export_now": item_count > 0 and export_ready_count == item_count,
-        "metadata_degraded": metadata_degraded_count > 0,
-        "metadata_degraded_count": metadata_degraded_count,
     }
     wf = coerce_wizard_furthest_step(cfg.get("wizard_furthest_step"))
     if wf is not None:
@@ -520,7 +210,6 @@ def job_to_summary(row: dict[str, Any], store: JobStore) -> dict[str, Any]:
         "title": row["title"],
         "status": _status_value(row.get("status")),
         "skip_item_review": skip_item_review,
-        "priority": _safe_int(row.get("priority")),
         "config": cfg,
         "error_message": row.get("error_message"),
         "created_at": row["created_at"],
@@ -580,37 +269,6 @@ def group_boxes_by_page(boxes: list[BoundingBox]) -> dict[int, list[dict[str, An
     return grouped
 
 
-def resolve_committed_output_path(
-    file_info: dict[str, Any],
-    result: Any,
-    stored_info: dict[str, Any],
-) -> str | None:
-    candidates: list[str] = []
-
-    for raw in (getattr(result, "output_path", None), stored_info.get("output_path")):
-        if isinstance(raw, str) and raw.strip():
-            candidates.append(raw.strip())
-
-    output_file_id = getattr(result, "output_file_id", None)
-    if isinstance(output_file_id, str) and output_file_id.strip():
-        source_path = str(file_info.get("file_path") or "")
-        ext = os.path.splitext(source_path)[1]
-        raw_file_type = getattr(file_info.get("file_type"), "value", file_info.get("file_type"))
-        if raw_file_type == "doc":
-            ext = ".docx"
-        if ext:
-            candidates.append(os.path.join(settings.OUTPUT_DIR, f"{output_file_id}{ext}"))
-
-    seen: set[str] = set()
-    for candidate in candidates:
-        real = os.path.realpath(candidate)
-        if real in seen:
-            continue
-        seen.add(real)
-        if os.path.exists(real):
-            return real
-
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -826,8 +484,6 @@ def _review_confirmed(item: dict[str, Any], has_output: bool, skip_item_review: 
     return status in (JobItemStatus.REVIEW_APPROVED.value, JobItemStatus.REDACTING.value)
 
 
-def _redacted_export_skip_reason(info: dict[str, Any] | None) -> str | None:
-    return _redacted_output_state(info)[1]
 
 
 def _delivery_blocking_reasons(
@@ -858,203 +514,6 @@ def _summary_delivery_status(selected_count: int, action_required_count: int) ->
     if selected_count == 0:
         return "no_selection"
     return "ready_for_delivery" if action_required_count == 0 else "action_required"
-
-
-def _iter_bounding_boxes(info: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if not info:
-        return []
-    raw = info.get("bounding_boxes")
-    if isinstance(raw, list):
-        return [box for box in raw if isinstance(box, dict)]
-    if not isinstance(raw, dict):
-        return []
-    out: list[dict[str, Any]] = []
-    for page, boxes in raw.items():
-        if not isinstance(boxes, list):
-            continue
-        for box in boxes:
-            if not isinstance(box, dict):
-                continue
-            enriched = dict(box)
-            enriched.setdefault("page", page)
-            out.append(enriched)
-    return out
-
-
-def _box_number(box: dict[str, Any], key: str) -> float:
-    try:
-        return float(box.get(key) or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _is_seal_box(box: dict[str, Any]) -> bool:
-    box_type = str(box.get("type") or "").strip().lower()
-    return box_type in {"seal", "official_seal", "stamp"}
-
-
-def _is_selected_box(box: dict[str, Any]) -> bool:
-    return box.get("selected") is not False
-
-
-def _box_quality_issues(box: dict[str, Any]) -> list[str]:
-    issues: list[str] = []
-    source = str(box.get("source") or "").lower()
-    source_detail = str(box.get("source_detail") or "").lower()
-    evidence_source = str(box.get("evidence_source") or "").lower()
-    source_marker = f"{source} {source_detail} {evidence_source}"
-    text = str(box.get("text") or "").strip().lower()
-    confidence = _box_number(box, "confidence")
-    x = _box_number(box, "x")
-    y = _box_number(box, "y")
-    width = _box_number(box, "width")
-    height = _box_number(box, "height")
-    right = x + width
-    bottom = y + height
-
-    if 0 < confidence < 0.55:
-        issues.append("low_confidence")
-    if "fallback" in source_marker:
-        issues.append("fallback_detector")
-    if "table_structure" in source_marker:
-        issues.append("table_structure")
-    if text.startswith(("<table", "<html", "<div")):
-        issues.append("coarse_markup")
-    if source == "ocr_has" and (width * height >= 0.2 or (width >= 0.6 and height >= 0.25)):
-        issues.append("large_ocr_region")
-    if _is_seal_box(box) and (x <= 0.04 or y <= 0.04 or right >= 0.96 or bottom >= 0.96):
-        issues.append("edge_seal")
-    if _is_seal_box(box) and (x <= 0.025 or right >= 0.975 or (width <= 0.07 and height >= 0.10)):
-        issues.append("seam_seal")
-    if isinstance(box.get("warnings"), list) and len(box["warnings"]) > 0 and not issues:
-        issues.append("warning")
-    return list(dict.fromkeys(issues))
-
-
-def _counter_key(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    return text
-
-
-def _increment_counter(counter: dict[str, int], key: Any, amount: int = 1) -> None:
-    normalized = _counter_key(key)
-    if normalized:
-        counter[normalized] = counter.get(normalized, 0) + amount
-
-
-def _empty_visual_evidence() -> dict[str, Any]:
-    return {
-        "total_boxes": 0,
-        "selected_boxes": 0,
-        "visual_feature_model": 0,
-        "local_fallback": 0,
-        "ocr_has": 0,
-        "table_structure": 0,
-        "fallback_detector": 0,
-        "source_counts": {},
-        "evidence_source_counts": {},
-        "source_detail_counts": {},
-        "warnings_by_key": {},
-    }
-
-
-def _sorted_visual_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
-    out = dict(evidence)
-    for key in ("source_counts", "evidence_source_counts", "source_detail_counts", "warnings_by_key"):
-        raw = out.get(key)
-        out[key] = dict(sorted(raw.items())) if isinstance(raw, dict) else {}
-    return out
-
-
-def _visual_evidence_summary(info: dict[str, Any] | None) -> dict[str, Any]:
-    evidence = _empty_visual_evidence()
-    boxes = _iter_bounding_boxes(info)
-    evidence["total_boxes"] = len(boxes)
-
-    for box in boxes:
-        if not _is_selected_box(box):
-            continue
-
-        evidence["selected_boxes"] += 1
-        source = _counter_key(box.get("source"))
-        source_detail = _counter_key(box.get("source_detail"))
-        evidence_source = _counter_key(box.get("evidence_source"))
-        source_marker = f"{source} {source_detail} {evidence_source}"
-
-        _increment_counter(evidence["source_counts"], source)
-        _increment_counter(evidence["source_detail_counts"], source_detail)
-        _increment_counter(evidence["evidence_source_counts"], evidence_source)
-
-        warnings = box.get("warnings")
-        if isinstance(warnings, list):
-            for warning in warnings:
-                _increment_counter(evidence["warnings_by_key"], warning)
-        elif isinstance(warnings, str):
-            _increment_counter(evidence["warnings_by_key"], warnings)
-
-        if evidence_source == "visual_feature_model" or (
-            source == "visual_features" and "fallback" not in source_marker
-        ):
-            evidence["visual_feature_model"] += 1
-        if "local_fallback" in source_marker:
-            evidence["local_fallback"] += 1
-        if source == "ocr_has" or evidence_source == "ocr_has":
-            evidence["ocr_has"] += 1
-        if "table_structure" in source_marker:
-            evidence["table_structure"] += 1
-        if "fallback" in source_marker:
-            evidence["fallback_detector"] += 1
-
-    return _sorted_visual_evidence(evidence)
-
-
-def _merge_visual_evidence(target: dict[str, Any], addition: dict[str, Any]) -> None:
-    scalar_keys = (
-        "total_boxes",
-        "selected_boxes",
-        "visual_feature_model",
-        "local_fallback",
-        "ocr_has",
-        "table_structure",
-        "fallback_detector",
-    )
-    for key in scalar_keys:
-        target[key] = int(target.get(key) or 0) + int(addition.get(key) or 0)
-    for key in ("source_counts", "evidence_source_counts", "source_detail_counts", "warnings_by_key"):
-        target_counter = target.setdefault(key, {})
-        addition_counter = addition.get(key) or {}
-        if not isinstance(target_counter, dict) or not isinstance(addition_counter, dict):
-            continue
-        for counter_key, count in addition_counter.items():
-            target_counter[counter_key] = int(target_counter.get(counter_key) or 0) + int(count or 0)
-
-
-def _visual_review_quality(info: dict[str, Any] | None) -> dict[str, Any]:
-    by_issue: dict[str, int] = {}
-    pages: dict[str, int] = {}
-    issue_count = 0
-    for box in _iter_bounding_boxes(info):
-        if not _is_selected_box(box):
-            continue
-        issues = _box_quality_issues(box)
-        if not issues:
-            continue
-        issue_count += len(issues)
-        page = str(box.get("page") or 1)
-        pages[page] = pages.get(page, 0) + len(issues)
-        for issue in issues:
-            by_issue[issue] = by_issue.get(issue, 0) + 1
-    issue_pages = sorted(pages, key=lambda value: int(value) if value.isdigit() else value)
-    issue_labels = sorted(by_issue)
-    return {
-        "blocking": False,
-        "review_hint": issue_count > 0,
-        "issue_count": issue_count,
-        "issue_pages": issue_pages,
-        "issue_pages_count": len(issue_pages),
-        "issue_labels": issue_labels,
-        "by_issue": dict(sorted(by_issue.items())),
-    }
 
 
 def build_export_report(

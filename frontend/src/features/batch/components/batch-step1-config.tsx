@@ -33,8 +33,6 @@ function BatchStep1ConfigInner() {
     confirmStep1,
     setConfirmStep1,
     isStep1Complete,
-    jobPriority,
-    setJobPriority,
     advanceToUploadStep,
   } = useBatchWizardContext();
 
@@ -264,8 +262,6 @@ function BatchStep1ConfigInner() {
         confirmStep1={confirmStep1}
         setConfirmStep1={setConfirmStep1}
         isStep1Complete={isStep1Complete}
-        jobPriority={jobPriority}
-        setJobPriority={setJobPriority}
         configLocked={jobConfigLocked}
         advanceToUploadStep={advanceToUploadStep}
       />

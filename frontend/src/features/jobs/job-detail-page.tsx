@@ -476,7 +476,7 @@ export function JobDetailPage() {
                           </td>
                           <td className="px-4 py-2.5 text-right">
                             <RedactionStateBadge state={rs} />
-                            {it.error_message && !it.error_message.startsWith('auto-repaired') && (
+                            {it.error_message && (
                               <span
                                 className="ml-2 inline-block max-w-36 truncate align-middle text-[var(--error-foreground)] text-2xs"
                                 title={it.error_message}

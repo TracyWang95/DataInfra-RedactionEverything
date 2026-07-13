@@ -11,7 +11,6 @@ import {
   requeueFailed,
   type JobDetail,
   type JobListStats,
-  type JobProgress,
   type JobStatusFilterApi,
   type JobSummary,
 } from '@/services/jobsApi';
@@ -223,52 +222,6 @@ function jobsPollSignature(jobs: JobSummary[]): string {
       ].join('\x1e');
     })
     .join('\x1f');
-}
-
-export function buildProgressHeadline(
-  progress: JobProgress,
-  navHints?: { redacted_count?: number | null; awaiting_review_count?: number | null } | null,
-): string {
-  const redacted = navHints?.redacted_count ?? progress.completed;
-  const awaiting = navHints?.awaiting_review_count ?? progress.awaiting_review;
-  const parts = [
-    t('jobs.headlineRedacted').replace('{n}', String(redacted)),
-    t('jobs.headlineAwaiting').replace('{n}', String(awaiting)),
-  ];
-  if (progress.failed > 0) parts.push(t('jobs.abnormal').replace('{n}', String(progress.failed)));
-  return parts.join(' \u00b7');
-}
-
-export function buildProgressSummary(
-  progress: JobProgress,
-  itemCount: number,
-  finishedCount: number,
-): string {
-  if (itemCount <= 0) return t('jobs.noFilesInJob');
-  if (finishedCount >= itemCount) return t('jobs.allFilesProcessed');
-
-  const waiting = progress.pending + progress.queued;
-  const processing = progress.processing + progress.parsing + progress.ner + progress.vision;
-  const review = progress.awaiting_review;
-  const generating = progress.review_approved + progress.redacting;
-  const failed = progress.failed;
-  const cancelled = progress.cancelled ?? 0;
-
-  const parts = [
-    waiting > 0 ? t('jobs.pending').replace('{n}', String(waiting)) : null,
-    processing > 0 ? t('jobs.recognizing').replace('{n}', String(processing)) : null,
-    review > 0 ? t('jobs.awaitingReviewCount').replace('{n}', String(review)) : null,
-    generating > 0 ? t('jobs.generating').replace('{n}', String(generating)) : null,
-    failed > 0 ? t('jobs.abnormal').replace('{n}', String(failed)) : null,
-    cancelled > 0 ? t('jobs.cancelledCount').replace('{n}', String(cancelled)) : null,
-  ].filter((part): part is string => Boolean(part));
-
-  if (parts.length === 0) {
-    return finishedCount > 0
-      ? t('jobs.completedCount').replace('{n}', String(finishedCount))
-      : t('jobs.waitingProcessing');
-  }
-  return parts.slice(0, 3).join(' \u00b7');
 }
 
 export function useJobs() {

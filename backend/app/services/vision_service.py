@@ -8,14 +8,10 @@ import base64
 import inspect
 import io
 import logging
-import os
+import re
 import time
 import uuid
-from collections import OrderedDict
-from threading import Lock
 from types import SimpleNamespace
-
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +42,11 @@ from app.services.vision.ocr_artifact_filter import (
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
 )
+from app.services.vision.pdf_text_layer_probe import (
+    _get_pdf_text_layer_probe_lock,
+    _record_sparse_pdf_text_layer_probe,
+    _should_skip_sparse_pdf_text_layer,
+)
 
 VISUAL_TYPE_LABELS_ZH = {
     **SLUG_TO_NAME_ZH,
@@ -62,80 +63,6 @@ _DEDUP_CONTAINMENT = 0.72
 # whole handwritten mark.
 _SIGNATURE_REDACTION_PAD = 0.18
 
-_PDF_TEXT_LAYER_SPARSE_SKIP_AFTER = 2
-_PDF_TEXT_LAYER_SPARSE_CACHE_MAX_ITEMS = 128
-_PDF_TEXT_LAYER_SPARSE_LOCK = Lock()
-_PDF_TEXT_LAYER_SPARSE_COUNTS: OrderedDict[tuple[str, int, int], int] = OrderedDict()
-_PDF_TEXT_LAYER_PROBE_LOCKS: dict[tuple[str, int, int], asyncio.Lock] = {}
-_PDF_TEXT_LAYER_PROBE_LOCKS_LOOP: asyncio.AbstractEventLoop | None = None
-
-# A probe whose char count is at/below this fraction of the min-char threshold
-# counts as a strong sparse signal and short-circuits future probes.
-_SPARSE_PROBE_STRONG_SIGNAL_DIVISOR = 4
-
-
-# --- OCR rule-line removal ----------------------------------------------------
-# Minimum run length (px floor, plus page-fraction) for a horizontal/vertical
-# stroke to be treated as a table rule line rather than ink.
-_RULE_LINE_RUN_MIN_PX = 24
-_RULE_LINE_ROW_RUN_RATIO = 0.38
-_RULE_LINE_COL_RUN_RATIO = 0.55
-
-# --- OCR region ink refinement ------------------------------------------------
-# Luminance weights (BT.601-style, /100) used to grayscale the crop.
-_LUMA_WEIGHT_R = 30
-_LUMA_WEIGHT_G = 59
-_LUMA_WEIGHT_B = 11
-_LUMA_WEIGHT_DENOM = 100
-# Red-ink (seal) detection: minimum red channel and its dominance over G/B.
-_RED_MARK_MIN = 120
-_RED_MARK_R_OVER_G = 1.18
-_RED_MARK_R_OVER_B = 1.12
-# Dark-ink mask: hard darkness cutoff, plus a softer cutoff for low-chroma pixels.
-_INK_GRAY_DARK_MAX = 122
-_INK_GRAY_SOFT_MAX = 168
-_INK_SOFT_SPAN_MAX = 55
-# Minimum ink-pixel count (absolute floor, plus crop-area fraction) to refine.
-_REFINE_MIN_INK_PIXELS = 8
-_REFINE_MIN_INK_AREA_RATIO = 0.002
-# Refinement padding: px floor/cap and fraction of the smaller region edge.
-_REFINE_PAD_MIN = 1
-_REFINE_PAD_MAX = 4
-_REFINE_PAD_RATIO = 0.04
-# Reject refinement that collapses width below this floor/fraction of region.
-_REFINE_MIN_WIDTH_PX = 6
-_REFINE_MIN_WIDTH_RATIO = 0.18
-# Crops at or below this smaller-side size are single-line value crops where
-# rule-line pruning is untrustworthy (its run thresholds degenerate); if
-# pruning removes most of their ink, keep the raw ink mask.
-_REFINE_RULE_TRUST_MIN_SIDE = 48
-
-# --- OCR region expansion -----------------------------------------------------
-# Per-entity horizontal pad as a fraction of page width (default for others).
-_OCR_REGION_HORIZONTAL_PAD_RATIO = {
-    "PHONE": 0.04,
-    "BANK_ACCOUNT": 0.045,
-    "ACCOUNT_NUMBER": 0.045,
-    "BANK_CARD": 0.045,
-    "ID_CARD": 0.014,
-    "AMOUNT": 0.008,
-    "PERSON": 0.02,
-    "NICKNAME": 0.02,
-    "PROPERTY": 0.04,
-    "ADDRESS": 0.008,
-    "ORG": 0.02,
-    "COMPANY": 0.02,
-    "DATE": 0.008,
-}
-_OCR_REGION_DEFAULT_PAD_RATIO = 0.006
-_OCR_REGION_PAD_X_MIN = 3
-_OCR_REGION_PAD_Y_MIN = 2
-# Apply tighter geometry-based padding only to short (non-wide) regions.
-_OCR_REGION_NARROW_HEIGHT_FACTOR = 5
-_OCR_REGION_NARROW_PAGE_WIDTH_RATIO = 0.12
-_OCR_REGION_GEOMETRY_PAD_WIDTH_RATIO = 0.10
-_OCR_REGION_GEOMETRY_PAD_HEIGHT_RATIO = 0.35
-_OCR_REGION_PAD_Y_RATIO = 0.25
 
 # --- Redaction effects --------------------------------------------------------
 # Redaction strength is a 1-100 slider.
@@ -161,83 +88,6 @@ def _normalize_file_type(file_type: FileType | str) -> FileType | str:
         return FileType(file_type) if isinstance(file_type, str) else file_type
     except ValueError:
         return file_type
-
-
-def _pdf_text_layer_sparse_key(file_path: str) -> tuple[str, int, int] | None:
-    try:
-        resolved = os.path.realpath(file_path)
-        stat = os.stat(resolved)
-        return (resolved, int(stat.st_mtime_ns), int(stat.st_size))
-    except OSError:
-        logger.debug("Unable to stat PDF for sparse text-layer cache: %s", file_path, exc_info=True)
-        return None
-
-
-def _should_skip_sparse_pdf_text_layer(file_path: str, file_type: FileType | str) -> bool:
-    if file_type != FileType.PDF_SCANNED:
-        return False
-    key = _pdf_text_layer_sparse_key(file_path)
-    if key is None:
-        return False
-    with _PDF_TEXT_LAYER_SPARSE_LOCK:
-        count = _PDF_TEXT_LAYER_SPARSE_COUNTS.get(key, 0)
-        if count:
-            _PDF_TEXT_LAYER_SPARSE_COUNTS.move_to_end(key)
-        return count >= _PDF_TEXT_LAYER_SPARSE_SKIP_AFTER
-
-
-def _get_pdf_text_layer_probe_lock(file_path: str, file_type: FileType | str) -> asyncio.Lock | None:
-    if file_type != FileType.PDF_SCANNED:
-        return None
-    key = _pdf_text_layer_sparse_key(file_path)
-    if key is None:
-        return None
-
-    global _PDF_TEXT_LAYER_PROBE_LOCKS_LOOP
-    loop = asyncio.get_running_loop()
-    with _PDF_TEXT_LAYER_SPARSE_LOCK:
-        if _PDF_TEXT_LAYER_PROBE_LOCKS_LOOP is not loop:
-            _PDF_TEXT_LAYER_PROBE_LOCKS.clear()
-            _PDF_TEXT_LAYER_PROBE_LOCKS_LOOP = loop
-        lock = _PDF_TEXT_LAYER_PROBE_LOCKS.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            _PDF_TEXT_LAYER_PROBE_LOCKS[key] = lock
-        return lock
-
-
-def _sparse_pdf_text_layer_probe_weight(stats: dict | None = None) -> int:
-    if not isinstance(stats, dict):
-        return 1
-    min_chars = max(0, int(settings.PDF_TEXT_LAYER_MIN_CHARS))
-    if min_chars <= 0:
-        return 1
-    char_count = int(stats.get("char_count") or 0)
-    if char_count <= max(1, min_chars // _SPARSE_PROBE_STRONG_SIGNAL_DIVISOR):
-        return _PDF_TEXT_LAYER_SPARSE_SKIP_AFTER
-    return 1
-
-
-def _record_sparse_pdf_text_layer_probe(
-    file_path: str,
-    file_type: FileType | str,
-    *,
-    stats: dict | None = None,
-) -> None:
-    if file_type != FileType.PDF_SCANNED:
-        return
-    key = _pdf_text_layer_sparse_key(file_path)
-    if key is None:
-        return
-    weight = max(1, _sparse_pdf_text_layer_probe_weight(stats))
-    with _PDF_TEXT_LAYER_SPARSE_LOCK:
-        _PDF_TEXT_LAYER_SPARSE_COUNTS[key] = min(
-            _PDF_TEXT_LAYER_SPARSE_SKIP_AFTER,
-            _PDF_TEXT_LAYER_SPARSE_COUNTS.get(key, 0) + weight,
-        )
-        _PDF_TEXT_LAYER_SPARSE_COUNTS.move_to_end(key)
-        while len(_PDF_TEXT_LAYER_SPARSE_COUNTS) > _PDF_TEXT_LAYER_SPARSE_CACHE_MAX_ITEMS:
-            _PDF_TEXT_LAYER_SPARSE_COUNTS.popitem(last=False)
 
 
 async def prime_pdf_text_layer_sparse_probe(
@@ -300,135 +150,6 @@ class VisionService:
         self.last_visual_feature_stage_duration_ms: dict[str, int] = {}
         self.last_warnings: list[str] = []
 
-    async def detect_sensitive_regions(
-        self,
-        file_path: str,
-        file_type: FileType,
-        page: int = 1,
-        draw_result: bool = True,
-        pipeline_mode: str = "ocr_has",
-        pipeline_types: list = None,
-    ) -> tuple[list[BoundingBox], str | None]:
-        total_start = time.perf_counter()
-        duration_ms: dict[str, int | dict[str, int]] = {"ocr_has": 0, "visual_features": 0}
-        self.last_pdf_text_layer_duration_ms = 0
-        self.last_pdf_text_layer_stats = {}
-        file_type = _normalize_file_type(file_type)
-        image_data: bytes | None = None
-
-        async def get_image_data() -> bytes:
-            nonlocal image_data
-            if image_data is not None:
-                return image_data
-            if file_type == FileType.IMAGE:
-                image_data = await self.file_parser.read_image(file_path)
-                return image_data
-            render_start = time.perf_counter()
-            image_data = await self.file_parser.get_pdf_page_image(file_path, page)
-            duration_ms["pdf_render_ms"] = _elapsed_ms(render_start)
-            duration_ms["pdf_render_cache_hit"] = bool(
-                getattr(self.file_parser, "last_pdf_page_image_cache_hit", False)
-            )
-            return image_data
-
-        if file_type == FileType.IMAGE:
-            image_data = await get_image_data()
-        elif file_type in [FileType.PDF, FileType.PDF_SCANNED]:
-            pass
-        else:
-            raise ValueError(f"Unsupported file type for vision: {file_type}")
-
-        logger.info("Using pipeline: %s", pipeline_mode)
-
-        pipeline_start = time.perf_counter()
-        used_pdf_text_layer = False
-        if pipeline_mode == "visual_features":
-            image_data = await get_image_data()
-            bounding_boxes, result_image_base64 = await self._detect_with_visual_features(
-                image_data, page, pipeline_types
-            )
-        else:
-            async def try_pdf_text_layer() -> tuple[list[BoundingBox], str | None] | None:
-                if (
-                    file_type not in [FileType.PDF, FileType.PDF_SCANNED]
-                    or not settings.PDF_TEXT_LAYER_VISION_ENABLED
-                ):
-                    return None
-                probe_lock = _get_pdf_text_layer_probe_lock(file_path, file_type)
-                if probe_lock is not None:
-                    async with probe_lock:
-                        return await attempt_pdf_text_layer()
-                return await attempt_pdf_text_layer()
-
-            async def attempt_pdf_text_layer() -> tuple[list[BoundingBox], str | None] | None:
-                if _should_skip_sparse_pdf_text_layer(file_path, file_type):
-                    duration_ms["pdf_text_layer_skipped_sparse_file"] = True
-                    return None
-                try:
-                    pdf_boxes, pdf_result = await self._detect_with_pdf_text_layer(
-                        file_path,
-                        page,
-                        pipeline_types,
-                    )
-                    duration_ms["pdf_text_layer_used"] = True
-                    return pdf_boxes, pdf_result
-                except ValueError as exc:
-                    duration_ms["pdf_text_layer_used"] = False
-                    _record_sparse_pdf_text_layer_probe(
-                        file_path,
-                        file_type,
-                        stats=self.last_pdf_text_layer_stats,
-                    )
-                    logger.info("PDF text layer not used for page %d: %s", page, exc)
-                except Exception:
-                    duration_ms["pdf_text_layer_used"] = False
-                    logger.exception("PDF text layer detection failed; falling back to image OCR")
-                return None
-
-            pdf_text_layer_result = await try_pdf_text_layer()
-            if pdf_text_layer_result is not None:
-                bounding_boxes, result_image_base64 = pdf_text_layer_result
-                used_pdf_text_layer = True
-                if draw_result:
-                    preview_start = time.perf_counter()
-                    image_data = await get_image_data()
-                    img = Image.open(io.BytesIO(image_data))
-                    img = ImageOps.exif_transpose(img)
-                    result_image_base64 = self._draw_boxes_on_image(img, bounding_boxes)
-                    duration_ms["preview_draw_ms"] = _elapsed_ms(preview_start)
-            if not used_pdf_text_layer:
-                image_data = await get_image_data()
-                bounding_boxes, result_image_base64 = await self._detect_with_ocr_has(
-                    image_data, page, pipeline_types
-                )
-        duration_ms[pipeline_mode] = _elapsed_ms(pipeline_start)
-        duration_ms["total"] = _elapsed_ms(total_start)
-        if self.last_pdf_text_layer_stats:
-            duration_ms["pdf_text_layer_ms"] = int(self.last_pdf_text_layer_duration_ms)
-            duration_ms["pdf_text_layer"] = dict(self.last_pdf_text_layer_stats or {})
-        self.last_duration_ms = duration_ms
-        self.last_pipeline_status = {
-            pipeline_mode: {
-                "ran": True,
-                "skipped": False,
-                "failed": False,
-                "region_count": len(bounding_boxes),
-                "error": None,
-                "duration_ms": duration_ms[pipeline_mode],
-            }
-        }
-        ocr_has_service = getattr(self, "ocr_has_service", None)
-        if pipeline_mode == "ocr_has" and getattr(ocr_has_service, "last_duration_ms", None):
-            self.last_pipeline_status[pipeline_mode]["stage_duration_ms"] = dict(
-                ocr_has_service.last_duration_ms
-            )
-        elif pipeline_mode == "visual_features" and getattr(self, "last_visual_feature_stage_duration_ms", None):
-            self.last_pipeline_status[pipeline_mode]["stage_duration_ms"] = dict(
-                self.last_visual_feature_stage_duration_ms
-            )
-
-        logger.info("Vision detect done (%s): %d regions", pipeline_mode, len(bounding_boxes))
-        return bounding_boxes, result_image_base64
 
     async def detect_with_dual_pipeline(
         self,
@@ -678,12 +399,22 @@ class VisionService:
         all_boxes = self._prefer_yolo_machine_codes(all_boxes)
         all_boxes = self._merge_seal_shards(all_boxes)
         # LocateAnything misread stamp content (seal script, inked dates) as
-        # phantom "signatures", which this absorb pass folded into the seal
-        # hull. The GLM grounding backend does not produce that phantom class,
-        # and absorbing there swallows REAL signatures stamped over a seal
-        # (签字盖章重叠) — so the pass is config-gated per visual backend.
+        # phantom "signatures", which this absorb pass folds into the seal hull.
+        # Gated because absorbing also swallows a REAL signature stamped over a
+        # seal (签字盖章重叠) — turn it OFF when those must survive.
         if bool(getattr(settings, "ABSORB_SIGNATURES_IN_SEALS", True)):
             all_boxes = self._absorb_signatures_in_seals(all_boxes)
+        # Small images are upscaled before LA now, which makes LA hallucinate
+        # the whole document as an id_card (立案告知书 upscaled: 5/5). Drop a
+        # card box that swallows all OCR text yet shows no card face evidence.
+        ocr_page_blocks = list(getattr(self.ocr_has_service, "last_ocr_blocks", []) or [])
+        if ocr_page_blocks:
+            try:
+                with Image.open(io.BytesIO(await get_image_data())) as _pg:
+                    page_size = ImageOps.exif_transpose(_pg).size
+                all_boxes = self._drop_page_hallucinated_cards(all_boxes, ocr_page_blocks, page_size)
+            except Exception:
+                logger.warning("page-hallucinated card filter skipped", exc_info=True)
         all_boxes = self._deduplicate_boxes(all_boxes)
         all_boxes = self._expand_signature_boxes(all_boxes)
         all_boxes = self._present_seals_as_visual(all_boxes)
@@ -920,13 +651,77 @@ class VisionService:
         result.extend(hull_by_id.values())
         return result
 
+    # ID-card face evidence: the printed labels present on a real 二代身份证
+    # (front or back). A page LA hallucinated as a card carries none of them.
+    _ID_CARD_FACE_WORDS = (
+        "居民身份证", "公民身份号码", "签发机关", "有效期限", "出生", "性别", "民族", "住址",
+    )
+    _ID_CARD_NUMBER_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
+
+    def _drop_page_hallucinated_cards(
+        self,
+        boxes: list[BoundingBox],
+        ocr_blocks: list,
+        page_size: tuple[int, int],
+    ) -> list[BoundingBox]:
+        """Drop an id_card visual box that is really the document hallucinated
+        as a card (立案告知书 upscaled: LA grounds the page as "ID card"). Zero
+        tuned numbers — pure identity signals. An id_card box is a hallucination
+        when it shows NO card evidence (no 二代身份证 face word AND no 18-digit
+        ID number in its interior OCR) AND EITHER:
+          - it contains an official_seal box — a real 身份证 never encloses a
+            red 公章 (semantic identity), or
+          - it covers the whole OCR text hull — the box IS the document.
+        A real card (face words readable, OR — a blurred copy — the 18-digit
+        number survives OCR) escapes on the evidence test and is kept. No OCR /
+        no id_card -> unchanged (fail toward keeping the mask). Failure
+        direction: any escape condition true -> keep (over-mask, never a
+        missed real card).
+        """
+        page_w, page_h = page_size
+        if not ocr_blocks or page_w <= 0 or page_h <= 0:
+            return boxes
+        rects = []
+        for b in ocr_blocks:
+            try:
+                left, top, right, bottom = b.left, b.top, b.left + b.width, b.top + b.height
+            except AttributeError:
+                continue
+            rects.append((left, top, right, bottom))
+        if not rects:
+            return boxes
+        hull = (
+            min(r[0] for r in rects), min(r[1] for r in rects),
+            max(r[2] for r in rects), max(r[3] for r in rects),
+        )
+        all_text = " ".join(str(getattr(b, "text", "") or "") for b in ocr_blocks)
+        has_face_evidence = (
+            any(word in all_text for word in self._ID_CARD_FACE_WORDS)
+            or bool(self._ID_CARD_NUMBER_RE.search(all_text))
+        )
+        seals = [b for b in boxes if b.type == "official_seal"]
+        out = []
+        for box in boxes:
+            if box.type == "id_card" and box.source == "visual_features" and not has_face_evidence:
+                bx1, by1 = box.x * page_w, box.y * page_h
+                bx2, by2 = (box.x + box.width) * page_w, (box.y + box.height) * page_h
+                covers_all_text = bx1 <= hull[0] and by1 <= hull[1] and bx2 >= hull[2] and by2 >= hull[3]
+                encloses_seal = any(self._center_inside(s, box) for s in seals)
+                if covers_all_text or encloses_seal:
+                    logger.info("Dropped page-hallucinated id_card box (no card evidence; seal=%s)", encloses_seal)
+                    continue
+            out.append(box)
+        return out
+
     def _absorb_signatures_in_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """A 'signature' centered inside an official_seal box is the stamp's
-        own content (seal script, inked date) misread by the model, not an
-        independent signature. Absorb it: expand the seal box to the hull of
-        both and drop the signature box. Coverage can only grow - a genuine
-        signature overlapping the stamp keeps every pixel masked, only the
-        redundant box disappears.
+        """A 'signature' OR 'fingerprint' centered inside an official_seal box
+        is the stamp's own content (seal script, star, inked date — all red
+        ink, so the fingerprint interior-ink gate legitimately passes it)
+        misread by the model, not an independent mark. Absorb it: expand the
+        seal box to the hull of both and drop the inner box. Coverage can
+        only grow - a genuine mark overlapping the stamp keeps every pixel
+        masked, only the redundant box disappears. (0713 contract19: the top
+        electronic seal came back as 4 tile "fingerprints".)
         """
         seal_indexes = [i for i, b in enumerate(boxes) if b.type == "official_seal"]
         if not seal_indexes:
@@ -934,7 +729,7 @@ class VisionService:
         out = list(boxes)
         absorbed: set[int] = set()
         for j, b in enumerate(boxes):
-            if b.type != "signature":
+            if b.type not in ("signature", "fingerprint"):
                 continue
             for i in seal_indexes:
                 seal = out[i]
@@ -953,7 +748,7 @@ class VisionService:
                     break
         if not absorbed:
             return boxes
-        logger.info("Absorbed %d signature box(es) into seal hulls", len(absorbed))
+        logger.info("Absorbed %d signature/fingerprint box(es) into seal hulls", len(absorbed))
         return [b for j, b in enumerate(out) if j not in absorbed]
 
     @staticmethod
@@ -980,23 +775,36 @@ class VisionService:
         boxes: list[BoundingBox],
         iou_threshold: float | None = None,
     ) -> list[BoundingBox]:
-        """Geometric dedup only: a single IoU pass, no type/source/text/ranking
-        rules. Boxes whose IoU with a kept box is >= the threshold are the same
-        physical region; the larger box is kept so redaction coverage never
-        shrinks. Every removed hardcoded rule (signature-name folding, same-line
-        heuristics, LA-wins precedence, containment ratios) could drop a genuine
-        PII box — i.e. cause a missed redaction. Pure IoU only merges boxes that
-        occupy essentially the same pixels, so distinct detections are kept.
+        """Geometric dedup scoped to one entity type at a time.
+
+        "Duplicate" means the SAME OBJECT detected twice; a differing type is
+        the model asserting a DIFFERENT entity, so cross-type boxes are never
+        merged however tightly they overlap - a thumbprint pressed onto a
+        handwritten name (0710 农业合同实证: same pixels, two entities) must
+        keep both boxes; the old type-blind pass ate the fingerprint on one
+        line and the signature on the other. Type equality is a string
+        identity, so user-defined custom types participate as their own
+        entities with no enumeration. Within one (page, type) group it stays
+        a pure IoU pass - the larger box is kept so redaction coverage never
+        shrinks, and no source/text/ranking rule is ever consulted (each such
+        removed rule could drop a genuine PII box).
         """
         if len(boxes) <= 1:
             return boxes
         from app.services.vision.region_merger import deduplicate_by_iou
 
         kwargs = {} if iou_threshold is None else {"iou_threshold": iou_threshold}
-        result = deduplicate_by_iou(boxes, lambda b: (b.x, b.y, b.width, b.height), **kwargs)
+        kept_ids: set[int] = set()
+        groups: dict[tuple, list[BoundingBox]] = {}
+        for b in boxes:
+            groups.setdefault((b.page, b.type), []).append(b)
+        for group in groups.values():
+            for b in deduplicate_by_iou(group, lambda b: (b.x, b.y, b.width, b.height), **kwargs):
+                kept_ids.add(id(b))
+        result = [b for b in boxes if id(b) in kept_ids]
         removed_count = len(boxes) - len(result)
         if removed_count > 0:
-            logger.info("DEDUP removed %d duplicate boxes (IoU only)", removed_count)
+            logger.info("DEDUP removed %d duplicate boxes (IoU within same type only)", removed_count)
         return result
 
     async def _detect_with_pdf_text_layer(
@@ -1034,15 +842,10 @@ class VisionService:
             if not self._should_keep_ocr_has_region(region.entity_type, region.text):
                 logger.debug("Skipping PDF text-layer semantic false positive: %s %s", region.entity_type, region.text)
                 continue
-            left, top, box_width, box_height = self._expand_ocr_region(
-                region.left,
-                region.top,
-                region.width,
-                region.height,
-                width,
-                height,
-                region.entity_type,
-            )
+            left = max(0, int(region.left))
+            top = max(0, int(region.top))
+            box_width = max(1, int(region.width))
+            box_height = max(1, int(region.height))
             bbox = BoundingBox(
                 id=f"pdf_text_{index}_{uuid.uuid4().hex[:8]}",
                 x=left / width,
@@ -1135,22 +938,17 @@ class VisionService:
                     )
                 )
                 continue
-            refined_left, refined_top, refined_width, refined_height = self._refine_ocr_region_to_ink(
-                img,
-                region.left,
-                region.top,
-                region.width,
-                region.height,
-            )
-            left, top, box_width, box_height = self._expand_ocr_region(
-                refined_left,
-                refined_top,
-                refined_width,
-                refined_height,
-                width,
-                height,
-                region.entity_type,
-            )
+            # Use the match/split geometry as-is: its X is the proven char-box
+            # span and its Y is the uniform document line grid. The old
+            # refine-to-ink then pad-by-ratio pair re-derived the box from each
+            # glyph's ink extent (digits read taller than CJK, so DATE rows
+            # towered) and then re-inflated it by a magic 0.25 height ratio,
+            # destroying the upstream uniformity. A charless slab that never got
+            # a tight char-box span stays a safe whole-block cover.
+            left = max(0, int(region.left))
+            top = max(0, int(region.top))
+            box_width = max(1, int(region.width))
+            box_height = max(1, int(region.height))
             bbox = BoundingBox(
                 id=f"ocr_{i}_{uuid.uuid4().hex[:8]}",
                 x=left / width,
@@ -1173,129 +971,6 @@ class VisionService:
     def _should_keep_ocr_has_region(entity_type: str, text: str | None) -> bool:
         """Keep non-empty HaS Text results; semantic filtering belongs to HaS."""
         return bool(str(text or "").strip())
-
-    @staticmethod
-    def _true_runs(values: np.ndarray) -> list[tuple[int, int]]:
-        active = np.flatnonzero(values)
-        if len(active) == 0:
-            return []
-        runs: list[tuple[int, int]] = []
-        start = prev = int(active[0])
-        for raw_index in active[1:]:
-            index = int(raw_index)
-            if index == prev + 1:
-                prev = index
-                continue
-            runs.append((start, prev))
-            start = prev = index
-        runs.append((start, prev))
-        return runs
-
-    @staticmethod
-    def _remove_ocr_rule_lines(mask: np.ndarray) -> np.ndarray:
-        if mask.ndim != 2 or mask.size == 0:
-            return mask
-
-        cleaned = mask.copy()
-        height, width = cleaned.shape
-        row_run_min = max(_RULE_LINE_RUN_MIN_PX, int(width * _RULE_LINE_ROW_RUN_RATIO))
-        col_run_min = max(_RULE_LINE_RUN_MIN_PX, int(height * _RULE_LINE_COL_RUN_RATIO))
-
-        for row in range(height):
-            for start, end in VisionService._true_runs(mask[row, :]):
-                if end - start + 1 >= row_run_min:
-                    cleaned[max(0, row - 1) : min(height, row + 2), start : end + 1] = False
-
-        column_source = cleaned.copy()
-        for col in range(width):
-            for start, end in VisionService._true_runs(column_source[:, col]):
-                if end - start + 1 >= col_run_min:
-                    cleaned[start : end + 1, max(0, col - 1) : min(width, col + 2)] = False
-        return cleaned
-
-    @staticmethod
-    def _refine_ocr_region_to_ink(
-        image: Image.Image,
-        left: int,
-        top: int,
-        region_width: int,
-        region_height: int,
-    ) -> tuple[int, int, int, int]:
-        page_width, page_height = image.size
-        x1 = max(0, min(page_width, int(left)))
-        y1 = max(0, min(page_height, int(top)))
-        x2 = max(x1 + 1, min(page_width, int(left + region_width)))
-        y2 = max(y1 + 1, min(page_height, int(top + region_height)))
-        crop = image.crop((x1, y1, x2, y2)).convert("RGB")
-        arr = np.asarray(crop).astype(np.int16, copy=False)
-        red = arr[:, :, 0]
-        green = arr[:, :, 1]
-        blue = arr[:, :, 2]
-        gray = (red * _LUMA_WEIGHT_R + green * _LUMA_WEIGHT_G + blue * _LUMA_WEIGHT_B) / _LUMA_WEIGHT_DENOM
-        span = arr.max(axis=2) - arr.min(axis=2)
-        red_mark = (red > _RED_MARK_MIN) & (red > green * _RED_MARK_R_OVER_G) & (red > blue * _RED_MARK_R_OVER_B)
-        mask = ((gray < _INK_GRAY_DARK_MAX) | ((gray < _INK_GRAY_SOFT_MAX) & (span < _INK_SOFT_SPAN_MAX))) & ~red_mark
-        cleaned = VisionService._remove_ocr_rule_lines(mask)
-        # Rule pruning targets long page structure; its run thresholds are
-        # relative to the crop size, so inside a single-line value crop dense
-        # blurred glyph rows read as "rules" and the text itself gets wiped
-        # (low-res photo report: K124016 ink 825→28px, the mask collapsed to a
-        # 4px sliver). When such a small crop loses the majority of its ink to
-        # pruning, the ink WAS the text — keep the raw mask: over-masking a
-        # stray line is harmless, under-masking a value leaks PII. Large crops
-        # keep full pruning (genuine form lines can dominate their ink).
-        is_value_sized_crop = min(crop.width, crop.height) <= _REFINE_RULE_TRUST_MIN_SIDE
-        if not (is_value_sized_crop and int(cleaned.sum()) * 2 < int(mask.sum())):
-            mask = cleaned
-
-        ys, xs = np.where(mask)
-        if len(xs) < max(_REFINE_MIN_INK_PIXELS, int(mask.size * _REFINE_MIN_INK_AREA_RATIO)):
-            return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
-
-        pad = max(_REFINE_PAD_MIN, min(_REFINE_PAD_MAX, int(min(region_width, region_height) * _REFINE_PAD_RATIO)))
-        nx1 = max(x1, x1 + int(xs.min()) - pad)
-        nx2 = min(x2, x1 + int(xs.max()) + 1 + pad)
-        ny1 = max(y1, y1 + int(ys.min()) - pad)
-        ny2 = min(y2, y1 + int(ys.max()) + 1 + pad)
-
-        if nx2 <= nx1 or ny2 <= ny1:
-            return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
-        if nx2 - nx1 < max(_REFINE_MIN_WIDTH_PX, min(region_width, region_height) * _REFINE_MIN_WIDTH_RATIO):
-            return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
-        return nx1, ny1, nx2 - nx1, ny2 - ny1
-
-    @staticmethod
-    def _expand_ocr_region(
-        left: int,
-        top: int,
-        region_width: int,
-        region_height: int,
-        page_width: int,
-        page_height: int,
-        entity_type: str,
-    ) -> tuple[int, int, int, int]:
-        horizontal_ratio = _OCR_REGION_HORIZONTAL_PAD_RATIO.get(
-            entity_type, _OCR_REGION_DEFAULT_PAD_RATIO
-        )
-        pad_x = max(_OCR_REGION_PAD_X_MIN, int(page_width * horizontal_ratio))
-        if region_width <= max(
-            region_height * _OCR_REGION_NARROW_HEIGHT_FACTOR,
-            page_width * _OCR_REGION_NARROW_PAGE_WIDTH_RATIO,
-        ):
-            geometry_pad = max(
-                _OCR_REGION_PAD_X_MIN,
-                min(
-                    int(region_width * _OCR_REGION_GEOMETRY_PAD_WIDTH_RATIO),
-                    int(region_height * _OCR_REGION_GEOMETRY_PAD_HEIGHT_RATIO),
-                ),
-            )
-            pad_x = min(pad_x, geometry_pad)
-        pad_y = max(_OCR_REGION_PAD_Y_MIN, int(region_height * _OCR_REGION_PAD_Y_RATIO))
-        x1 = max(0, int(left) - pad_x)
-        y1 = max(0, int(top) - pad_y)
-        x2 = min(page_width, int(left + region_width) + pad_x)
-        y2 = min(page_height, int(top + region_height) + pad_y)
-        return x1, y1, max(1, x2 - x1), max(1, y2 - y1)
 
     def _supplement_machine_codes(
         self,

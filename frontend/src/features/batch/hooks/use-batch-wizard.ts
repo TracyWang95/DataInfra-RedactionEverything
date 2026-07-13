@@ -7,7 +7,6 @@ import { localizeErrorMessage } from '@/utils/localizeError';
 
 import { type BatchWizardMode } from '@/services/batchPipeline';
 import { createJob, getJob, updateJobDraft } from '@/services/jobsApi';
-import { notifyDone, phaseJustFinished } from '@/lib/notifications';
 import {
   buildPreviewBatchRows,
   isPreviewBatchJobId,
@@ -41,7 +40,9 @@ import {
 import { useBatchConfig } from './use-batch-config';
 import { useBatchExportAdvance } from './use-batch-export-advance';
 import { useBatchFiles } from './use-batch-files';
+import { useBatchLeaveGuards } from './use-batch-leave-guards';
 import { useBatchNavigation } from './use-batch-navigation';
+import { useBatchPhaseNotifications } from './use-batch-phase-notifications';
 import { useBatchPolling } from './use-batch-polling';
 import { useBatchReview } from './use-batch-review';
 import { useBatchSubmit } from './use-batch-submit';
@@ -132,8 +133,6 @@ export function useBatchWizard() {
     confirmStep1,
     setConfirmStep1,
     isStep1Complete,
-    jobPriority,
-    setJobPriority,
     onBatchTextPresetChange,
     onBatchVisionPresetChange,
   } = config;
@@ -752,7 +751,6 @@ export function useBatchWizard() {
           job_type: toBatchJobType(mode),
           title: `${t('batchHub.batch')} ${new Date().toLocaleString()}`,
           config: payload,
-          priority: jobPriority,
         });
         jid = j.id;
         writeLocalWizardMaxStep(jid, nextFurthest);
@@ -782,7 +780,6 @@ export function useBatchWizard() {
     furthestStep,
     isPreviewMode,
     isStep1Complete,
-    jobPriority,
     mode,
     itemIdByFileIdRef,
     setMsg,
@@ -818,71 +815,16 @@ export function useBatchWizard() {
     internalStepNavRef,
   );
 
-  // 识别全部完成通知（W2-2）：analyzing/pending 活跃数 >0 → 0 的翻转，
-  // 仅在识别步（step3）响，避免 step2 清空队列误报。
-  const recognitionActiveCount = useMemo(
-    () =>
-      rows.filter((row) => row.analyzeStatus === 'analyzing' || row.analyzeStatus === 'pending')
-        .length,
-    [rows],
+  // 阶段完成通知（识别完成 / 成品生成完成）。
+  useBatchPhaseNotifications(rows, step, isPreviewMode);
+
+  // ── Blocker effects（step4 未保存草稿离开守卫） ──
+  const showLeaveConfirmModal = useBatchLeaveGuards(
+    step,
+    navigationBlocker,
+    flushCurrentReviewDraft,
+    reviewDraftDirtyRef,
   );
-
-  // 成品全部生成通知：批量确认后 review_approved/redacting 归零=可进导出
-  //（万级要几分钟，用户多半已切走页签——PM 5188 份实战反馈）。
-  const settlingActiveCount = useMemo(
-    () =>
-      rows.filter(
-        (row) => row.analyzeStatus === 'review_approved' || row.analyzeStatus === 'redacting',
-      ).length,
-    [rows],
-  );
-  const prevSettlingActiveRef = useRef(0);
-  useEffect(() => {
-    const prev = prevSettlingActiveRef.current;
-    prevSettlingActiveRef.current = settlingActiveCount;
-    if (step === 4 && !isPreviewMode && phaseJustFinished(prev, settlingActiveCount)) {
-      notifyDone(t('notify.outputsReady'));
-    }
-  }, [settlingActiveCount, step, isPreviewMode, t]);
-  const prevRecognitionActiveRef = useRef(0);
-  useEffect(() => {
-    const prev = prevRecognitionActiveRef.current;
-    prevRecognitionActiveRef.current = recognitionActiveCount;
-    if (step === 3 && !isPreviewMode && phaseJustFinished(prev, recognitionActiveCount)) {
-      notifyDone(t('notify.recognitionDone'), t('notify.recognitionDoneBody').replace('{n}', String(rows.length)));
-    }
-  }, [recognitionActiveCount, step, isPreviewMode, rows.length, t]);
-
-  // ── Blocker effects ──
-  const [leaveConfirmOpen, _setLeaveConfirmOpen] = useState(false);
-  const showLeaveConfirmModal = leaveConfirmOpen || navigationBlocker.state === 'blocked';
-
-  useEffect(() => {
-    if (navigationBlocker.state !== 'blocked') return;
-    void (async () => {
-      const ok = await flushCurrentReviewDraft();
-      if (ok && navigationBlocker.state === 'blocked') navigationBlocker.proceed();
-    })();
-  }, [flushCurrentReviewDraft, navigationBlocker]);
-
-  useEffect(() => {
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (step !== 4 || !reviewDraftDirtyRef.current) return;
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [step, reviewDraftDirtyRef]);
-
-  useEffect(() => {
-    if (step !== 4) return;
-    const onPageHide = () => {
-      void flushCurrentReviewDraft();
-    };
-    window.addEventListener('pagehide', onPageHide);
-    return () => window.removeEventListener('pagehide', onPageHide);
-  }, [flushCurrentReviewDraft, step]);
 
   return {
     // Identity
@@ -920,8 +862,6 @@ export function useBatchWizard() {
     confirmStep1,
     setConfirmStep1,
     isStep1Complete,
-    jobPriority,
-    setJobPriority,
     onBatchTextPresetChange,
     onBatchVisionPresetChange,
 

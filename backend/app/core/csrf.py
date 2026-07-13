@@ -74,7 +74,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 value=token,
                 httponly=False,
                 samesite="strict",
-                secure=not settings.DEBUG,
+                secure=settings.COOKIE_SECURE and not settings.DEBUG,
                 path="/",
             )
 
