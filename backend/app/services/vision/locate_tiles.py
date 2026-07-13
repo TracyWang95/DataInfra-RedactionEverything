@@ -27,7 +27,6 @@ _TILE_RETRY_BOTTOM_SLUGS = frozenset({"qr_code"})
 # covers the WHOLE page (not just margins/foot), gated on the full-frame miss.
 _TILE_RETRY_GRID_SLUGS = frozenset({"fingerprint", "signature"})
 # LA reads degraded machine codes as either sibling; both mask identically.
-_MACHINE_CODE_SIBLINGS = frozenset({"qr_code", "barcode"})
 
 
 def _axis_positions(total: int, window: int) -> list[int]:

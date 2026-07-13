@@ -35,7 +35,6 @@ from app.services.vision.locate_requests import (
     _detect_requests,
 )
 from app.services.vision.locate_tiles import (
-    _MACHINE_CODE_SIBLINGS,
     _TILE_RETRY_BOTTOM_SLUGS,
     _TILE_RETRY_GRID_SLUGS,
     _TILE_RETRY_MARGIN_SLUGS,
@@ -1240,11 +1239,17 @@ class LocateAnythingGroundingService:
                 logger.warning("tile retry %s failed on one tile: %s", slug, result)
                 continue
             for raw in result:
-                raw_slug = normalize_visual_slug(str(raw.get("category", "")))
-                if raw_slug != slug and not (
-                    slug in _MACHINE_CODE_SIBLINGS and raw_slug in _MACHINE_CODE_SIBLINGS
-                ):
-                    continue
+                # Tag-by-request, no echo filtering: this tile carried exactly
+                # ONE query (the checklist wording for `slug`), so every box in
+                # the response belongs to that slug by construction. The old
+                # echo check compared the server-normalized QUERY WORDING with
+                # the slug — a tautology while query==slug, but the moment the
+                # checklist wording diverged ("handwritten name signature" for
+                # signature, "red inked thumbprint mark" for fingerprint) it
+                # silently swallowed EVERY tile box of those types (contract 19
+                # 实证: both grid tiles hit a signature each, pipeline kept 0;
+                # the historical "fingerprint,qr_code kept 0/6" waste was this
+                # bug, not model misses).
                 try:
                     normalized = _clamp_box(
                         float(raw.get("x") or 0),
