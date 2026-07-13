@@ -343,7 +343,7 @@ class LocateService:
         torch.save(prompt_embeds, buf)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    def _vllm_complete_b64(self, prompt_embeds_b64: str) -> str:
+    def _vllm_complete_b64(self, prompt_embeds_b64: str, temperature: float = DEFAULT_TEMPERATURE) -> str:
         """Greedy vLLM completion from a base64 prompt-embeds payload."""
         import json
         import urllib.error
@@ -414,7 +414,7 @@ class LocateService:
                 # the shared 16GB card thrashes (observed: tower at ~12GB, encodes
                 # stalling at 100% GPU with the whole stack resident).
                 trim_cuda_cache("vllm-chat-encode")
-        answer = await asyncio.to_thread(self._vllm_complete_b64, b64)
+        answer = await asyncio.to_thread(self._vllm_complete_b64, b64, temperature)
         boxes = _parse_boxes(answer, inference_image.width, inference_image.height)
         return answer, boxes, (inference_image.width, inference_image.height)
 
