@@ -515,6 +515,53 @@ class VisionService:
         cy = inner.y + inner.height / 2.0
         return outer.x <= cx <= outer.x + outer.width and outer.y <= cy <= outer.y + outer.height
 
+    @staticmethod
+    def _x_overlap_fraction(a: BoundingBox, b: BoundingBox) -> float:
+        """Horizontal overlap as a fraction of the narrower box (0..1)."""
+        lo = max(a.x, b.x)
+        hi = min(a.x + a.width, b.x + b.width)
+        return max(0.0, hi - lo) / max(1e-9, min(a.width, b.width))
+
+    def _adopt_la_vertical_geometry(
+        self,
+        boxes: list[BoundingBox],
+        la_boxes: list[BoundingBox],
+    ) -> list[BoundingBox]:
+        """Replace each OCR text-value box's vertical extent with the LA
+        handwriting box that shares its column.
+
+        On photographed forms PaddleOCR-VL emits per-glyph char boxes that all
+        carry the merged block's full y-range (no true per-glyph vertical
+        geometry), so a handwritten value's box is too tall and, on a tilted
+        multi-column form, sits at the wrong row. LocateAnything grounds the
+        handwriting as a real 2D box — tight y, tilt-correct. A value and its
+        handwriting share a column, so the LA box that overlaps the value box
+        horizontally AND whose y-center falls inside the value box's (tall)
+        y-span is that value's grounding — overlap is identity, no threshold.
+        Adopt its y/height; keep the value box's own x (char-crop, proven). No
+        matching LA box -> keep the OCR box unchanged (coverage never dropped).
+        """
+        if not la_boxes:
+            return boxes
+        result: list[BoundingBox] = []
+        for box in boxes:
+            if box.source != "ocr_has" or not str(box.text or "").strip():
+                result.append(box)
+                continue
+            top, bottom = box.y, box.y + box.height
+            candidates = [
+                la
+                for la in la_boxes
+                if top <= la.y + la.height / 2.0 <= bottom
+                and self._x_overlap_fraction(box, la) > 0.0
+            ]
+            if not candidates:
+                result.append(box)
+                continue
+            best = max(candidates, key=lambda la: self._x_overlap_fraction(box, la))
+            result.append(box.model_copy(update={"y": best.y, "height": best.height}))
+        return result
+
     def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """Drop OCR text boxes that coincide with a LocateAnything signature box.
 
