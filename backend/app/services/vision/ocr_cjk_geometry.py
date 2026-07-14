@@ -471,6 +471,66 @@ def _line_rects_from_span_boxes(
     return [r for r in rects if r[3] > r[1]] or None
 
 
+def _column_split_char_boxes(char_boxes: list) -> list[list[dict]]:
+    """Split one block's char boxes into columns by the horizontal gutter.
+
+    PaddleOCR-VL sometimes MERGES two side-by-side columns into one block: each
+    char keeps its own x, but y collapses to the whole block's range, so a
+    matcher's x-span union covers the gutter AND the neighbouring column. The
+    columns are separated by a GUTTER — a blank wide enough to hold a full glyph
+    slot — while in-column chars sit an advance apart (real photo: gutter 34-41px
+    vs in-column advance ~19px). This finds the gutter WITHOUT any hardcoded
+    pixel threshold or magic multiplier: the block's own glyph em (the median
+    single-CJK char WIDTH, _median_single_cjk_width) is the scale, and an
+    inter-char gap >= one em means "the blank can hold >= one full character
+    slot" == a deliberate column break. Every gap smaller than an em is
+    in-column spacing and stays one column. Multiple em-wide gaps -> multiple
+    columns.
+
+    No em (an all-Latin / all-digit block, Latin width is not a typographic em)
+    -> return the whole block as one group: the gutter cannot be self-calibrated,
+    so the safe move is to over-cover, not to guess a split.
+
+    LEAK-SAFETY: this only ever turns ONE input group into >= 1 output groups;
+    it drops no box and shrinks no y (it does not touch y at all). The caller
+    ALWAYS unions the original block into the mask, so a mis-split can only ADD
+    coverage (each half-value gets its own covered sub-block), never remove it —
+    strictly leak-safe, zero under-coverage.
+
+    Boxes are grouped by x position (columns partition x-space), so the input
+    order does not matter; groups come out left-to-right. Interior boxes that
+    overlap in x (same column, different photo rows) never open a gutter because
+    the gap is measured from the current column's running right edge.
+
+     TODO(接线, human main-loop, needs GPU/real docs): call this in the NER
+    payload build / matcher BEFORE the x-span union so a merged double-column
+    block is fed downstream as per-column sub-blocks (each unioned separately).
+    Also verify whether region_detection already emits column-granular blocks —
+    if so it is the stronger evidence source and this becomes a fallback only.
+    """
+    boxes = [
+        c for c in char_boxes
+        if c and c.get("x1") is not None and c.get("x2") is not None
+    ]
+    if len(boxes) <= 1:
+        return [boxes] if boxes else []
+    em = _median_single_cjk_width(boxes)
+    if em is None:
+        return [boxes]  # no CJK scale -> cannot self-calibrate a gutter; keep whole block
+    ordered = sorted(boxes, key=lambda c: float(c["x1"]))
+    groups: list[list[dict]] = [[ordered[0]]]
+    column_right = float(ordered[0]["x2"])
+    for box in ordered[1:]:
+        gap = float(box["x1"]) - column_right
+        if gap >= em:  # a blank wide enough to hold >= one full glyph slot
+            groups.append([box])
+            column_right = float(box["x2"])
+        else:
+            groups[-1].append(box)
+            column_right = max(column_right, float(box["x2"]))
+    return groups
+
+
 def _char_rows(chars: list) -> list[list[dict]]:
     """Split a reading-ordered char stream into text rows.
 
