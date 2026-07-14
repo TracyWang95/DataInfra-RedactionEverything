@@ -84,8 +84,11 @@ def test_identical_payloads_deduplicated(monkeypatch):
         )
 
     asyncio.run(run())
-    # 主 NER + bridge NER 各 1 次；两个并发相同 payload 被 inflight 去重共享
-    assert client.calls <= 2, f"相同 payload 应去重共享，实际调用 {client.calls} 次"
+    # 主 NER + bridge NER + 残差 NER 各 1 次（残差 pass 因 R3 收紧"已消费"判据
+    # 而触发：张三 与 联 CJK 相邻不是 isolated token，块内 13800000000 仍是未
+    # 解释的墨迹）。关键不变量：两个并发相同 payload 每一 pass 都被去重共享——
+    # 不去重则为 2×3=6 次。
+    assert client.calls <= 3, f"相同 payload 每一 pass 应去重共享，实际调用 {client.calls} 次"
 
 
 class _ChunkCountingService(HybridNERService):
