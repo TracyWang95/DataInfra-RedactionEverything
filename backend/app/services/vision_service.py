@@ -523,44 +523,128 @@ class VisionService:
         hi = min(a.x + a.width, b.x + b.width)
         return max(0.0, hi - lo) / max(1e-9, min(a.width, b.width))
 
+    @staticmethod
+    def _has_vertically_disjoint_pair(boxes: list[BoundingBox]) -> bool:
+        """True if any two boxes in the column don't vertically overlap.
+
+        Two vertically disjoint LA boxes mean two distinct text rows live in
+        this column — the value's row is then ambiguous.
+        """
+        for i in range(len(boxes)):
+            a = boxes[i]
+            for j in range(i + 1, len(boxes)):
+                b = boxes[j]
+                overlap = min(a.y + a.height, b.y + b.height) - max(a.y, b.y)
+                if overlap <= 1e-9:
+                    return True
+        return False
+
     def _adopt_la_vertical_geometry(
         self,
         boxes: list[BoundingBox],
         la_boxes: list[BoundingBox],
+        doc_line_h: float,
+        ink_hulls: dict[str, tuple[float, float]] | None = None,
     ) -> list[BoundingBox]:
-        """Replace each OCR text-value box's vertical extent with the LA
-        handwriting box that shares its column.
+        """Tighten an OCR text-value box's *virtual* vertical height using the
+        LA handwriting box that grounds its row — coverage-preservingly.
 
         On photographed forms PaddleOCR-VL emits per-glyph char boxes that all
         carry the merged block's full y-range (no true per-glyph vertical
         geometry), so a handwritten value's box is too tall and, on a tilted
-        multi-column form, sits at the wrong row. LocateAnything grounds the
-        handwriting as a real 2D box — tight y, tilt-correct. A value and its
-        handwriting share a column, so the LA box that overlaps the value box
-        horizontally AND whose y-center falls inside the value box's (tall)
-        y-span is that value's grounding — overlap is identity, no threshold.
-        Adopt its y/height; keep the value box's own x (char-crop, proven). No
-        matching LA box -> keep the OCR box unchanged (coverage never dropped).
+        multi-column form, spans into a neighbouring row. LocateAnything grounds
+        the handwriting as a real 2D box — tight y, tilt-correct.
+
+        The old version bare-replaced y/height with LA's, which is unsafe two
+        ways: LA frames only the densest strokes (undercovering a descender /
+        flourish), and on a wrong/ambiguous match it could re-anchor to the
+        wrong row (a reverse leak). This version is a *coverage consumer*:
+
+          (a) Error-row guard: a candidate LA must contain the OCR box's
+              y-center (``la.y <= cy <= la.y+la.h``); among valid candidates
+              take the one whose center is nearest cy. If cy falls in the gutter
+              between LA rows (no LA row contains it) -> refuse to correct and
+              keep the original over-covering OCR box (failure = don't correct,
+              never re-anchor).
+          (b) Ambiguity: if the column holds >=2 vertically-disjoint LA
+              candidates (two distinct rows), the value's row can't be
+              determined -> keep the original OCR box.
+          (c) Coverage-preserving height (core): do NOT bare-replace. The new
+              vertical extent is the hull of the LA box's y-range UNION the
+              entity's *proven* ink hull (``ink_hulls[box.id]`` = the measured
+              y-range of the entity's own dark strokes, floor). New
+              ``y1 = min(la.y, ink_top)``, ``y2 = max(la.y+la.h, ink_bottom)``;
+              the OCR box's x (char-crop, proven) is kept. This drops LA-external
+              virtual height while never shrinking below real ink — any
+              descender/flourish inside the ink hull stays covered.
+          (d) Only *confirmed* over-tall boxes are touched: those with
+              ``height >= 2 * doc_line_h`` (``doc_line_h`` = the document's own
+              self-calibrated line height, e.g. ``text_evidence_hull``'s median
+              text-region em). Normal-height boxes are returned unchanged so we
+              never disturb a box that is already right.
+
+        Every failure path (no LA match / no ink floor / ambiguity / gutter /
+        not over-tall) returns the original over-covering box, so coverage is
+        monotone non-decreasing versus the bare-replace it supersedes.
+
+        Pure geometry only. WIRING TODO (human, in the dual pipeline):
+          1. Measure each candidate text box's ink y-hull from the image (dark
+             pixels of that entity's strokes) and pass it in ``ink_hulls`` keyed
+             by ``box.id``; ``region_has_visible_ink`` / ``text_evidence_hull``
+             are the existing per-entity ink probes to build it from.
+          2. Source ``la_boxes`` by cropping the over-tall box's column strip and
+             running LA grounding on it (GPU).
+          3. On LA empty / miss for a box, pass no candidate — this function
+             keeps the original box.
+          4. Pass ``doc_line_h`` = the self-calibrated line em (e.g.
+             ``text_evidence_hull(regions)[1]``), never a fixed pixel constant.
         """
-        if not la_boxes:
+        if not la_boxes or doc_line_h <= 0:
             return boxes
+        ink_hulls = ink_hulls or {}
+        oversize_floor = 2.0 * doc_line_h
         result: list[BoundingBox] = []
         for box in boxes:
             if box.source != "ocr_has" or not str(box.text or "").strip():
                 result.append(box)
                 continue
-            top, bottom = box.y, box.y + box.height
-            candidates = [
-                la
-                for la in la_boxes
-                if top <= la.y + la.height / 2.0 <= bottom
-                and self._x_overlap_fraction(box, la) > 0.0
-            ]
-            if not candidates:
+            # (d) only confirmed-oversize boxes are candidates for tightening
+            if box.height < oversize_floor:
                 result.append(box)
                 continue
-            best = max(candidates, key=lambda la: self._x_overlap_fraction(box, la))
-            result.append(box.model_copy(update={"y": best.y, "height": best.height}))
+            top, bottom = box.y, box.y + box.height
+            # same-column candidates: horizontal overlap AND vertical intersection
+            column = [
+                la
+                for la in la_boxes
+                if self._x_overlap_fraction(box, la) > 0.0
+                and min(bottom, la.y + la.height) - max(top, la.y) > 1e-9
+            ]
+            if not column:
+                result.append(box)
+                continue
+            # (b) two distinct rows in the column -> ambiguous
+            if self._has_vertically_disjoint_pair(column):
+                result.append(box)
+                continue
+            # (a) error-row guard: keep only LA rows containing the OCR y-center
+            cy = box.y + box.height / 2.0
+            valid = [la for la in column if la.y <= cy <= la.y + la.height]
+            if not valid:
+                result.append(box)  # cy in gutter / no row contains it
+                continue
+            best = min(valid, key=lambda la: abs((la.y + la.height / 2.0) - cy))
+            # (c) coverage-preserving height: hull(LA y-range ∪ proven ink hull)
+            ink = ink_hulls.get(box.id)
+            if ink is None:
+                result.append(box)  # no measured ink floor -> cannot safely tighten
+                continue
+            ink_top, ink_bottom = ink
+            new_top = min(best.y, ink_top)
+            new_bottom = max(best.y + best.height, ink_bottom)
+            result.append(
+                box.model_copy(update={"y": new_top, "height": new_bottom - new_top})
+            )
         return result
 
     def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
