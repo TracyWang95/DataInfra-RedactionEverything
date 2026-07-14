@@ -27,7 +27,7 @@ def make_client(responses):
     client = HaSClient()
     calls = []
 
-    def fake_call_model(messages, *, max_tokens=None):
+    def fake_call_model(messages, *, max_tokens=None, temperature=None):
         calls.append(messages[0]["content"])
         return responses[min(len(calls) - 1, len(responses) - 1)]
 
