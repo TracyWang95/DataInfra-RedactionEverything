@@ -124,6 +124,49 @@ def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
     )
 
 
+def _prune_looser_same_text_boxes(
+    regions: list[SensitiveRegion],
+) -> list[SensitiveRegion]:
+    """Keep the tightest box among same-type, same-text, overlapping regions.
+
+    One value can be localized more than once: a garbled handwritten ID matches
+    both its own right-column glyphs (tight) AND — because the char alignment
+    strays across a merged two-column OCR block — the whole row (拍照保姆合同:
+    身份证号码 0.734 page-wide). Same text ⇒ same value, so the tightest box
+    already covers its glyphs; the wider twin is redundant over-coverage that
+    bleeds onto the other column's field and labels. Drop it.
+
+    Leak-safe: only boxes that share the SAME text AND overlap are collapsed, so
+    the surviving tight box covers this value's glyphs; every other field keeps
+    its own box. A value repeated elsewhere on the page (non-overlapping) is
+    untouched.
+    """
+    if len(regions) <= 1:
+        return regions
+    drop_ids: set[int] = set()
+    for region in regions:
+        r_text = (region.text or "").strip()
+        if not r_text:
+            continue
+        r_area = region.width * region.height
+        for other in regions:
+            if other is region or id(other) in drop_ids:
+                continue
+            if (
+                other.entity_type == region.entity_type
+                and (other.text or "").strip() == r_text
+                and other.width * other.height < r_area
+                and _regions_overlap(region, other)
+            ):
+                drop_ids.add(id(region))
+                logger.debug(
+                    "Dropped looser same-text box for '%s' (w=%d) — tighter twin (w=%d) covers it",
+                    r_text, region.width, other.width,
+                )
+                break
+    return [r for r in regions if id(r) not in drop_ids]
+
+
 def _char_word_class(ch: str) -> str:
     if "一" <= ch <= "鿿":
         return "cjk"
@@ -878,6 +921,8 @@ def match_entities_to_ocr(
         regions.extend(
             match_entities_to_ocr(ocr_blocks, digit_retry_entities, _digit_retry=True)
         )
+
+    regions = _prune_looser_same_text_boxes(regions)
 
     deduped_regions = _dedupe_ocr_regions(regions)
     logger.info("Matched %d entities to OCR blocks (%d after dedupe)", len(regions), len(deduped_regions))
