@@ -41,6 +41,7 @@ from app.services.vision.machine_code_detector import (
 from app.services.vision.ocr_artifact_filter import (
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
+    text_evidence_hull,
 )
 from app.services.vision.pdf_text_layer_probe import (
     _get_pdf_text_layer_probe_lock,
@@ -996,6 +997,10 @@ class VisionService:
         page: int,
     ) -> list[BoundingBox]:
         width, height = img.size
+        # Self-calibrate the page body extent from the regions that decoded real
+        # text; the edge filter judges margin artifacts against this hull rather
+        # than a fixed normalized offset.
+        text_hull, page_em = text_evidence_hull(regions)
         bounding_boxes = []
         for i, region in enumerate(regions):
             normalized_region_type = self._norm_box_type(region.entity_type)
@@ -1012,10 +1017,12 @@ class VisionService:
                 height,
                 region.entity_type,
                 region.text,
+                text_hull,
+                page_em,
             ):
                 logger.debug("Skipping OCR region on page edge artifact: %s %s", region.entity_type, region.text)
                 continue
-            if not region_has_visible_ink(img, region.left, region.top, region.width, region.height):
+            if not region_has_visible_ink(img, region.left, region.top, region.width, region.height, region.entity_type):
                 logger.debug("Skipping OCR region on blank/low-ink area: %s %s", region.entity_type, region.text)
                 continue
             if is_ocr_visual_seal:
