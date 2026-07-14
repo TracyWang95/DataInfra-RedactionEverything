@@ -662,6 +662,13 @@ class VisionService:
         "居民身份证", "公民身份号码", "签发机关", "有效期限", "出生", "性别", "民族", "住址",
     )
     _ID_CARD_NUMBER_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
+    # A physical 二代身份证 is a rectangular card (aspect ≈ 1.585, portrait ≈ 0.63);
+    # perspective/rotation in a phone photo widens the axis-aligned box only
+    # modestly. A box several times wider than tall is not a card at all — it is
+    # LA grounding a horizontal "身份证号码：…" text line (图片_20260714 保姆合同:
+    # 表单只有号码, 无实体证件). No real card orientation reaches this ratio, so
+    # dropping above it never discards a genuine card.
+    _ID_CARD_MAX_ASPECT = 3.0
 
     def _drop_page_hallucinated_cards(
         self,
@@ -707,6 +714,14 @@ class VisionService:
         seals = [b for b in boxes if b.type == "official_seal"]
         out = []
         for box in boxes:
+            if box.type == "id_card" and box.source == "visual_features":
+                box_w_px, box_h_px = box.width * page_w, box.height * page_h
+                if box_h_px > 0 and box_w_px / box_h_px > self._ID_CARD_MAX_ASPECT:
+                    logger.info(
+                        "Dropped id_card box shaped like a text line, not a card (aspect %.1f)",
+                        box_w_px / box_h_px,
+                    )
+                    continue
             if box.type == "id_card" and box.source == "visual_features" and not has_face_evidence:
                 bx1, by1 = box.x * page_w, box.y * page_h
                 bx2, by2 = (box.x + box.width) * page_w, (box.y + box.height) * page_h

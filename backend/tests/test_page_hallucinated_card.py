@@ -76,3 +76,21 @@ def test_real_card_with_seal_nearby_but_face_words_kept():
     blocks = [_blk("居民身份证 公民身份号码 11010119900307461X", 120, 200)]
     out = _drop([card, seal], blocks)
     assert any(b.type == "id_card" for b in out)
+
+
+def test_text_line_shaped_idcard_dropped():
+    # 图片_20260714 保姆合同: LA grounds the "身份证号码：…" form row as id_card —
+    # a wide thin box (aspect ~4.3 on this page) that no physical card can be.
+    # An 18-digit number IS present (would pass the face-evidence escape), so
+    # only the card-shape test catches this false ground.
+    card = _box("id_card", 0.347, 0.178, 0.202, 0.037)  # (0.202*700)/(0.037*900)≈4.25
+    blocks = [_blk("身份证号码：20120198712071242", 240, 160, w=400, h=30)]
+    assert _drop([card], blocks) == []
+
+
+def test_card_shaped_small_idcard_kept():
+    # a genuine card photographed small: card-proportioned (aspect ~1.8), not
+    # covering the page — must survive the shape test.
+    card = _box("id_card", 0.1, 0.1, 0.3, 0.13)  # (0.3*700)/(0.13*900)≈1.79
+    blocks = [_blk("居民身份证", 100, 40), _blk("公民身份号码 11010119900307461X", 100, 700)]
+    assert len(_drop([card], blocks)) == 1
