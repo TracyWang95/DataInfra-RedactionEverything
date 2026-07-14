@@ -27,7 +27,9 @@ class _RecordingHaS:
         self.answers_by_call = answers_by_call
         self.calls = []
 
-    def ner(self, text, labels):
+    def ner(self, text, labels=None, **_kwargs):
+        # Accept the real ner's keyword-only temperature/sample_index (the main
+        # call now drives the self-consistent aggregator through them).
         self.calls.append(text)
         index = min(len(self.calls) - 1, len(self.answers_by_call) - 1)
         return self.answers_by_call[index]

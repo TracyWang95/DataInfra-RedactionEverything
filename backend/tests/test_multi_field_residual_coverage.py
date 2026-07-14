@@ -81,7 +81,9 @@ class _ContentHaS:
     def __init__(self):
         self.calls = []
 
-    def ner(self, text, labels):
+    def ner(self, text, labels=None, **_kwargs):
+        # Accept the real ner's keyword-only temperature/sample_index (the main
+        # call now drives the self-consistent aggregator through them).
         self.calls.append(text)
         compact = "".join(text.split())
         if "11010119900307461X" in compact:

@@ -442,10 +442,30 @@ async def run_has_text_analysis(
                             logger.info("HaS NER cache hit after slot wait")
                         else:
                             model_start = time.perf_counter()
-                            ner_result = await asyncio.to_thread(
-                                has_client.ner, text_content, chinese_types
+                            # Self-consistent multi-pass NER over THIS payload.
+                            # Pass 0 is the temp=0 greedy seed (== today's single
+                            # call); passes >=1 re-sample at temp>0 under distinct
+                            # sample_index keys and are folded into the union. The
+                            # union is monotone (only ⊇ the seed), so widening K
+                            # cannot uncover PII the seed already hid — hallucinated
+                            # temp>0 values are gated to 0 region by the matcher.
+                            # K=1 (default) drives exactly one temp=0 pass = current.
+                            k_samples = max(1, int(settings.HAS_NER_SELF_CONSIST_SAMPLES))
+                            sample_temp = float(settings.HAS_NER_SELF_CONSIST_TEMPERATURE)
+
+                            def _ner_sample(pass_index: int) -> Any:
+                                return has_client.ner(
+                                    text_content,
+                                    chinese_types,
+                                    temperature=(0.0 if pass_index == 0 else sample_temp),
+                                    sample_index=pass_index,
+                                )
+
+                            ner_result, passes_run = await asyncio.to_thread(
+                                aggregate_ner_samples, _ner_sample, k_samples
                             )
                             _record_has_text_metric(stage_status, "has_text_cache_status", "model_call")
+                            _record_has_text_metric(stage_status, "has_text_self_consist_passes", passes_run)
                             _add_has_text_duration(
                                 stage_status,
                                 "has_text_model_ms",
