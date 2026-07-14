@@ -61,14 +61,17 @@ def _entity_type_from_block_context(entity_type: str, entity_text: str, block_te
 
 
 def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]:
-    """Drop OCR regions that are spatial near-duplicates (same pixels).
+    """Drop OCR regions whose pixels are already covered (same pixels).
 
-    A single IoU pass with no type/text/source/ranking rules. Only regions that
-    essentially coincide are merged, so two real PII values on different parts of
-    the page — e.g. the same date in three table rows, or a name in the 姓名 cell
-    and again in a signature — are always kept. The old bucket-key + same-line +
-    startswith heuristics each risked dropping a distinct value (a missed
-    redaction); IoU alone cannot.
+    A single containment pass with no type/text/source/ranking rules: a region is
+    dropped only when its box is swallowed whole by the union of the kept
+    (larger-or-equal) boxes — any exposed pixel keeps it. Two real PII values on
+    different parts of the page — e.g. the same date in three table rows, or a
+    name in the 姓名 cell and again in a signature — never nest, so they are
+    always kept. The old bucket-key + same-line + startswith heuristics each
+    risked dropping a distinct value (a missed redaction); a partial-overlap twin
+    that sticks out is no longer dropped either (the old IoU>=0.5 pass would have
+    uncovered its exposed strip).
 
     One containment pass runs first: mixed-granularity block sets (PP-Structure
     lines + PaddleOCR-VL layout paragraphs) can match the same value at both
@@ -111,7 +114,9 @@ def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]
         )
     ]
 
-    return deduplicate_by_iou(tightest, lambda r: (r.left, r.top, r.width, r.height))
+    return deduplicate_by_iou(
+        tightest, lambda r: (r.left, r.top, r.width, r.height), mode="containment"
+    )
 
 
 def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
@@ -126,23 +131,33 @@ def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
 
 def _prune_looser_same_text_boxes(
     regions: list[SensitiveRegion],
+    span_proven_ids: set[int] | None = None,
 ) -> list[SensitiveRegion]:
     """Keep the tightest box among same-type, same-text, overlapping regions.
 
     One value can be localized more than once: a garbled handwritten ID matches
     both its own right-column glyphs (tight) AND — because the char alignment
     strays across a merged two-column OCR block — the whole row (拍照保姆合同:
-    身份证号码 0.734 page-wide). Same text ⇒ same value, so the tightest box
-    already covers its glyphs; the wider twin is redundant over-coverage that
-    bleeds onto the other column's field and labels. Drop it.
+    身份证号码 0.734 page-wide). Same text ⇒ same value, so the tighter box may
+    already cover its glyphs; the wider twin is then redundant over-coverage that
+    bleeds onto the other column's field and labels.
 
-    Leak-safe: only boxes that share the SAME text AND overlap are collapsed, so
-    the surviving tight box covers this value's glyphs; every other field keeps
-    its own box. A value repeated elsewhere on the page (non-overlapping) is
-    untouched.
+    Coverage precondition: the wider box is dropped ONLY when the tighter twin is
+    a COMPLETE-span proof — its box is the union of the value's char boxes with
+    the span's first AND last glyph proven (``span_proven_ids``, computed by the
+    caller from ``_entity_span_char_boxes``). Char boxes run in reading order, so
+    a proven first+last glyph means the tight box spans every glyph of the value:
+    dropping the wider twin cannot uncover a glyph. A tighter box from an argmax
+    PARTIAL match (it may cover only "123" of "X12345") is NOT a proof — the
+    wider box is kept so the tail glyphs stay masked.
+
+    Leak-safe: only boxes that share the SAME text AND overlap are collapsed, and
+    only against a proven-full-span twin; every other field keeps its own box, a
+    value repeated elsewhere (non-overlapping) is untouched.
     """
     if len(regions) <= 1:
         return regions
+    proven = span_proven_ids or set()
     drop_ids: set[int] = set()
     for region in regions:
         r_text = (region.text or "").strip()
@@ -157,10 +172,11 @@ def _prune_looser_same_text_boxes(
                 and (other.text or "").strip() == r_text
                 and other.width * other.height < r_area
                 and _regions_overlap(region, other)
+                and id(other) in proven
             ):
                 drop_ids.add(id(region))
                 logger.debug(
-                    "Dropped looser same-text box for '%s' (w=%d) — tighter twin (w=%d) covers it",
+                    "Dropped looser same-text box for '%s' (w=%d) — proven tighter twin (w=%d) covers it",
                     r_text, region.width, other.width,
                 )
                 break
@@ -576,6 +592,10 @@ def match_entities_to_ocr(
     """
     regions: list[SensitiveRegion] = []
     digit_retry_entities: list[dict[str, str]] = []
+    # Region ids whose box is a COMPLETE-span char-box proof (first+last glyph
+    # of the value aligned). _prune_looser_same_text_boxes may only drop a wider
+    # same-text twin against one of these — an argmax/partial box is not a proof.
+    span_proven_region_ids: set[int] = set()
 
     # Expand HTML tables into virtual cell blocks
     expanded_blocks: list[OCRTextBlock] = []
@@ -690,7 +710,13 @@ def match_entities_to_ocr(
                         document_line_height,
                     )
                     crop_span = None
+                    # Whether this region's box is a complete-span glyph proof
+                    # (both _entity_char_box_line_rects and _charsless_block_line_rects
+                    # go through _entity_span_char_boxes' first+last-glyph guard).
+                    # The argmax narrow and the row-band mixed path are NOT proofs.
+                    span_proven = False
                     if line_rects is not None:
+                        span_proven = True
                         crop_span = (
                             min(r[0] for r in line_rects),
                             max(r[2] for r in line_rects),
@@ -711,6 +737,7 @@ def match_entities_to_ocr(
                             block, block_text, visual_occurrence_start, visual_text, prepared_blocks, document_line_height
                         )
                         if line_rects is not None:
+                            span_proven = True
                             crop_span = (
                                 min(r[0] for r in line_rects),
                                 max(r[2] for r in line_rects),
@@ -762,17 +789,20 @@ def match_entities_to_ocr(
                         # x-span union would cover the block's full width and
                         # height, so emit one tight region per text line.
                         for lx1, ly1, lx2, ly2 in line_rects:
+                            sub_region = SensitiveRegion(
+                                text=visual_text,
+                                entity_type=contextual_type,
+                                left=lx1,
+                                top=ly1,
+                                width=lx2 - lx1,
+                                height=ly2 - ly1,
+                                confidence=1.0,
+                                source=region_source,
+                            )
+                            if span_proven:
+                                span_proven_region_ids.add(id(sub_region))
                             entity_regions.append((
-                                SensitiveRegion(
-                                    text=visual_text,
-                                    entity_type=contextual_type,
-                                    left=lx1,
-                                    top=ly1,
-                                    width=lx2 - lx1,
-                                    height=ly2 - ly1,
-                                    confidence=1.0,
-                                    source=region_source,
-                                ),
+                                sub_region,
                                 has_position_evidence,
                                 not has_position_evidence,
                             ))
@@ -781,17 +811,20 @@ def match_entities_to_ocr(
                             entity_text, block_text[:20], len(line_rects),
                         )
                     else:
+                        single_region = SensitiveRegion(
+                            text=visual_text,
+                            entity_type=contextual_type,
+                            left=rl,
+                            top=rt,
+                            width=rw,
+                            height=rh,
+                            confidence=1.0,
+                            source=region_source,
+                        )
+                        if span_proven:
+                            span_proven_region_ids.add(id(single_region))
                         entity_regions.append((
-                            SensitiveRegion(
-                                text=visual_text,
-                                entity_type=contextual_type,
-                                left=rl,
-                                top=rt,
-                                width=rw,
-                                height=rh,
-                                confidence=1.0,
-                                source=region_source,
-                            ),
+                            single_region,
                             has_position_evidence,
                             not has_position_evidence,
                         ))
@@ -922,7 +955,7 @@ def match_entities_to_ocr(
             match_entities_to_ocr(ocr_blocks, digit_retry_entities, _digit_retry=True)
         )
 
-    regions = _prune_looser_same_text_boxes(regions)
+    regions = _prune_looser_same_text_boxes(regions, span_proven_region_ids)
 
     deduped_regions = _dedupe_ocr_regions(regions)
     logger.info("Matched %d entities to OCR blocks (%d after dedupe)", len(regions), len(deduped_regions))

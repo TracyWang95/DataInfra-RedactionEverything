@@ -564,53 +564,88 @@ class VisionService:
         return result
 
     def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """Drop OCR text boxes that coincide with a LocateAnything signature box.
+        """Drop OCR text boxes fully contained in a LocateAnything signature box.
 
-        OCR reading the signature scribble as text is a false positive. An
-        ocr_has text box whose center sits inside a visual signature box (or that
-        contains the signature's center) is suppressed in favour of the signature
-        box. Center-point anchoring is an identity-grade geometric test.
+        OCR reading the signature scribble as text is a false positive. But the
+        old test — text center in the sig OR sig center in the text — dropped a
+        WIDE PII text box the moment a small signature core landed inside it, a
+        missed redaction. Coverage precondition instead: drop the ocr_has text
+        box ONLY when it is geometrically contained in the signature box
+        (smaller_overlap(text, sig) == 1.0). The comparison uses a locally
+        pad-expanded copy of the sig — pad = _SIGNATURE_REDACTION_PAD, the SAME
+        scale _expand_signature_boxes grows the signature mask to downstream — so
+        any text we drop here is provably inside the FINAL signature mask;
+        coverage is monotone. A wide PII box that merely overlaps a small
+        signature core sticks out of the padded sig, so both boxes survive.
         """
         sig_types = {"signature", "handwriting", "approval_mark"}
         sigs = [b for b in boxes if b.source == "visual_features" and b.type in sig_types]
         if not sigs:
             return boxes
+        pad = _SIGNATURE_REDACTION_PAD
+        padded_sig_rects = [
+            (
+                max(0.0, s.x - s.width * pad),
+                max(0.0, s.y - s.height * pad),
+                min(1.0, s.x + s.width + s.width * pad),
+                min(1.0, s.y + s.height + s.height * pad),
+            )
+            for s in sigs
+        ]
         kept: list[BoundingBox] = []
         dropped = 0
         for b in boxes:
             if b.source == "ocr_has" and any(
-                self._center_inside(b, s) or self._center_inside(s, b) for s in sigs
+                px1 <= b.x
+                and py1 <= b.y
+                and b.x + b.width <= px2
+                and b.y + b.height <= py2
+                for px1, py1, px2, py2 in padded_sig_rects
             ):
                 dropped += 1
                 continue
             kept.append(b)
         if dropped:
-            logger.info("Suppressed %d OCR text box(es) inside a signature region", dropped)
+            logger.info("Suppressed %d OCR text box(es) contained in a signature region", dropped)
         return kept
 
     def _prefer_vl_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """For official_seal, prefer OCR/VL boxes over LocateAnything boxes.
 
         VL (ocr_has) segments stacked stamps into one box per seal; LocateAnything
-        often over-merges them into a single tall strip. Where a VL seal coincides
-        with an LA seal (centers mutually contain), drop the LA box so the VL split
-        wins. LA seals with no VL counterpart are kept (gap-fill for stamps VL
-        missed). If VL produced no seals, keep every LA seal unchanged.
+        often over-merges them into a single tall strip. The old test dropped the
+        LA strip whenever ONE VL seal's center fell inside it — but an LA strip
+        that spans TWO stacked stamps and only one of which VL found would then be
+        dropped, uncovering the stamp VL missed (a missed redaction). Coverage
+        precondition instead: drop the LA seal ONLY when the true union of the VL
+        seals intersecting it fully covers it (exact axis-aligned coverage, no
+        threshold). Otherwise keep the LA box — it may be the only cover over a
+        VL-missed overlapping stamp. LA seals with no VL counterpart are kept; if
+        VL produced no seals, every LA seal is kept unchanged.
         """
+        from app.services.vision.region_merger import rect_covered_by_union
+
         vl_seals = [b for b in boxes if b.type == "official_seal" and b.source == "ocr_has"]
         if not vl_seals:
             return boxes
         kept: list[BoundingBox] = []
         dropped = 0
         for b in boxes:
-            if b.type == "official_seal" and b.source == "visual_features" and any(
-                self._center_inside(v, b) or self._center_inside(b, v) for v in vl_seals
-            ):
-                dropped += 1
-                continue
+            if b.type == "official_seal" and b.source == "visual_features":
+                overlapping_vl = [
+                    (v.x, v.y, v.width, v.height)
+                    for v in vl_seals
+                    if self._calculate_iou(v, b) > 0.0
+                    or self._calculate_smaller_overlap(v, b) > 0.0
+                ]
+                if overlapping_vl and rect_covered_by_union(
+                    (b.x, b.y, b.width, b.height), overlapping_vl
+                ):
+                    dropped += 1
+                    continue
             kept.append(b)
         if dropped:
-            logger.info("Dropped %d LA seal box(es) superseded by VL seals", dropped)
+            logger.info("Dropped %d LA seal box(es) fully covered by the VL seal union", dropped)
         return kept
 
     def _prefer_yolo_machine_codes(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
@@ -710,13 +745,66 @@ class VisionService:
         "居民身份证", "公民身份号码", "签发机关", "有效期限", "出生", "性别", "民族", "住址",
     )
     _ID_CARD_NUMBER_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
-    # A physical 二代身份证 is a rectangular card (aspect ≈ 1.585, portrait ≈ 0.63);
-    # perspective/rotation in a phone photo widens the axis-aligned box only
-    # modestly. A box several times wider than tall is not a card at all — it is
-    # LA grounding a horizontal "身份证号码：…" text line (图片_20260714 保姆合同:
-    # 表单只有号码, 无实体证件). No real card orientation reaches this ratio, so
-    # dropping above it never discards a genuine card.
-    _ID_CARD_MAX_ASPECT = 3.0
+
+    def _id_card_number_covered_elsewhere(
+        self,
+        card: BoundingBox,
+        boxes: list[BoundingBox],
+        ocr_blocks: list,
+        page_size: tuple[int, int],
+    ) -> bool:
+        """Whether an id_card ground can be dropped because it only covers an ID
+        number that is ALREADY masked by another retained ocr_has box.
+
+        A wide axis-aligned box is a SIGNAL that LA grounded a horizontal
+        "身份证号码：…" text line rather than a card face — but the aspect ratio
+        never decides alone (dropping an UNcovered number is a leak). The gate is
+        coverage: for every 18-digit ID number sitting inside this box's region
+        (this page's own OCR blocks), a DIFFERENT retained ocr_has box that
+        overlaps the region must carry the same number. Then dropping this box
+        keeps every number masked — coverage is monotone. A genuine card face
+        (its printed 二代证 face words appear inside the box) is never dropped:
+        its name/photo would be uncovered, so any face word inside keeps the box.
+        """
+        page_w, page_h = page_size
+        if page_w <= 0 or page_h <= 0:
+            return False
+        cx1, cy1 = card.x * page_w, card.y * page_h
+        cx2, cy2 = (card.x + card.width) * page_w, (card.y + card.height) * page_h
+        numbers_inside: list[str] = []
+        interior_text: list[str] = []
+        for b in ocr_blocks:
+            try:
+                bcx = b.left + b.width / 2.0
+                bcy = b.top + b.height / 2.0
+            except AttributeError:
+                continue
+            if not (cx1 <= bcx <= cx2 and cy1 <= bcy <= cy2):
+                continue
+            text = str(getattr(b, "text", "") or "")
+            interior_text.append(text)
+            numbers_inside.extend(m.group() for m in self._ID_CARD_NUMBER_RE.finditer(text))
+        if not numbers_inside:
+            return False
+        joined_interior = " ".join(interior_text)
+        if any(word in joined_interior for word in self._ID_CARD_FACE_WORDS):
+            return False
+        retained_ocr = [
+            o
+            for o in boxes
+            if o is not card
+            and o.source == "ocr_has"
+            and not (
+                o.x + o.width <= card.x
+                or card.x + card.width <= o.x
+                or o.y + o.height <= card.y
+                or card.y + card.height <= o.y
+            )
+        ]
+        for number in numbers_inside:
+            if not any(number in str(o.text or "") for o in retained_ocr):
+                return False
+        return True
 
     def _drop_page_hallucinated_cards(
         self,
@@ -763,11 +851,9 @@ class VisionService:
         out = []
         for box in boxes:
             if box.type == "id_card" and box.source == "visual_features":
-                box_w_px, box_h_px = box.width * page_w, box.height * page_h
-                if box_h_px > 0 and box_w_px / box_h_px > self._ID_CARD_MAX_ASPECT:
+                if self._id_card_number_covered_elsewhere(box, boxes, ocr_blocks, page_size):
                     logger.info(
-                        "Dropped id_card box shaped like a text line, not a card (aspect %.1f)",
-                        box_w_px / box_h_px,
+                        "Dropped id_card ground: its id number is already masked by a retained OCR box"
                     )
                     continue
             if box.type == "id_card" and box.source == "visual_features" and not has_face_evidence:

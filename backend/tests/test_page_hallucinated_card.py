@@ -21,6 +21,12 @@ def _blk(text, left, top, w=100, h=20):
     return OCRTextBlock(text=text, polygon=[[left,top],[left+w,top],[left+w,top+h],[left,top+h]], confidence=0.95)
 
 
+def _ocr_box(x, y, w, h, text):
+    return BoundingBox(id=f"ocr_{x}_{y}", x=x, y=y, width=w, height=h, type="id_card",
+        text=text, page=1, confidence=0.95, source="ocr_has",
+        source_detail="pdf_text_layer", evidence_source="ocr_has")
+
+
 def _drop(boxes, blocks):
     return VisionService()._drop_page_hallucinated_cards(boxes, blocks, PAGE)
 
@@ -78,19 +84,31 @@ def test_real_card_with_seal_nearby_but_face_words_kept():
     assert any(b.type == "id_card" for b in out)
 
 
-def test_text_line_shaped_idcard_dropped():
-    # 图片_20260714 保姆合同: LA grounds the "身份证号码：…" form row as id_card —
-    # a wide thin box (aspect ~4.3 on this page) that no physical card can be.
-    # An 18-digit number IS present (would pass the face-evidence escape), so
-    # only the card-shape test catches this false ground.
-    card = _box("id_card", 0.347, 0.178, 0.202, 0.037)  # (0.202*700)/(0.037*900)≈4.25
-    blocks = [_blk("身份证号码：20120198712071242", 240, 160, w=400, h=30)]
-    assert _drop([card], blocks) == []
+def test_textline_idcard_number_covered_elsewhere_dropped():
+    # 图片_20260714 保姆合同: LA grounds the "身份证号码：…" form row as id_card.
+    # 保覆盖门禁: only drop it because the SAME id number is already carried by a
+    # retained ocr_has box overlapping the region — so the number stays masked.
+    card = _box("id_card", 0.357, 0.178, 0.286, 0.033)  # px [250,160,450,190]
+    blocks = [_blk("身份证号码：11010119900307461X", 250, 160, w=200, h=30)]  # center inside card
+    ocr = _ocr_box(0.357, 0.178, 0.286, 0.033, "11010119900307461X")       # covers the number
+    out = _drop([card, ocr], blocks)
+    assert [b.source for b in out] == ["ocr_has"]  # LA card dropped, OCR number kept
 
 
-def test_card_shaped_small_idcard_kept():
-    # a genuine card photographed small: card-proportioned (aspect ~1.8), not
-    # covering the page — must survive the shape test.
-    card = _box("id_card", 0.1, 0.1, 0.3, 0.13)  # (0.3*700)/(0.13*900)≈1.79
-    blocks = [_blk("居民身份证", 100, 40), _blk("公民身份号码 11010119900307461X", 100, 700)]
-    assert len(_drop([card], blocks)) == 1
+def test_textline_idcard_number_not_covered_kept():
+    # Same wide id_card ground, but NOTHING else covers the number. A wide aspect
+    # alone must NOT drop it — dropping an uncovered number is a leak. Keep it.
+    card = _box("id_card", 0.357, 0.178, 0.286, 0.033)
+    blocks = [_blk("身份证号码：11010119900307461X", 250, 160, w=200, h=30)]
+    assert _drop([card], blocks) == [card]
+
+
+def test_idcard_with_face_words_inside_kept_even_if_number_covered():
+    # A genuine card face: its 二代证 face words sit inside the box, so even
+    # though the number is separately masked, dropping the box would uncover the
+    # name/photo. Real-card protection keeps it.
+    card = _box("id_card", 0.30, 0.20, 0.40, 0.30)  # px [210,180,490,450]
+    blocks = [_blk("居民身份证 公民身份号码 11010119900307461X", 220, 220, w=250, h=40)]
+    ocr = _ocr_box(0.32, 0.24, 0.30, 0.05, "11010119900307461X")
+    out = _drop([card, ocr], blocks)
+    assert any(b.source == "visual_features" and b.type == "id_card" for b in out)

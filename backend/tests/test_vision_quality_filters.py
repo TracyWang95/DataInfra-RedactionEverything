@@ -292,25 +292,54 @@ def test_nested_amount_regions_dedupe_by_value_signature() -> None:
     assert (regions[0].left, regions[0].top, regions[0].width, regions[0].height) == (230, 1340, 302, 38)
 
 
-def test_nested_different_amounts_keep_both_regions() -> None:
-    # A paragraph region matched for one value must NOT be dropped because a
-    # different value's tight region nests inside it (coverage would be lost).
-    regions = _dedupe_ocr_regions([
-        SensitiveRegion(
-            text="￥1684000.00元",
-            entity_type="AMOUNT",
-            left=228, top=1254, width=1546, height=150,
-            confidence=1.0,
-            source="text_match",
-        ),
-        SensitiveRegion(
-            text="￥1431400.00元",
-            entity_type="AMOUNT",
-            left=230, top=1340, width=302, height=38,
-            confidence=1.0,
-            source="text_match",
-        ),
-    ])
+def test_nested_different_amounts_drop_inner_keep_covering_outer() -> None:
+    # Two different amount values, the tight one geometrically NESTED inside the
+    # paragraph one. Containment dedup keeps the LARGER (covering) box and drops
+    # the nested one — coverage is preserved because the outer box already masks
+    # every pixel of the inner. The old IoU pass kept both; the point of the new
+    # rule is that dropping a box that is swallowed whole never uncovers a pixel.
+    outer = SensitiveRegion(
+        text="￥1684000.00元",
+        entity_type="AMOUNT",
+        left=228, top=1254, width=1546, height=150,
+        confidence=1.0,
+        source="text_match",
+    )
+    inner = SensitiveRegion(
+        text="￥1431400.00元",
+        entity_type="AMOUNT",
+        left=230, top=1340, width=302, height=38,
+        confidence=1.0,
+        source="text_match",
+    )
+    regions = _dedupe_ocr_regions([outer, inner])
+
+    assert regions == [outer]
+    # the surviving box fully covers the dropped inner box's pixels
+    assert outer.left <= inner.left and outer.top <= inner.top
+    assert outer.left + outer.width >= inner.left + inner.width
+    assert outer.top + outer.height >= inner.top + inner.height
+
+
+def test_partially_overlapping_amounts_keep_both_regions() -> None:
+    # Two amount regions that overlap but each stick OUT of the other (old
+    # IoU>=0.5 would have dropped one, uncovering its exposed strip). Containment
+    # keeps both — any exposed pixel keeps the box.
+    a = SensitiveRegion(
+        text="￥1684000.00元",
+        entity_type="AMOUNT",
+        left=228, top=1254, width=400, height=60,
+        confidence=1.0,
+        source="text_match",
+    )
+    b = SensitiveRegion(
+        text="￥1431400.00元",
+        entity_type="AMOUNT",
+        left=400, top=1270, width=400, height=60,
+        confidence=1.0,
+        source="text_match",
+    )
+    regions = _dedupe_ocr_regions([a, b])
 
     assert len(regions) == 2
 
