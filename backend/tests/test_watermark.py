@@ -23,6 +23,32 @@ def test_png_watermark_changes_pixels(tmp_path):
     assert before != after, "watermark must visibly alter the image"
 
 
+def test_png_watermark_is_actually_visible(tmp_path):
+    """回归：图像水印的实际透明度须接近设计值，而非被 alpha 双乘压到近乎不可见。
+
+    W2-1 根因：_tile_overlay 先把瓦片 alpha 压到 _IMAGE_ALPHA、又拿它当 paste
+    的 mask，导致透明度被平方(0.16→0.024)，真机上只改动零星几像素、肉眼看不见。
+    """
+    import numpy as np
+
+    from app.services.redaction.watermark import _GRAY, _IMAGE_ALPHA
+
+    p = tmp_path / "out.png"
+    _make_png(p, size=(400, 300), color=(255, 255, 255))
+    before = np.asarray(Image.open(p).convert("RGB")).astype(int)
+    assert apply_watermark(str(p), "仅供测试项目使用") is True
+    after = np.asarray(Image.open(p).convert("RGB")).astype(int)
+    diff = np.abs(after - before).max(axis=2)
+    # 灰字在白底上，最深笔画应压暗 ~ (255 - gray)*_IMAGE_ALPHA
+    expected_peak = (255 - _GRAY[0] * 255) * _IMAGE_ALPHA
+    assert diff.max() >= expected_peak * 0.6, (
+        f"最深水印像素仅变 {int(diff.max())}，远低于设计透明度 "
+        f"{_IMAGE_ALPHA} 的预期峰值 ~{expected_peak:.0f}（alpha 被双乘压没）"
+    )
+    # 斜排平铺应覆盖可观数量像素，而非零星几个
+    assert (diff >= 10).mean() >= 0.005, "水印覆盖过少，接近不可见"
+
+
 def test_jpeg_watermark_keeps_format(tmp_path):
     p = tmp_path / "out.jpg"
     Image.new("RGB", (300, 200), (250, 250, 250)).save(p, quality=92)
