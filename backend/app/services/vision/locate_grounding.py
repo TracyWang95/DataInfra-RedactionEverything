@@ -78,6 +78,19 @@ _DEFAULT_TOP_P = 0.9
 _DEFAULT_DETECT_CONFIDENCE = 0.8
 _DEFAULT_CHECKLIST_CONFIDENCE = 0.82
 
+# Generic handwriting-grounding queries fed to LocateAnything so its 2D boxes
+# can supply real per-row geometry for tightening over-tall OCR value boxes.
+# These are MODEL INPUT WORDS (a small set of generic handwriting phrasings),
+# NOT a per-type rule table: measured on real forms, "handwritten number"
+# grounds IDs + phone numbers, "handwritten Chinese address text" grounds
+# addresses, "handwritten name" grounds names. The wording is tunable — pass a
+# custom list to ``ground_handwriting`` to override.
+_HANDWRITING_GROUNDING_QUERIES = (
+    "handwritten number",
+    "handwritten Chinese address text",
+    "handwritten name",
+)
+
 
 @dataclass
 class LocateGroundingTimings:
@@ -935,6 +948,66 @@ class LocateAnythingGroundingService:
                     evidence_source="visual_feature_model",
                 )
             )
+        return boxes
+
+    async def ground_handwriting(
+        self,
+        image_data: bytes,
+        queries: list[str] | None = None,
+        page: int = 1,
+    ) -> list[BoundingBox]:
+        """Ground handwritten VALUES as real 2D boxes (row geometry only).
+
+        Each query is one single-category ``/detect`` call, run SEQUENTIALLY:
+        LocateAnything's recall collapses when categories share a prompt AND is
+        load-sensitive (concurrent calls contend on the GPU and silently drop
+        boxes), so these are never fanned out. ``queries`` is a small set of
+        generic handwriting phrasings (model input words, not per-type rules);
+        it defaults to ``_HANDWRITING_GROUNDING_QUERIES``.
+
+        The boxes are tagged ``type="handwriting"`` with EMPTY text — they exist
+        only to feed row-accurate y-geometry to
+        ``VisionService._adopt_la_vertical_geometry``; they are not redaction
+        targets themselves. A failing query is logged and skipped (the others
+        still produce boxes); on total miss the caller keeps the original box.
+        """
+        phrasings = list(queries) if queries is not None else list(_HANDWRITING_GROUNDING_QUERIES)
+        boxes: list[BoundingBox] = []
+        for query in phrasings:
+            try:
+                raw_boxes = await self._post_detect(image_data, [query])
+            except Exception as exc:
+                logger.warning("handwriting grounding query %r failed, skipping: %s", query, exc)
+                continue
+            for raw in raw_boxes:
+                try:
+                    normalized = _clamp_box(
+                        float(raw.get("x") or 0),
+                        float(raw.get("y") or 0),
+                        float(raw.get("width") or 0),
+                        float(raw.get("height") or 0),
+                    )
+                except (TypeError, ValueError):
+                    normalized = None
+                if normalized is None:
+                    continue
+                x, y, width, height = normalized
+                boxes.append(
+                    BoundingBox(
+                        id=f"la_hw_{uuid.uuid4().hex[:8]}",
+                        x=x,
+                        y=y,
+                        width=width,
+                        height=height,
+                        type="handwriting",
+                        text="",
+                        page=page,
+                        confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                        source="visual_features",
+                        source_detail="locate_anything:handwriting_grounding",
+                        evidence_source="visual_feature_model",
+                    )
+                )
         return boxes
 
     async def _confirm_seal_crop(

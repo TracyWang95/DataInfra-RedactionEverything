@@ -211,6 +211,28 @@ def _otsu_threshold_separability(gray: np.ndarray) -> tuple[int, float] | None:
     return t, eta
 
 
+def ink_foreground_mask(rgb: np.ndarray) -> np.ndarray:
+    """Boolean ink (foreground) mask over an HxWx3 uint8 RGB array.
+
+    A pixel is ink when it is dark (min channel below the luminance cut) OR a
+    saturated red-ink mark (red dominant over green/blue). This is the SINGLE
+    foreground identity shared by the ink-density gate below and the vertical
+    ink-hull measurement in the vision service — there is no second threshold
+    set, so both agree on what "ink" is.
+    """
+    red = rgb[:, :, 0]
+    green = rgb[:, :, 1]
+    blue = rgb[:, :, 2]
+    gray = rgb.min(axis=2)
+    dark = gray < _INK_DARK_MAX
+    red_mark = (
+        (red > _INK_RED_MIN)
+        & (red > green * _INK_RED_OVER_GREEN)
+        & (red > blue * _INK_RED_OVER_BLUE)
+    )
+    return dark | red_mark
+
+
 def region_has_visible_ink(
     image: Image.Image,
     left: int,
@@ -231,17 +253,8 @@ def region_has_visible_ink(
     crop = image.crop((x1, y1, x2, y2)).convert("RGB")
     arr = np.asarray(crop)
     area = max(1, crop.width * crop.height)
-    red = arr[:, :, 0]
-    green = arr[:, :, 1]
-    blue = arr[:, :, 2]
     gray = arr.min(axis=2)
-    dark = gray < _INK_DARK_MAX
-    red_mark = (
-        (red > _INK_RED_MIN)
-        & (red > green * _INK_RED_OVER_GREEN)
-        & (red > blue * _INK_RED_OVER_BLUE)
-    )
-    ink = int(np.count_nonzero(dark | red_mark))
+    ink = int(np.count_nonzero(ink_foreground_mask(arr)))
     density = ink / area
     page_area = max(1, width * height)
     region_area_ratio = area / page_area

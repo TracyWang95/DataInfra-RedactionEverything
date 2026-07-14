@@ -322,6 +322,12 @@ class Settings(BaseSettings):
     # (measured: 54s parallel vs ~10s serial on one file).
     SERIALIZE_SHARED_GPU_MODELS: bool = True
     VISION_DUAL_PIPELINE_PARALLEL: bool = False
+    # R7w gray-launch switch: adopt LocateAnything handwriting-grounding row
+    # geometry to coverage-preservingly tighten over-tall OCR value boxes.
+    # Default OFF — the tighten is leak-safe (hull(LA∪measured-ink), never below
+    # ink) but the LA grounding pass costs a GPU round-trip, so it is opt-in
+    # until validated on real forms.
+    VISION_LA_VERTICAL_TIGHTEN: bool = False
     # PaddleOCR-VL toggle. Dropped from the default deployment: when false the
     # backend never calls the VL /ocr endpoint and routes all OCR through
     # PP-StructureV3 (the current, faster, more precise path).

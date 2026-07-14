@@ -32,13 +32,17 @@ from app.services.vision.image_pipeline import (
     SourcePipeline,
     draw_preview_boxes,
 )
-from app.services.vision.locate_grounding import LocateAnythingGroundingService
+from app.services.vision.locate_grounding import (
+    _HANDWRITING_GROUNDING_QUERIES,
+    LocateAnythingGroundingService,
+)
 from app.services.vision.machine_code_detector import (
     BARCODE_SLUG,
     QR_CODE_SLUG,
     detect_machine_code_regions,
 )
 from app.services.vision.ocr_artifact_filter import (
+    ink_foreground_mask,
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
     text_evidence_hull,
@@ -83,6 +87,15 @@ _PDF_REDACTION_RENDER_SCALE = 2.0
 # duplicate (OCR line-wrap makes HaS return a heading both whole and as line
 # fragments). IoU dedup misses it because the size gap keeps IoU low.
 _CONTAINED_TEXT_DROP_RATIO = 0.85
+
+# Ink-hull measurement: a scan row is a printed horizontal rule (underline)
+# when its single longest contiguous ink run covers at least this fraction of
+# the value's field width. This is a SHAPE identity — a rule underlines the
+# whole field, so it is one full-width run, while a row of handwriting is
+# broken into short strokes whose longest run is a small fraction of the field.
+# Excluding such rows (printed furniture, never PII) keeps the measured hull on
+# the handwritten strokes; the 0.2 tolerance below full width absorbs scan gaps.
+_RULE_MIN_RUN_WIDTH_FRAC = 0.8
 
 
 def _elapsed_ms(start: float) -> int:
@@ -422,6 +435,10 @@ class VisionService:
             except Exception:
                 logger.warning("page-hallucinated card filter skipped", exc_info=True)
         all_boxes = self._deduplicate_boxes(all_boxes)
+        # R7w: coverage-preservingly tighten over-tall OCR value boxes using LA
+        # handwriting-grounding row geometry + measured ink hulls (env-gated,
+        # exception-swallowing). Placed after dedup / before signature padding.
+        all_boxes = await self._tighten_la_vertical_geometry(all_boxes, get_image_data, page)
         all_boxes = self._expand_signature_boxes(all_boxes)
         all_boxes = self._present_seals_as_visual(all_boxes)
 
@@ -646,6 +663,172 @@ class VisionService:
                 box.model_copy(update={"y": new_top, "height": new_bottom - new_top})
             )
         return result
+
+    @staticmethod
+    def _doc_line_height(boxes: list[BoundingBox]) -> float:
+        """Self-calibrated document line height (normalized) from the OCR boxes.
+
+        This must NOT be the median box height: char-box merge is exactly what
+        inflates some value boxes, so the median is contaminated by the tall
+        tail. But merge only ever GROWS a box's height (union over a taller
+        block) — it never shrinks one below the true single-line glyph height.
+        So the true line height is the LOWER envelope of the height
+        distribution, and a low quantile (median of the shorter half ≈ 25th
+        percentile) is a robust estimate immune to the inflated tail. Derived
+        purely from the page's own boxes — no fixed pixel constant. Returns 0.0
+        when there is nothing to calibrate from (caller then skips tightening).
+        """
+        hs = sorted(
+            b.height
+            for b in boxes
+            if b.source == "ocr_has" and str(b.text or "").strip() and b.height > 0
+        )
+        if not hs:
+            return 0.0
+        lower = hs[: max(1, len(hs) // 2)]
+        return lower[len(lower) // 2]
+
+    @staticmethod
+    def _full_width_rule_rows(mask: "np.ndarray") -> "np.ndarray":
+        """Per-row boolean selector marking rows that are a solid horizontal rule.
+
+        A printed underline underlines the whole field, so in its row the ink is
+        ONE contiguous run spanning ~the full crop width; a row of handwriting is
+        broken into short strokes whose longest contiguous run is a small
+        fraction of the field. The cut is on the longest run being essentially
+        the entire width (``_RULE_MIN_RUN_WIDTH_FRAC``) — a shape identity of
+        "a line", not a tuned score.
+        """
+        import numpy as np
+
+        h, w = mask.shape
+        out = np.zeros(h, dtype=bool)
+        if w == 0:
+            return out
+        floor = _RULE_MIN_RUN_WIDTH_FRAC * w
+        for i in range(h):
+            row = mask[i]
+            if not row.any():
+                continue
+            # longest contiguous run of True via run boundaries on a 0-padded row
+            edges = np.flatnonzero(np.diff(np.concatenate(([0], row.astype(np.int8), [0]))))
+            runs = edges[1::2] - edges[0::2]
+            if runs.size and int(runs.max()) >= floor:
+                out[i] = True
+        return out
+
+    def _measure_ink_hulls(
+        self,
+        image: "Image.Image",
+        boxes: list[BoundingBox],
+        la_boxes: list[BoundingBox],
+    ) -> dict[str, tuple[float, float]]:
+        """Measure each OCR text-value box's real ink y-extent from the image.
+
+        Feeds ``_adopt_la_vertical_geometry``'s coverage-preserving floor: the
+        tighten is ``hull(LA-row ∪ measured-ink)`` and can never collapse below
+        proven strokes. For each ``ocr_has`` value box we find the LA handwriting
+        box that grounds its row (x-overlap AND contains the box's y-center). In
+        that box's x span (the OCR value's proven char-crop), over a row window
+        self-calibrated to the LA box height ``[la.y - la.h, la.y + 2*la.h]``
+        (keeps the measurement on THIS row so a neighbouring row's ink can't
+        inflate the hull), we take the y upper/lower bound of foreground (ink)
+        pixels using the SAME ink identity as the density gate
+        (``ink_foreground_mask``), after excluding full-width horizontal rules
+        (printed underlines — see ``_full_width_rule_rows``).
+
+        Returns ``{box.id: (ink_top_norm, ink_bottom_norm)}`` only for boxes with
+        a matching LA row AND measurable stroke ink. A box absent from the dict
+        keeps its original (over-covering) geometry in the consumer — so any
+        analysis gap fails toward over-coverage, never a leak.
+        """
+        if not la_boxes:
+            return {}
+        try:
+            import numpy as np
+
+            rgb = np.asarray(image.convert("RGB"))
+        except Exception:
+            logger.warning("ink hull measurement unavailable; skipping", exc_info=True)
+            return {}
+        if rgb.ndim != 3 or rgb.shape[0] < 2 or rgb.shape[1] < 2:
+            return {}
+        ph, pw = rgb.shape[0], rgb.shape[1]
+        hulls: dict[str, tuple[float, float]] = {}
+        for box in boxes:
+            if box.source != "ocr_has" or not str(box.text or "").strip():
+                continue
+            cy = box.y + box.height / 2.0
+            candidates = [
+                la
+                for la in la_boxes
+                if self._x_overlap_fraction(box, la) > 0.0
+                and la.y <= cy <= la.y + la.height
+            ]
+            if not candidates:
+                continue
+            la = min(candidates, key=lambda l: abs((l.y + l.height / 2.0) - cy))
+            x0 = max(0, int(box.x * pw))
+            x1 = min(pw, int((box.x + box.width) * pw))
+            win_top = max(0, int((la.y - la.height) * ph))
+            win_bottom = min(ph, int((la.y + 2.0 * la.height) * ph))
+            if x1 - x0 < 1 or win_bottom - win_top < 1:
+                continue
+            crop = rgb[win_top:win_bottom, x0:x1]
+            mask = ink_foreground_mask(crop)
+            # exclude printed full-width underlines; strokes drive the hull
+            stroke_mask = mask.copy()
+            stroke_mask[self._full_width_rule_rows(mask)] = False
+            rows_with_ink = np.flatnonzero(stroke_mask.any(axis=1))
+            if rows_with_ink.size == 0:
+                continue
+            ink_top = (win_top + int(rows_with_ink.min())) / ph
+            ink_bottom = (win_top + int(rows_with_ink.max()) + 1) / ph
+            hulls[box.id] = (ink_top, ink_bottom)
+        return hulls
+
+    async def _tighten_la_vertical_geometry(
+        self,
+        all_boxes: list[BoundingBox],
+        get_image_data,
+        page: int,
+    ) -> list[BoundingBox]:
+        """Wire the R7c core into the pipeline: LA handwriting grounding + measured
+        ink hulls -> coverage-preserving vertical tighten of over-tall OCR value
+        boxes. Gated behind ``VISION_LA_VERTICAL_TIGHTEN`` (default off) and fully
+        exception-swallowing — any failure returns ``all_boxes`` untouched so the
+        main redaction path is never affected. GPU/image work is deferred until a
+        genuine over-tall candidate exists.
+        """
+        if not bool(getattr(settings, "VISION_LA_VERTICAL_TIGHTEN", False)):
+            return all_boxes
+        try:
+            doc_line_h = self._doc_line_height(all_boxes)
+            if doc_line_h <= 0:
+                return all_boxes
+            oversize_floor = 2.0 * doc_line_h
+            needs = [
+                b
+                for b in all_boxes
+                if b.source == "ocr_has"
+                and str(b.text or "").strip()
+                and b.height >= oversize_floor
+            ]
+            if not needs:
+                return all_boxes
+            image_data = await get_image_data()
+            la_hw = await self.visual_grounding.ground_handwriting(
+                image_data, list(_HANDWRITING_GROUNDING_QUERIES), page=page
+            )
+            if not la_hw:
+                return all_boxes
+            with Image.open(io.BytesIO(image_data)) as _img:
+                image = ImageOps.exif_transpose(_img).convert("RGB")
+            ink_hulls = self._measure_ink_hulls(image, all_boxes, la_hw)
+            return self._adopt_la_vertical_geometry(all_boxes, la_hw, doc_line_h, ink_hulls)
+        except Exception:
+            logger.warning("LA vertical tighten skipped", exc_info=True)
+            return all_boxes
 
     def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """Drop OCR text boxes fully contained in a LocateAnything signature box.
