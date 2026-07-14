@@ -8,6 +8,7 @@ dedupe.
 from __future__ import annotations
 
 import logging
+import os
 from difflib import SequenceMatcher
 
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
@@ -20,6 +21,7 @@ from app.services.vision.has_text_payload import (
 # Geometry cluster: parent uses these + re-exports the rest for the public API.
 from app.services.vision.ocr_cjk_geometry import (
     _CJK_LINE_HEIGHT_RATIO,
+    _column_split_char_boxes,
     _document_line_height,
     _entity_char_box_line_rects,
     _entity_span_char_boxes,  # noqa: F401
@@ -47,6 +49,55 @@ from app.services.vision.ocr_tuning import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _column_split_enabled() -> bool:
+    """Whether to feed merged double-column blocks downstream as per-column
+    sub-blocks (``REDACT_OCR_COLUMN_SPLIT``). Defaults OFF for a safe gray-launch
+    — read fresh each call so operators can flip it without a restart, and so the
+    shipped (un-split) behaviour is byte-identical until it is turned on."""
+    return os.getenv("REDACT_OCR_COLUMN_SPLIT", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _column_split_sub_blocks(block: OCRTextBlock) -> list[OCRTextBlock]:
+    """Per-column sub-blocks for a block whose chars form >= 2 em-gutter columns.
+
+    PaddleOCR-VL sometimes MERGES two side-by-side columns into one block; each
+    char keeps its own x but y collapses to the whole block's range, so a value
+    that lives in one column can align across the gutter and be masked as the
+    full-width slab. _column_split_char_boxes (self-calibrated em-gutter, no
+    hardcoded pixel threshold) splits the chars into per-column groups; each
+    group becomes a sub-block whose text is the group's chars, whose chars ARE
+    the group, and whose polygon is the group's x-union at the ORIGINAL block's
+    y range — the split only ever touches x, never y (vertical extent stays the
+    merged band, tightening is R7c's job).
+
+    Returns [] when the block has no chars or forms a single column, so the
+    caller adds nothing and behaviour is unchanged. LEAK-SAFETY: the caller
+    ALWAYS keeps the original block too, so a sub-block only ADDS a tighter
+    per-column candidate; a value that genuinely spans both columns matches
+    NEITHER sub-block (its glyphs are split) and stays covered by the original.
+    """
+    chars = getattr(block, "chars", None) or []
+    if not chars:
+        return []
+    groups = _column_split_char_boxes(chars)
+    if len(groups) <= 1:
+        return []
+    top = block.top
+    bottom = block.top + block.height
+    sub_blocks: list[OCRTextBlock] = []
+    for group in groups:
+        left = min(float(c["x1"]) for c in group)
+        right = max(float(c["x2"]) for c in group)
+        text = "".join(str(c.get("c", "")) for c in group)
+        polygon = [[left, top], [right, top], [right, bottom], [left, bottom]]
+        sub_blocks.append(
+            OCRTextBlock(text=text, polygon=polygon, confidence=block.confidence, chars=group)
+        )
+    return sub_blocks
 
 
 def _is_low_signal_vision_entity(entity_type: str, entity_text: str) -> bool:
@@ -611,6 +662,24 @@ def match_entities_to_ocr(
                 expanded_blocks.append(block)
         else:
             expanded_blocks.append(block)
+
+    # Merged double-column split (gated, default OFF). PaddleOCR-VL can merge two
+    # side-by-side columns into one block; a per-column value then aligns across
+    # the gutter and over-covers the full width. Feed each column group
+    # downstream as its own sub-block so the value matches its own column's tight
+    # char boxes; the ORIGINAL block is always kept (already appended above), so
+    # this only ADDS a tighter candidate and the existing prune/dedupe collapses
+    # the full-width twin — strictly coverage-preserving. Table-virtual cells
+    # already carry precise per-cell boxes, so they are skipped.
+    if _column_split_enabled():
+        column_sub_blocks: list[OCRTextBlock] = []
+        for block in expanded_blocks:
+            if id(block) in table_virtual_block_ids or block.text.startswith("<table"):
+                continue
+            column_sub_blocks.extend(_column_split_sub_blocks(block))
+        if column_sub_blocks:
+            logger.debug("Column-split emitted %d sub-blocks", len(column_sub_blocks))
+            expanded_blocks.extend(column_sub_blocks)
     # No visual-line reconstruction and no sub-span position/size estimation:
     # match against the real OCR blocks and redact the whole matched block. mIoU
     # is the sole merge step downstream.
