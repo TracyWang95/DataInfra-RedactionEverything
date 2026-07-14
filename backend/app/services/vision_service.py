@@ -1094,22 +1094,30 @@ class VisionService:
             if not self._should_keep_ocr_has_region(region.entity_type, region.text):
                 logger.debug("Skipping OCR-HaS semantic false positive: %s %s", region.entity_type, region.text)
                 continue
-            if is_page_edge_ocr_artifact(
-                region.left,
-                region.top,
-                region.width,
-                region.height,
-                width,
-                height,
-                region.entity_type,
-                region.text,
-                text_hull,
-                page_em,
-            ):
-                logger.debug("Skipping OCR region on page edge artifact: %s %s", region.entity_type, region.text)
-                continue
+            # A region is dropped ONLY when it carries no visible ink — an inked
+            # margin note or handwriting value is always kept, even outside the
+            # body-text hull. The page-edge/hull test may NOT short-circuit ahead
+            # of the ink gate (R9 verify): it only qualifies the drop reason, it
+            # can never remove an inked (potential-PII) region.
             if not region_has_visible_ink(img, region.left, region.top, region.width, region.height, region.entity_type):
-                logger.debug("Skipping OCR region on blank/low-ink area: %s %s", region.entity_type, region.text)
+                artifact = is_page_edge_ocr_artifact(
+                    region.left,
+                    region.top,
+                    region.width,
+                    region.height,
+                    width,
+                    height,
+                    region.entity_type,
+                    region.text,
+                    text_hull,
+                    page_em,
+                )
+                logger.debug(
+                    "Skipping inkless OCR region (%s): %s %s",
+                    "page-edge/outside-body" if artifact else "blank",
+                    region.entity_type,
+                    region.text,
+                )
                 continue
             if is_ocr_visual_seal:
                 left = max(0, min(width - 1, int(region.left)))
