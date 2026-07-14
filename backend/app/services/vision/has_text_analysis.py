@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from app.core.config import settings
@@ -57,6 +58,81 @@ logger = logging.getLogger(__name__)
 # The model judges what is a date; no hand-written pattern enumerates them.
 
 
+def _merge_ner_into_union(
+    union: dict[str, list[str]], result: Any
+) -> bool:
+    """Fold one NER pass into the running union; return whether it added anything.
+
+    Order-preserving, dedup within a type bucket. A bucket is only created when
+    a real (non-empty) value lands in it, so an all-empty pass never plants a
+    spurious empty type. Returns True iff at least one new (type,value) pair was
+    added — the caller reads that only as a budget-convergence signal.
+    """
+    if not isinstance(result, dict):
+        return False
+    added = False
+    for entity_type, values in result.items():
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not value:
+                continue
+            bucket = union.setdefault(entity_type, [])
+            if value not in bucket:
+                bucket.append(value)
+                added = True
+    return added
+
+
+def aggregate_ner_samples(
+    sample_fn: Callable[[int], Any],
+    max_passes: int,
+) -> tuple[dict[str, list[str]], int]:
+    """Self-consistent multi-pass NER union — pure core; the GPU loop is the caller's.
+
+    ``sample_fn(index)`` yields pass ``index``'s raw NER result (type->values).
+    Pass 0 MUST be the temp=0 greedy seed and passes >=1 temp>0 re-samples —
+    the caller wires temperature/sample-index per index (HaSClient.ner takes
+    both; the sample-index cache key keeps a temp>0 pass from being served the
+    seed's cached result and collapsing the union to a single 趟). This function
+    only owns the union + seed + stopping arithmetic.
+
+    Leak-safety (0 new leaks):
+      * The union is monotone non-decreasing — values only ever accumulate, so
+        it is always a SUPERSET of pass 0, i.e. of today's deterministic output.
+      * Convergence ("this pass added no new value") is ONLY a budget signal to
+        stop spending GPU — never evidence the page is clean. It is checked only
+        for passes after the seed, and it never rolls back the union already
+        gathered.
+      * Hallucinated values sampled at temp>0 stay in the union; the downstream
+        matcher is the leak-safe gate — it yields 0 region for any value that
+        does not occur in the OCR blocks. Growing the union cannot uncover PII.
+
+    接线 TODO (human GPU main loop): drive ``sample_fn`` as
+    ``lambda i: has_client.ner(text, types, temperature=(0.0 if i == 0 else T),
+    sample_index=i)`` inside shared_gpu_inference_slot; read ``max_passes`` from
+    a config knob; cache ONLY the returned union under the canonical
+    (sample_index=0) key for downstream reuse. Whether temp>0 sampling actually
+    lifts recall, and whether it saturates in 2-4 passes without EngineDead
+    bursts, is for real-GPU verification — not asserted here.
+
+    Returns ``(union, passes_run)``.
+    """
+    if max_passes < 1:
+        max_passes = 1
+    union: dict[str, list[str]] = {}
+    passes_run = 0
+    for index in range(max_passes):
+        result = sample_fn(index)
+        passes_run += 1
+        added = _merge_ner_into_union(union, result)
+        # index 0 is the temp=0 seed (its find is the union floor). Only a
+        # post-seed pass that adds nothing signals convergence -> stop.
+        if index > 0 and not added:
+            break
+    return union, passes_run
+
+
 async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: Any) -> None:
     """Model-driven AMOUNT value narrowing（人民币每亩每年100元 → 100元）.
 
@@ -76,6 +152,13 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
     label = str(getattr(settings, "AMOUNT_VALUE_QUERY_LABEL", "") or "").strip()
     if not label or not has_client:
         return
+    # Each per-entity re-ask goes through the global GPU gate, serialized like
+    # every other local model call. No concatenated batching: a shared context
+    # makes HaS return a shorter wrong substring of one value (欠盖), so每实体
+    # 独立一次、闸上串行。The slot is released between entities so unrelated
+    # pipeline GPU work can interleave.
+    from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
     split_entities: list[dict[str, str]] = []
     for entity in entities:
         if entity.get("type") != "AMOUNT":
@@ -84,7 +167,8 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
         if not original:
             continue
         try:
-            result = await asyncio.to_thread(has_client.ner, original, [label])
+            async with shared_gpu_inference_slot("OCR HaS AMOUNT value narrow"):
+                result = await asyncio.to_thread(has_client.ner, original, [label])
         except Exception as exc:
             logger.debug("amount value narrowing skipped for %r: %s", original, exc)
             continue
