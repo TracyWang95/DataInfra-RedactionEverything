@@ -370,6 +370,7 @@ class OcrHasVisionService:
         image_bytes: bytes,
         vision_types: list | None = None,
         draw_result: bool = True,
+        blocks_out: list | None = None,
     ) -> tuple[list[SensitiveRegion], str | None]:
         """
         检测敏感信息并在图像上绘制
@@ -437,6 +438,13 @@ class OcrHasVisionService:
             stage_status=duration_ms,
         )
         self.last_ocr_blocks = list(ocr_blocks)
+        # Per-call, race-free handoff: last_ocr_blocks is a process-wide singleton
+        # overwritten by any concurrent detect before a downstream reader (the
+        # dual pipeline's hallucinated-card gate) runs. Fill the caller's own list
+        # here, synchronously with this call's ocr_blocks, so that gate always
+        # judges THIS page's evidence.
+        if blocks_out is not None:
+            blocks_out[:] = ocr_blocks
         duration_ms["ocr"] = round((time.perf_counter() - ocr_start) * 1000)
         logger.info("OCR finished in %.2fs, blocks=%d", duration_ms["ocr"] / 1000, len(ocr_blocks))
 

@@ -412,7 +412,7 @@ class VisionService:
         # Small images are upscaled before LA now, which makes LA hallucinate
         # the whole document as an id_card (立案告知书 upscaled: 5/5). Drop a
         # card box that swallows all OCR text yet shows no card face evidence.
-        ocr_page_blocks = list(getattr(self.ocr_has_service, "last_ocr_blocks", []) or [])
+        ocr_page_blocks = list(getattr(self, "_page_ocr_blocks", None) or [])
         if ocr_page_blocks:
             try:
                 with Image.open(io.BytesIO(await get_image_data())) as _pg:
@@ -899,6 +899,9 @@ class VisionService:
             )
 
         regions = await self.ocr_has_service.detect_from_text_blocks(blocks, pipeline_types)
+        # This page's text blocks (local, off the singleton) for the same per-call
+        # hallucinated-card gate the image path feeds.
+        self._page_ocr_blocks = list(blocks)
         if getattr(self.ocr_has_service, "last_duration_ms", None):
             self.ocr_has_service.last_duration_ms["pdf_text_layer_extract"] = int(
                 self.last_pdf_text_layer_duration_ms
@@ -938,11 +941,16 @@ class VisionService:
         pipeline_types: list = None,
         draw_result: bool = True,
     ) -> tuple[list[BoundingBox], str | None]:
+        page_blocks: list = []
         regions, result_image_base64 = await self.ocr_has_service.detect_and_draw(
             image_data,
             vision_types=pipeline_types,
             draw_result=draw_result,
+            blocks_out=page_blocks,
         )
+        # This call's OCR blocks, captured off the process-wide singleton so the
+        # hallucinated-card gate never judges against a concurrent page's blocks.
+        self._page_ocr_blocks = page_blocks
 
         img = Image.open(io.BytesIO(image_data))
         img = ImageOps.exif_transpose(img)
