@@ -224,6 +224,12 @@ class Settings(BaseSettings):
     VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
     VISUAL_FEATURES_TIMEOUT: float = 240.0
     VISUAL_FEATURES_CONF: float = 0.25
+    # LA 多采样共识: 同图跑 N 次 seedless 采样, 只保留多数次都出现的框, 压 temp0.7
+    # 开放采样的波动(不动采样参数)。1=关(默认,向后兼容); 建议 3。
+    # MIN_VOTES=0 表示自动取多数(N//2+1)。结果按图片hash缓存, 重新识别返回同一结果。
+    LOCATE_ANYTHING_CONSENSUS_SAMPLES: int = 1
+    LOCATE_ANYTHING_CONSENSUS_MIN_VOTES: int = 0
+    LOCATE_ANYTHING_CONSENSUS_IOU: float = 0.5
     # LocateAnything's recall collapses when categories share one prompt, so the
     # detect stage always fans out one category per call; keep the zero-recall
     # tile retry on to recover small / edge objects the full-frame pass drops.

@@ -5,9 +5,11 @@ feature grounding.
 """
 import asyncio
 import base64
+import hashlib
 import inspect
 import io
 import logging
+from collections import OrderedDict
 import re
 import time
 import uuid
@@ -32,6 +34,7 @@ from app.services.vision.image_pipeline import (
     SourcePipeline,
     draw_preview_boxes,
 )
+from app.services.vision.la_consensus import consensus_boxes
 from app.services.vision.locate_grounding import (
     _HANDWRITING_GROUNDING_QUERIES,
     LocateAnythingGroundingService,
@@ -56,6 +59,11 @@ from app.services.vision.pdf_text_layer_probe import (
 VISUAL_TYPE_LABELS_ZH = {
     **SLUG_TO_NAME_ZH,
 }
+
+# LA 多采样共识结果缓存: key=sha256(image)+types+page -> (boxes, timings)。
+# 同一图重新识别返回同一共识结果(彻底稳定); 有界 LRU 防内存涨。
+_LA_CONSENSUS_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_LA_CONSENSUS_CACHE_MAX = 128
 
 # --- Merge / dedup parameters (NOT detection filters) -------------------------
 # Two boxes describe the SAME physical region when they overlap beyond these
@@ -1501,6 +1509,48 @@ class VisionService:
             )
         return extra
 
+    async def _detect_categories_consensus(
+        self,
+        image_data: bytes,
+        page: int,
+        fixed_types: list,
+    ) -> tuple[list[BoundingBox], dict]:
+        """LA 多采样共识包装 detect_categories。SAMPLES<=1 时直通(默认零开销)。
+        SAMPLES>1 时同图跑 N 次 seedless 采样取多数框(压 temp0.7 波动、保召回), 并按
+        图片hash缓存(重新识别返回同一结果、彻底稳定)。N 次串行, 避免 N×并发压垮 LA。"""
+        samples = int(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_SAMPLES", 1) or 1)
+        if samples <= 1:
+            return await self.visual_grounding.detect_categories(image_data, page, fixed_types)
+        type_key = ",".join(sorted(str(getattr(t, "id", t)) for t in (fixed_types or [])))
+        cache_key = f"{hashlib.sha256(image_data).hexdigest()}:{page}:{type_key}"
+        cached = _LA_CONSENSUS_CACHE.get(cache_key)
+        if cached is not None:
+            _LA_CONSENSUS_CACHE.move_to_end(cache_key)
+            return cached[0], {**cached[1], "consensus_cache_hit": 1}
+        runs: list[list[BoundingBox]] = []
+        first_timings: dict = {}
+        for i in range(samples):
+            boxes, timings = await self.visual_grounding.detect_categories(
+                image_data, page, fixed_types
+            )
+            runs.append(boxes)
+            if i == 0:
+                first_timings = timings
+        min_votes = int(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_MIN_VOTES", 0) or 0)
+        if min_votes <= 0:
+            min_votes = samples // 2 + 1
+        iou = float(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_IOU", 0.5))
+        merged = consensus_boxes(runs, min_votes, iou)
+        timings_out = {
+            **first_timings,
+            "consensus_samples": samples,
+            "consensus_min_votes": min_votes,
+        }
+        _LA_CONSENSUS_CACHE[cache_key] = (merged, timings_out)
+        while len(_LA_CONSENSUS_CACHE) > _LA_CONSENSUS_CACHE_MAX:
+            _LA_CONSENSUS_CACHE.popitem(last=False)
+        return merged, timings_out
+
     async def _detect_with_visual_features(
         self,
         image_data: bytes,
@@ -1511,7 +1561,7 @@ class VisionService:
         fixed_types, checklist_types = self._split_visual_feature_types(pipeline_types)
         # LocateAnything owns all visual features (seals included), detected per
         # category below; its output is trusted as-is.
-        locate_boxes, stage_duration_ms = await self.visual_grounding.detect_categories(
+        locate_boxes, stage_duration_ms = await self._detect_categories_consensus(
             image_data,
             page,
             fixed_types,
