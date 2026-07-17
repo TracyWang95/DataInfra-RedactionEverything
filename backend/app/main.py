@@ -41,6 +41,7 @@ from app.core.config import settings
 from app.core.errors import AppError, app_error_handler, http_exception_handler, validation_exception_handler
 from app.core.gpu_memory import query_gpu_memory as _query_gpu_memory
 from app.core.gpu_memory import query_gpu_memory_all as _query_gpu_memory_all
+from app.core.gpu_memory import filter_visible_gpu_cards as _filter_visible_gpu_cards
 from app.core.health_checks import check_has_ner_health, check_ocr_health_sync, check_service_health_sync
 from app.core.license import get_license_state
 from app.core.logging_config import setup_logging
@@ -555,6 +556,8 @@ async def services_health():
 
     gpu_mem = await loop.run_in_executor(None, _query_gpu_memory)
     gpu_mem_all = await loop.run_in_executor(None, _query_gpu_memory_all)
+    # 只显示本项目使用的卡（共享机上其它卡属于别的项目）；VISIBLE_GPU_INDICES 空=全显示
+    gpu_mem_all = _filter_visible_gpu_cards(gpu_mem_all, settings.VISIBLE_GPU_INDICES)
 
     services["paddle_ocr"] = ocr_result.as_service_payload()
     services["has_ner"] = has_result.as_service_payload()

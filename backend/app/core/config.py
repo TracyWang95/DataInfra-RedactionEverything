@@ -185,6 +185,10 @@ class Settings(BaseSettings):
     # API 配置
     API_PREFIX: str = "/api/v1"
 
+    # "本地服务"面板只显示本项目使用的 GPU 卡（nvidia-smi 物理 index，逗号/空格分隔）。
+    # 共享多卡机上其它卡属于别的项目；空=显示全部（单机/开发向后兼容）。如 "6,7"。
+    VISIBLE_GPU_INDICES: str = ""
+
     # CORS 配置
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
