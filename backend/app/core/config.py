@@ -185,6 +185,10 @@ class Settings(BaseSettings):
     # API 配置
     API_PREFIX: str = "/api/v1"
 
+    # "本地服务"面板只显示本项目使用的 GPU 卡（nvidia-smi 物理 index，逗号/空格分隔）。
+    # 共享多卡机上其它卡属于别的项目；空=显示全部（单机/开发向后兼容）。如 "6,7"。
+    VISIBLE_GPU_INDICES: str = ""
+
     # CORS 配置
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
@@ -220,6 +224,12 @@ class Settings(BaseSettings):
     VISUAL_FEATURES_MODEL_NAME: str = "LocateAnything-3B"
     VISUAL_FEATURES_TIMEOUT: float = 240.0
     VISUAL_FEATURES_CONF: float = 0.25
+    # LA 多采样共识: 同图跑 N 次 seedless 采样, 只保留多数次都出现的框, 压 temp0.7
+    # 开放采样的波动(不动采样参数)。1=关(默认,向后兼容); 建议 3。
+    # MIN_VOTES=0 表示自动取多数(N//2+1)。结果按图片hash缓存, 重新识别返回同一结果。
+    LOCATE_ANYTHING_CONSENSUS_SAMPLES: int = 1
+    LOCATE_ANYTHING_CONSENSUS_MIN_VOTES: int = 0
+    LOCATE_ANYTHING_CONSENSUS_IOU: float = 0.5
     # LocateAnything's recall collapses when categories share one prompt, so the
     # detect stage always fans out one category per call; keep the zero-recall
     # tile retry on to recover small / edge objects the full-frame pass drops.
@@ -322,6 +332,12 @@ class Settings(BaseSettings):
     # (measured: 54s parallel vs ~10s serial on one file).
     SERIALIZE_SHARED_GPU_MODELS: bool = True
     VISION_DUAL_PIPELINE_PARALLEL: bool = False
+    # R7w gray-launch switch: adopt LocateAnything handwriting-grounding row
+    # geometry to coverage-preservingly tighten over-tall OCR value boxes.
+    # Default OFF — the tighten is leak-safe (hull(LA∪measured-ink), never below
+    # ink) but the LA grounding pass costs a GPU round-trip, so it is opt-in
+    # until validated on real forms.
+    VISION_LA_VERTICAL_TIGHTEN: bool = False
     # PaddleOCR-VL toggle. Dropped from the default deployment: when false the
     # backend never calls the VL /ocr endpoint and routes all OCR through
     # PP-StructureV3 (the current, faster, more precise path).
@@ -382,6 +398,14 @@ class Settings(BaseSettings):
     # 1 = 历史串行行为（单卡小显存部署安全默认）；vLLM 多实例部署可放开
     # （双卡 5090 生产 = 6：双实例 × 每实例 ~3，受 KV cache 预算约束）。
     HAS_NER_GLOBAL_MAX_INFLIGHT: int = 1
+    # 自洽多趟 NER 采样（R4 leak-safe 并集）。K = 主 payload 的采样趟数。
+    # K=1 = 现状：单趟 temp=0 贪心种子，与历史逐字等价。并集只增不减 => 恒 ⊇
+    # 种子 = 现状超集；temp>0 趟采出的幻觉值交下游 matcher 网住（不匹配 OCR 块
+    # 即产 0 region），故放大 K 不新增泄露。第 0 趟恒 temp=0 种子，>=1 趟用
+    # HAS_NER_SELF_CONSIST_TEMPERATURE 采样。默认保守（K=1 关闭），人类 GPU
+    # 验证 temp>0 是否提升召回 / 是否 2-3 趟饱和 / 是否触发 EngineDead 后再灰度。
+    HAS_NER_SELF_CONSIST_SAMPLES: int = 1
+    HAS_NER_SELF_CONSIST_TEMPERATURE: float = 0.7
 
     # --- 批量异步导出（万级文件：分卷落盘，见 services/export_service.py） ---
     EXPORT_VOLUME_MAX_BYTES: int = 2 * 1024**3   # 每卷 zip ≤2GB
@@ -621,6 +645,16 @@ class Settings(BaseSettings):
     @classmethod
     def _validate_has_ner_global_max_inflight(cls, v: int) -> int:
         return max(1, min(12, v))
+
+    @field_validator("HAS_NER_SELF_CONSIST_SAMPLES")
+    @classmethod
+    def _validate_has_ner_self_consist_samples(cls, v: int) -> int:
+        return max(1, min(8, v))
+
+    @field_validator("HAS_NER_SELF_CONSIST_TEMPERATURE")
+    @classmethod
+    def _validate_has_ner_self_consist_temperature(cls, v: float) -> float:
+        return max(0.0, min(2.0, v))
 
     @field_validator("HAS_NER_CUSTOM_MAX_TYPES_PER_REQUEST")
     @classmethod

@@ -56,11 +56,8 @@ def _render_text_tile(text: str, fontsize: int = 30) -> Image.Image:
 
 
 def _tile_overlay(size: tuple[int, int], tile: Image.Image) -> Image.Image:
-    """斜排平铺：旋转文字块后按对角网格铺满画布。"""
+    """斜排平铺：旋转文字块后按对角网格铺满画布，最后一次性压到目标透明度。"""
     rotated = tile.rotate(_ANGLE_DEG, expand=True, resample=Image.BICUBIC)
-    # 压 alpha 到目标透明度
-    alpha = rotated.getchannel("A").point(lambda a: int(a * _IMAGE_ALPHA))
-    rotated.putalpha(alpha)
     overlay = Image.new("RGBA", size, (0, 0, 0, 0))
     step_x = rotated.width + max(60, rotated.width // 2)
     step_y = rotated.height + max(50, rotated.height // 2)
@@ -68,6 +65,11 @@ def _tile_overlay(size: tuple[int, int], tile: Image.Image) -> Image.Image:
         offset = (row % 2) * (step_x // 2)
         for x in range(-rotated.width, size[0] + rotated.width, step_x):
             overlay.paste(rotated, (x + offset, y), rotated)
+    # 平铺时用满不透明瓦片以保持文字颜色，最后再一次性把整层压到目标透明度。
+    # 切勿在 paste 前先 putalpha(α*_IMAGE_ALPHA) 又拿同一张图当 mask —— 那会使
+    # paste 结果 α = 源α × mask，透明度被平方(0.16→0.024)近乎不可见（W2-1 根因）。
+    faded = overlay.getchannel("A").point(lambda a: int(a * _IMAGE_ALPHA))
+    overlay.putalpha(faded)
     return overlay
 
 

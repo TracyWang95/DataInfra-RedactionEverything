@@ -5,9 +5,11 @@ feature grounding.
 """
 import asyncio
 import base64
+import hashlib
 import inspect
 import io
 import logging
+from collections import OrderedDict
 import re
 import time
 import uuid
@@ -32,15 +34,21 @@ from app.services.vision.image_pipeline import (
     SourcePipeline,
     draw_preview_boxes,
 )
-from app.services.vision.locate_grounding import LocateAnythingGroundingService
+from app.services.vision.la_consensus import consensus_boxes
+from app.services.vision.locate_grounding import (
+    _HANDWRITING_GROUNDING_QUERIES,
+    LocateAnythingGroundingService,
+)
 from app.services.vision.machine_code_detector import (
     BARCODE_SLUG,
     QR_CODE_SLUG,
     detect_machine_code_regions,
 )
 from app.services.vision.ocr_artifact_filter import (
+    ink_foreground_mask,
     is_page_edge_ocr_artifact,
     region_has_visible_ink,
+    text_evidence_hull,
 )
 from app.services.vision.pdf_text_layer_probe import (
     _get_pdf_text_layer_probe_lock,
@@ -51,6 +59,11 @@ from app.services.vision.pdf_text_layer_probe import (
 VISUAL_TYPE_LABELS_ZH = {
     **SLUG_TO_NAME_ZH,
 }
+
+# LA 多采样共识结果缓存: key=sha256(image)+types+page -> (boxes, timings)。
+# 同一图重新识别返回同一共识结果(彻底稳定); 有界 LRU 防内存涨。
+_LA_CONSENSUS_CACHE: "OrderedDict[str, tuple]" = OrderedDict()
+_LA_CONSENSUS_CACHE_MAX = 128
 
 # --- Merge / dedup parameters (NOT detection filters) -------------------------
 # Two boxes describe the SAME physical region when they overlap beyond these
@@ -77,6 +90,20 @@ _BLUR_RADIUS_BASE = 1
 _BLUR_RADIUS_MAX_SPAN = 24
 # Rasterization scale for redacting PDF pages.
 _PDF_REDACTION_RENDER_SCALE = 2.0
+
+# A text region this fraction inside a larger same-type region is a redundant
+# duplicate (OCR line-wrap makes HaS return a heading both whole and as line
+# fragments). IoU dedup misses it because the size gap keeps IoU low.
+_CONTAINED_TEXT_DROP_RATIO = 0.85
+
+# Ink-hull measurement: a scan row is a printed horizontal rule (underline)
+# when its single longest contiguous ink run covers at least this fraction of
+# the value's field width. This is a SHAPE identity — a rule underlines the
+# whole field, so it is one full-width run, while a row of handwriting is
+# broken into short strokes whose longest run is a small fraction of the field.
+# Excluding such rows (printed furniture, never PII) keeps the measured hull on
+# the handwritten strokes; the 0.2 tolerance below full width absorbs scan gaps.
+_RULE_MIN_RUN_WIDTH_FRAC = 0.8
 
 
 def _elapsed_ms(start: float) -> int:
@@ -394,6 +421,7 @@ class VisionService:
                     result = exc
                 await record_pipeline_result(label, result)
 
+        all_boxes = self._drop_signatures_on_recognized_text(all_boxes)
         all_boxes = self._suppress_text_in_signature(all_boxes)
         all_boxes = self._prefer_vl_seals(all_boxes)
         all_boxes = self._prefer_yolo_machine_codes(all_boxes)
@@ -407,7 +435,7 @@ class VisionService:
         # Small images are upscaled before LA now, which makes LA hallucinate
         # the whole document as an id_card (立案告知书 upscaled: 5/5). Drop a
         # card box that swallows all OCR text yet shows no card face evidence.
-        ocr_page_blocks = list(getattr(self.ocr_has_service, "last_ocr_blocks", []) or [])
+        ocr_page_blocks = list(getattr(self, "_page_ocr_blocks", None) or [])
         if ocr_page_blocks:
             try:
                 with Image.open(io.BytesIO(await get_image_data())) as _pg:
@@ -416,6 +444,10 @@ class VisionService:
             except Exception:
                 logger.warning("page-hallucinated card filter skipped", exc_info=True)
         all_boxes = self._deduplicate_boxes(all_boxes)
+        # R7w: coverage-preservingly tighten over-tall OCR value boxes using LA
+        # handwriting-grounding row geometry + measured ink hulls (env-gated,
+        # exception-swallowing). Placed after dedup / before signature padding.
+        all_boxes = await self._tighten_la_vertical_geometry(all_boxes, get_image_data, page)
         all_boxes = self._expand_signature_boxes(all_boxes)
         all_boxes = self._present_seals_as_visual(all_boxes)
 
@@ -510,54 +542,429 @@ class VisionService:
         cy = inner.y + inner.height / 2.0
         return outer.x <= cx <= outer.x + outer.width and outer.y <= cy <= outer.y + outer.height
 
-    def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """Drop OCR text boxes that coincide with a LocateAnything signature box.
+    @staticmethod
+    def _x_overlap_fraction(a: BoundingBox, b: BoundingBox) -> float:
+        """Horizontal overlap as a fraction of the narrower box (0..1)."""
+        lo = max(a.x, b.x)
+        hi = min(a.x + a.width, b.x + b.width)
+        return max(0.0, hi - lo) / max(1e-9, min(a.width, b.width))
 
-        OCR reading the signature scribble as text is a false positive. An
-        ocr_has text box whose center sits inside a visual signature box (or that
-        contains the signature's center) is suppressed in favour of the signature
-        box. Center-point anchoring is an identity-grade geometric test.
+    @staticmethod
+    def _has_vertically_disjoint_pair(boxes: list[BoundingBox]) -> bool:
+        """True if any two boxes in the column don't vertically overlap.
+
+        Two vertically disjoint LA boxes mean two distinct text rows live in
+        this column — the value's row is then ambiguous.
+        """
+        for i in range(len(boxes)):
+            a = boxes[i]
+            for j in range(i + 1, len(boxes)):
+                b = boxes[j]
+                overlap = min(a.y + a.height, b.y + b.height) - max(a.y, b.y)
+                if overlap <= 1e-9:
+                    return True
+        return False
+
+    def _adopt_la_vertical_geometry(
+        self,
+        boxes: list[BoundingBox],
+        la_boxes: list[BoundingBox],
+        doc_line_h: float,
+        ink_hulls: dict[str, tuple[float, float]] | None = None,
+    ) -> list[BoundingBox]:
+        """Tighten an OCR text-value box's *virtual* vertical height using the
+        LA handwriting box that grounds its row — coverage-preservingly.
+
+        On photographed forms PaddleOCR-VL emits per-glyph char boxes that all
+        carry the merged block's full y-range (no true per-glyph vertical
+        geometry), so a handwritten value's box is too tall and, on a tilted
+        multi-column form, spans into a neighbouring row. LocateAnything grounds
+        the handwriting as a real 2D box — tight y, tilt-correct.
+
+        The old version bare-replaced y/height with LA's, which is unsafe two
+        ways: LA frames only the densest strokes (undercovering a descender /
+        flourish), and on a wrong/ambiguous match it could re-anchor to the
+        wrong row (a reverse leak). This version is a *coverage consumer*:
+
+          (a) Error-row guard: a candidate LA must contain the OCR box's
+              y-center (``la.y <= cy <= la.y+la.h``); among valid candidates
+              take the one whose center is nearest cy. If cy falls in the gutter
+              between LA rows (no LA row contains it) -> refuse to correct and
+              keep the original over-covering OCR box (failure = don't correct,
+              never re-anchor).
+          (b) Ambiguity: if the column holds >=2 vertically-disjoint LA
+              candidates (two distinct rows), the value's row can't be
+              determined -> keep the original OCR box.
+          (c) Coverage-preserving height (core): do NOT bare-replace. The new
+              vertical extent is the hull of the LA box's y-range UNION the
+              entity's *proven* ink hull (``ink_hulls[box.id]`` = the measured
+              y-range of the entity's own dark strokes, floor). New
+              ``y1 = min(la.y, ink_top)``, ``y2 = max(la.y+la.h, ink_bottom)``;
+              the OCR box's x (char-crop, proven) is kept. This drops LA-external
+              virtual height while never shrinking below real ink — any
+              descender/flourish inside the ink hull stays covered.
+          (d) Only *confirmed* over-tall boxes are touched: those with
+              ``height >= 2 * doc_line_h`` (``doc_line_h`` = the document's own
+              self-calibrated line height, e.g. ``text_evidence_hull``'s median
+              text-region em). Normal-height boxes are returned unchanged so we
+              never disturb a box that is already right.
+
+        Every failure path (no LA match / no ink floor / ambiguity / gutter /
+        not over-tall) returns the original over-covering box, so coverage is
+        monotone non-decreasing versus the bare-replace it supersedes.
+
+        Pure geometry only. WIRING TODO (human, in the dual pipeline):
+          1. Measure each candidate text box's ink y-hull from the image (dark
+             pixels of that entity's strokes) and pass it in ``ink_hulls`` keyed
+             by ``box.id``; ``region_has_visible_ink`` / ``text_evidence_hull``
+             are the existing per-entity ink probes to build it from.
+          2. Source ``la_boxes`` by cropping the over-tall box's column strip and
+             running LA grounding on it (GPU).
+          3. On LA empty / miss for a box, pass no candidate — this function
+             keeps the original box.
+          4. Pass ``doc_line_h`` = the self-calibrated line em (e.g.
+             ``text_evidence_hull(regions)[1]``), never a fixed pixel constant.
+        """
+        if not la_boxes or doc_line_h <= 0:
+            return boxes
+        ink_hulls = ink_hulls or {}
+        oversize_floor = 2.0 * doc_line_h
+        result: list[BoundingBox] = []
+        for box in boxes:
+            if box.source != "ocr_has" or not str(box.text or "").strip():
+                result.append(box)
+                continue
+            # (d) only confirmed-oversize boxes are candidates for tightening
+            if box.height < oversize_floor:
+                result.append(box)
+                continue
+            top, bottom = box.y, box.y + box.height
+            # same-column candidates: horizontal overlap AND vertical intersection
+            column = [
+                la
+                for la in la_boxes
+                if self._x_overlap_fraction(box, la) > 0.0
+                and min(bottom, la.y + la.height) - max(top, la.y) > 1e-9
+            ]
+            if not column:
+                result.append(box)
+                continue
+            # (b) two distinct rows in the column -> ambiguous
+            if self._has_vertically_disjoint_pair(column):
+                result.append(box)
+                continue
+            # (a) error-row guard: keep only LA rows containing the OCR y-center
+            cy = box.y + box.height / 2.0
+            valid = [la for la in column if la.y <= cy <= la.y + la.height]
+            if not valid:
+                result.append(box)  # cy in gutter / no row contains it
+                continue
+            best = min(valid, key=lambda la: abs((la.y + la.height / 2.0) - cy))
+            # (c) coverage-preserving height: hull(LA y-range ∪ proven ink hull)
+            ink = ink_hulls.get(box.id)
+            if ink is None:
+                result.append(box)  # no measured ink floor -> cannot safely tighten
+                continue
+            ink_top, ink_bottom = ink
+            new_top = min(best.y, ink_top)
+            new_bottom = max(best.y + best.height, ink_bottom)
+            result.append(
+                box.model_copy(update={"y": new_top, "height": new_bottom - new_top})
+            )
+        return result
+
+    @staticmethod
+    def _doc_line_height(boxes: list[BoundingBox]) -> float:
+        """Self-calibrated document line height (normalized) from the OCR boxes.
+
+        This must NOT be the median box height: char-box merge is exactly what
+        inflates some value boxes, so the median is contaminated by the tall
+        tail. But merge only ever GROWS a box's height (union over a taller
+        block) — it never shrinks one below the true single-line glyph height.
+        So the true line height is the LOWER envelope of the height
+        distribution, and a low quantile (median of the shorter half ≈ 25th
+        percentile) is a robust estimate immune to the inflated tail. Derived
+        purely from the page's own boxes — no fixed pixel constant. Returns 0.0
+        when there is nothing to calibrate from (caller then skips tightening).
+        """
+        hs = sorted(
+            b.height
+            for b in boxes
+            if b.source == "ocr_has" and str(b.text or "").strip() and b.height > 0
+        )
+        if not hs:
+            return 0.0
+        lower = hs[: max(1, len(hs) // 2)]
+        return lower[len(lower) // 2]
+
+    @staticmethod
+    def _full_width_rule_rows(mask: "np.ndarray") -> "np.ndarray":
+        """Per-row boolean selector marking rows that are a solid horizontal rule.
+
+        A printed underline underlines the whole field, so in its row the ink is
+        ONE contiguous run spanning ~the full crop width; a row of handwriting is
+        broken into short strokes whose longest contiguous run is a small
+        fraction of the field. The cut is on the longest run being essentially
+        the entire width (``_RULE_MIN_RUN_WIDTH_FRAC``) — a shape identity of
+        "a line", not a tuned score.
+        """
+        import numpy as np
+
+        h, w = mask.shape
+        out = np.zeros(h, dtype=bool)
+        if w == 0:
+            return out
+        floor = _RULE_MIN_RUN_WIDTH_FRAC * w
+        for i in range(h):
+            row = mask[i]
+            if not row.any():
+                continue
+            # longest contiguous run of True via run boundaries on a 0-padded row
+            edges = np.flatnonzero(np.diff(np.concatenate(([0], row.astype(np.int8), [0]))))
+            runs = edges[1::2] - edges[0::2]
+            if runs.size and int(runs.max()) >= floor:
+                out[i] = True
+        return out
+
+    def _measure_ink_hulls(
+        self,
+        image: "Image.Image",
+        boxes: list[BoundingBox],
+        la_boxes: list[BoundingBox],
+    ) -> dict[str, tuple[float, float]]:
+        """Measure each OCR text-value box's real ink y-extent from the image.
+
+        Feeds ``_adopt_la_vertical_geometry``'s coverage-preserving floor: the
+        tighten is ``hull(LA-row ∪ measured-ink)`` and can never collapse below
+        proven strokes. For each ``ocr_has`` value box we find the LA handwriting
+        box that grounds its row (x-overlap AND contains the box's y-center). In
+        that box's x span (the OCR value's proven char-crop), over a row window
+        self-calibrated to the LA box height ``[la.y - la.h, la.y + 2*la.h]``
+        (keeps the measurement on THIS row so a neighbouring row's ink can't
+        inflate the hull), we take the y upper/lower bound of foreground (ink)
+        pixels using the SAME ink identity as the density gate
+        (``ink_foreground_mask``), after excluding full-width horizontal rules
+        (printed underlines — see ``_full_width_rule_rows``).
+
+        Returns ``{box.id: (ink_top_norm, ink_bottom_norm)}`` only for boxes with
+        a matching LA row AND measurable stroke ink. A box absent from the dict
+        keeps its original (over-covering) geometry in the consumer — so any
+        analysis gap fails toward over-coverage, never a leak.
+        """
+        if not la_boxes:
+            return {}
+        try:
+            import numpy as np
+
+            rgb = np.asarray(image.convert("RGB"))
+        except Exception:
+            logger.warning("ink hull measurement unavailable; skipping", exc_info=True)
+            return {}
+        if rgb.ndim != 3 or rgb.shape[0] < 2 or rgb.shape[1] < 2:
+            return {}
+        ph, pw = rgb.shape[0], rgb.shape[1]
+        hulls: dict[str, tuple[float, float]] = {}
+        for box in boxes:
+            if box.source != "ocr_has" or not str(box.text or "").strip():
+                continue
+            cy = box.y + box.height / 2.0
+            candidates = [
+                la
+                for la in la_boxes
+                if self._x_overlap_fraction(box, la) > 0.0
+                and la.y <= cy <= la.y + la.height
+            ]
+            if not candidates:
+                continue
+            la = min(candidates, key=lambda l: abs((l.y + l.height / 2.0) - cy))
+            x0 = max(0, int(box.x * pw))
+            x1 = min(pw, int((box.x + box.width) * pw))
+            win_top = max(0, int((la.y - la.height) * ph))
+            win_bottom = min(ph, int((la.y + 2.0 * la.height) * ph))
+            if x1 - x0 < 1 or win_bottom - win_top < 1:
+                continue
+            crop = rgb[win_top:win_bottom, x0:x1]
+            mask = ink_foreground_mask(crop)
+            # exclude printed full-width underlines; strokes drive the hull
+            stroke_mask = mask.copy()
+            stroke_mask[self._full_width_rule_rows(mask)] = False
+            rows_with_ink = np.flatnonzero(stroke_mask.any(axis=1))
+            if rows_with_ink.size == 0:
+                continue
+            ink_top = (win_top + int(rows_with_ink.min())) / ph
+            ink_bottom = (win_top + int(rows_with_ink.max()) + 1) / ph
+            hulls[box.id] = (ink_top, ink_bottom)
+        return hulls
+
+    async def _tighten_la_vertical_geometry(
+        self,
+        all_boxes: list[BoundingBox],
+        get_image_data,
+        page: int,
+    ) -> list[BoundingBox]:
+        """Wire the R7c core into the pipeline: LA handwriting grounding + measured
+        ink hulls -> coverage-preserving vertical tighten of over-tall OCR value
+        boxes. Gated behind ``VISION_LA_VERTICAL_TIGHTEN`` (default off) and fully
+        exception-swallowing — any failure returns ``all_boxes`` untouched so the
+        main redaction path is never affected. GPU/image work is deferred until a
+        genuine over-tall candidate exists.
+        """
+        if not bool(getattr(settings, "VISION_LA_VERTICAL_TIGHTEN", False)):
+            return all_boxes
+        try:
+            doc_line_h = self._doc_line_height(all_boxes)
+            if doc_line_h <= 0:
+                return all_boxes
+            oversize_floor = 2.0 * doc_line_h
+            needs = [
+                b
+                for b in all_boxes
+                if b.source == "ocr_has"
+                and str(b.text or "").strip()
+                and b.height >= oversize_floor
+            ]
+            if not needs:
+                return all_boxes
+            image_data = await get_image_data()
+            la_hw = await self.visual_grounding.ground_handwriting(
+                image_data, list(_HANDWRITING_GROUNDING_QUERIES), page=page
+            )
+            if not la_hw:
+                return all_boxes
+            with Image.open(io.BytesIO(image_data)) as _img:
+                image = ImageOps.exif_transpose(_img).convert("RGB")
+            ink_hulls = self._measure_ink_hulls(image, all_boxes, la_hw)
+            return self._adopt_la_vertical_geometry(all_boxes, la_hw, doc_line_h, ink_hulls)
+        except Exception:
+            logger.warning("LA vertical tighten skipped", exc_info=True)
+            return all_boxes
+
+    def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """Drop OCR text boxes fully contained in a LocateAnything signature box.
+
+        OCR reading the signature scribble as text is a false positive. But the
+        old test — text center in the sig OR sig center in the text — dropped a
+        WIDE PII text box the moment a small signature core landed inside it, a
+        missed redaction. Coverage precondition instead: drop the ocr_has text
+        box ONLY when it is geometrically contained in the signature box
+        (smaller_overlap(text, sig) == 1.0). The comparison uses a locally
+        pad-expanded copy of the sig — pad = _SIGNATURE_REDACTION_PAD, the SAME
+        scale _expand_signature_boxes grows the signature mask to downstream — so
+        any text we drop here is provably inside the FINAL signature mask;
+        coverage is monotone. A wide PII box that merely overlaps a small
+        signature core sticks out of the padded sig, so both boxes survive.
         """
         sig_types = {"signature", "handwriting", "approval_mark"}
         sigs = [b for b in boxes if b.source == "visual_features" and b.type in sig_types]
         if not sigs:
             return boxes
+        pad = _SIGNATURE_REDACTION_PAD
+        padded_sig_rects = [
+            (
+                max(0.0, s.x - s.width * pad),
+                max(0.0, s.y - s.height * pad),
+                min(1.0, s.x + s.width + s.width * pad),
+                min(1.0, s.y + s.height + s.height * pad),
+            )
+            for s in sigs
+        ]
         kept: list[BoundingBox] = []
         dropped = 0
         for b in boxes:
             if b.source == "ocr_has" and any(
-                self._center_inside(b, s) or self._center_inside(s, b) for s in sigs
+                px1 <= b.x
+                and py1 <= b.y
+                and b.x + b.width <= px2
+                and b.y + b.height <= py2
+                for px1, py1, px2, py2 in padded_sig_rects
             ):
                 dropped += 1
                 continue
             kept.append(b)
         if dropped:
-            logger.info("Suppressed %d OCR text box(es) inside a signature region", dropped)
+            logger.info("Suppressed %d OCR text box(es) contained in a signature region", dropped)
         return kept
+
+    def _drop_signatures_on_recognized_text(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """Cross-model check: drop a visual 'signature' that lands on a region the
+        text model already recognised as a named entity.
+
+        LocateAnything sometimes grounds a PRINTED name/field (e.g. the 姓名 cell
+        '曹慧桐', OCR conf 1.0) as a signature. That is a two-model disagreement:
+        the text model read clean high-confidence characters there, so the pixels
+        are printed text, not a handwritten mark — the phantom signature loses.
+        A GENUINE handwritten signature has NO clean text box under it (OCR cannot
+        read the scribble), so it never matches and survives untouched (measured:
+        real handwriting 0% overlap vs printed-name signature 81%).
+
+        0-miss safe by construction: we only drop when the signature's area mostly
+        coincides with an ocr_has entity box, and that entity box is itself a
+        redaction region — so the pixels stay masked; only the redundant duplicate
+        label goes. Runs BEFORE _suppress_text_in_signature so the entity box it
+        cross-checks against is still present.
+        """
+        sig_types = {"signature", "handwriting", "approval_mark"}
+        sigs = [b for b in boxes if b.source == "visual_features" and b.type in sig_types]
+        entities = [b for b in boxes if b.source == "ocr_has" and str(getattr(b, "text", "")).strip()]
+        if not sigs or not entities:
+            return boxes
+        drop_ids: set[int] = set()
+        for s in sigs:
+            s_area = max(s.width * s.height, 1e-9)
+            for t in entities:
+                ix = min(s.x + s.width, t.x + t.width) - max(s.x, t.x)
+                iy = min(s.y + s.height, t.y + t.height) - max(s.y, t.y)
+                if ix <= 0 or iy <= 0:
+                    continue
+                # majority of the signature coincides with a recognised text entity
+                if (ix * iy) / s_area > 0.5:
+                    drop_ids.add(id(s))
+                    break
+        if not drop_ids:
+            return boxes
+        logger.info(
+            "Cross-check: dropped %d phantom signature(s) grounded on recognised OCR text "
+            "(region stays masked by the entity box)", len(drop_ids)
+        )
+        return [b for b in boxes if id(b) not in drop_ids]
 
     def _prefer_vl_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """For official_seal, prefer OCR/VL boxes over LocateAnything boxes.
 
         VL (ocr_has) segments stacked stamps into one box per seal; LocateAnything
-        often over-merges them into a single tall strip. Where a VL seal coincides
-        with an LA seal (centers mutually contain), drop the LA box so the VL split
-        wins. LA seals with no VL counterpart are kept (gap-fill for stamps VL
-        missed). If VL produced no seals, keep every LA seal unchanged.
+        often over-merges them into a single tall strip. The old test dropped the
+        LA strip whenever ONE VL seal's center fell inside it — but an LA strip
+        that spans TWO stacked stamps and only one of which VL found would then be
+        dropped, uncovering the stamp VL missed (a missed redaction). Coverage
+        precondition instead: drop the LA seal ONLY when the true union of the VL
+        seals intersecting it fully covers it (exact axis-aligned coverage, no
+        threshold). Otherwise keep the LA box — it may be the only cover over a
+        VL-missed overlapping stamp. LA seals with no VL counterpart are kept; if
+        VL produced no seals, every LA seal is kept unchanged.
         """
+        from app.services.vision.region_merger import rect_covered_by_union
+
         vl_seals = [b for b in boxes if b.type == "official_seal" and b.source == "ocr_has"]
         if not vl_seals:
             return boxes
         kept: list[BoundingBox] = []
         dropped = 0
         for b in boxes:
-            if b.type == "official_seal" and b.source == "visual_features" and any(
-                self._center_inside(v, b) or self._center_inside(b, v) for v in vl_seals
-            ):
-                dropped += 1
-                continue
+            if b.type == "official_seal" and b.source == "visual_features":
+                overlapping_vl = [
+                    (v.x, v.y, v.width, v.height)
+                    for v in vl_seals
+                    if self._calculate_iou(v, b) > 0.0
+                    or self._calculate_smaller_overlap(v, b) > 0.0
+                ]
+                if overlapping_vl and rect_covered_by_union(
+                    (b.x, b.y, b.width, b.height), overlapping_vl
+                ):
+                    dropped += 1
+                    continue
             kept.append(b)
         if dropped:
-            logger.info("Dropped %d LA seal box(es) superseded by VL seals", dropped)
+            logger.info("Dropped %d LA seal box(es) fully covered by the VL seal union", dropped)
         return kept
 
     def _prefer_yolo_machine_codes(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
@@ -565,10 +972,16 @@ class VisionService:
 
         The specialist detector boxes machine codes at pixel accuracy; the
         grounding model's 0-1000 quantized boxes run visibly loose (its QR box
-        swallows the serial number printed below the code). Where both detect
-        the same code (centers mutually contained, the merge layer's standard
-        identity test), keep the tight specialist box. VLM codes with no YOLO
-        counterpart are kept — this only resolves duplicates, never recall.
+        swallows the serial number printed below the code). Where both detect a
+        code at the same spot (centers mutually contained, the merge layer's
+        standard identity test), keep the tight specialist box. YOLO is also the
+        authority on the code's TYPE: one physical machine code is a QR OR a
+        barcode, never both, so a VLM box of EITHER code type overlapping a YOLO
+        code box is the same code — the VLM often double-labels one QR as both
+        qr_code AND barcode (病例5), leaving two stacked boxes. Drop the VLM box
+        regardless of its type label; YOLO's box already covers the region, so
+        this only resolves duplicates, never recall. VLM codes with no YOLO
+        counterpart are kept untouched.
         """
         code_types = {"qr_code", "barcode"}
         yolo_codes = [
@@ -584,7 +997,7 @@ class VisionService:
                 b.type in code_types
                 and not str(getattr(b, "source_detail", "") or "").startswith("has_image:")
                 and any(
-                    y.type == b.type and (self._center_inside(y, b) or self._center_inside(b, y))
+                    self._center_inside(y, b) or self._center_inside(b, y)
                     for y in yolo_codes
                 )
             ):
@@ -592,7 +1005,7 @@ class VisionService:
                 continue
             kept.append(b)
         if dropped:
-            logger.info("Dropped %d loose VLM machine-code box(es) superseded by YOLO", dropped)
+            logger.info("Dropped %d VLM machine-code box(es) superseded by the YOLO code", dropped)
         return kept
 
     def _merge_seal_shards(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
@@ -658,6 +1071,66 @@ class VisionService:
     )
     _ID_CARD_NUMBER_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
 
+    def _id_card_number_covered_elsewhere(
+        self,
+        card: BoundingBox,
+        boxes: list[BoundingBox],
+        ocr_blocks: list,
+        page_size: tuple[int, int],
+    ) -> bool:
+        """Whether an id_card ground can be dropped because it only covers an ID
+        number that is ALREADY masked by another retained ocr_has box.
+
+        A wide axis-aligned box is a SIGNAL that LA grounded a horizontal
+        "身份证号码：…" text line rather than a card face — but the aspect ratio
+        never decides alone (dropping an UNcovered number is a leak). The gate is
+        coverage: for every 18-digit ID number sitting inside this box's region
+        (this page's own OCR blocks), a DIFFERENT retained ocr_has box that
+        overlaps the region must carry the same number. Then dropping this box
+        keeps every number masked — coverage is monotone. A genuine card face
+        (its printed 二代证 face words appear inside the box) is never dropped:
+        its name/photo would be uncovered, so any face word inside keeps the box.
+        """
+        page_w, page_h = page_size
+        if page_w <= 0 or page_h <= 0:
+            return False
+        cx1, cy1 = card.x * page_w, card.y * page_h
+        cx2, cy2 = (card.x + card.width) * page_w, (card.y + card.height) * page_h
+        numbers_inside: list[str] = []
+        interior_text: list[str] = []
+        for b in ocr_blocks:
+            try:
+                bcx = b.left + b.width / 2.0
+                bcy = b.top + b.height / 2.0
+            except AttributeError:
+                continue
+            if not (cx1 <= bcx <= cx2 and cy1 <= bcy <= cy2):
+                continue
+            text = str(getattr(b, "text", "") or "")
+            interior_text.append(text)
+            numbers_inside.extend(m.group() for m in self._ID_CARD_NUMBER_RE.finditer(text))
+        if not numbers_inside:
+            return False
+        joined_interior = " ".join(interior_text)
+        if any(word in joined_interior for word in self._ID_CARD_FACE_WORDS):
+            return False
+        retained_ocr = [
+            o
+            for o in boxes
+            if o is not card
+            and o.source == "ocr_has"
+            and not (
+                o.x + o.width <= card.x
+                or card.x + card.width <= o.x
+                or o.y + o.height <= card.y
+                or card.y + card.height <= o.y
+            )
+        ]
+        for number in numbers_inside:
+            if not any(number in str(o.text or "") for o in retained_ocr):
+                return False
+        return True
+
     def _drop_page_hallucinated_cards(
         self,
         boxes: list[BoundingBox],
@@ -702,6 +1175,12 @@ class VisionService:
         seals = [b for b in boxes if b.type == "official_seal"]
         out = []
         for box in boxes:
+            if box.type == "id_card" and box.source == "visual_features":
+                if self._id_card_number_covered_elsewhere(box, boxes, ocr_blocks, page_size):
+                    logger.info(
+                        "Dropped id_card ground: its id number is already masked by a retained OCR box"
+                    )
+                    continue
             if box.type == "id_card" and box.source == "visual_features" and not has_face_evidence:
                 bx1, by1 = box.x * page_w, box.y * page_h
                 bx2, by2 = (box.x + box.width) * page_w, (box.y + box.height) * page_h
@@ -832,6 +1311,9 @@ class VisionService:
             )
 
         regions = await self.ocr_has_service.detect_from_text_blocks(blocks, pipeline_types)
+        # This page's text blocks (local, off the singleton) for the same per-call
+        # hallucinated-card gate the image path feeds.
+        self._page_ocr_blocks = list(blocks)
         if getattr(self.ocr_has_service, "last_duration_ms", None):
             self.ocr_has_service.last_duration_ms["pdf_text_layer_extract"] = int(
                 self.last_pdf_text_layer_duration_ms
@@ -871,11 +1353,16 @@ class VisionService:
         pipeline_types: list = None,
         draw_result: bool = True,
     ) -> tuple[list[BoundingBox], str | None]:
+        page_blocks: list = []
         regions, result_image_base64 = await self.ocr_has_service.detect_and_draw(
             image_data,
             vision_types=pipeline_types,
             draw_result=draw_result,
+            blocks_out=page_blocks,
         )
+        # This call's OCR blocks, captured off the process-wide singleton so the
+        # hallucinated-card gate never judges against a concurrent page's blocks.
+        self._page_ocr_blocks = page_blocks
 
         img = Image.open(io.BytesIO(image_data))
         img = ImageOps.exif_transpose(img)
@@ -884,7 +1371,35 @@ class VisionService:
         bounding_boxes = await asyncio.to_thread(
             self._filter_ocr_has_regions, img, regions, page
         )
+        bounding_boxes = self._drop_contained_same_type_text(bounding_boxes)
         return bounding_boxes, result_image_base64
+
+    def _drop_contained_same_type_text(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """Drop a text region mostly contained within a larger same-type region.
+
+        OCR line-wrap makes HaS return a wrapped heading both whole and as line
+        fragments (19合同 标题 "...供货合同" also emits a "货合同" tail), so the
+        matcher lays a small box inside the larger same-type box. IoU dedup
+        misses it — the size gap keeps IoU below threshold — but containment
+        catches it. The larger box is kept so redaction coverage never shrinks.
+        Same-type only: a different type is a different entity the model asserts.
+        """
+        if len(boxes) <= 1:
+            return boxes
+        drop: set[int] = set()
+        for smaller in boxes:
+            area_s = smaller.width * smaller.height
+            for larger in boxes:
+                if larger is smaller or larger.type != smaller.type:
+                    continue
+                if larger.width * larger.height <= area_s:
+                    continue
+                if self._calculate_smaller_overlap(smaller, larger) >= _CONTAINED_TEXT_DROP_RATIO:
+                    drop.add(id(smaller))
+                    break
+        if drop:
+            logger.info("Dropped %d text region(s) contained in a larger same-type box", len(drop))
+        return [b for b in boxes if id(b) not in drop]
 
     def _filter_ocr_has_regions(
         self,
@@ -893,6 +1408,10 @@ class VisionService:
         page: int,
     ) -> list[BoundingBox]:
         width, height = img.size
+        # Self-calibrate the page body extent from the regions that decoded real
+        # text; the edge filter judges margin artifacts against this hull rather
+        # than a fixed normalized offset.
+        text_hull, page_em = text_evidence_hull(regions)
         bounding_boxes = []
         for i, region in enumerate(regions):
             normalized_region_type = self._norm_box_type(region.entity_type)
@@ -900,19 +1419,30 @@ class VisionService:
             if not self._should_keep_ocr_has_region(region.entity_type, region.text):
                 logger.debug("Skipping OCR-HaS semantic false positive: %s %s", region.entity_type, region.text)
                 continue
-            if is_page_edge_ocr_artifact(
-                region.left,
-                region.top,
-                region.width,
-                region.height,
-                width,
-                height,
-                region.entity_type,
-            ):
-                logger.debug("Skipping OCR region on page edge artifact: %s %s", region.entity_type, region.text)
-                continue
-            if not region_has_visible_ink(img, region.left, region.top, region.width, region.height):
-                logger.debug("Skipping OCR region on blank/low-ink area: %s %s", region.entity_type, region.text)
+            # A region is dropped ONLY when it carries no visible ink — an inked
+            # margin note or handwriting value is always kept, even outside the
+            # body-text hull. The page-edge/hull test may NOT short-circuit ahead
+            # of the ink gate (R9 verify): it only qualifies the drop reason, it
+            # can never remove an inked (potential-PII) region.
+            if not region_has_visible_ink(img, region.left, region.top, region.width, region.height, region.entity_type):
+                artifact = is_page_edge_ocr_artifact(
+                    region.left,
+                    region.top,
+                    region.width,
+                    region.height,
+                    width,
+                    height,
+                    region.entity_type,
+                    region.text,
+                    text_hull,
+                    page_em,
+                )
+                logger.debug(
+                    "Skipping inkless OCR region (%s): %s %s",
+                    "page-edge/outside-body" if artifact else "blank",
+                    region.entity_type,
+                    region.text,
+                )
                 continue
             if is_ocr_visual_seal:
                 left = max(0, min(width - 1, int(region.left)))
@@ -1029,6 +1559,53 @@ class VisionService:
             )
         return extra
 
+    async def _detect_categories_consensus(
+        self,
+        image_data: bytes,
+        page: int,
+        fixed_types: list,
+    ) -> tuple[list[BoundingBox], dict]:
+        """LA 多采样共识包装 detect_categories。SAMPLES<=1 时直通(默认零开销)。
+        SAMPLES>1 时同图跑 N 次 seedless 采样取多数框(压 temp0.7 波动、保召回), 并按
+        图片hash缓存(重新识别返回同一结果、彻底稳定)。N 次串行, 避免 N×并发压垮 LA。"""
+        samples = int(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_SAMPLES", 1) or 1)
+        if samples <= 1:
+            return await self.visual_grounding.detect_categories(image_data, page, fixed_types)
+        type_key = ",".join(sorted(str(getattr(t, "id", t)) for t in (fixed_types or [])))
+        cache_key = f"{hashlib.sha256(image_data).hexdigest()}:{page}:{type_key}"
+        cached = _LA_CONSENSUS_CACHE.get(cache_key)
+        if cached is not None:
+            _LA_CONSENSUS_CACHE.move_to_end(cache_key)
+            return cached[0], {**cached[1], "consensus_cache_hit": 1}
+        # N seedless passes run SERIALLY: concurrent samples contend for the two
+        # LA cards and each pass loses boxes (measured: concurrent union-3 dropped
+        # 病例5 to 3/4 vs serial 4/4), the same card-contention that forces the
+        # dual pipeline sequential. Serial ~15s for 3 passes; the per-image hash
+        # cache makes every re-detect after the first instant + identical.
+        runs: list[list[BoundingBox]] = []
+        first_timings: dict = {}
+        for i in range(samples):
+            boxes, timings = await self.visual_grounding.detect_categories(
+                image_data, page, fixed_types
+            )
+            runs.append(boxes)
+            if i == 0:
+                first_timings = timings
+        min_votes = int(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_MIN_VOTES", 0) or 0)
+        if min_votes <= 0:
+            min_votes = samples // 2 + 1
+        iou = float(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_IOU", 0.5))
+        merged = consensus_boxes(runs, min_votes, iou)
+        timings_out = {
+            **first_timings,
+            "consensus_samples": samples,
+            "consensus_min_votes": min_votes,
+        }
+        _LA_CONSENSUS_CACHE[cache_key] = (merged, timings_out)
+        while len(_LA_CONSENSUS_CACHE) > _LA_CONSENSUS_CACHE_MAX:
+            _LA_CONSENSUS_CACHE.popitem(last=False)
+        return merged, timings_out
+
     async def _detect_with_visual_features(
         self,
         image_data: bytes,
@@ -1039,7 +1616,7 @@ class VisionService:
         fixed_types, checklist_types = self._split_visual_feature_types(pipeline_types)
         # LocateAnything owns all visual features (seals included), detected per
         # category below; its output is trusted as-is.
-        locate_boxes, stage_duration_ms = await self.visual_grounding.detect_categories(
+        locate_boxes, stage_duration_ms = await self._detect_categories_consensus(
             image_data,
             page,
             fixed_types,

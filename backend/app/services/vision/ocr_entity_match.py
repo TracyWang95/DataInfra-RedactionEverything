@@ -8,6 +8,7 @@ dedupe.
 from __future__ import annotations
 
 import logging
+import os
 from difflib import SequenceMatcher
 
 from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
@@ -20,6 +21,7 @@ from app.services.vision.has_text_payload import (
 # Geometry cluster: parent uses these + re-exports the rest for the public API.
 from app.services.vision.ocr_cjk_geometry import (
     _CJK_LINE_HEIGHT_RATIO,
+    _column_split_char_boxes,
     _document_line_height,
     _entity_char_box_line_rects,
     _entity_span_char_boxes,  # noqa: F401
@@ -49,6 +51,55 @@ from app.services.vision.ocr_tuning import (
 logger = logging.getLogger(__name__)
 
 
+def _column_split_enabled() -> bool:
+    """Whether to feed merged double-column blocks downstream as per-column
+    sub-blocks (``REDACT_OCR_COLUMN_SPLIT``). Defaults OFF for a safe gray-launch
+    — read fresh each call so operators can flip it without a restart, and so the
+    shipped (un-split) behaviour is byte-identical until it is turned on."""
+    return os.getenv("REDACT_OCR_COLUMN_SPLIT", "0").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _column_split_sub_blocks(block: OCRTextBlock) -> list[OCRTextBlock]:
+    """Per-column sub-blocks for a block whose chars form >= 2 em-gutter columns.
+
+    PaddleOCR-VL sometimes MERGES two side-by-side columns into one block; each
+    char keeps its own x but y collapses to the whole block's range, so a value
+    that lives in one column can align across the gutter and be masked as the
+    full-width slab. _column_split_char_boxes (self-calibrated em-gutter, no
+    hardcoded pixel threshold) splits the chars into per-column groups; each
+    group becomes a sub-block whose text is the group's chars, whose chars ARE
+    the group, and whose polygon is the group's x-union at the ORIGINAL block's
+    y range — the split only ever touches x, never y (vertical extent stays the
+    merged band, tightening is R7c's job).
+
+    Returns [] when the block has no chars or forms a single column, so the
+    caller adds nothing and behaviour is unchanged. LEAK-SAFETY: the caller
+    ALWAYS keeps the original block too, so a sub-block only ADDS a tighter
+    per-column candidate; a value that genuinely spans both columns matches
+    NEITHER sub-block (its glyphs are split) and stays covered by the original.
+    """
+    chars = getattr(block, "chars", None) or []
+    if not chars:
+        return []
+    groups = _column_split_char_boxes(chars)
+    if len(groups) <= 1:
+        return []
+    top = block.top
+    bottom = block.top + block.height
+    sub_blocks: list[OCRTextBlock] = []
+    for group in groups:
+        left = min(float(c["x1"]) for c in group)
+        right = max(float(c["x2"]) for c in group)
+        text = "".join(str(c.get("c", "")) for c in group)
+        polygon = [[left, top], [right, top], [right, bottom], [left, bottom]]
+        sub_blocks.append(
+            OCRTextBlock(text=text, polygon=polygon, confidence=block.confidence, chars=group)
+        )
+    return sub_blocks
+
+
 def _is_low_signal_vision_entity(entity_type: str, entity_text: str) -> bool:
     compact = _compact_text(entity_text)
     if not compact:
@@ -61,14 +112,17 @@ def _entity_type_from_block_context(entity_type: str, entity_text: str, block_te
 
 
 def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]:
-    """Drop OCR regions that are spatial near-duplicates (same pixels).
+    """Drop OCR regions whose pixels are already covered (same pixels).
 
-    A single IoU pass with no type/text/source/ranking rules. Only regions that
-    essentially coincide are merged, so two real PII values on different parts of
-    the page — e.g. the same date in three table rows, or a name in the 姓名 cell
-    and again in a signature — are always kept. The old bucket-key + same-line +
-    startswith heuristics each risked dropping a distinct value (a missed
-    redaction); IoU alone cannot.
+    A single containment pass with no type/text/source/ranking rules: a region is
+    dropped only when its box is swallowed whole by the union of the kept
+    (larger-or-equal) boxes — any exposed pixel keeps it. Two real PII values on
+    different parts of the page — e.g. the same date in three table rows, or a
+    name in the 姓名 cell and again in a signature — never nest, so they are
+    always kept. The old bucket-key + same-line + startswith heuristics each
+    risked dropping a distinct value (a missed redaction); a partial-overlap twin
+    that sticks out is no longer dropped either (the old IoU>=0.5 pass would have
+    uncovered its exposed strip).
 
     One containment pass runs first: mixed-granularity block sets (PP-Structure
     lines + PaddleOCR-VL layout paragraphs) can match the same value at both
@@ -111,7 +165,9 @@ def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]
         )
     ]
 
-    return deduplicate_by_iou(tightest, lambda r: (r.left, r.top, r.width, r.height))
+    return deduplicate_by_iou(
+        tightest, lambda r: (r.left, r.top, r.width, r.height), mode="containment"
+    )
 
 
 def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
@@ -122,6 +178,60 @@ def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
         and a.top < b.top + b.height
         and b.top < a.top + a.height
     )
+
+
+def _prune_looser_same_text_boxes(
+    regions: list[SensitiveRegion],
+    span_proven_ids: set[int] | None = None,
+) -> list[SensitiveRegion]:
+    """Keep the tightest box among same-type, same-text, overlapping regions.
+
+    One value can be localized more than once: a garbled handwritten ID matches
+    both its own right-column glyphs (tight) AND — because the char alignment
+    strays across a merged two-column OCR block — the whole row (拍照保姆合同:
+    身份证号码 0.734 page-wide). Same text ⇒ same value, so the tighter box may
+    already cover its glyphs; the wider twin is then redundant over-coverage that
+    bleeds onto the other column's field and labels.
+
+    Coverage precondition: the wider box is dropped ONLY when the tighter twin is
+    a COMPLETE-span proof — its box is the union of the value's char boxes with
+    the span's first AND last glyph proven (``span_proven_ids``, computed by the
+    caller from ``_entity_span_char_boxes``). Char boxes run in reading order, so
+    a proven first+last glyph means the tight box spans every glyph of the value:
+    dropping the wider twin cannot uncover a glyph. A tighter box from an argmax
+    PARTIAL match (it may cover only "123" of "X12345") is NOT a proof — the
+    wider box is kept so the tail glyphs stay masked.
+
+    Leak-safe: only boxes that share the SAME text AND overlap are collapsed, and
+    only against a proven-full-span twin; every other field keeps its own box, a
+    value repeated elsewhere (non-overlapping) is untouched.
+    """
+    if len(regions) <= 1:
+        return regions
+    proven = span_proven_ids or set()
+    drop_ids: set[int] = set()
+    for region in regions:
+        r_text = (region.text or "").strip()
+        if not r_text:
+            continue
+        r_area = region.width * region.height
+        for other in regions:
+            if other is region or id(other) in drop_ids:
+                continue
+            if (
+                other.entity_type == region.entity_type
+                and (other.text or "").strip() == r_text
+                and other.width * other.height < r_area
+                and _regions_overlap(region, other)
+                and id(other) in proven
+            ):
+                drop_ids.add(id(region))
+                logger.debug(
+                    "Dropped looser same-text box for '%s' (w=%d) — proven tighter twin (w=%d) covers it",
+                    r_text, region.width, other.width,
+                )
+                break
+    return [r for r in regions if id(r) not in drop_ids]
 
 
 def _char_word_class(ch: str) -> str:
@@ -533,6 +643,10 @@ def match_entities_to_ocr(
     """
     regions: list[SensitiveRegion] = []
     digit_retry_entities: list[dict[str, str]] = []
+    # Region ids whose box is a COMPLETE-span char-box proof (first+last glyph
+    # of the value aligned). _prune_looser_same_text_boxes may only drop a wider
+    # same-text twin against one of these — an argmax/partial box is not a proof.
+    span_proven_region_ids: set[int] = set()
 
     # Expand HTML tables into virtual cell blocks
     expanded_blocks: list[OCRTextBlock] = []
@@ -548,6 +662,24 @@ def match_entities_to_ocr(
                 expanded_blocks.append(block)
         else:
             expanded_blocks.append(block)
+
+    # Merged double-column split (gated, default OFF). PaddleOCR-VL can merge two
+    # side-by-side columns into one block; a per-column value then aligns across
+    # the gutter and over-covers the full width. Feed each column group
+    # downstream as its own sub-block so the value matches its own column's tight
+    # char boxes; the ORIGINAL block is always kept (already appended above), so
+    # this only ADDS a tighter candidate and the existing prune/dedupe collapses
+    # the full-width twin — strictly coverage-preserving. Table-virtual cells
+    # already carry precise per-cell boxes, so they are skipped.
+    if _column_split_enabled():
+        column_sub_blocks: list[OCRTextBlock] = []
+        for block in expanded_blocks:
+            if id(block) in table_virtual_block_ids or block.text.startswith("<table"):
+                continue
+            column_sub_blocks.extend(_column_split_sub_blocks(block))
+        if column_sub_blocks:
+            logger.debug("Column-split emitted %d sub-blocks", len(column_sub_blocks))
+            expanded_blocks.extend(column_sub_blocks)
     # No visual-line reconstruction and no sub-span position/size estimation:
     # match against the real OCR blocks and redact the whole matched block. mIoU
     # is the sole merge step downstream.
@@ -647,7 +779,13 @@ def match_entities_to_ocr(
                         document_line_height,
                     )
                     crop_span = None
+                    # Whether this region's box is a complete-span glyph proof
+                    # (both _entity_char_box_line_rects and _charsless_block_line_rects
+                    # go through _entity_span_char_boxes' first+last-glyph guard).
+                    # The argmax narrow and the row-band mixed path are NOT proofs.
+                    span_proven = False
                     if line_rects is not None:
+                        span_proven = True
                         crop_span = (
                             min(r[0] for r in line_rects),
                             max(r[2] for r in line_rects),
@@ -668,6 +806,7 @@ def match_entities_to_ocr(
                             block, block_text, visual_occurrence_start, visual_text, prepared_blocks, document_line_height
                         )
                         if line_rects is not None:
+                            span_proven = True
                             crop_span = (
                                 min(r[0] for r in line_rects),
                                 max(r[2] for r in line_rects),
@@ -719,17 +858,20 @@ def match_entities_to_ocr(
                         # x-span union would cover the block's full width and
                         # height, so emit one tight region per text line.
                         for lx1, ly1, lx2, ly2 in line_rects:
+                            sub_region = SensitiveRegion(
+                                text=visual_text,
+                                entity_type=contextual_type,
+                                left=lx1,
+                                top=ly1,
+                                width=lx2 - lx1,
+                                height=ly2 - ly1,
+                                confidence=1.0,
+                                source=region_source,
+                            )
+                            if span_proven:
+                                span_proven_region_ids.add(id(sub_region))
                             entity_regions.append((
-                                SensitiveRegion(
-                                    text=visual_text,
-                                    entity_type=contextual_type,
-                                    left=lx1,
-                                    top=ly1,
-                                    width=lx2 - lx1,
-                                    height=ly2 - ly1,
-                                    confidence=1.0,
-                                    source=region_source,
-                                ),
+                                sub_region,
                                 has_position_evidence,
                                 not has_position_evidence,
                             ))
@@ -738,17 +880,20 @@ def match_entities_to_ocr(
                             entity_text, block_text[:20], len(line_rects),
                         )
                     else:
+                        single_region = SensitiveRegion(
+                            text=visual_text,
+                            entity_type=contextual_type,
+                            left=rl,
+                            top=rt,
+                            width=rw,
+                            height=rh,
+                            confidence=1.0,
+                            source=region_source,
+                        )
+                        if span_proven:
+                            span_proven_region_ids.add(id(single_region))
                         entity_regions.append((
-                            SensitiveRegion(
-                                text=visual_text,
-                                entity_type=contextual_type,
-                                left=rl,
-                                top=rt,
-                                width=rw,
-                                height=rh,
-                                confidence=1.0,
-                                source=region_source,
-                            ),
+                            single_region,
                             has_position_evidence,
                             not has_position_evidence,
                         ))
@@ -878,6 +1023,8 @@ def match_entities_to_ocr(
         regions.extend(
             match_entities_to_ocr(ocr_blocks, digit_retry_entities, _digit_retry=True)
         )
+
+    regions = _prune_looser_same_text_boxes(regions, span_proven_region_ids)
 
     deduped_regions = _dedupe_ocr_regions(regions)
     logger.info("Matched %d entities to OCR blocks (%d after dedupe)", len(regions), len(deduped_regions))

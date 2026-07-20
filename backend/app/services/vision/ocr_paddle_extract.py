@@ -8,7 +8,10 @@ calls with caching and in-flight dedupe.
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
@@ -130,7 +133,46 @@ def run_paddle_ocr(
 
     primary_structure_blocks: list[OCRTextBlock] | None = None
     primary_structure_visual_regions: list[SensitiveRegion] = []
+
+    # Speculatively fire the PaddleOCR-VL supplement in parallel with
+    # PP-StructureV3. Both read the same image with independent engines
+    # (PP-Structure on the OCR sidecar's paddle GPU, VL on the vLLM server), so
+    # running them concurrently makes the OCR wall-clock max(structure, VL)
+    # instead of the sum. When needs_text_precision + SUPPLEMENT_VL hold the
+    # supplement runs regardless of the structure block count (and the sparse
+    # fallback reuses the same result), so the parallel call is never wasted.
+    _vl_state: dict = {"thread": None, "result": {}}
+
+    def _supplement_vl_blocks() -> tuple[list[OCRTextBlock], list[SensitiveRegion]]:
+        thread = _vl_state["thread"]
+        if thread is not None:
+            thread.join()
+            result = _vl_state["result"]
+            if "e" in result:
+                raise result["e"]
+            return result["r"]
+        return _run_ocr_service(
+            image,
+            ocr_service,
+            stage_status=stage_status,
+            image_bytes=image_bytes(),
+            service_available_checked=True,
+        )
+
     if use_structure_primary:
+        if not vl_disabled and needs_text_precision and bool(settings.OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL):
+            image_bytes()  # memoize the PNG encode once so the two threads don't race it
+
+            def _run_vl_supplement() -> None:
+                try:
+                    _vl_state["result"]["r"] = _run_ocr_service(
+                        image, ocr_service, None, image_bytes(), True
+                    )
+                except BaseException as exc:  # surfaced by _supplement_vl_blocks
+                    _vl_state["result"]["e"] = exc
+
+            _vl_state["thread"] = threading.Thread(target=_run_vl_supplement, daemon=True)
+            _vl_state["thread"].start()
         primary_structure_blocks, primary_structure_visual_regions = _run_structure_service_with_visuals(
             image,
             ocr_service,
@@ -152,13 +194,7 @@ def run_paddle_ocr(
                 # whole-block IoU contract (_merge_ocr_blocks), so structure
                 # blocks win on overlap and VL adds what structure missed
                 # (e.g. text crushed under a red seal).
-                vl_blocks, vl_visual_regions = _run_ocr_service(
-                    image,
-                    ocr_service,
-                    stage_status=stage_status,
-                    image_bytes=image_bytes(),
-                    service_available_checked=True,
-                )
+                vl_blocks, vl_visual_regions = _supplement_vl_blocks()
                 merged_blocks = _merge_ocr_blocks(
                     primary_structure_blocks, vl_blocks, prefer_extra_text=True
                 )
@@ -178,13 +214,7 @@ def run_paddle_ocr(
                 # branch above. VL's generative whole-line blocks carry no
                 # char boxes; letting them displace per-line structure blocks
                 # masks label and value together as one full line.
-                vl_blocks, vl_visual_regions = _run_ocr_service(
-                    image,
-                    ocr_service,
-                    stage_status=stage_status,
-                    image_bytes=image_bytes(),
-                    service_available_checked=True,
-                )
+                vl_blocks, vl_visual_regions = _supplement_vl_blocks()
                 merged_blocks = _merge_ocr_blocks(
                     primary_structure_blocks, vl_blocks, prefer_extra_text=True
                 )
@@ -225,13 +255,7 @@ def run_paddle_ocr(
         # PP-StructureV3 produced (even if sparse) as the OCR result.
         return (primary_structure_blocks or []), primary_structure_visual_regions
 
-    blocks, visual_regions = _run_ocr_service(
-        image,
-        ocr_service,
-        stage_status=stage_status,
-        image_bytes=image_bytes(),
-        service_available_checked=True,
-    )
+    blocks, visual_regions = _supplement_vl_blocks()
     if primary_structure_visual_regions:
         visual_regions = [*primary_structure_visual_regions, *visual_regions]
     should_structure_fallback = (
@@ -400,74 +424,123 @@ def _attach_chars_to_charless_blocks(
     if not ocr_service or not hasattr(ocr_service, "extract_structure_boxes"):
         return blocks
     width, height = image.size
-    for block in blocks:
-        if getattr(block, "chars", None):
-            continue
-        left, top = max(0, int(block.left)), max(0, int(block.top))
-        right = min(width, int(block.left + block.width))
-        bottom = min(height, int(block.top + block.height))
-        if right - left < 4 or bottom - top < 4:
-            continue
-        # Whole-block crop first, then three anchored half-width sweep windows:
-        # the engine's det collapses on an underline+handwriting row at block
-        # width (the 农业 row-1 printed label AND handwritten value both vanish)
-        # yet reads the same pixels inside a half-width window. Same
-        # start/center/end half-size anchoring identity as the tile retry
-        # (_axis_positions): anything narrower than half a window is whole
-        # inside at least one sweep.
-        crops = [(left, top, right, bottom)]
-        window = max(1, (right - left) // 2)
-        crops.extend(
-            (left + x0, top, min(right, left + x0 + window), bottom)
-            for x0 in _axis_positions(right - left, window)
-        )
-        kept_segments: list = []  # (page-coord bbox, page-coord chars)
-        for crop_left, crop_top, crop_right, crop_bottom in crops:
-            try:
-                crop_blocks, _ = _run_structure_service_with_visuals(
-                    image.crop((crop_left, crop_top, crop_right, crop_bottom)), ocr_service
-                )
-            except Exception as exc:
-                logger.info("charless-block re-OCR failed: %s", exc)
-                continue
-            for cb in crop_blocks:
-                chars = [
-                    {"c": ch["c"], "x1": crop_left + ch["x1"], "y1": crop_top + ch["y1"],
-                     "x2": crop_left + ch["x2"], "y2": crop_top + ch["y2"]}
-                    for ch in (getattr(cb, "chars", None) or [])
-                ]
-                if not chars:
-                    continue
-                x1 = min(c["x1"] for c in chars)
-                y1 = min(c["y1"] for c in chars)
-                x2 = max(c["x2"] for c in chars)
-                y2 = max(c["y2"] for c in chars)
-                # Region-overlap identity dedupe: a segment overlapping an
-                # already-kept one in BOTH x and y is the same physical text
-                # re-detected through another window — first seen (the
-                # whole-block crop) wins. A same-row segment at a new x range
-                # is genuinely new content and joins.
-                if any(
-                    x1 < kx2 and kx1 < x2 and y1 < ky2 and ky1 < y2
-                    for (kx1, ky1, kx2, ky2), _kc in kept_segments
-                ):
-                    continue
-                kept_segments.append(((x1, y1, x2, y2), chars))
-        if not kept_segments:
-            continue
-        # Reading order across all kept segments: same row identity as
-        # _reading_order (rows do not overlap in y; same-row segments do),
-        # then left-to-right inside a row.
-        segment_blocks = [
-            SimpleNamespace(
-                top=bbox[1], left=bbox[0], height=bbox[3] - bbox[1], width=bbox[2] - bbox[0], chars=chars
-            )
-            for bbox, chars in kept_segments
-        ]
-        block.chars = [
-            ch for seg in _reading_order(segment_blocks) for ch in seg.chars
-        ]
+    charless = [block for block in blocks if not getattr(block, "chars", None)]
+    if not charless:
+        return blocks
+    # Recover each charless block on its own worker (the OCR sidecars serialize
+    # PP-Structure per GPU, so client-side crop-level fan-out just queues at the
+    # server — block-level parallelism is what the two sidecars actually absorb).
+    # Within a block the whole-block crop runs FIRST and the three half-width
+    # sweeps only fire when it comes back empty: a single-line block either reads
+    # whole (the crop returns chars) or its det collapses entirely at block width
+    # (returns nothing) — the sweeps are the collapse path. This drops a clean
+    # page's ~13 blocks from ~4 crops each to 1, the dominant OCR cost, with the
+    # recovered char boxes unchanged (a non-empty whole-block read already covers
+    # the line; the sweeps would only re-detect it and get deduped away).
+    def _recover(block: OCRTextBlock) -> None:
+        crops = _charless_block_crops(block, width, height)
+        if not crops:
+            return
+        whole = _crop_char_segments(image, ocr_service, crops[0])
+        if whole:
+            _apply_char_segments(block, [whole])
+            return
+        sweeps = [_crop_char_segments(image, ocr_service, crop) for crop in crops[1:]]
+        _apply_char_segments(block, [whole, *sweeps])
+
+    if len(charless) == 1:
+        _recover(charless[0])
+        return blocks
+    max_workers = min(len(charless), max(1, int(os.environ.get("OCR_REOCR_CONCURRENCY", "16") or "16")))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        list(executor.map(_recover, charless))
     return blocks
+
+
+def _charless_block_crops(
+    block: OCRTextBlock, width: int, height: int
+) -> list[tuple[int, int, int, int]]:
+    """Whole-block crop plus three anchored half-width sweep windows for one
+    charless block ([] if degenerate). The engine's det collapses on an
+    underline+handwriting row at block width (the 农业 row-1 printed label AND
+    handwritten value both vanish) yet reads the same pixels inside a half-width
+    window; same start/center/end half-size anchoring as the tile retry
+    (_axis_positions), so anything narrower than half a window is whole inside at
+    least one sweep."""
+    left, top = max(0, int(block.left)), max(0, int(block.top))
+    right = min(width, int(block.left + block.width))
+    bottom = min(height, int(block.top + block.height))
+    if right - left < 4 or bottom - top < 4:
+        return []
+    crops = [(left, top, right, bottom)]
+    window = max(1, (right - left) // 2)
+    crops.extend(
+        (left + x0, top, min(right, left + x0 + window), bottom)
+        for x0 in _axis_positions(right - left, window)
+    )
+    return crops
+
+
+def _crop_char_segments(
+    image: Image.Image, ocr_service: Any, crop: tuple[int, int, int, int]
+) -> list:
+    """Re-OCR one crop and return its (page-coord bbox, page-coord chars)
+    segments — NO dedup (the caller dedups across a block's crops in order)."""
+    crop_left, crop_top, crop_right, crop_bottom = crop
+    try:
+        crop_blocks, _ = _run_structure_service_with_visuals(
+            image.crop((crop_left, crop_top, crop_right, crop_bottom)), ocr_service
+        )
+    except Exception as exc:
+        logger.info("charless-block re-OCR failed: %s", exc)
+        return []
+    segments: list = []
+    for cb in crop_blocks:
+        chars = [
+            {"c": ch["c"], "x1": crop_left + ch["x1"], "y1": crop_top + ch["y1"],
+             "x2": crop_left + ch["x2"], "y2": crop_top + ch["y2"]}
+            for ch in (getattr(cb, "chars", None) or [])
+        ]
+        if not chars:
+            continue
+        x1 = min(c["x1"] for c in chars)
+        y1 = min(c["y1"] for c in chars)
+        x2 = max(c["x2"] for c in chars)
+        y2 = max(c["y2"] for c in chars)
+        segments.append(((x1, y1, x2, y2), chars))
+    return segments
+
+
+def _apply_char_segments(block: OCRTextBlock, crop_segments_in_order: list) -> None:
+    """Dedup a block's crop segments (first-seen wins, whole-block crop first)
+    and attach them as the block's chars in reading order. No-op if nothing was
+    recovered (the block stays a safe whole-block mask)."""
+    kept_segments: list = []  # (page-coord bbox, page-coord chars)
+    for segments in crop_segments_in_order:
+        for (x1, y1, x2, y2), chars in segments:
+            # Region-overlap identity dedupe: a segment overlapping an
+            # already-kept one in BOTH x and y is the same physical text
+            # re-detected through another window — first seen (the whole-block
+            # crop) wins. A same-row segment at a new x range joins.
+            if any(
+                x1 < kx2 and kx1 < x2 and y1 < ky2 and ky1 < y2
+                for (kx1, ky1, kx2, ky2), _kc in kept_segments
+            ):
+                continue
+            kept_segments.append(((x1, y1, x2, y2), chars))
+    if not kept_segments:
+        return
+    # Reading order across all kept segments: same row identity as _reading_order
+    # (rows do not overlap in y; same-row segments do), then left-to-right.
+    segment_blocks = [
+        SimpleNamespace(
+            top=bbox[1], left=bbox[0], height=bbox[3] - bbox[1], width=bbox[2] - bbox[0], chars=chars
+        )
+        for bbox, chars in kept_segments
+    ]
+    block.chars = [
+        ch for seg in _reading_order(segment_blocks) for ch in seg.chars
+    ]
 
 
 def _run_structure_service_with_visuals(

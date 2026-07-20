@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 from app.core.config import settings
@@ -22,6 +23,8 @@ from app.services.vision.has_text_payload import (
     _filter_blocks_for_has_text,
     _item_query_labels,
 )
+from app.services.vision.ocr_entity_match import _is_isolated_token_occurrence
+from app.services.vision.ocr_table_semantics import _block_search_text
 from app.services.vision.ocr_cache import (
     _add_has_text_duration,
     _begin_has_text_ner_inflight,
@@ -55,6 +58,81 @@ logger = logging.getLogger(__name__)
 # The model judges what is a date; no hand-written pattern enumerates them.
 
 
+def _merge_ner_into_union(
+    union: dict[str, list[str]], result: Any
+) -> bool:
+    """Fold one NER pass into the running union; return whether it added anything.
+
+    Order-preserving, dedup within a type bucket. A bucket is only created when
+    a real (non-empty) value lands in it, so an all-empty pass never plants a
+    spurious empty type. Returns True iff at least one new (type,value) pair was
+    added — the caller reads that only as a budget-convergence signal.
+    """
+    if not isinstance(result, dict):
+        return False
+    added = False
+    for entity_type, values in result.items():
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not value:
+                continue
+            bucket = union.setdefault(entity_type, [])
+            if value not in bucket:
+                bucket.append(value)
+                added = True
+    return added
+
+
+def aggregate_ner_samples(
+    sample_fn: Callable[[int], Any],
+    max_passes: int,
+) -> tuple[dict[str, list[str]], int]:
+    """Self-consistent multi-pass NER union — pure core; the GPU loop is the caller's.
+
+    ``sample_fn(index)`` yields pass ``index``'s raw NER result (type->values).
+    Pass 0 MUST be the temp=0 greedy seed and passes >=1 temp>0 re-samples —
+    the caller wires temperature/sample-index per index (HaSClient.ner takes
+    both; the sample-index cache key keeps a temp>0 pass from being served the
+    seed's cached result and collapsing the union to a single 趟). This function
+    only owns the union + seed + stopping arithmetic.
+
+    Leak-safety (0 new leaks):
+      * The union is monotone non-decreasing — values only ever accumulate, so
+        it is always a SUPERSET of pass 0, i.e. of today's deterministic output.
+      * Convergence ("this pass added no new value") is ONLY a budget signal to
+        stop spending GPU — never evidence the page is clean. It is checked only
+        for passes after the seed, and it never rolls back the union already
+        gathered.
+      * Hallucinated values sampled at temp>0 stay in the union; the downstream
+        matcher is the leak-safe gate — it yields 0 region for any value that
+        does not occur in the OCR blocks. Growing the union cannot uncover PII.
+
+    接线 TODO (human GPU main loop): drive ``sample_fn`` as
+    ``lambda i: has_client.ner(text, types, temperature=(0.0 if i == 0 else T),
+    sample_index=i)`` inside shared_gpu_inference_slot; read ``max_passes`` from
+    a config knob; cache ONLY the returned union under the canonical
+    (sample_index=0) key for downstream reuse. Whether temp>0 sampling actually
+    lifts recall, and whether it saturates in 2-4 passes without EngineDead
+    bursts, is for real-GPU verification — not asserted here.
+
+    Returns ``(union, passes_run)``.
+    """
+    if max_passes < 1:
+        max_passes = 1
+    union: dict[str, list[str]] = {}
+    passes_run = 0
+    for index in range(max_passes):
+        result = sample_fn(index)
+        passes_run += 1
+        added = _merge_ner_into_union(union, result)
+        # index 0 is the temp=0 seed (its find is the union floor). Only a
+        # post-seed pass that adds nothing signals convergence -> stop.
+        if index > 0 and not added:
+            break
+    return union, passes_run
+
+
 async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: Any) -> None:
     """Model-driven AMOUNT value narrowing（人民币每亩每年100元 → 100元）.
 
@@ -74,6 +152,13 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
     label = str(getattr(settings, "AMOUNT_VALUE_QUERY_LABEL", "") or "").strip()
     if not label or not has_client:
         return
+    # Each per-entity re-ask goes through the global GPU gate, serialized like
+    # every other local model call. No concatenated batching: a shared context
+    # makes HaS return a shorter wrong substring of one value (欠盖), so每实体
+    # 独立一次、闸上串行。The slot is released between entities so unrelated
+    # pipeline GPU work can interleave.
+    from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
     split_entities: list[dict[str, str]] = []
     for entity in entities:
         if entity.get("type") != "AMOUNT":
@@ -82,7 +167,8 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
         if not original:
             continue
         try:
-            result = await asyncio.to_thread(has_client.ner, original, [label])
+            async with shared_gpu_inference_slot("OCR HaS AMOUNT value narrow"):
+                result = await asyncio.to_thread(has_client.ner, original, [label])
         except Exception as exc:
             logger.debug("amount value narrowing skipped for %r: %s", original, exc)
             continue
@@ -95,6 +181,75 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
         for extra in values[1:]:
             split_entities.append({**entity, "text": extra})
     entities.extend(split_entities)
+
+
+def _block_residual_ink(block_compact: str, consumed_values: list[str]) -> str | None:
+    """The block's value-level residual ink, or None when the block is consumed.
+
+    Replaces the old bare-containment identity (any(value in block or block in
+    value)) — which let 消费=["张三"] swallow the block 负责人张三丰 and let one
+    recalled ID mark a merged two-column 身份证号码 block fully consumed, so the
+    second column's ID never reached the residual re-ask.
+
+    A block is consumed when the model has already explained every value-sized
+    span of its ink:
+
+      - the whole block is a fragment of a returned value (block ⊂ value —
+        the original second branch, kept verbatim); or
+      - carving out every returned value's ISOLATED-TOKEN occurrences
+        (_is_isolated_token_occurrence: script-class change / punctuation /
+        string edge — so 张三 does not consume 张三丰) leaves no contiguous
+        uncovered run as long as half the shortest value that anchored in this
+        block. That half-of-shortest-anchor scale is the block's own document
+        self-calibration — never a hardcoded char count: a bare field label
+        left over (号码：) falls below it and does not resurrect the block,
+        while a second, unexplained value (the other column's ID) clears it.
+
+    Otherwise the uncovered characters (in order) are returned as the residual
+    ink to re-ask — the consumed sibling value and the field labels are gone,
+    so the residual differs from the full block text and clears the
+    residual_text != text_content gate even for a lone merged two-column block.
+    """
+    if not block_compact:
+        return None
+    # Second branch (kept): the whole block is a piece of some returned value.
+    for value in consumed_values:
+        if value and block_compact in value:
+            return None
+    covered = [False] * len(block_compact)
+    anchored_lens: list[int] = []
+    for value in consumed_values:
+        if not value:
+            continue
+        start = block_compact.find(value)
+        while start != -1:
+            end = start + len(value)
+            if _is_isolated_token_occurrence(block_compact, start, end):
+                for i in range(start, end):
+                    covered[i] = True
+                anchored_lens.append(len(value))
+            start = block_compact.find(value, start + 1)
+    leftover = "".join(ch for ch, is_cov in zip(block_compact, covered) if not is_cov)
+    if not leftover:
+        return None
+    if not anchored_lens:
+        # No returned value anchored here — the block is wholly unexplained.
+        return leftover
+    # A leftover run at least half as long as the shortest anchored value is
+    # another value hiding in the block; a leftover made only of sub-value
+    # fragments (field labels) is treated as already explained.
+    scale = min(anchored_lens)
+    run = 0
+    has_value_sized_run = False
+    for is_cov in covered:
+        if is_cov:
+            run = 0
+        else:
+            run += 1
+            if run * 2 >= scale:
+                has_value_sized_run = True
+                break
+    return leftover if has_value_sized_run else None
 
 
 async def run_has_text_analysis(
@@ -287,10 +442,30 @@ async def run_has_text_analysis(
                             logger.info("HaS NER cache hit after slot wait")
                         else:
                             model_start = time.perf_counter()
-                            ner_result = await asyncio.to_thread(
-                                has_client.ner, text_content, chinese_types
+                            # Self-consistent multi-pass NER over THIS payload.
+                            # Pass 0 is the temp=0 greedy seed (== today's single
+                            # call); passes >=1 re-sample at temp>0 under distinct
+                            # sample_index keys and are folded into the union. The
+                            # union is monotone (only ⊇ the seed), so widening K
+                            # cannot uncover PII the seed already hid — hallucinated
+                            # temp>0 values are gated to 0 region by the matcher.
+                            # K=1 (default) drives exactly one temp=0 pass = current.
+                            k_samples = max(1, int(settings.HAS_NER_SELF_CONSIST_SAMPLES))
+                            sample_temp = float(settings.HAS_NER_SELF_CONSIST_TEMPERATURE)
+
+                            def _ner_sample(pass_index: int) -> Any:
+                                return has_client.ner(
+                                    text_content,
+                                    chinese_types,
+                                    temperature=(0.0 if pass_index == 0 else sample_temp),
+                                    sample_index=pass_index,
+                                )
+
+                            ner_result, passes_run = await asyncio.to_thread(
+                                aggregate_ner_samples, _ner_sample, k_samples
                             )
                             _record_has_text_metric(stage_status, "has_text_cache_status", "model_call")
+                            _record_has_text_metric(stage_status, "has_text_self_consist_passes", passes_run)
                             _add_has_text_duration(
                                 stage_status,
                                 "has_text_model_ms",
@@ -390,10 +565,13 @@ async def run_has_text_analysis(
         # ---- Residual re-ask pass (0712 海关发票实证) ----
         # 长 payload 召回稀释: 161块×38标签一次NER, 金额桶16值恰好漏掉
         # USD 4,700.00/USD 125.00(同标签块级14/14全召回; temp=0确定性; 收窄/
-        # 匹配无辜)。"已消费"恒等式=模型自己的答案: 任一已返回值(不短于其
-        # 类型 min-len——防'男'把整块标已消费、防多值块部分召回逃逸)与块文本
-        # compact 后互为子串 → 该块已消费。未消费块按原序拼残差 payload
-        # (同 caps 同标签集)再问一次——同一模型在短上下文召回完美(实测)。
+        # 匹配无辜)。"已消费"判据=模型自己的答案, 但用 _block_residual_ink 的
+        # token 级字符覆盖(isolated-token 扣除, 不再 bare-containment): 返回值
+        # 只有作为整词出现才算解释该块的那段墨迹, 扣完仍剩 >= 本块最短锚定值
+        # 一半长度的连续墨迹=还有第二列的值未解释 → 未消费; 只剩字段标签碎片
+        # =已解释。未消费块只把"未解释的那段墨迹"拼残差 payload(丢掉已消费
+        # 兄弟值与标签)再问一次——短上下文召回完美(实测), 且残差 != 整页文本,
+        # 单块合并双列也能过 residual_text != text_content 门控。
         # 附加式合并只增不减: force-fit 最坏=表头多遮一块; 返回空=与现状全等。
         consumed_values: list[str] = []
         for entity_type, entity_list in merged_ner_result.items():
@@ -405,14 +583,23 @@ async def run_has_text_analysis(
                     consumed_values.append(compact_value)
         residual_blocks = []
         for block in candidate_blocks:
-            block_compact = _compact_text(str(getattr(block, "text", "") or ""))
+            block_compact = _compact_text(_block_search_text(block))
             if not block_compact:
                 continue
-            consumed = any(
-                value in block_compact or block_compact in value for value in consumed_values
+            residual_ink = _block_residual_ink(block_compact, consumed_values)
+            if residual_ink is None:
+                continue
+            # Re-ask only the unexplained ink, not the whole block: the consumed
+            # sibling values are already merged, so dropping them keeps recall
+            # while making the residual payload differ from the full page even
+            # for a lone merged two-column block (clears the != text_content gate).
+            residual_blocks.append(
+                OCRTextBlock(
+                    text=residual_ink,
+                    polygon=list(getattr(block, "polygon", None) or [[0, 0], [0, 0], [0, 0], [0, 0]]),
+                    confidence=float(getattr(block, "confidence", 1.0) or 1.0),
+                )
             )
-            if not consumed:
-                residual_blocks.append(block)
         if residual_blocks:
             residual_payload = _build_has_text_payload(
                 residual_blocks,

@@ -325,3 +325,20 @@ def query_gpu_memory_all() -> list[dict]:
     return []
 
 
+def filter_visible_gpu_cards(cards: list[dict], visible_spec: str) -> list[dict]:
+    """只保留本项目使用的物理卡（``visible_spec`` 为逗号/空格分隔的 nvidia-smi index）。
+
+    共享多卡机上，本项目只占自己的卡（如各服务 ``CUDA_VISIBLE_DEVICES=6,7``），
+    面板不该显示别的项目占用的卡。``visible_spec`` 为空 -> 返回全部（单机/开发向后兼容）。
+    若指定的 index 在本机一个都匹配不到（配错），回退为全部，避免面板空白。
+    """
+    spec = str(visible_spec or "").strip()
+    if not spec or not cards:
+        return cards
+    want = {int(x) for x in re.split(r"[,\s]+", spec) if x.strip().isdigit()}
+    if not want:
+        return cards
+    filtered = [c for c in cards if int(c.get("index", -1)) in want]
+    return filtered if filtered else cards
+
+

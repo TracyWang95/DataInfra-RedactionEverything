@@ -21,14 +21,39 @@ def _fold_glyph(glyph: str) -> str:
     return folded if len(folded) == 1 else glyph
 
 
-# CJK body text is typeset at a line height of ~1.3x the glyph em (the standard
-# full-width line-height ratio). On a phone photo EVERY vertical char-box signal
-# is destroyed — the y-band collapses AND the centers pile into one line so the
-# height, the position and even the tilt are all unrecoverable; only the x-extent
-# survives. So the em (glyph width) is the one trustworthy size, and this ratio is
-# the single unavoidable constant that turns it into the row height that covers
-# the ink with its leading (the bare em alone leaves the feet poking out).
+# CJK body text is typeset at a line height of ~1.3-1.5x the glyph em. On a phone
+# photo EVERY vertical char-box signal is destroyed — the y-band collapses AND the
+# centers pile into one line so the height, the position and even the tilt are all
+# unrecoverable; only the x-extent survives. So the em (glyph width) is the one
+# trustworthy size, and a line-height ratio turns it into the row height that
+# covers the ink with its leading (the bare em alone leaves the feet poking out).
+#
+# This is the FLOOR ratio, not a fixed constant: _document_line_height calibrates
+# the real ratio per document from the un-collapsed rows' measured baseline pitch
+# and only ever CLAMPS UP to this floor (calibration may raise coverage, never
+# lower it). A fully-collapsed page — no measurable pitch — falls back to this
+# floor, byte-identical to the old constant, so coverage is never cut on a guess.
 _CJK_LINE_HEIGHT_RATIO = 1.5
+
+
+def _row_break(x1: float, previous_x1: float | None, em: float | None) -> bool:
+    """Whether a char box starting at x1 opens a new text row after previous_x1.
+
+    A real line wrap resets reading order leftward by ~a full line width — always
+    at least one glyph em. Sub-em leftward steps are in-row jitter (a tilted photo,
+    the word engine emitting a wide glyph's box a hair left of its neighbour) and
+    must NOT split the row, or the row rect fragments and each fragment gets the
+    multi-line wrap-fill to the block edge (over-cover onto the next column). When
+    no em is measurable (an all-Latin/digit row) the threshold is unknown, so fall
+    back to the old "any leftward reset splits" rule — more splits over-cover, the
+    safe direction. Shared by _char_rows and _line_rects_from_span_boxes so the two
+    stay in lockstep.
+    """
+    if previous_x1 is None:
+        return False
+    if em is None:
+        return x1 < previous_x1
+    return x1 <= previous_x1 - em
 
 
 def _median_single_cjk_width(char_boxes) -> float | None:
@@ -54,18 +79,65 @@ def _median_single_cjk_width(char_boxes) -> float | None:
     return widths[len(widths) // 2]
 
 
+def _calibrated_line_height_ratio(blocks: list[OCRTextBlock], em: float) -> float:
+    """The document's real line-height ratio, measured from un-collapsed rows.
+
+    The em (glyph width) survives a phone photo but the leading (line height /
+    em) is document-specific — a dense form sits near 1.2, an airy contract near
+    1.8. Measure it from the one signal that IS trustworthy on un-collapsed
+    pages: the baseline PITCH (adjacent row center-to-center distance), not the
+    single-glyph height. Per block, split its chars into rows (_char_rows), take
+    the pitches between adjacent row centers, drop collapsed pairs (pitch < em,
+    rows piled onto one baseline), and keep the block's MINIMUM real pitch — the
+    tightest adjacent spacing IS one line height; anything larger is a paragraph
+    gap or a skipped (chars-less) middle row. A block is trusted only when it has
+    at least two such spacings, so a lone gap cannot masquerade as the line
+    height. Across the trusted blocks take a high quantile (P75, the
+    over-coverage direction) and divide by em.
+
+    Clamped to the floor: calibration may only RAISE the ratio above 1.5, never
+    lower it, so collapsed rows are never grown to less than the current floor.
+    No measurable pitch (a fully-collapsed page) → the floor.
+    """
+    line_heights: list[float] = []
+    for block in blocks:
+        chars = getattr(block, "chars", None) or []
+        centers: list[float] = []
+        for row in _char_rows(chars):
+            ys = [
+                (float(b["y1"]) + float(b["y2"])) / 2.0
+                for b in row
+                if b.get("y1") is not None and b.get("y2") is not None
+            ]
+            if ys:
+                centers.append(sum(ys) / len(ys))
+        centers.sort()
+        pitches = [b - a for a, b in zip(centers, centers[1:], strict=False) if b - a >= em]
+        if len(pitches) >= 2:
+            line_heights.append(min(pitches))
+    if not line_heights:
+        return _CJK_LINE_HEIGHT_RATIO
+    line_heights.sort()
+    p75 = line_heights[min(len(line_heights) - 1, (len(line_heights) * 3) // 4)]
+    return max(_CJK_LINE_HEIGHT_RATIO, p75 / em)
+
+
 def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
     """Uniform text-row height for the whole page: the CJK glyph em scaled to the
-    typeset line height.
+    document's calibrated line-height ratio.
 
     The em is the median WIDTH of single CJK glyph boxes (see
     _median_single_cjk_width). One page-level value → every box is the same
     height, immune to any single block's loose / tilted / multi-line polygon,
     which is what made the wrapped 云A856Z8号 and 日 tower while 小空山7号 read flat.
+    The ratio is calibrated from the real baseline pitch (see
+    _calibrated_line_height_ratio), clamped up to the 1.5 floor.
     """
     all_chars = [c for block in blocks for c in (getattr(block, "chars", None) or [])]
     em = _median_single_cjk_width(all_chars)
-    return None if em is None else em * _CJK_LINE_HEIGHT_RATIO
+    if em is None:
+        return None
+    return em * _calibrated_line_height_ratio(blocks, em)
 
 
 def _glyph_alignment(
@@ -269,6 +341,9 @@ def _line_rects_from_span_boxes(
     """Per-text-line rects built from a span's (possibly gappy) char boxes —
     the geometry half of _entity_char_box_line_rects, shared with the
     partial-proof path (_span_rects_with_row_bands)."""
+    # Block em — the wrap threshold shared with _char_rows: a real line break
+    # resets leftward by >= one em, sub-em steps are in-row jitter (F6).
+    block_em = _median_single_cjk_width(getattr(block, "chars", None) or [])
     rects: list[tuple[int, int, int, int]] = []
     current: tuple[int, int, int, int] | None = None
     previous_x1: float | None = None
@@ -277,7 +352,7 @@ def _line_rects_from_span_boxes(
             continue
         x1, y1 = float(box["x1"]), float(box["y1"])
         x2, y2 = float(box["x2"]), float(box["y2"])
-        if current is not None and previous_x1 is not None and x1 < previous_x1:
+        if current is not None and _row_break(x1, previous_x1, block_em):
             rects.append(current)
             current = None
         current = (
@@ -323,22 +398,30 @@ def _line_rects_from_span_boxes(
         # grid — byte-identical to before — which is what stops tall Latin glyphs
         # leaking (per-char sized them by width, and Latin width << Latin height).
         entity_em = _median_single_cjk_width(span_boxes)
-        row_line_height = line_height
+        # F3 — row height is the MAX of every measured floor, adjusted only
+        # upward (never below the page grid): the page em grid (line_height),
+        # the block-local em (a pure-digit value inside a big-font labelled
+        # block inherits the label's font size, which its own charless span
+        # cannot state), this entity's own em (lifts a big header off the body
+        # grid), and the value's real ink band (never shrink below the glyphs).
+        floors = [f for f in (line_height,) if f is not None and f > 0]
+        if block_em is not None:
+            floors.append(block_em * _CJK_LINE_HEIGHT_RATIO)
         if entity_em is not None:
-            entity_line_height = entity_em * _CJK_LINE_HEIGHT_RATIO
-            row_line_height = (
-                entity_line_height
-                if row_line_height is None
-                else max(row_line_height, entity_line_height)
-            )
-        if row_line_height is not None and row_line_height > 0:
-            # Document line grid, floored by THIS entity's own font: the page em
-            # (see _document_line_height) is a floor for body & Latin, the entity
-            # em lifts big headers. A single block's polygon cannot state its row
-            # height reliably — loose, tilt-inflated, or (multi-line) the line
-            # PITCH not the glyph height — which is why the wrapped 云A856Z8号 and
-            # 日 towered while 小空山7号 read flat. Clamped to the block below.
-            row_h = min(float(block_bottom - block_top), float(row_line_height))
+            floors.append(entity_em * _CJK_LINE_HEIGHT_RATIO)
+        ink_band = max(
+            (float(b["y2"]) - float(b["y1"]) for b in span_boxes if b is not None),
+            default=0.0,
+        )
+        if ink_band > 0:
+            floors.append(ink_band)
+        if floors:
+            # Grown to the tallest floor and clamped to the block polygon by the
+            # per-rect grow below — a single block's polygon cannot state its row
+            # height reliably (loose, tilt-inflated, or the multi-line line PITCH),
+            # which is why the wrapped 云A856Z8号 and 日 towered while 小空山7号 read
+            # flat, so the polygon caps but never sets the row height.
+            row_h = max(floors)
         else:
             # No page grid (degenerate page with no adjacent CJK pair — never the
             # real pipeline, which always threads one in): full block polygon
@@ -347,8 +430,15 @@ def _line_rects_from_span_boxes(
         if row_h > 0:
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
-                # Grow the (often y-collapsed) char band up to the row height about
-                # its center, but never shrink below the chars' own y-extent.
+                # F5 — collapse is judged by HEIGHT evidence, not y-variance: a
+                # tilted collapsed band has a non-zero y-variance yet its band is
+                # a sliver, so it must still grow, while a band that already spans
+                # the typeset row height (band >= row_h) has proven its ink covers
+                # the line and is left as-is. Grow-only about the chars' own
+                # y-center, never shrinking below the band, clamped to the block.
+                if y2r - y1r >= row_h:
+                    grown.append((x1r, max(block_top, y1r), x2r, min(block_bottom, y2r)))
+                    continue
                 cy = (y1r + y2r) / 2
                 y1g = min(y1r, int(cy - row_h / 2))
                 y2g = max(y2r, int(cy + row_h / 2))
@@ -381,19 +471,81 @@ def _line_rects_from_span_boxes(
     return [r for r in rects if r[3] > r[1]] or None
 
 
+def _column_split_char_boxes(char_boxes: list) -> list[list[dict]]:
+    """Split one block's char boxes into columns by the horizontal gutter.
+
+    PaddleOCR-VL sometimes MERGES two side-by-side columns into one block: each
+    char keeps its own x, but y collapses to the whole block's range, so a
+    matcher's x-span union covers the gutter AND the neighbouring column. The
+    columns are separated by a GUTTER — a blank wide enough to hold a full glyph
+    slot — while in-column chars sit an advance apart (real photo: gutter 34-41px
+    vs in-column advance ~19px). This finds the gutter WITHOUT any hardcoded
+    pixel threshold or magic multiplier: the block's own glyph em (the median
+    single-CJK char WIDTH, _median_single_cjk_width) is the scale, and an
+    inter-char gap >= one em means "the blank can hold >= one full character
+    slot" == a deliberate column break. Every gap smaller than an em is
+    in-column spacing and stays one column. Multiple em-wide gaps -> multiple
+    columns.
+
+    No em (an all-Latin / all-digit block, Latin width is not a typographic em)
+    -> return the whole block as one group: the gutter cannot be self-calibrated,
+    so the safe move is to over-cover, not to guess a split.
+
+    LEAK-SAFETY: this only ever turns ONE input group into >= 1 output groups;
+    it drops no box and shrinks no y (it does not touch y at all). The caller
+    ALWAYS unions the original block into the mask, so a mis-split can only ADD
+    coverage (each half-value gets its own covered sub-block), never remove it —
+    strictly leak-safe, zero under-coverage.
+
+    Boxes are grouped by x position (columns partition x-space), so the input
+    order does not matter; groups come out left-to-right. Interior boxes that
+    overlap in x (same column, different photo rows) never open a gutter because
+    the gap is measured from the current column's running right edge.
+
+     TODO(接线, human main-loop, needs GPU/real docs): call this in the NER
+    payload build / matcher BEFORE the x-span union so a merged double-column
+    block is fed downstream as per-column sub-blocks (each unioned separately).
+    Also verify whether region_detection already emits column-granular blocks —
+    if so it is the stronger evidence source and this becomes a fallback only.
+    """
+    boxes = [
+        c for c in char_boxes
+        if c and c.get("x1") is not None and c.get("x2") is not None
+    ]
+    if len(boxes) <= 1:
+        return [boxes] if boxes else []
+    em = _median_single_cjk_width(boxes)
+    if em is None:
+        return [boxes]  # no CJK scale -> cannot self-calibrate a gutter; keep whole block
+    ordered = sorted(boxes, key=lambda c: float(c["x1"]))
+    groups: list[list[dict]] = [[ordered[0]]]
+    column_right = float(ordered[0]["x2"])
+    for box in ordered[1:]:
+        gap = float(box["x1"]) - column_right
+        if gap >= em:  # a blank wide enough to hold >= one full glyph slot
+            groups.append([box])
+            column_right = float(box["x2"])
+        else:
+            groups[-1].append(box)
+            column_right = max(column_right, float(box["x2"]))
+    return groups
+
+
 def _char_rows(chars: list) -> list[list[dict]]:
     """Split a reading-ordered char stream into text rows.
 
     Same identity as _entity_char_box_line_rects: a row break is where reading
-    order resets leftward (the next box STARTS left of the previous box's
-    start). Holds on tilted photos where y tests would fuse adjacent rows.
+    order resets leftward by at least one glyph em (_row_break) — a full-width
+    wrap, not sub-em in-row jitter. Holds on tilted photos where y tests would
+    fuse adjacent rows.
     """
+    em = _median_single_cjk_width(chars)
     rows: list[list[dict]] = []
     current: list[dict] = []
     previous_x1: float | None = None
     for box in chars:
         x1 = float(box["x1"])
-        if current and previous_x1 is not None and x1 < previous_x1:
+        if current and _row_break(x1, previous_x1, em):
             rows.append(current)
             current = []
         current.append(box)

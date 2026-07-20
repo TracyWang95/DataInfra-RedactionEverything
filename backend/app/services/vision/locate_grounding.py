@@ -78,6 +78,19 @@ _DEFAULT_TOP_P = 0.9
 _DEFAULT_DETECT_CONFIDENCE = 0.8
 _DEFAULT_CHECKLIST_CONFIDENCE = 0.82
 
+# Generic handwriting-grounding queries fed to LocateAnything so its 2D boxes
+# can supply real per-row geometry for tightening over-tall OCR value boxes.
+# These are MODEL INPUT WORDS (a small set of generic handwriting phrasings),
+# NOT a per-type rule table: measured on real forms, "handwritten number"
+# grounds IDs + phone numbers, "handwritten Chinese address text" grounds
+# addresses, "handwritten name" grounds names. The wording is tunable — pass a
+# custom list to ``ground_handwriting`` to override.
+_HANDWRITING_GROUNDING_QUERIES = (
+    "handwritten number",
+    "handwritten Chinese address text",
+    "handwritten name",
+)
+
 
 @dataclass
 class LocateGroundingTimings:
@@ -630,6 +643,7 @@ class LocateAnythingGroundingService:
             await asyncio.gather(*leftover_specs, return_exceptions=True)
 
         boxes = self._drop_solid_fill_seals(boxes, image_data)
+        boxes = self._snap_seals_to_ink(boxes, image_data)
         boxes = self._drop_skin_hue_fingerprints(boxes, image_data)
         boxes = self._snap_fingerprints_to_ink(boxes, image_data)
         timings.total = _elapsed_ms(total_start)
@@ -694,6 +708,58 @@ class LocateAnythingGroundingService:
             snapped += 1
         if snapped:
             logger.info("Snapped %d fingerprint box(es) to their measured ink extent", snapped)
+        return out
+
+    def _snap_seals_to_ink(
+        self, boxes: list[BoundingBox], image_data: bytes
+    ) -> list[BoundingBox]:
+        """Snap an official_seal box to the UNION hull of its own red ink.
+
+        A 公章 IS a red stamp impression — its box must cover the red ink and no
+        more. The edge-seal margin probe grounds a whole page-margin tile as a
+        seal (病例5: the left FORM COLUMN — black text with one tiny red mark),
+        yielding a full-height strip whose red content is a sliver of the box.
+        Mirror of _snap_fingerprints_to_ink, but the UNION of the intersecting
+        colored components (not one box each): a real stamp's ring + star + text
+        are separate components, so per-component would shatter it — their union
+        IS the stamp's extent. Fail-open, over-mask direction: no colored
+        component inside the box (a greyscale scan, a faint seal below the
+        visible chroma floor) leaves it unchanged, never tightening below the ink.
+        """
+        if not any(b.type == "official_seal" for b in boxes):
+            return boxes
+        try:
+            components = raw_colored_component_bboxes(image_data)
+        except Exception:
+            logger.warning("seal ink snap unavailable; keeping boxes", exc_info=True)
+            return boxes
+        if not components:
+            return boxes
+        out: list[BoundingBox] = []
+        snapped = 0
+        for b in boxes:
+            if b.type != "official_seal":
+                out.append(b)
+                continue
+            touched = [
+                (cx, cy, cw, ch)
+                for cx, cy, cw, ch in components
+                if b.x < cx + cw and cx < b.x + b.width and b.y < cy + ch and cy < b.y + b.height
+            ]
+            if not touched:
+                out.append(b)  # fail open — no visible red ink to measure
+                continue
+            x1 = min(cx for cx, _, _, _ in touched)
+            y1 = min(cy for _, cy, _, _ in touched)
+            x2 = max(cx + cw for cx, _, cw, _ in touched)
+            y2 = max(cy + ch for _, cy, _, ch in touched)
+            if (x1, y1, x2 - x1, y2 - y1) != (b.x, b.y, b.width, b.height):
+                snapped += 1
+            out.append(
+                b.model_copy(update={"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1})
+            )
+        if snapped:
+            logger.info("Snapped %d seal box(es) to their measured red-ink hull", snapped)
         return out
 
     @staticmethod
@@ -935,6 +1001,66 @@ class LocateAnythingGroundingService:
                     evidence_source="visual_feature_model",
                 )
             )
+        return boxes
+
+    async def ground_handwriting(
+        self,
+        image_data: bytes,
+        queries: list[str] | None = None,
+        page: int = 1,
+    ) -> list[BoundingBox]:
+        """Ground handwritten VALUES as real 2D boxes (row geometry only).
+
+        Each query is one single-category ``/detect`` call, run SEQUENTIALLY:
+        LocateAnything's recall collapses when categories share a prompt AND is
+        load-sensitive (concurrent calls contend on the GPU and silently drop
+        boxes), so these are never fanned out. ``queries`` is a small set of
+        generic handwriting phrasings (model input words, not per-type rules);
+        it defaults to ``_HANDWRITING_GROUNDING_QUERIES``.
+
+        The boxes are tagged ``type="handwriting"`` with EMPTY text — they exist
+        only to feed row-accurate y-geometry to
+        ``VisionService._adopt_la_vertical_geometry``; they are not redaction
+        targets themselves. A failing query is logged and skipped (the others
+        still produce boxes); on total miss the caller keeps the original box.
+        """
+        phrasings = list(queries) if queries is not None else list(_HANDWRITING_GROUNDING_QUERIES)
+        boxes: list[BoundingBox] = []
+        for query in phrasings:
+            try:
+                raw_boxes = await self._post_detect(image_data, [query])
+            except Exception as exc:
+                logger.warning("handwriting grounding query %r failed, skipping: %s", query, exc)
+                continue
+            for raw in raw_boxes:
+                try:
+                    normalized = _clamp_box(
+                        float(raw.get("x") or 0),
+                        float(raw.get("y") or 0),
+                        float(raw.get("width") or 0),
+                        float(raw.get("height") or 0),
+                    )
+                except (TypeError, ValueError):
+                    normalized = None
+                if normalized is None:
+                    continue
+                x, y, width, height = normalized
+                boxes.append(
+                    BoundingBox(
+                        id=f"la_hw_{uuid.uuid4().hex[:8]}",
+                        x=x,
+                        y=y,
+                        width=width,
+                        height=height,
+                        type="handwriting",
+                        text="",
+                        page=page,
+                        confidence=float(raw.get("confidence", _DEFAULT_DETECT_CONFIDENCE) or _DEFAULT_DETECT_CONFIDENCE),
+                        source="visual_features",
+                        source_detail="locate_anything:handwriting_grounding",
+                        evidence_source="visual_feature_model",
+                    )
+                )
         return boxes
 
     async def _confirm_seal_crop(

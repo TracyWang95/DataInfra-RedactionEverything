@@ -101,10 +101,10 @@ class HaSClient:
     """HaS本地模型客户端"""
 
     _SHARED_NER_CACHE: OrderedDict[
-        tuple[str, tuple[str, ...], str, str],
+        tuple[str, tuple[str, ...], str, str, int],
         tuple[float, dict[str, list[str]]],
     ] = OrderedDict()
-    _SHARED_NER_INFLIGHT: dict[tuple[str, tuple[str, ...], str, str], threading.Event] = {}
+    _SHARED_NER_INFLIGHT: dict[tuple[str, tuple[str, ...], str, str, int], threading.Event] = {}
     _SHARED_NER_LOCK = threading.Lock()
 
 
@@ -142,13 +142,23 @@ class HaSClient:
             return resp
         return ner_breaker.call_sync(_request)
 
-    def _call_model(self, messages: list[dict], *, max_tokens: int | None = None) -> str:
-        """调用 OpenAI 兼容接口（llama.cpp HaS）。"""
+    def _call_model(
+        self,
+        messages: list[dict],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        """调用 OpenAI 兼容接口（llama.cpp HaS）。
+
+        temperature 未传时用确定性默认 _MODEL_TEMPERATURE(=0.0)；自洽多趟采样时
+        调用方按趟传入(第0趟贪心0.0，后续 temp>0)。
+        """
         from app.core.config import settings
         base = self._effective_base_url()
         payload: dict[str, Any] = {
             "messages": messages,
-            "temperature": _MODEL_TEMPERATURE,
+            "temperature": _MODEL_TEMPERATURE if temperature is None else float(temperature),
             "top_p": _MODEL_TOP_P,
             "stream": False,
         }
@@ -303,13 +313,23 @@ class HaSClient:
         text: str,
         entity_types: list[str],
         guidance_key: str = "",
-    ) -> tuple[str, tuple[str, ...], str, str]:
+        sample_index: int = 0,
+    ) -> tuple[str, tuple[str, ...], str, str, int]:
+        # sample_index keeps self-consistent temp>0 passes over the SAME payload
+        # from being served the temp=0 seed's cached result (union would collapse
+        # to a single 趟). Default 0 = the deterministic seed / today's key.
         digest = hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()
-        return (self._effective_base_url(), tuple(sorted(entity_types)), digest, guidance_key)
+        return (
+            self._effective_base_url(),
+            tuple(sorted(entity_types)),
+            digest,
+            guidance_key,
+            int(sample_index),
+        )
 
     def _get_cached_ner(
         self,
-        key: tuple[str, tuple[str, ...], str, str],
+        key: tuple[str, tuple[str, ...], str, str, int],
     ) -> dict[str, list[str]] | None:
         if self._ner_cache_ttl_sec <= 0 or self._ner_cache_max_items <= 0:
             return None
@@ -344,7 +364,7 @@ class HaSClient:
 
     def _set_cached_ner(
         self,
-        key: tuple[str, tuple[str, ...], str, str],
+        key: tuple[str, tuple[str, ...], str, str, int],
         result: dict[str, list[str]],
     ) -> None:
         if self._ner_cache_ttl_sec <= 0 or self._ner_cache_max_items <= 0:
@@ -357,7 +377,7 @@ class HaSClient:
 
     def _begin_ner_request(
         self,
-        key: tuple[str, tuple[str, ...], str, str],
+        key: tuple[str, tuple[str, ...], str, str, int],
     ) -> tuple[bool, threading.Event | None]:
         if self._ner_cache_ttl_sec <= 0 or self._ner_cache_max_items <= 0:
             return True, None
@@ -372,7 +392,7 @@ class HaSClient:
 
     def _finish_ner_request(
         self,
-        key: tuple[str, tuple[str, ...], str, str],
+        key: tuple[str, tuple[str, ...], str, str, int],
         event: threading.Event | None,
     ) -> None:
         if event is None:
@@ -395,6 +415,8 @@ class HaSClient:
         entity_types: list[str] | None = None,
         type_guidance: list[dict[str, Any]] | None = None,
         *,
+        temperature: float | None = None,
+        sample_index: int = 0,
         _allow_truncation_retry: bool = True,
     ) -> dict[str, list[str]]:
         """
@@ -403,6 +425,10 @@ class HaSClient:
         Args:
             text: 待识别文本
             entity_types: 要识别的实体类型清单(必须显式传入)
+            temperature: 本次请求采样温度。None=确定性默认(0.0)。自洽多趟采样时
+                调用方按趟传(第0趟贪心0.0，后续 temp>0)。
+            sample_index: 自洽采样趟号，进缓存键。默认 0=贪心种子/现状键；>0 的趟
+                与种子不共享缓存，避免 temp>0 趟被喂种子结果导致并集塌成 1 趟。
 
         Returns:
             {类型: [实体列表]}
@@ -411,7 +437,7 @@ class HaSClient:
         guidance = self._normalize_type_guidance(types, type_guidance)
         guidance_text = json.dumps(guidance, ensure_ascii=False, separators=(",", ":")) if guidance else ""
         guidance_key = hashlib.sha256(guidance_text.encode("utf-8", errors="ignore")).hexdigest() if guidance_text else ""
-        cache_key = self._ner_cache_key(text, types, guidance_key)
+        cache_key = self._ner_cache_key(text, types, guidance_key, sample_index)
         cached = self._get_cached_ner(cache_key)
         if cached is not None:
             return cached
@@ -436,7 +462,13 @@ class HaSClient:
                 )
                 merged: dict[str, list[str]] = {}
                 for start in range(0, len(types), batch_size):
-                    part = self.ner(text, types[start:start + batch_size], None)
+                    part = self.ner(
+                        text,
+                        types[start:start + batch_size],
+                        None,
+                        temperature=temperature,
+                        sample_index=sample_index,
+                    )
                     for key, values in (part or {}).items():
                         if not values:
                             continue
@@ -504,7 +536,7 @@ If nothing matches, return {{}}.
 
         try:
             started = time.perf_counter()
-            response = self._call_model(messages, max_tokens=max_tokens)
+            response = self._call_model(messages, max_tokens=max_tokens, temperature=temperature)
             parse_mode, result = self._try_parse_json_object(response)
             if result is None:
                 logger.warning("HaS NER response could not be parsed as JSON: %.200s", response)
@@ -514,7 +546,13 @@ If nothing matches, return {{}}.
                     batch_size = max(_NER_BATCH_MIN_TYPES, min(_NER_BATCH_MAX_TYPES, target // _NER_BATCH_TOKENS_PER_TYPE))
                     merged: dict[str, list[str]] = {}
                     for start in range(0, len(types), batch_size):
-                        part = self.ner(text, types[start:start + batch_size], None)
+                        part = self.ner(
+                            text,
+                            types[start:start + batch_size],
+                            None,
+                            temperature=temperature,
+                            sample_index=sample_index,
+                        )
                         for key, values in (part or {}).items():
                             if not values:
                                 continue
@@ -554,6 +592,8 @@ If nothing matches, return {{}}.
                             text,
                             missing,
                             retry_guidance,
+                            temperature=temperature,
+                            sample_index=sample_index,
                             _allow_truncation_retry=False,
                         )
                         for key, values in (retry_result or {}).items():
