@@ -1,0 +1,15 @@
+# Incremental upgrade: base already has paddlepaddle-gpu cu129 + libgomp + baked models.
+# Only bumps paddleocr/paddlex for PP-OCRv6_medium_* engine bindings.
+ARG BASE_IMAGE=redaction-ocr:cu129
+FROM ${BASE_IMAGE}
+
+USER root
+COPY scripts/ocr_server.py /app/ocr_server.py
+RUN pip install --no-cache-dir \
+    --default-timeout=300 \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    "paddleocr[doc-parser]==3.7.0" \
+    && chown appuser:appuser /app/ocr_server.py
+
+USER appuser
+CMD ["python", "ocr_server.py"]

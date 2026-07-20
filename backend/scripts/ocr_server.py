@@ -116,6 +116,25 @@ def _require_gpu_or_exit() -> None:
         print(f"[OCR] FATAL: paddle is not installed: {exc}", flush=True)
         _fatal(1)
 
+    # Air-gapped hosts must skip model-hoster probes (HF/ModelScope/AIStudio/BOS).
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+
+    try:
+        import paddleocr as _paddleocr
+
+        paddleocr_ver = getattr(_paddleocr, "__version__", "?")
+    except Exception:
+        paddleocr_ver = "?"
+    try:
+        cuda_ver = paddle.version.cuda()
+    except Exception:
+        cuda_ver = "?"
+    print(
+        f"[OCR] versions: paddle={paddle.__version__} paddleocr={paddleocr_ver} "
+        f"cuda={cuda_ver}",
+        flush=True,
+    )
+
     if not paddle.is_compiled_with_cuda():
         print("[OCR] FATAL: installed Paddle build has no CUDA support.", flush=True)
         _fatal(1)

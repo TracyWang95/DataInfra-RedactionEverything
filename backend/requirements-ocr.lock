@@ -1,11 +1,15 @@
-# Pinned dependencies for OCR microservice (offline bastion: CUDA 12.6).
+# Pinned dependencies for OCR microservice (local / CUDA 12.9).
 # Re-generate: pip freeze > requirements-ocr.lock
 #
-# Use cu126 wheels to match bastion driver/toolkit (paddle.version.cuda() -> 12.6).
+# Use cu129 wheels (paddle.version.cuda() -> 12.9). For bastion CUDA 12.6 see
+# requirements-ocr-cu126.lock and: OCR_CUDA=cu126 bash deploy/pack-ocr-offline.sh
 # NVIDIA Container Toolkit injects host CUDA libs at runtime; image only needs libgomp etc.
---extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
+#
+# paddleocr 3.7.x required for PP-OCRv6_medium_* engine bindings (3.6.x fails with
+# "No engine bindings registered for model 'PP-OCRv6_medium_det'").
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
 paddlepaddle-gpu==3.3.0
-paddleocr[doc-parser]==3.6.0
+paddleocr[doc-parser]==3.7.0
 fastapi==0.136.1
 uvicorn==0.35.0
 httpx==0.28.1

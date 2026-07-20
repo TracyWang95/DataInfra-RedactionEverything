@@ -1,7 +1,9 @@
-# Offline-friendly OCR sidecar for bastion hosts (CUDA 12.6 / cu126).
-# Build: bash deploy/pack-ocr-offline.sh
+# Offline-friendly OCR sidecar.
+# Build: OCR_CUDA=cu129 bash deploy/pack-ocr-offline.sh
 ARG BASE_IMAGE=python:3.11-slim
 FROM ${BASE_IMAGE}
+
+ARG REQUIREMENTS_FILE=requirements-ocr.lock
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -21,11 +23,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-ocr.lock .
-# Prefer Tsinghua PyPI; paddle CUDA wheels still come from the lock's cu126 extra-index.
+COPY ${REQUIREMENTS_FILE} /tmp/requirements-ocr.lock
+# Prefer Tsinghua PyPI; paddle CUDA wheels come from the lock's cu126/cu129 extra-index.
 RUN pip install --no-cache-dir \
+    --default-timeout=300 \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    -r requirements-ocr.lock
+    -r /tmp/requirements-ocr.lock \
+    && rm -f /tmp/requirements-ocr.lock
 
 COPY scripts/ocr_server.py .
 

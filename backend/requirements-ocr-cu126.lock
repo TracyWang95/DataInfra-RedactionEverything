@@ -1,0 +1,14 @@
+# Pinned dependencies for OCR microservice (offline bastion: CUDA 12.6).
+# Use when packaging for hosts whose paddle.version.cuda() is 12.6:
+#   OCR_CUDA=cu126 bash deploy/pack-ocr-offline.sh
+#
+# paddleocr 3.7.x required for PP-OCRv6_medium_* engine bindings.
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
+paddlepaddle-gpu==3.3.0
+paddleocr[doc-parser]==3.7.0
+fastapi==0.136.1
+uvicorn==0.35.0
+httpx==0.28.1
+numpy>=1.24.0
+Pillow>=12.2.0
+pydantic>=2.0.0
