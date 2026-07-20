@@ -1,5 +1,7 @@
 # Runtime data (user downloads, not baked into image)
-models/
+models/*
+!models/paddleocr-offline/
+!models/paddleocr-offline/**
 uploads/
 outputs/
 data/
@@ -40,6 +42,7 @@ Thumbs.db
 *.gguf
 *.bin
 *.safetensors
+!models/paddleocr-offline/**
 *.pt
 *.onnx
 *.engine

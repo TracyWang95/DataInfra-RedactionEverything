@@ -74,8 +74,18 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.ocr
+    # python entry loads models; do not use `uvicorn ocr_server:app` alone.
+    command: ["python", "ocr_server.py"]
     ports:
       - "${OCR_PORT:-8082}:8082"
+    environment:
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+      - PADDLE_PDX_CACHE_HOME=/opt/paddlex
+      - OCR_STRUCTURE_ENABLED=${OCR_STRUCTURE_ENABLED:-true}
+      - OCR_STRUCTURE_PRIMARY=${OCR_STRUCTURE_PRIMARY:-true}
+      - OCR_STRUCTURE_WARMUP=${OCR_STRUCTURE_WARMUP:-1}
+      - OCR_VL_ENABLED=${OCR_VL_ENABLED:-1}
+      - OCR_PORT=8082
     deploy:
       resources:
         reservations:
@@ -90,7 +100,7 @@ services:
       interval: 30s
       timeout: 15s
       retries: 5
-      start_period: 60s
+      start_period: 180s
     profiles:
       - gpu
     restart: unless-stopped

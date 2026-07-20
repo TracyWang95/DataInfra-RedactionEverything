@@ -1,9 +1,9 @@
-# Pinned dependencies for OCR microservice.
+# Pinned dependencies for OCR microservice (offline bastion: CUDA 12.6).
 # Re-generate: pip freeze > requirements-ocr.lock
 #
-# NOTE: Base image should include CUDA runtime for GPU inference.
-# Consider nvidia/cuda:12.x-runtime or PaddlePaddle official GPU image.
---extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu129/
+# Use cu126 wheels to match bastion driver/toolkit (paddle.version.cuda() -> 12.6).
+# NVIDIA Container Toolkit injects host CUDA libs at runtime; image only needs libgomp etc.
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cu126/
 paddlepaddle-gpu==3.3.0
 paddleocr[doc-parser]==3.6.0
 fastapi==0.136.1

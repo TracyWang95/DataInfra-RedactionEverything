@@ -1,19 +1,44 @@
-FROM python:3.11-slim
+# Offline-friendly OCR sidecar for bastion hosts (CUDA 12.6 / cu126).
+# Build: bash deploy/pack-ocr-offline.sh
+ARG BASE_IMAGE=python:3.11-slim
+FROM ${BASE_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    # Skip HuggingFace/ModelScope connectivity probes on air-gapped hosts.
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+    # Baked model cache (see models/paddleocr-offline/).
+    PADDLE_PDX_CACHE_HOME=/opt/paddlex \
+    OCR_STRUCTURE_ENABLED=true \
+    OCR_STRUCTURE_PRIMARY=true \
+    OCR_STRUCTURE_WARMUP=1
 
 WORKDIR /app
 
+# libgomp1: required by libpaddle.so (missing -> "libgomp.so.1: cannot open shared object file")
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1 libglib2.0-0 \
+    libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-ocr.lock .
-RUN pip install --no-cache-dir -r requirements-ocr.lock
+# Prefer Tsinghua PyPI; paddle CUDA wheels still come from the lock's cu126 extra-index.
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -r requirements-ocr.lock
 
 COPY scripts/ocr_server.py .
 
-RUN adduser --disabled-password --gecos '' appuser
+# Pre-downloaded PaddleX / PaddleOCR-VL weights for fully offline init.
+COPY models/paddleocr-offline/ /opt/paddlex/official_models/
+
+RUN adduser --disabled-password --gecos '' appuser && \
+    mkdir -p /opt/paddlex && \
+    chown -R appuser:appuser /app /opt/paddlex
 USER appuser
 
 EXPOSE 8082
 
-CMD ["uvicorn", "ocr_server:app", "--host", "0.0.0.0", "--port", "8082"]
+# Must use python entry so init_ocr() / warmup run before serving.
+# (uvicorn ocr_server:app alone leaves ready=false.)
+CMD ["python", "ocr_server.py"]
