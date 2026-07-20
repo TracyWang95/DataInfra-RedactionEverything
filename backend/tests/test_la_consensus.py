@@ -61,10 +61,26 @@ def test_samples_one_returns_first_unchanged():
     assert len(out) == 2  # 单次采样原样返回, 不过滤
 
 
-def test_min_votes_one_returns_first_unchanged():
+def test_min_votes_one_is_union():
+    # 并集模式: 保留任意 run 出现的框(治淡签字/手写单次采样time中time漏)
     runs = [[_b(0.3, 0.4)], [_b(0.9, 0.9, type_="signature")]]
     out = consensus_boxes(runs, min_votes=1)
-    assert len(out) == 1 and out[0].type == "official_seal"  # 向后兼容: 返回首次
+    assert {b.type for b in out} == {"official_seal", "signature"}  # 两个都保留
+
+
+def test_union_hull_covers_max_extent():
+    # 同一手写笔画在 2/3 采样出现、位置/大小微异(IoU≈0.68>0.5 聚一簇) -> 并集外壳覆盖二者最大范围
+    runs = [
+        [_b(0.30, 0.40, w=0.10, h=0.10, type_="signature")],
+        [],  # 这次采样漏了这一笔
+        [_b(0.31, 0.41, w=0.10, h=0.10, type_="signature")],
+    ]
+    out = consensus_boxes(runs, min_votes=1)
+    assert len(out) == 1  # 单次会漏, 并集保住
+    b = out[0]
+    assert abs(b.x - 0.30) < 1e-9 and abs(b.y - 0.40) < 1e-9       # 外壳左上=最小
+    assert abs((b.x + b.width) - 0.41) < 1e-9                      # 外壳右=max(0.40,0.41)
+    assert abs((b.y + b.height) - 0.51) < 1e-9                     # 外壳下=max(0.50,0.51)
 
 
 def test_empty_runs():

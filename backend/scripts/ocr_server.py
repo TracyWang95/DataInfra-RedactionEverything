@@ -183,6 +183,17 @@ def init_ocr() -> None:
                 vl_rec_backend=vl_backend,
                 vl_rec_server_url=vl_server_url,
                 vl_rec_api_model_name=vl_model_name,
+                # Fan every layout block's VL recognition at the vLLM server
+                # concurrently (default None = serial → the GPU idles between
+                # blocks, ~10s/page). use_queues=True switches the pipeline to
+                # the queued/streaming executor so the fan-out actually happens
+                # in parallel; without it max_concurrency has no effect. Together
+                # the vLLM server batches every block in one throughput pass, so
+                # a 58-block page finishes in ~one batched generation.
+                vl_rec_max_concurrency=int(
+                    os.environ.get("OCR_VL_MAX_CONCURRENCY", "128") or "128"
+                ),
+                use_queues=True,
             )
             _model_name = f"PaddleOCR-VL via {vl_backend} ({vl_model_name})"
         else:
@@ -584,15 +595,17 @@ def extract_vl(
         raw_boxes: list[dict] = []
         if not spotting_requested:
             try:
+                _tp = time.perf_counter()
                 outputs = _vl.predict(temp_path, max_new_tokens=max_new_tokens, **predict_kwargs)
                 raw_boxes = _extract_vl_parsing_boxes(outputs)
                 if _vl_seal_enabled():
                     raw_boxes.extend(_extract_vl_seal_boxes(outputs))
-                print(f"[OCR] PaddleOCR-VL parser produced {len(raw_boxes)} boxes", flush=True)
+                print(f"[OCR] PaddleOCR-VL parser produced {len(raw_boxes)} boxes in {time.perf_counter()-_tp:.2f}s", flush=True)
             except Exception as exc:
                 print(f"[OCR] PaddleOCR-VL parser failed: {exc}", flush=True)
 
         if not raw_boxes:
+            _ts = time.perf_counter()
             outputs = _vl.predict(
                 temp_path,
                 use_layout_detection=False,
@@ -600,7 +613,7 @@ def extract_vl(
                 max_new_tokens=max_new_tokens,
             )
             raw_boxes = _extract_vl_spotting_boxes(outputs)
-            print(f"[OCR] PaddleOCR-VL spotting produced {len(raw_boxes)} boxes", flush=True)
+            print(f"[OCR] PaddleOCR-VL spotting produced {len(raw_boxes)} boxes in {time.perf_counter()-_ts:.2f}s", flush=True)
     except Exception as exc:
         print(f"[OCR] PaddleOCR-VL predict failed: {exc}", flush=True)
         return []

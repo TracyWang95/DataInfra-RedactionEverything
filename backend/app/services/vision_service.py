@@ -928,10 +928,16 @@ class VisionService:
 
         The specialist detector boxes machine codes at pixel accuracy; the
         grounding model's 0-1000 quantized boxes run visibly loose (its QR box
-        swallows the serial number printed below the code). Where both detect
-        the same code (centers mutually contained, the merge layer's standard
-        identity test), keep the tight specialist box. VLM codes with no YOLO
-        counterpart are kept — this only resolves duplicates, never recall.
+        swallows the serial number printed below the code). Where both detect a
+        code at the same spot (centers mutually contained, the merge layer's
+        standard identity test), keep the tight specialist box. YOLO is also the
+        authority on the code's TYPE: one physical machine code is a QR OR a
+        barcode, never both, so a VLM box of EITHER code type overlapping a YOLO
+        code box is the same code — the VLM often double-labels one QR as both
+        qr_code AND barcode (病例5), leaving two stacked boxes. Drop the VLM box
+        regardless of its type label; YOLO's box already covers the region, so
+        this only resolves duplicates, never recall. VLM codes with no YOLO
+        counterpart are kept untouched.
         """
         code_types = {"qr_code", "barcode"}
         yolo_codes = [
@@ -947,7 +953,7 @@ class VisionService:
                 b.type in code_types
                 and not str(getattr(b, "source_detail", "") or "").startswith("has_image:")
                 and any(
-                    y.type == b.type and (self._center_inside(y, b) or self._center_inside(b, y))
+                    self._center_inside(y, b) or self._center_inside(b, y)
                     for y in yolo_codes
                 )
             ):
@@ -955,7 +961,7 @@ class VisionService:
                 continue
             kept.append(b)
         if dropped:
-            logger.info("Dropped %d loose VLM machine-code box(es) superseded by YOLO", dropped)
+            logger.info("Dropped %d VLM machine-code box(es) superseded by the YOLO code", dropped)
         return kept
 
     def _merge_seal_shards(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
@@ -1527,6 +1533,11 @@ class VisionService:
         if cached is not None:
             _LA_CONSENSUS_CACHE.move_to_end(cache_key)
             return cached[0], {**cached[1], "consensus_cache_hit": 1}
+        # N seedless passes run SERIALLY: concurrent samples contend for the two
+        # LA cards and each pass loses boxes (measured: concurrent union-3 dropped
+        # 病例5 to 3/4 vs serial 4/4), the same card-contention that forces the
+        # dual pipeline sequential. Serial ~15s for 3 passes; the per-image hash
+        # cache makes every re-detect after the first instant + identical.
         runs: list[list[BoundingBox]] = []
         first_timings: dict = {}
         for i in range(samples):

@@ -20,7 +20,12 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from locate_anything_eval import LocateAnythingWorker, _parse_boxes, _resize_for_inference
+from locate_anything_eval import (
+    LocateAnythingWorker,
+    _parse_boxes,
+    _resize_for_inference,
+    fold_sample_boxes,
+)
 from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
@@ -49,6 +54,10 @@ ADAPTIVE_SIDE_FLOOR = 640
 ADAPTIVE_SIDE_LADDER = [2048, 1920, 1792, 1600, 1536, 1280, 1024]
 # Cap on tokens the vLLM LM generates per detection completion.
 VLLM_MAX_TOKENS = 512
+# Seedless samples per detection: n>1 batches N decodes on ONE prompt encode
+# (union-of-N recall at ~1x cost) instead of the backend issuing N serial passes.
+# When >1, set the backend's LOCATE_ANYTHING_CONSENSUS_SAMPLES back to 1.
+LM_SAMPLES = max(1, int(os.environ.get("LOCATE_ANYTHING_VLLM_SAMPLES", "1")))
 # Network timeout (seconds) for a single vLLM completion request.
 VLLM_REQUEST_TIMEOUT_SECONDS = 120
 # Fixed confidence stamped on every LocateAnything box (model emits no score).
@@ -343,8 +352,16 @@ class LocateService:
         torch.save(prompt_embeds, buf)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    def _vllm_complete_b64(self, prompt_embeds_b64: str, temperature: float = DEFAULT_TEMPERATURE) -> str:
-        """Greedy vLLM completion from a base64 prompt-embeds payload."""
+    def _vllm_complete_b64(
+        self, prompt_embeds_b64: str, temperature: float = DEFAULT_TEMPERATURE, n: int = 1
+    ) -> list[str]:
+        """vLLM completion(s) from a base64 prompt-embeds payload — returns n texts.
+
+        n>1 batches the samples in ONE forward pass: the prompt embeds are encoded
+        once and n sequences decode together, so a union-of-n recall pass costs
+        ~1x, not nx. Used to fold the backend's serial multi-sample consensus into
+        a single batched call (LOCATE_ANYTHING_VLLM_SAMPLES).
+        """
         import json
         import urllib.error
         import urllib.request
@@ -365,6 +382,7 @@ class LocateService:
             # seedless sampling recovers on retry). Behavior now mirrors HF.
             "temperature": temperature,
             "top_p": 0.9,
+            "n": n,
             "prompt_embeds": prompt_embeds_b64,
             "skip_special_tokens": False,
             "spaces_between_special_tokens": False,
@@ -381,7 +399,7 @@ class LocateService:
             raise HTTPException(
                 status_code=503, detail=f"LocateAnything LM backend unavailable: {exc}"
             ) from exc
-        return payload["choices"][0]["text"]
+        return [choice["text"] for choice in payload["choices"]]
 
     async def _predict_boxes_vllm(
         self, image: Image.Image, prompt: str, max_image_side: int,
@@ -416,9 +434,12 @@ class LocateService:
                 # the shared 16GB card thrashes (observed: tower at ~12GB, encodes
                 # stalling at 100% GPU with the whole stack resident).
                 trim_cuda_cache("vllm-chat-encode")
-        answer = await asyncio.to_thread(self._vllm_complete_b64, b64, temperature)
-        boxes = _parse_boxes(answer, inference_image.width, inference_image.height)
-        return answer, boxes, (inference_image.width, inference_image.height)
+        answers = await asyncio.to_thread(self._vllm_complete_b64, b64, temperature, LM_SAMPLES)
+        boxes: list[dict[str, Any]] = []
+        for _ans in answers:
+            boxes.extend(_parse_boxes(_ans, inference_image.width, inference_image.height))
+        boxes = fold_sample_boxes(boxes)
+        return answers[0], boxes, (inference_image.width, inference_image.height)
 
     async def predict_boxes_per_category(
         self, image: Image.Image, categories: list[str], max_image_side: int = DEFAULT_MAX_SIDE
@@ -466,8 +487,11 @@ class LocateService:
 
         # Phase 2 (network, concurrent): vLLM generations batch on the LM server.
         async def _gen(cat: str, b64: str) -> tuple[str, list[dict[str, Any]], str]:
-            answer = await asyncio.to_thread(self._vllm_complete_b64, b64)
-            return cat, _parse_boxes(answer, width, height), answer
+            answers = await asyncio.to_thread(self._vllm_complete_b64, b64, DEFAULT_TEMPERATURE, LM_SAMPLES)
+            boxes: list[dict[str, Any]] = []
+            for _ans in answers:
+                boxes.extend(_parse_boxes(_ans, width, height))
+            return cat, fold_sample_boxes(boxes), answers[0]
 
         results = await asyncio.gather(*[_gen(cat, b64) for cat, b64 in payloads])
         print(

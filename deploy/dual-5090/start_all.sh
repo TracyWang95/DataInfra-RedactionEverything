@@ -7,6 +7,14 @@
 set -u
 mkdir -p ~/logs
 
+# Reap orphan EngineCores from earlier half-killed restarts BEFORE launching:
+# `pkill -f vllm` only kills the APIServer, leaving the VLLM::EngineCore child
+# (ppid=1) pinning multi-GB of VRAM, which then OOMs whatever we start next
+# (YOLO/has_image, or LA's MoonViT encode → 503) and unbalances the two cards.
+_SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib_kill_vllm.sh
+[ -f "$_SD/lib_kill_vllm.sh" ] && . "$_SD/lib_kill_vllm.sh" && reap_orphan_enginecores
+
 up(){ ss -ltn 2>/dev/null | grep -q ":$1 "; }
 launch(){ # name port script
   local name=$1 port=$2 script=$3

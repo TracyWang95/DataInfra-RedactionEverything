@@ -196,6 +196,67 @@ def _box_from_match(match: re.Match[str], width: int, height: int, label: str) -
     }
 
 
+def _rects_intersect(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    return (
+        min(a["x"] + a["width"], b["x"] + b["width"]) > max(a["x"], b["x"])
+        and min(a["y"] + a["height"], b["y"] + b["height"]) > max(a["y"], b["y"])
+    )
+
+
+def fold_sample_boxes(boxes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fold the n sampled boxes for ONE mark into a single hull.
+
+    With LOCATE_ANYTHING_VLLM_SAMPLES>1 the model draws the same mark n times,
+    each slightly differently; emitting all n stacks 2-3 boxes on one signature.
+    Samples that INTERSECT are the model's repeated look at the same object —
+    single-linkage, so a chain of overlapping samples folds together — and
+    collapse to their hull, the full extent any sample saw (over-mask direction,
+    never tighter than what the model drew). Samples that do not touch stay
+    separate, so two distinct marks stay two boxes. Folding is per label:
+    different categories never merge. Pure geometry over the model's own
+    samples — no score, no threshold, nothing to tune.
+    """
+    if len(boxes) < 2:
+        return boxes
+    by_label: dict[str, list[dict[str, Any]]] = {}
+    for box in boxes:
+        by_label.setdefault(str(box.get("label", "")), []).append(box)
+    folded: list[dict[str, Any]] = []
+    for group in by_label.values():
+        used = [False] * len(group)
+        for i, seed in enumerate(group):
+            if used[i]:
+                continue
+            cluster = [seed]
+            used[i] = True
+            grew = True
+            while grew:
+                grew = False
+                for j, other in enumerate(group):
+                    if used[j]:
+                        continue
+                    if any(_rects_intersect(m, other) for m in cluster):
+                        cluster.append(other)
+                        used[j] = True
+                        grew = True
+            if len(cluster) == 1:
+                folded.append(seed)
+                continue
+            left = min(m["x"] for m in cluster)
+            top = min(m["y"] for m in cluster)
+            right = max(m["x"] + m["width"] for m in cluster)
+            bottom = max(m["y"] + m["height"] for m in cluster)
+            hull = dict(cluster[0])
+            hull.update({
+                "x": round(left, 2),
+                "y": round(top, 2),
+                "width": round(right - left, 2),
+                "height": round(bottom - top, 2),
+            })
+            folded.append(hull)
+    return folded
+
+
 def _draw_overlay(image: Image.Image, task_results: dict[str, Any], out_path: Path) -> None:
     colors = {
         "signature": (22, 163, 74),

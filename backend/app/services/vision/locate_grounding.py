@@ -643,6 +643,7 @@ class LocateAnythingGroundingService:
             await asyncio.gather(*leftover_specs, return_exceptions=True)
 
         boxes = self._drop_solid_fill_seals(boxes, image_data)
+        boxes = self._snap_seals_to_ink(boxes, image_data)
         boxes = self._drop_skin_hue_fingerprints(boxes, image_data)
         boxes = self._snap_fingerprints_to_ink(boxes, image_data)
         timings.total = _elapsed_ms(total_start)
@@ -707,6 +708,58 @@ class LocateAnythingGroundingService:
             snapped += 1
         if snapped:
             logger.info("Snapped %d fingerprint box(es) to their measured ink extent", snapped)
+        return out
+
+    def _snap_seals_to_ink(
+        self, boxes: list[BoundingBox], image_data: bytes
+    ) -> list[BoundingBox]:
+        """Snap an official_seal box to the UNION hull of its own red ink.
+
+        A 公章 IS a red stamp impression — its box must cover the red ink and no
+        more. The edge-seal margin probe grounds a whole page-margin tile as a
+        seal (病例5: the left FORM COLUMN — black text with one tiny red mark),
+        yielding a full-height strip whose red content is a sliver of the box.
+        Mirror of _snap_fingerprints_to_ink, but the UNION of the intersecting
+        colored components (not one box each): a real stamp's ring + star + text
+        are separate components, so per-component would shatter it — their union
+        IS the stamp's extent. Fail-open, over-mask direction: no colored
+        component inside the box (a greyscale scan, a faint seal below the
+        visible chroma floor) leaves it unchanged, never tightening below the ink.
+        """
+        if not any(b.type == "official_seal" for b in boxes):
+            return boxes
+        try:
+            components = raw_colored_component_bboxes(image_data)
+        except Exception:
+            logger.warning("seal ink snap unavailable; keeping boxes", exc_info=True)
+            return boxes
+        if not components:
+            return boxes
+        out: list[BoundingBox] = []
+        snapped = 0
+        for b in boxes:
+            if b.type != "official_seal":
+                out.append(b)
+                continue
+            touched = [
+                (cx, cy, cw, ch)
+                for cx, cy, cw, ch in components
+                if b.x < cx + cw and cx < b.x + b.width and b.y < cy + ch and cy < b.y + b.height
+            ]
+            if not touched:
+                out.append(b)  # fail open — no visible red ink to measure
+                continue
+            x1 = min(cx for cx, _, _, _ in touched)
+            y1 = min(cy for _, cy, _, _ in touched)
+            x2 = max(cx + cw for cx, _, cw, _ in touched)
+            y2 = max(cy + ch for _, cy, _, ch in touched)
+            if (x1, y1, x2 - x1, y2 - y1) != (b.x, b.y, b.width, b.height):
+                snapped += 1
+            out.append(
+                b.model_copy(update={"x": x1, "y": y1, "width": x2 - x1, "height": y2 - y1})
+            )
+        if snapped:
+            logger.info("Snapped %d seal box(es) to their measured red-ink hull", snapped)
         return out
 
     @staticmethod
