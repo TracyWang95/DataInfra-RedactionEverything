@@ -83,6 +83,22 @@ def _vision_type_ids(types: list[Any] | None) -> list[str]:
     return sorted(str(getattr(t, "id", t)) for t in (types or []))
 
 
+def _visual_query_fingerprint(visual_feature_types: list[Any] | None) -> list[str]:
+    """The grounding wording actually sent per visual type, id=query."""
+    out: list[str] = []
+    for item in visual_feature_types or []:
+        rows = getattr(item, "checklist", None) or []
+        first = rows[0] if rows else None
+        query = ""
+        if first is not None:
+            if isinstance(first, dict):
+                query = str(first.get("query") or first.get("rule") or "")
+            else:
+                query = str(getattr(first, "query", "") or getattr(first, "rule", "") or "")
+        out.append(f"{getattr(item, 'id', item)}={query}")
+    return sorted(out)
+
+
 def _vision_signature(
     page: int,
     ocr_has_types: list[Any] | None,
@@ -91,13 +107,30 @@ def _vision_signature(
     from app.core.config import settings
 
     return {
-        "version": 4,
+        # v5: the signature now covers WHAT the detector was told, not just which
+        # types were ticked. It used to key on the type ids alone, so changing the
+        # grounding wording (or the tile/seal/sampling switches) left the key
+        # identical and 重新识别 quietly replayed the OLD boxes — the change looked
+        # like it had not deployed at all.
+        "version": 5,
         "page": int(page),
         "ocr_has_types": _vision_type_ids(ocr_has_types),
         "visual_feature_types": _vision_type_ids(visual_feature_types),
         "visual_signature_max_side": int(
             getattr(settings, "VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE", 640) or 640
         ),
+        "visual_queries": _visual_query_fingerprint(visual_feature_types),
+        "visual_flags": [
+            bool(getattr(settings, "VISUAL_TILE_RETRY", True)),
+            bool(getattr(settings, "VISUAL_EDGE_SEAL_REFINE", True)),
+            int(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_SAMPLES", 1) or 1),
+        ],
+        # Detector-side knobs the backend cannot observe because they live in the
+        # LA server's own env (sampling temperature, LOCATE_ANYTHING_VLLM_SAMPLES,
+        # generation mode). Bump VISION_DETECTOR_EPOCH whenever one of them
+        # changes, otherwise the key stays identical and 重新识别 replays boxes the
+        # old detector produced.
+        "detector_epoch": os.environ.get("VISION_DETECTOR_EPOCH", "0"),
     }
 
 

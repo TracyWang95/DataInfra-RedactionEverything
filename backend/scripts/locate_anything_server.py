@@ -366,6 +366,14 @@ class LocateService:
         import urllib.error
         import urllib.request
 
+        # vLLM rejects n>1 under greedy sampling ("n must be 1 when using greedy
+        # sampling") and the WHOLE request then fails -> the caller sees 503 and
+        # that detection is silently lost (measured: 28 dropped tile passes in one
+        # corpus run, i.e. lost recall). n>1 is meaningless at temperature 0
+        # anyway — every sample would be identical — so collapse it here.
+        if temperature <= 0:
+            n = 1
+
         body = {
             "model": VLLM_LM_MODEL,
             "max_tokens": VLLM_MAX_TOKENS,

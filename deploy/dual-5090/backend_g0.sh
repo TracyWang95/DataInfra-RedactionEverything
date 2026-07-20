@@ -31,4 +31,5 @@ export VISUAL_DETECT_BATCH_CATEGORIES=true
 export VISION_DUAL_PIPELINE_PARALLEL=false
 export HAS_IMAGE_URL="http://127.0.0.1:29140"
 export VISUAL_EDGE_SEAL_REFINE=0
+export VISION_DETECTOR_EPOCH=2
 exec /home/ubuntu/miniconda3/envs/dataInfra/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 28001 --workers 1
