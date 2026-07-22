@@ -1,4 +1,4 @@
-﻿// Copyright 2026 DataInfra-RedactionEverything Contributors
+// Copyright 2026 DataInfra-RedactionEverything Contributors
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@/i18n';
@@ -377,7 +377,7 @@ export function useBatchFiles(
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: ACCEPTED_UPLOAD_FILE_TYPES,
-    maxSize: 50 * 1024 * 1024,
+    maxSize: 100 * 1024 * 1024,
     disabled: loading,
     multiple: true,
   });

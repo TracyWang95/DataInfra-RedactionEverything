@@ -137,16 +137,21 @@ function EntityGroupRowInner({
         onClick={handleJump}
         onKeyDown={handleKeyDown}
       >
-        <div className="flex items-start gap-2">
-          <Checkbox
-            checked={allSelected ? true : noneSelected ? false : 'indeterminate'}
-            aria-label={toggleLabel}
-            disabled={group.ids.length === 0}
+        <div className="flex items-start gap-2.5">
+          {/* Extra padding around checkbox: remote-desktop mouse precision is poor */}
+          <span
+            className="-m-1.5 inline-flex shrink-0 items-center justify-center p-1.5"
             onClick={stopCheckboxClick}
-            onCheckedChange={handleToggle}
-            className="mt-0.5"
-            data-testid={`entity-group-toggle-${group.type}-${group.text}`}
-          />
+          >
+            <Checkbox
+              checked={allSelected ? true : noneSelected ? false : 'indeterminate'}
+              aria-label={toggleLabel}
+              disabled={group.ids.length === 0}
+              onCheckedChange={handleToggle}
+              className="size-5 shrink-0"
+              data-testid={`entity-group-toggle-${group.type}-${group.text}`}
+            />
+          </span>
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-1.5">
               <span className="truncate text-xs font-medium" style={textStyle}>
@@ -302,7 +307,7 @@ function ReviewEntityListInner({
 
   return (
     <Card
-      className="page-surface border-border/70 shadow-[var(--shadow-sm)]"
+      className="page-surface flex min-h-0 flex-col overflow-hidden border-border/70 shadow-[var(--shadow-sm)]"
       role="region"
       aria-labelledby={headingId}
       aria-describedby={countId}
@@ -326,7 +331,7 @@ function ReviewEntityListInner({
           <Button
             variant="outline"
             size="sm"
-            className="h-6 whitespace-nowrap text-xs"
+            className="h-7 whitespace-nowrap text-xs"
             disabled={!hasToggleableEntities || selectedReviewEntityCount === reviewEntities.length}
             onClick={selectAllEntities}
             data-testid="select-all-entities"
@@ -336,7 +341,7 @@ function ReviewEntityListInner({
           <Button
             variant="outline"
             size="sm"
-            className="h-6 whitespace-nowrap text-xs"
+            className="h-7 whitespace-nowrap text-xs"
             disabled={!hasToggleableEntities || selectedReviewEntityCount === 0}
             onClick={deselectAllEntities}
             data-testid="deselect-all-entities"
@@ -346,7 +351,7 @@ function ReviewEntityListInner({
         </div>
       </div>
       <div
-        className="flex flex-1 flex-col gap-2 overflow-y-auto p-2"
+        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2"
         role="list"
         aria-label={t('batchWizard.step4.entityList')}
       >

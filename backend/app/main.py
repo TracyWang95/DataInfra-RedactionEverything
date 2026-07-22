@@ -329,7 +329,7 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
         app,
-        max_body_size: int = 60 * 1024 * 1024,  # 60MB for uploads
+        max_body_size: int = 110 * 1024 * 1024,  # 110MB headroom over 100MB file cap
         max_json_body_size: int = 1 * 1024 * 1024,  # 1MB for JSON requests
     ):
         super().__init__(app)

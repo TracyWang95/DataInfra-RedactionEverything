@@ -243,9 +243,9 @@ const PlaygroundInner: FC = () => {
       )}
 
       {stage === 'preview' && (
-        <div className="page-shell !max-w-[min(100%,2048px)] !px-3 !py-3 sm:!px-4 sm:!py-4 2xl:!px-6">
+        <div className="page-shell flex min-h-0 flex-col !max-w-[min(100%,2048px)] !px-3 !py-3 sm:!px-4 sm:!py-4 2xl:!px-6">
           <div className="grid min-h-0 flex-1 gap-3 overflow-hidden lg:grid-cols-[minmax(0,1fr)_20.75rem] xl:grid-cols-[minmax(0,1fr)_21.5rem]">
-            <div className="saas-panel flex min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="saas-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <PlaygroundToolbar
                 filename={fileInfo?.filename}
                 isImageMode={isImageMode}
@@ -267,7 +267,7 @@ const PlaygroundInner: FC = () => {
                 className="flex min-h-0 flex-1 flex-col overflow-hidden select-text"
               >
                 {isImageMode ? (
-                  <div className="flex-1 min-h-0">
+                  <div className="min-h-0 flex-1">
                     {fileInfo && (
                       <ImageBBoxEditor
                         imageSrc={imageUrl}
@@ -324,7 +324,8 @@ const PlaygroundInner: FC = () => {
               </div>
             </div>
 
-            <PlaygroundEntityPanel
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              <PlaygroundEntityPanel
               isImageMode={isImageMode}
               isLoading={isLoading}
               recognitionIssue={recognitionIssue}
@@ -351,6 +352,7 @@ const PlaygroundInner: FC = () => {
               onEntityClick={ui.handleEntityClick}
               onRemoveEntity={removeEntity}
             />
+            </div>
           </div>
         </div>
       )}

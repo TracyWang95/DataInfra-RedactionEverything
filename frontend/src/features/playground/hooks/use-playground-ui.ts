@@ -172,7 +172,7 @@ export function usePlaygroundUI(options: UsePlaygroundUIOptions) {
       }
 
       if (rect.width === 0 && rect.height === 0) return;
-      setSelectionPos(clampPopoverInCanvas(rect, root.getBoundingClientRect(), 320, 280));
+      setSelectionPos(clampPopoverInCanvas(rect, root.getBoundingClientRect(), 320, 320));
     };
 
     update();

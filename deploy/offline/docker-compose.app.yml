@@ -12,6 +12,9 @@ services:
     image: redaction-backend:latest
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    # 访问宿主机 GPU 6/7 模型 LB (29xxx)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
@@ -29,13 +32,15 @@ services:
       - VISUAL_FEATURES_CONCURRENCY=${VISUAL_FEATURES_CONCURRENCY:-1}
       - VISION_DUAL_PIPELINE_PARALLEL=${VISION_DUAL_PIPELINE_PARALLEL:-false}
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
-      # ---- 模型服务地址 (指向 GPU 服务器) ----
-      - OCR_BASE_URL=${OCR_BASE_URL:-http://<MODEL_SERVER_IP>:8082}
+      # ---- 模型服务地址 (本机 GPU 6/7 LB；可用 .env 覆盖) ----
+      - OCR_BASE_URL=${OCR_BASE_URL:-http://host.docker.internal:29082}
       - HAS_TEXT_RUNTIME=${HAS_TEXT_RUNTIME:-vllm}
-      - HAS_TEXT_VLLM_BASE_URL=${HAS_TEXT_VLLM_BASE_URL:-http://<MODEL_SERVER_IP>:8080/v1}
+      - HAS_TEXT_VLLM_BASE_URL=${HAS_TEXT_VLLM_BASE_URL:-http://host.docker.internal:29080/v1}
       - HAS_TEXT_MODEL_NAME=${HAS_TEXT_MODEL_NAME:-HaS_Text_0209_0.6B}
-      - VISUAL_FEATURES_BASE_URL=${VISUAL_FEATURES_BASE_URL:-http://<MODEL_SERVER_IP>:8090}
-      - HAS_IMAGE_URL=${HAS_IMAGE_URL:-http://<MODEL_SERVER_IP>:8081}
+      - VISUAL_FEATURES_BASE_URL=${VISUAL_FEATURES_BASE_URL:-http://host.docker.internal:29090}
+      - VISUAL_FEATURES_MODEL_NAME=${VISUAL_FEATURES_MODEL_NAME:-LocateAnything-3B}
+      - LOCATE_ANYTHING_ENABLED=${LOCATE_ANYTHING_ENABLED:-1}
+      - HAS_IMAGE_URL=${HAS_IMAGE_URL:-http://host.docker.internal:29140}
     volumes:
       - backend-data:/app/data
       - backend-uploads:/app/uploads
@@ -60,7 +65,8 @@ services:
     networks:
       - app-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO /dev/null http://localhost:8080/ || exit 1"]
+      # Use 127.0.0.1: alpine getent prefers ::1 for localhost, nginx listens on IPv4 only
+      test: ["CMD-SHELL", "wget -qO /dev/null http://127.0.0.1:8080/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

@@ -249,22 +249,27 @@ function ReviewRegionItemInner({ region, t, toggleReviewBoxSelected }: ReviewReg
         style={cardStyle}
         data-testid={`bbox-toggle-${box.id}`}
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <Checkbox
-            checked={box.selected !== false}
-            aria-label={checkboxLabel}
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span
+            className="-m-1.5 inline-flex shrink-0 items-center justify-center p-1.5"
             onClick={stopCheckboxClick}
-            onCheckedChange={handleToggle}
-          />
+          >
+            <Checkbox
+              checked={box.selected !== false}
+              aria-label={checkboxLabel}
+              onCheckedChange={handleToggle}
+              className="size-5 shrink-0"
+            />
+          </span>
           <span className="min-w-0 truncate text-xs font-medium" style={typeStyle}>
             {meta.name}
           </span>
           <span className="ml-auto shrink-0 text-xs text-muted-foreground">{dimensionLabel}</span>
         </div>
         {box.text && (
-          <p className="mt-0.5 truncate pl-6 text-xs text-muted-foreground">{box.text}</p>
+          <p className="mt-0.5 truncate pl-8 text-xs text-muted-foreground">{box.text}</p>
         )}
-        <div className="mt-1 flex min-w-0 flex-nowrap gap-1 overflow-hidden pl-6 text-[11px] text-muted-foreground">
+        <div className="mt-1 flex min-w-0 flex-nowrap gap-1 overflow-hidden pl-8 text-[11px] text-muted-foreground">
           {box.confidence !== undefined && (
             <span className="shrink-0 whitespace-nowrap">
               {t('batchWizard.step4.confidence')} {Math.round(box.confidence * 100)}%
@@ -290,7 +295,7 @@ function ReviewRegionItemInner({ region, t, toggleReviewBoxSelected }: ReviewReg
         </div>
         {issues.length > 0 && (
           <div
-            className="mt-1 flex flex-nowrap gap-1 overflow-hidden pl-6"
+            className="mt-1 flex flex-nowrap gap-1 overflow-hidden pl-8"
             data-testid={`bbox-quality-${box.id}`}
             aria-label={`${t('batchWizard.step4.qualityIssues')} ${issues
               .map((issue) => issue.label)
@@ -640,7 +645,7 @@ function ReviewImageContentInner({
           role="tabpanel"
           aria-labelledby={regionsTabId}
           className={cn(
-            'min-h-0 min-w-0 flex-[1] flex-col bg-background lg:min-w-[220px] lg:max-w-[300px] 2xl:max-w-[320px]',
+            'flex min-h-0 min-w-0 flex-[1] flex-col overflow-hidden bg-background lg:min-w-[220px] lg:max-w-[300px] 2xl:max-w-[320px]',
             mobilePanel === 'regions' ? 'flex' : 'hidden',
             'lg:flex',
           )}
@@ -721,7 +726,7 @@ function ReviewImageContentInner({
             </div>
           )}
           <div
-            className="flex flex-1 flex-col gap-1.5 overflow-y-auto p-2 pt-1"
+            className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-2 pt-1"
             role="list"
             aria-label={t('batchWizard.step4.detectionRegions')}
           >

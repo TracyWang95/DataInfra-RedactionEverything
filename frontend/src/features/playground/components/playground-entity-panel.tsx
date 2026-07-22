@@ -13,7 +13,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useT } from '@/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -104,11 +103,14 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
             : '';
 
     return (
+      // Keep the redact CTA pinned at the bottom: only the region list scrolls.
+      // flex-shrink-0 + whole-panel scroll used to push "开始匿名化" below the
+      // overflow-hidden page shell when there were many regions (bastion UX bug).
       <div
-        className="flex min-h-0 w-full flex-shrink-0 flex-col gap-2.5 self-stretch overflow-x-hidden overflow-y-auto"
+        className="flex h-full min-h-0 w-full flex-col gap-2.5 self-stretch overflow-hidden"
         data-testid="playground-entity-panel"
       >
-        <Card className="overflow-hidden">
+        <Card className="shrink-0 overflow-hidden">
           <CardContent className="flex flex-col gap-2.5 p-3.5">
             <div className="space-y-0.5">
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -132,7 +134,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
           </CardContent>
         </Card>
 
-        <Card className="overflow-hidden">
+        <Card className="max-h-[min(45%,16rem)] shrink-0 overflow-y-auto">
           <CardHeader className="p-3.5 pb-2.5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -198,7 +200,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
                 maxLength={64}
                 onChange={(event) => setWatermarkText(event.target.value)}
                 placeholder={t('playground.watermarkPlaceholder')}
-                className="h-8 text-xs"
+                className="h-9 text-sm"
                 data-testid="playground-watermark-input"
               />
             </div>
@@ -258,7 +260,7 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
               {totalCount}
             </Badge>
           </div>
-          <ScrollArea className="flex-1">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             {isImageMode ? (
               <BoxList boxes={visibleBoxes} onToggle={onToggleBox} typeNameById={typeNameById} />
             ) : (
@@ -269,31 +271,33 @@ export const PlaygroundEntityPanel: FC<PlaygroundEntityPanelProps> = memo(
                 onRemove={onRemoveEntity}
               />
             )}
-          </ScrollArea>
+          </div>
         </Card>
 
-        {disabledReason && !isLoading && (
-          <RedactionBlockedNotice
-            totalCount={totalCount}
-            reason={disabledReason}
-            onRerunNer={onRerunNer}
-            onSelectAll={onSelectAll}
-          />
-        )}
-        <Button
-          onClick={onRedact}
-          disabled={shownSelectedCount === 0 || isLoading}
-          aria-describedby={disabledReason ? 'playground-redact-disabled-reason' : undefined}
-          className={cn(
-            'h-11 shrink-0 rounded-[20px] text-sm font-semibold shadow-[var(--shadow-control)]',
-            shownSelectedCount === 0 && 'opacity-50',
+        <div className="shrink-0 space-y-2 border-t border-border/60 bg-background pt-1">
+          {disabledReason && !isLoading && (
+            <RedactionBlockedNotice
+              totalCount={totalCount}
+              reason={disabledReason}
+              onRerunNer={onRerunNer}
+              onSelectAll={onSelectAll}
+            />
           )}
-          data-testid="playground-redact-btn"
-        >
-          {isLoading
-            ? t('playground.processing')
-            : `${t('playground.startRedact')} (${shownSelectedCount})`}
-        </Button>
+          <Button
+            onClick={onRedact}
+            disabled={shownSelectedCount === 0 || isLoading}
+            aria-describedby={disabledReason ? 'playground-redact-disabled-reason' : undefined}
+            className={cn(
+              'h-11 w-full rounded-[20px] text-sm font-semibold shadow-[var(--shadow-control)]',
+              shownSelectedCount === 0 && 'opacity-50',
+            )}
+            data-testid="playground-redact-btn"
+          >
+            {isLoading
+              ? t('playground.processing')
+              : `${t('playground.startRedact')} (${shownSelectedCount})`}
+          </Button>
+        </div>
       </div>
     );
   },
@@ -422,11 +426,16 @@ const BoxList: FC<{
             }}
             data-testid={`playground-box-${box.id}`}
           >
-            <Checkbox
-              checked={box.selected}
-              onCheckedChange={() => onToggle(box.id)}
-              className="size-4"
-            />
+            <span
+              className="-m-1.5 inline-flex shrink-0 items-center justify-center p-1.5"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <Checkbox
+                checked={box.selected}
+                onCheckedChange={() => onToggle(box.id)}
+                className="size-5 shrink-0"
+              />
+            </span>
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex flex-wrap items-center gap-1.5">
                 <Badge variant="secondary">

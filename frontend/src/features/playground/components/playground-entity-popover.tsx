@@ -39,10 +39,10 @@ export const PlaygroundEntityPopover: FC = () => {
             ui.setClickedEntity(null);
             ui.setEntityPopupPos(null);
           }}
-          className="shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
           aria-label="Close"
         >
-          <svg width="14" height="14" viewBox="0 0 15 15" fill="none">
+          <svg width="16" height="16" viewBox="0 0 15 15" fill="none">
             <path
               d="M11.782 4.032a.575.575 0 10-.813-.814L7.5 6.687 4.032 3.218a.575.575 0 00-.814.814L6.687 7.5l-3.469 3.468a.575.575 0 00.814.814L7.5 8.313l3.469 3.469a.575.575 0 00.813-.814L8.313 7.5l3.469-3.468z"
               fill="currentColor"
@@ -54,7 +54,7 @@ export const PlaygroundEntityPopover: FC = () => {
         size="sm"
         variant="ghost"
         onClick={ui.confirmRemoveEntity}
-        className="h-7 w-full text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+        className="h-9 w-full text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
       >
         {t('playground.removeAnnotation')}
       </Button>

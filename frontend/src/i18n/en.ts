@@ -574,7 +574,7 @@ const enBase: Record<string, string> = {
   'batchWizard.step2.dismissIssues': 'Dismiss',
   'batchWizard.step2.retryFailed': 'Retry failed ({count})',
   'batchWizard.step2.moreIssues': '+ {count} more issues',
-  'batchWizard.step2.rejectTooLarge': 'The file exceeds the 50 MB upload limit.',
+  'batchWizard.step2.rejectTooLarge': 'The file exceeds the 100 MB upload limit.',
   'batchWizard.step2.rejectInvalidType': 'This file type is not supported by the current uploader.',
   'batchWizard.step2.rejectModeMismatchText':
     'This looks like a scanned image. Use the mixed-file batch entry so the system can choose the right recognition path.',

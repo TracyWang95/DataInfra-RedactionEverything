@@ -497,7 +497,7 @@ const zhBase: Record<string, string> = {
   'batchWizard.step2.dismissIssues': '关闭',
   'batchWizard.step2.retryFailed': '重试失败文件 ({count})',
   'batchWizard.step2.moreIssues': '还有 {count} 个问题',
-  'batchWizard.step2.rejectTooLarge': '文件超过 50 MB 上传上限。',
+  'batchWizard.step2.rejectTooLarge': '文件超过 100 MB 上传上限。',
   'batchWizard.step2.rejectInvalidType': '当前上传器不支持该文件类型。',
   'batchWizard.step2.rejectModeMismatchText':
     '这看起来是扫描图片。请使用混合文件批量入口，让系统自动选择合适的识别方式。',

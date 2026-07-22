@@ -2,7 +2,9 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 WORKDIR /app
 
@@ -11,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # HaS-Image needs torch + ultralytics (YOLO11 runtime).
+# torch CUDA wheels keep official PyTorch index; remaining deps use Tsinghua (PIP_INDEX_URL).
 RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 \
     && pip install ultralytics fastapi uvicorn pydantic Pillow
 

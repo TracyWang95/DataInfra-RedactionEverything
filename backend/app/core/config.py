@@ -196,7 +196,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     OUTPUT_DIR: str = "./outputs"
     DATA_DIR: str = "./data"
-    MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50MB
+    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
     ALLOWED_EXTENSIONS: list[str] = [
         # Documents
         ".doc",

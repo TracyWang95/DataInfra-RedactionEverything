@@ -136,7 +136,7 @@ export function useTextSelection({
       if (rect.width === 0 && rect.height === 0) return;
 
       const cardRect = card.getBoundingClientRect();
-      const clamped = clampPopoverInCanvas(rect, cardRect, 240, 240);
+      const clamped = clampPopoverInCanvas(rect, cardRect, 280, 280);
       setSelectionPos({ left: clamped.left - cardRect.left, top: clamped.top - cardRect.top });
     };
 

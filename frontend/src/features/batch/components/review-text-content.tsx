@@ -402,11 +402,11 @@ function ReviewTextContentInner({
           />
         </div>
       )}
-      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_300px] 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_320px]">
+      <div className="grid min-h-0 flex-1 gap-2 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(220px,300px)] 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(240px,320px)]">
         {/* Original text */}
         <Card
           ref={cardRef}
-          className="relative page-surface border-border/70 shadow-[var(--shadow-sm)]"
+          className="relative flex min-h-0 flex-col overflow-hidden page-surface border-border/70 shadow-[var(--shadow-sm)]"
         >
           <div className="flex h-8 shrink-0 items-center justify-between border-b px-3">
             <span className="truncate text-xs font-semibold">
@@ -419,7 +419,7 @@ function ReviewTextContentInner({
           </div>
           <div
             ref={reviewTextScrollRef}
-            className="flex-1 overflow-auto p-3"
+            className="min-h-0 flex-1 overflow-auto p-3"
             onScroll={handleOriginalScroll}
           >
             <div
@@ -454,13 +454,13 @@ function ReviewTextContentInner({
         </Card>
 
         {/* Redacted preview */}
-        <Card className="page-surface border-border/70 shadow-[var(--shadow-sm)]">
+        <Card className="flex min-h-0 flex-col overflow-hidden page-surface border-border/70 shadow-[var(--shadow-sm)]">
           <div className="flex h-8 shrink-0 items-center border-b px-3">
             <span className="truncate text-xs font-semibold">
               {t('batchWizard.step4.redactedPreview')}
             </span>
           </div>
-          <div ref={previewScrollRef} className="flex-1 overflow-auto p-3">
+          <div ref={previewScrollRef} className="min-h-0 flex-1 overflow-auto p-3">
             <div className="text-sm leading-relaxed whitespace-pre-wrap font-[system-ui]">
               {previewContent}
             </div>

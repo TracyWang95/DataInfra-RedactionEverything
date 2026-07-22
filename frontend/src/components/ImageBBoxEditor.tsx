@@ -234,6 +234,7 @@ function ImageBBoxEditor({
     viewportRef,
     imageRef,
     naturalSize,
+    viewportSize,
     displaySize,
     displayW,
     displayH,
@@ -623,10 +624,14 @@ function ImageBBoxEditor({
         </div>
       )}
 
-      {/* Image viewport */}
+      {/* Image viewport
+          Avoid items-center/justify-center on overflow-auto flex: when the
+          bitmap briefly exceeds the viewport (bastion layout race / DPI),
+          flex centering makes the top unreachable and the image looks stuck
+          at the bottom. margin:auto centers when smaller and keeps scroll. */}
       <div
         ref={viewportRef}
-        className={`relative flex-1 w-full min-h-0 ${readOnly ? 'overflow-hidden' : 'overflow-auto'} flex items-center justify-center bg-[var(--surface-canvas)] ${
+        className={`relative flex flex-1 w-full min-h-0 ${readOnly ? 'overflow-hidden' : 'overflow-auto'} bg-[var(--surface-canvas)] ${
           viewportTopSlot ? 'pt-11' : ''
         } ${viewportBottomSlot ? 'pb-14' : ''}`}
       >
@@ -646,23 +651,28 @@ function ImageBBoxEditor({
           <div
             role="img"
             aria-label="Image redaction preview (read-only)"
-            className="relative shrink-0 leading-none"
+            className="relative m-auto shrink-0 leading-none"
             style={
-              naturalSize.width > 0 && naturalSize.height > 0
+              naturalSize.width > 0 &&
+              naturalSize.height > 0 &&
+              viewportSize.width > 0 &&
+              viewportSize.height > 0
                 ? (() => {
-                    const vw = viewportRef.current?.clientWidth || 800;
-                    const vh = viewportRef.current?.clientHeight || 600;
-                    const scale = Math.min(vw / naturalSize.width, vh / naturalSize.height, 1);
+                    const scale = Math.min(
+                      viewportSize.width / naturalSize.width,
+                      viewportSize.height / naturalSize.height,
+                      1,
+                    );
                     return { width: naturalSize.width * scale, height: naturalSize.height * scale };
                   })()
-                : undefined
+                : { visibility: 'hidden' as const }
             }
           >
             <img
               ref={imageRef}
               src={imageSrc}
               alt=""
-              className="block w-full h-full select-none"
+              className="block h-full w-full select-none"
               onLoad={handleImageLoad}
               draggable={false}
             />
@@ -675,10 +685,12 @@ function ImageBBoxEditor({
             aria-label={t('editor.canvasLabel')}
             aria-roledescription="bounding box editor"
             tabIndex={0}
-            className={`relative inline-block shrink-0 ${drawMode ? 'cursor-crosshair' : 'cursor-default'}`}
+            className={`relative m-auto inline-block shrink-0 ${drawMode ? 'cursor-crosshair' : 'cursor-default'}`}
             style={{
               width: displayW > 0 ? displayW : undefined,
               height: displayH > 0 ? displayH : undefined,
+              // Hide until fit scale is known to avoid intrinsic-size flash.
+              visibility: displayW > 0 && displayH > 0 ? 'visible' : 'hidden',
               touchAction: 'none',
             }}
             onKeyDown={handleKeyDown}
@@ -695,7 +707,7 @@ function ImageBBoxEditor({
               ref={imageRef}
               src={imageSrc}
               alt="edit"
-              className="select-none block max-w-none"
+              className="block max-w-none select-none"
               width={displayW > 0 ? Math.round(displayW) : undefined}
               height={displayH > 0 ? Math.round(displayH) : undefined}
               style={{

@@ -1,6 +1,12 @@
-FROM node:24-alpine AS builder
+ARG NODE_IMAGE=docker.m.daocloud.io/library/node:24-alpine
+ARG NGINX_IMAGE=docker.m.daocloud.io/library/nginx:alpine
+
+FROM ${NODE_IMAGE} AS builder
 
 WORKDIR /app
+
+# 国内 npm 镜像，加速依赖安装
+RUN npm config set registry https://registry.npmmirror.com
 
 COPY package*.json ./
 RUN npm ci
@@ -8,7 +14,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-FROM nginx:alpine
+FROM ${NGINX_IMAGE}
 
 # Use auto-detected worker count instead of the default 1.
 RUN sed -i 's/worker_processes\s*1/worker_processes auto/' /etc/nginx/nginx.conf
@@ -25,7 +31,7 @@ RUN adduser -D -u 1001 appuser && \
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget -qO /dev/null http://localhost:8080/ || exit 1
+    CMD wget -qO /dev/null http://127.0.0.1:8080/ || exit 1
 
 USER appuser
 
