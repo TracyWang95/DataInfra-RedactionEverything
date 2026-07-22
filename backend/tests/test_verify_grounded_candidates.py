@@ -84,20 +84,19 @@ def test_signature_is_never_verified():
     assert [b.id for b in out] == ["s"]
 
 
-def test_fingerprint_is_never_verified():
-    """A pale ink print re-grounds only on "ink stain" and 0 on every
-    fingerprint-worded phrase, and its recall is stochastic — so a re-ground
-    sample can return n=0 on a REAL print and drop it (a leak). Fingerprints skip
-    verify like signatures; the page-holding-finger over-mask is the safe price."""
+def test_fingerprint_is_verified_precision_first():
+    """Fingerprints ARE re-grounded (precision-first: no pixel skin gate, so the
+    verify is the model-centric filter that prunes context-artifact false prints).
+    A print whose crop no longer grounds is dropped."""
     svc = LocateAnythingGroundingService()
 
-    async def boom(image_data, categories, max_image_side=None):
-        raise AssertionError("a fingerprint box must not be re-grounded")
+    async def fake(image_data, categories, max_image_side=None):
+        return []  # the crop no longer grounds as a fingerprint
 
-    svc._post_detect = boom  # type: ignore[assignment]
+    svc._post_detect = fake  # type: ignore[assignment]
     fp = _box("locate_anything:tile_retry", type_="fingerprint", id_="f", text="指纹")
-    out = _run(svc._verify_grounded_candidates([fp], _PNG, {"fingerprint": "ink stain"}))
-    assert [b.id for b in out] == ["f"]
+    out = _run(svc._verify_grounded_candidates([fp], _PNG, {"fingerprint": "red inked thumbprint mark"}))
+    assert out == []
 
 
 def test_yolo_box_is_never_reground_and_always_kept():

@@ -54,9 +54,7 @@ def test_batched_request_demuxes_by_requested_category(svc, monkeypatch):
 
     monkeypatch.setattr(LocateAnythingGroundingService, "_post_detect", fake_detect)
     boxes, _ = asyncio.run(svc.detect_categories(b"img", 1, _ptypes(["signature", "fingerprint"])))
-    # ONE request carried all three tags: signature (1 phrase) + fingerprint's
-    # 2-phrase union ("red or pink fingerprint" + "ink stain").
-    assert len(sent) == 1 and len(sent[0]) == 3
+    assert len(sent) == 1 and len(sent[0]) == 2  # ONE request carried both
     assert {b.type for b in boxes} == {"signature", "fingerprint"}
 
 
@@ -81,7 +79,7 @@ def test_batch_failure_falls_back_to_fanout(svc, monkeypatch):
     monkeypatch.setattr(LocateAnythingGroundingService, "_post_detect", fake_detect)
     boxes, _ = asyncio.run(svc.detect_categories(b"img", 1, _ptypes(["signature", "fingerprint"])))
     assert {b.type for b in boxes} == {"signature", "fingerprint"}
-    assert len(calls) == 4  # 1 failed batch + 3 fan-out (fingerprint = 2-phrase union)
+    assert len(calls) == 3  # 1 failed batch + 2 fan-out
 
 
 def test_switch_off_keeps_fanout(monkeypatch, svc):
@@ -94,5 +92,4 @@ def test_switch_off_keeps_fanout(monkeypatch, svc):
 
     monkeypatch.setattr(LocateAnythingGroundingService, "_post_detect", fake_detect)
     asyncio.run(svc.detect_categories(b"img", 1, _ptypes(["signature", "fingerprint"])))
-    # 3 fan-out calls: signature + fingerprint's 2-phrase union, each 1 category
-    assert len(sent) == 3 and all(len(c) == 1 for c in sent)
+    assert len(sent) == 2 and all(len(c) == 1 for c in sent)

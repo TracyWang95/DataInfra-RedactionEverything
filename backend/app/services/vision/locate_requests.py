@@ -12,7 +12,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.visual_feature_categories import (
     DEFAULT_VISUAL_FEATURE_SLUGS,
-    SLUG_TO_GROUNDING_QUERIES,
+    SLUG_TO_GROUNDING_QUERY,
     SLUG_TO_NAME_ZH,
     VISUAL_FEATURE_SLUGS,
     normalize_visual_slug,
@@ -52,33 +52,26 @@ def _checklist_prompt(type_configs: list[Any]) -> str:
     return "\n".join(lines)
 
 
-def _grounding_queries(item: Any, slug: str) -> list[str]:
-    """The wording(s) sent to the model for a fixed category — the user's 识别清单
+def _grounding_query(item: Any, slug: str) -> str:
+    """The wording sent to the model for a fixed category — the user's 识别清单
     owns it (勾选什么传入什么): a checklist row's explicit `query` field wins
     (model query wording decoupled from the Chinese display `rule` — the
     signature A/B matrix picked "handwritten name signature": it removed the
     underline false positive AND recalled the faint tiff1 signature the
     Chinese phrase missed), then the row's rule/positive_prompt, then the
-    item's first rule line — each an explicit SINGLE query; only an unconfigured
-    item falls back to the category's factory grounding_queries
-    (SLUG_TO_GROUNDING_QUERIES), which is a UNION for the few slugs where no
-    single phrase recalls every instance (fingerprint), else its name."""
+    item's first rule line; only an unconfigured item falls back to the
+    category's own grounding_query (SLUG_TO_GROUNDING_QUERY), then its name."""
     for row in getattr(item, "checklist", None) or []:
         for key in ("query", "rule", "positive_prompt"):
             value = str(
                 (row.get(key) if isinstance(row, dict) else getattr(row, key, "")) or ""
             ).strip()
             if value:
-                return [value]
+                return value
     for rule in getattr(item, "rules", None) or []:
         if str(rule).strip():
-            return [str(rule).strip()]
-    return list(SLUG_TO_GROUNDING_QUERIES.get(slug) or (SLUG_TO_NAME_ZH.get(slug, slug),))
-
-
-def _grounding_query(item: Any, slug: str) -> str:
-    """The primary (first) grounding query — see _grounding_queries."""
-    return _grounding_queries(item, slug)[0]
+            return str(rule).strip()
+    return SLUG_TO_GROUNDING_QUERY.get(slug) or SLUG_TO_NAME_ZH.get(slug, slug)
 
 
 def _detect_requests(
@@ -101,9 +94,8 @@ def _detect_requests(
     if pipeline_types is None:
         fixed = list(DEFAULT_VISUAL_FEATURE_SLUGS)
         return [
-            (q, s, SLUG_TO_NAME_ZH.get(s, s))
+            (SLUG_TO_GROUNDING_QUERY.get(s) or SLUG_TO_NAME_ZH.get(s, s), s, SLUG_TO_NAME_ZH.get(s, s))
             for s in fixed
-            for q in (SLUG_TO_GROUNDING_QUERIES.get(s) or (SLUG_TO_NAME_ZH.get(s, s),))
         ], fixed
     requests: list[tuple[str, str, str]] = []
     fixed: list[str] = []
@@ -115,8 +107,7 @@ def _detect_requests(
             if slug in seen:
                 continue
             seen.add(slug)
-            for query in _grounding_queries(item, slug):
-                requests.append((query, slug, SLUG_TO_NAME_ZH.get(slug, slug)))
+            requests.append((_grounding_query(item, slug), slug, SLUG_TO_NAME_ZH.get(slug, slug)))
             fixed.append(slug)
         elif tid.startswith("custom_visual_features_") and tid not in seen:
             label = str(getattr(item, "name", "") or "").strip() or tid[

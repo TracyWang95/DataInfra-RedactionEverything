@@ -41,9 +41,8 @@ class VisualFeatureCategory:
     # Chinese display name — one definition, no slug→query side table. Set it only
     # where a MEASURED precision/recall result needs a phrase different from the
     # label. This grounding model was trained on English class names, so a Chinese
-    # query mis-fires on several classes. Three ride a tuned English query_override
-    # (official_seal, signature, id_card); fingerprint rides a UNION of English
-    # phrases (union_queries) because no single phrase recalls every print:
+    # query mis-fires on four classes — three PII-critical stamp/mark classes plus
+    # id_card, each of which rides a single tuned English query_override:
     #   • official_seal — 公章 fired 71 corpus seal boxes (FPs on docs with NO
     #     seal) vs 19 for "seal"; the verify can't prune a hallucination it
     #     re-confirms.
@@ -54,44 +53,31 @@ class VisualFeatureCategory:
     #     grid retry zoom in to recover the small 海油 签字 without flooding false
     #     signatures on body text — signatures skip the verify, so the prompt must
     #     carry the precision itself. (中文 手写签名 over-fired: 67 corpus FPs.)
-    #   • fingerprint — no single phrase recalls every ink print, so it rides a
-    #     UNION (union_queries). "red or pink fingerprint" catches ridge-textured
-    #     ink prints; "ink stain" catches the clean/pale prints the fingerprint
-    #     wording misses ENTIRELY and, being colour-neutral, also a black print on
-    #     a B&W scan. Measured on the 保姆 contract (2026-07-21): the crimson print
-    #     recalls at 0.65 on "red or pink fingerprint", the pale-pink one at 0.64
-    #     on "ink stain" and 0.00 on every fingerprint-worded phrase (LA and YOLO
-    #     both); neither floods the seal pages (ink stain → 0 boxes on xinchuang).
-    #     A miss is a leak, so recall is unioned and the page-holding-finger
-    #     over-mask is accepted — there is NO pixel skin gate (a bare finger's
-    #     ridges ARE a print's; only the union+over-mask is model-centric).
+    #   • fingerprint — 指纹 recalled 0/7 real prints at full frame (2026-07-10
+    #     A/B); "red inked thumbprint mark" recalled 7/7. Precision-first policy
+    #     (2026-07-22, 容许找不到但不要高FP): ONE tuned English query, NOT a
+    #     recall-max union — a broad phrase like "ink stain" recovers one extra
+    #     pale print but fires on ink smudges / red text / the page-holding finger
+    #     (high FP). Context-artifact false prints are pruned by the model-centric
+    #     verify re-ground (there is NO pixel skin gate). A dedicated impression
+    #     detector is the real precision fix and is being sourced separately.
     #   • id_card — 身份证 fired on the "身份证号" text LABEL because the query word
     #     is a substring of the field label, boxing printed form text as a card
     #     (2026-07-21 A/B on the 门诊病历: 身份证 → 1 box on the label, "ID card" →
     #     0). A real card's PII is still covered by OCR text + face even if the
     #     English query under-recalls the bare card outline.
-    # Every other class rides its Chinese display name, where no mis-fire was
-    # measured.
+    # So these four keep their tuned English query; every other class rides its
+    # Chinese display name, where no mis-fire was measured.
     query_override: str = ""
-    # A union of grounding phrases for one category (empty = the single
-    # grounding_query is used). Set only where MEASUREMENT shows no single phrase
-    # recalls every instance — see the fingerprint note above. All boxes are
-    # tagged by the slug, so the union is invisible downstream.
-    union_queries: tuple[str, ...] = ()
 
     @property
     def grounding_query(self) -> str:
         return self.query_override or self.name_zh
 
-    @property
-    def grounding_queries(self) -> tuple[str, ...]:
-        return self.union_queries or (self.grounding_query,)
-
 
 VISUAL_FEATURE_CATEGORIES: tuple[VisualFeatureCategory, ...] = (
     VisualFeatureCategory(0, "face", "人脸", "人体面部区域"),
-    VisualFeatureCategory(1, "fingerprint", "指纹", "指纹、捺印区域",
-                          union_queries=("red or pink fingerprint", "ink stain")),
+    VisualFeatureCategory(1, "fingerprint", "指纹", "指纹、捺印区域", "red inked thumbprint mark"),
     VisualFeatureCategory(2, "palmprint", "掌纹", "掌纹区域"),
     VisualFeatureCategory(3, "id_card", "身份证", "居民身份证等证件", "ID card"),
     VisualFeatureCategory(4, "hk_macau_permit", "港澳通行证", "往来港澳通行证等"),
@@ -120,12 +106,6 @@ VISUAL_FEATURE_CATEGORIES: tuple[VisualFeatureCategory, ...] = (
 # supplies the default when a checklist row carries no positive prompt.
 SLUG_TO_GROUNDING_QUERY: dict[str, str] = {
     item.id: item.grounding_query for item in VISUAL_FEATURE_CATEGORIES
-}
-# The full grounding-query UNION per fixed category (usually one phrase; a union
-# only where measurement needs it, e.g. fingerprint). DERIVED from the single
-# category definition, like the singular map — no hand-maintained side table.
-SLUG_TO_GROUNDING_QUERIES: dict[str, tuple[str, ...]] = {
-    item.id: item.grounding_queries for item in VISUAL_FEATURE_CATEGORIES
 }
 
 VISUAL_FEATURE_CLASS_COUNT = len(VISUAL_FEATURE_CATEGORIES)

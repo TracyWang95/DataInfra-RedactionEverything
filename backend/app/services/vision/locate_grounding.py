@@ -168,17 +168,11 @@ class LocateAnythingGroundingService:
             timings.total = _elapsed_ms(total_start)
             logger.info("LocateAnything visual category stage skipped: no visual categories")
             return [], timings.as_dict()
-        # The user's grounding query(-ies) per fixed slug, so every supplement pass
+        # The user's grounding query per fixed slug, so every supplement pass
         # (tile retry, edge refine, signature) sends the same wording the main
-        # detect sent — the 清单 owns the wording end to end. A slug maps to a LIST
-        # because a category may ground a UNION of phrases (fingerprint = "red or
-        # pink fingerprint" + "ink stain"); a tile re-runs each and the boxes union
-        # under the one slug. Order preserved from requests.
+        # detect sent — the 清单 owns the wording end to end.
         slug_set = set(model_slugs)
-        queries_by_slug: dict[str, list[str]] = {}
-        for tag, rtype, _text in requests:
-            if rtype in slug_set:
-                queries_by_slug.setdefault(rtype, []).append(tag)
+        query_by_slug = {rtype: tag for tag, rtype, _text in requests if rtype in slug_set}
         # The checked wording per requested type (preset OR user-custom), carried
         # verbatim for the model-centric verify re-ground — whatever schema the
         # 清单 checked is what gets re-tested, never a slug→name mapping.
@@ -210,7 +204,7 @@ class LocateAnythingGroundingService:
         # default (Chinese localises the stamp on a small crop where the old
         # English "seal" returned 0; that English→中文 swap is gone now that the
         # default query is Chinese).
-        fragment_queries = dict(queries_by_slug)
+        fragment_queries = dict(query_by_slug)
         fragment_on = (
             bool(getattr(settings, "VISUAL_FRAGMENT_SEAL", True))
             and model_slugs
@@ -269,7 +263,7 @@ class LocateAnythingGroundingService:
             res = await self._post_detect(image_data, [tag])
             if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
                 spec_task = asyncio.create_task(
-                    self._detect_on_tiles(image_data, page, [rtype], queries=queries_by_slug)
+                    self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
                 )
                 spec_task.add_done_callback(
                     lambda t: t.exception() if not t.cancelled() else None
@@ -315,7 +309,7 @@ class LocateAnythingGroundingService:
                 for _tag, rtype, _t in requests:
                     if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
                         spec_task = asyncio.create_task(
-                            self._detect_on_tiles(image_data, page, [rtype], queries=queries_by_slug)
+                            self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
                         )
                         spec_task.add_done_callback(
                             lambda t: t.exception() if not t.cancelled() else None
@@ -386,8 +380,7 @@ class LocateAnythingGroundingService:
             la_start = time.perf_counter()
             try:
                 la_boxes = await self._detect_la_signature(
-                    la_sig_url, image_data, page,
-                    (queries_by_slug.get("signature") or ["signature"])[0],
+                    la_sig_url, image_data, page, query_by_slug.get("signature", "signature")
                 )
             except Exception as exc:
                 la_boxes = []
@@ -434,7 +427,7 @@ class LocateAnythingGroundingService:
                 # a slug whose main detect had raw boxes that all got dropped
                 # later (clamp/physical gates) never fired a spec — run it now
                 tile_boxes.extend(
-                    await self._detect_on_tiles(image_data, page, live_slugs, queries=queries_by_slug)
+                    await self._detect_on_tiles(image_data, page, live_slugs, queries=query_by_slug)
                 )
             # Grid-retry marks (signature/fingerprint) recover STOCHASTICALLY — one
             # sample of the tiles finds 陈勇, the next 周X, rarely both in the same
@@ -449,7 +442,7 @@ class LocateAnythingGroundingService:
             if grid_retry and samples > 1 and grid_hits:
                 extra = await asyncio.gather(
                     *[
-                        self._detect_on_tiles(image_data, page, grid_retry, queries=queries_by_slug)
+                        self._detect_on_tiles(image_data, page, grid_retry, queries=query_by_slug)
                         for _ in range(samples - 1)
                     ],
                     return_exceptions=True,
@@ -582,22 +575,25 @@ class LocateAnythingGroundingService:
         a separate trained model, precise on its own. Any decode/HTTP failure fails
         OPEN (keep the box) — a missed redaction outranks a false one.
 
-        Signatures and fingerprints are NOT verified: re-grounding either on its
-        own tight crop is unreliable. A signature — the 甲方/乙方 names on 保姆 —
-        returns n=0 on a tight crop yet n=1 slightly wider, so a real name whose
-        detected box is tight WOULD be dropped (a leak). A fingerprint's recall is
-        stochastic AND phrase-split (a pale ink print re-grounds only on "ink
-        stain", 0 on every fingerprint-worded phrase), so a re-ground sample can
-        return n=0 on a REAL print and drop it. Both are 0-miss types where the
-        recovered over-mask (a blank strip, a page-holding finger) is the safe
-        price. They pass untouched.
+        Signatures are NOT verified: re-grounding a real handwritten name on its
+        own tight crop is unreliable — measured on 保姆, the 甲方/乙方 names return
+        n=0 on a tight crop yet n=1 on a slightly wider one, so a real name whose
+        detected box is tight WOULD be dropped (a leak). The recovered false
+        signatures on blank margins are the price of that safety; they are
+        over-mask (redact a blank strip, leak nothing). Signatures pass untouched.
+
+        Fingerprints ARE verified (precision-first policy, 容许找不到但不要高FP):
+        the pixel skin gate is gone, so re-grounding each print's own tight crop
+        is the model-centric filter that prunes context-artifact false prints
+        (a red underline / seal edge the grid boxed as 指纹). A real ink print
+        re-grounds on its crop; the residual page-holding-finger FP is the one
+        the model cannot separate by texture and is left to a dedicated detector.
         """
         grounded = [
             b
             for b in boxes
             if str(b.source_detail or "").startswith("locate_anything:")
             and b.type != "signature"
-            and b.type != "fingerprint"
         ]
         if not grounded:
             return boxes
@@ -891,7 +887,7 @@ class LocateAnythingGroundingService:
         slugs: list[str],
         tiles_for=None,
         source_detail: str = "locate_anything:tile_retry",
-        queries: dict[str, list[str]] | None = None,
+        queries: dict[str, str] | None = None,
         native_resolution: bool = False,
         max_concurrency: int | None = None,
     ) -> list[BoundingBox]:
@@ -923,19 +919,13 @@ class LocateAnythingGroundingService:
                     tiles = _grid_tiles(width, height)
                 else:
                     tiles = _bottom_tiles(width, height)
-            # Same wording as the full-frame pass — the 清单 owns it. A slug may
-            # carry a UNION of phrases (fingerprint = "red or pink fingerprint" +
-            # "ink stain"); each is re-run on every tile and the boxes union under
-            # the one slug (tagged by `slug` in metas below, never the query echo).
-            slug_queries = (queries or {}).get(slug) or [slug]
             for x0, y0, x1, y1 in tiles:
                 encoded = io.BytesIO()
                 image.crop((x0, y0, x1, y1)).save(encoded, format="JPEG", quality=_JPEG_QUALITY)
-                crop_bytes = encoded.getvalue()
+                # Same wording as the full-frame pass — the 清单 owns it.
                 side = max(x1 - x0, y1 - y0) if native_resolution else None
-                for query in slug_queries:
-                    tasks.append(self._post_detect(crop_bytes, [query], side))
-                    metas.append((slug, x0, y0, x1 - x0, y1 - y0))
+                tasks.append(self._post_detect(encoded.getvalue(), [(queries or {}).get(slug, slug)], side))
+                metas.append((slug, x0, y0, x1 - x0, y1 - y0))
         # The fragment pass fires ~20 tiles; firing them all at once spikes the
         # shared LA card's vision-encode buffers into CUDA-capacity 503s (every
         # tile then fails and the pass returns nothing). Bound the in-flight
@@ -963,12 +953,12 @@ class LocateAnythingGroundingService:
                 continue
             for raw in result:
                 # Tag-by-request, no echo filtering: this tile carried exactly
-                # ONE query (one of the checklist wordings for `slug`), so every
-                # box in the response belongs to that slug by construction. The old
+                # ONE query (the checklist wording for `slug`), so every box in
+                # the response belongs to that slug by construction. The old
                 # echo check compared the server-normalized QUERY WORDING with
                 # the slug — a tautology while query==slug, but the moment the
                 # checklist wording diverged ("handwritten name signature" for
-                # signature, "ink stain" for fingerprint) it
+                # signature, "red inked thumbprint mark" for fingerprint) it
                 # silently swallowed EVERY tile box of those types (contract 19
                 # 实证: both grid tiles hit a signature each, pipeline kept 0;
                 # the historical "fingerprint,qr_code kept 0/6" waste was this
