@@ -31,8 +31,6 @@ _NER_TOKENS_PER_TYPE = 8
 # 单批次目标 token 预算的最小下限（防呆：env 误配过小也不低于千级——
 # Tracy: 128 太小，预算按 8k 级跑）
 _NER_MIN_TARGET_TOKENS = 1024
-# HaS NER 命中实体的默认置信度
-_NER_DEFAULT_CONFIDENCE = 0.95
 
 
 class HaSService:
@@ -385,7 +383,11 @@ class HaSService:
                             start=pos,
                             end=pos + len(entity_text),
                             page=1,
-                            confidence=_NER_DEFAULT_CONFIDENCE,
+                            # No score: HaS returns values, not probabilities, and
+                            # its token logprobs measure character predictability
+                            # rather than whether the span is PII (probed: the
+                            # correct 李建国/周明 scored 0.75/0.87 while an empty
+                            # answer scored 0.99).
                             source="has",
                             coref_id=coref_map[coref_key],
                         ))

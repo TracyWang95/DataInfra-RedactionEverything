@@ -12,7 +12,7 @@ from app.services.vision.locate_grounding import LocateAnythingGroundingService
 
 
 def test_tile_boxes_tagged_by_request_not_echo(monkeypatch):
-    async def fake_post(self, image_data, categories):
+    async def fake_post(self, image_data, categories, max_image_side=None):
         # server contract: category echoes the normalized QUERY WORDING
         return [{"category": categories[0].lower(), "x": 0.2, "y": 0.3, "width": 0.3, "height": 0.2, "confidence": 0.82}]
 

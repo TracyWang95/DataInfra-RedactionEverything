@@ -58,7 +58,10 @@ class Entity(BaseModel):
     start: int = Field(..., description="Start offset")
     end: int = Field(..., description="End offset")
     page: int = Field(default=1, description="Page number")
-    confidence: float = Field(default=1.0, description="Recognition confidence")
+    # None = nothing measured this entity. HaS NER has no usable score (its token
+    # logprobs track how predictable the next character was, not whether the span
+    # is PII), so text entities arrive unscored and the UI shows no number.
+    confidence: float | None = Field(default=None, description="Recognition confidence, if measured")
     source: Literal["regex", "llm", "manual", "has"] | None = Field(
         default=None,
         description="Text entity source",
@@ -91,7 +94,10 @@ class BoundingBox(BaseModel):
     type: str = Field(..., description="Region type id")
     text: str | None = Field(None, description="Recognized text or label")
     selected: bool = Field(default=True, description="Whether selected for redaction")
-    confidence: float = Field(default=1.0, description="Detection confidence")
+    # None = this detector reported no score (e.g. LocateAnything without the
+    # vLLM decoder's logprobs). Never substitute a constant: the UI renders a
+    # number as a measurement.
+    confidence: float | None = Field(default=None, description="Detection confidence, if measured")
     source: Literal["ocr_has", "visual_features", "manual"] | None = Field(
         default=None,
         description="Detection source",

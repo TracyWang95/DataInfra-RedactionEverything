@@ -122,7 +122,7 @@ def _vision_signature(
         "visual_queries": _visual_query_fingerprint(visual_feature_types),
         "visual_flags": [
             bool(getattr(settings, "VISUAL_TILE_RETRY", True)),
-            bool(getattr(settings, "VISUAL_EDGE_SEAL_REFINE", True)),
+            bool(getattr(settings, "VISUAL_FRAGMENT_SEAL", True)),
             int(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_SAMPLES", 1) or 1),
         ],
         # Detector-side knobs the backend cannot observe because they live in the
@@ -589,7 +589,10 @@ def get_report(file_id: str) -> RedactionReport:
 
     # Count by type
     type_dist: dict[str, int] = {}
-    confidence_dist = {"high": 0, "medium": 0, "low": 0}
+    # "unmeasured" is a real bucket, not a zero: text entities carry no score
+    # (HaS returns values, not probabilities). Folding them into "high" would
+    # report certainty nobody measured.
+    confidence_dist = {"high": 0, "medium": 0, "low": 0, "unmeasured": 0}
     source_dist: dict[str, int] = {}
 
     total = 0
@@ -598,19 +601,21 @@ def get_report(file_id: str) -> RedactionReport:
         total += 1
         if isinstance(e, dict):
             etype = e.get("type", "UNKNOWN")
-            conf = e.get("confidence", 1.0)
+            conf = e.get("confidence")
             src = e.get("source", "unknown")
             sel = e.get("selected", True)
         else:
             etype = getattr(e, "type", "UNKNOWN")
-            conf = getattr(e, "confidence", 1.0)
+            conf = getattr(e, "confidence", None)
             src = getattr(e, "source", "unknown") or "unknown"
             sel = getattr(e, "selected", True)
 
         type_dist[str(etype)] = type_dist.get(str(etype), 0) + 1
         source_dist[str(src)] = source_dist.get(str(src), 0) + 1
 
-        if conf >= 0.8:
+        if conf is None:
+            confidence_dist["unmeasured"] += 1
+        elif conf >= 0.8:
             confidence_dist["high"] += 1
         elif conf >= 0.5:
             confidence_dist["medium"] += 1

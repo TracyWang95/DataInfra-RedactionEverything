@@ -4,7 +4,6 @@
 丢弃Secure cookie→CSRF头缺失→上传POST 403(后端零应用日志)。COOKIE_SECURE=0时
 cookie不带Secure,HTTP下正常;默认True保HTTPS安全。
 """
-import re
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient

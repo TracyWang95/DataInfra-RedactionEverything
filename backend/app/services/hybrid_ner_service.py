@@ -287,7 +287,7 @@ class HybridNERService:
                     start=match.start(),
                     end=match.end(),
                     page=1,
-                    confidence=0.96,
+                    # A regex either matched or it did not; there is nothing to score.
                     source="regex",
                 ))
         return entities
@@ -600,9 +600,13 @@ class HybridNERService:
                     continue
                 if existing.source in {"has", "llm"} and entity.source == "regex":
                     continue
-            if entity.confidence > existing.confidence:
+            # Unscored (None) never outranks a measured entity, and two
+            # unscored ones fall through to the source/type tie-breakers.
+            new_score = entity.confidence
+            old_score = existing.confidence
+            if new_score is not None and (old_score is None or new_score > old_score):
                 entity_map[key] = entity
-            elif entity.confidence == existing.confidence:
+            elif new_score == old_score:
                 if source_rank(entity.source) > source_rank(existing.source):
                     entity_map[key] = entity
                 elif source_rank(entity.source) == source_rank(existing.source):

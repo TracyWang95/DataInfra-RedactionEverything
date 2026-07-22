@@ -35,11 +35,13 @@ def test_detect_requests_fixed_and_custom() -> None:
         _pt("custom_visual_features_shouyin", "红色手印"),
         _pt("official_seal"),
     ])
-    # fixed: sent as its factory grounding query (checklist empty), tagged by
-    # slug, named by SLUG_TO_NAME_ZH; custom: sent as its human label verbatim,
-    # tagged by its own type_id
+    # fixed: sent as the category's factory grounding queries (checklist empty) —
+    # usually one phrase; fingerprint expands to its UNION ("red or pink
+    # fingerprint" + "ink stain"), both tagged by the fingerprint slug. Named by
+    # SLUG_TO_NAME_ZH. custom: sent as its human label verbatim, tagged by type_id.
     assert reqs == [
-        ("red inked thumbprint mark", "fingerprint", "指纹"),
+        ("red or pink fingerprint", "fingerprint", "指纹"),
+        ("ink stain", "fingerprint", "指纹"),
         ("红色手印", "custom_visual_features_shouyin", "红色手印"),
         ("seal", "official_seal", "公章"),
     ]
@@ -47,15 +49,23 @@ def test_detect_requests_fixed_and_custom() -> None:
 
 
 def test_detect_requests_none_is_all_fixed() -> None:
-    from app.core.visual_feature_categories import SLUG_TO_DEFAULT_QUERY, SLUG_TO_NAME_ZH
+    from app.core.visual_feature_categories import SLUG_TO_GROUNDING_QUERIES, SLUG_TO_NAME_ZH
 
     reqs, fixed = _detect_requests(None)
     assert fixed == list(DEFAULT_VISUAL_FEATURE_SLUGS)
-    # fixed: tagged by slug, sent as the factory grounding query
-    assert all(
-        tag == (SLUG_TO_DEFAULT_QUERY.get(rtype) or SLUG_TO_NAME_ZH.get(rtype, rtype))
-        for tag, rtype, _text in reqs
-    )
+
+    # fixed: tagged by slug, sent as EACH of the category's factory grounding
+    # queries — one phrase for most, a UNION for a few (fingerprint). Every emitted
+    # tag is one of its slug's factory queries, and the union is fully expanded.
+    def _factory(slug: str) -> tuple[str, ...]:
+        return SLUG_TO_GROUNDING_QUERIES.get(slug) or (SLUG_TO_NAME_ZH.get(slug, slug),)
+
+    for tag, rtype, _text in reqs:
+        assert tag in _factory(rtype)
+    emitted = {(tag, rtype) for tag, rtype, _t in reqs}
+    for slug in fixed:
+        for query in _factory(slug):
+            assert (query, slug) in emitted
 
 
 def test_detect_requests_checklist_wording_wins() -> None:

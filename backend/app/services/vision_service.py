@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 
 from app.core.config import settings
 from app.core.visual_feature_categories import (
@@ -34,6 +34,17 @@ from app.services.vision.image_pipeline import (
     SourcePipeline,
     draw_preview_boxes,
 )
+from app.services.vision.box_geometry import (
+    _calculate_iou,
+    _calculate_smaller_overlap,
+    _center_inside,
+    _doc_line_height,
+    _has_vertically_disjoint_pair,
+    _higher_confidence,
+    _norm_box_type,
+    _x_overlap_fraction,
+)
+from app.services.vision.redaction_effects import _apply_box_effect
 from app.services.vision.la_consensus import consensus_boxes
 from app.services.vision.locate_grounding import (
     _HANDWRITING_GROUNDING_QUERIES,
@@ -421,6 +432,19 @@ class VisionService:
                     result = exc
                 await record_pipeline_result(label, result)
 
+        # Specialized signature detector (conditional-detr) REPLACES the LA
+        # signature grounding when configured — single-class, never fires on
+        # printed labels, deterministic. The OCR-prune inside it + the seal absorb
+        # below kill its two residual FP classes (printed org name, seal script).
+        if bool(visual_feature_types) and self._visual_slug_requested(visual_feature_items, "signature"):
+            try:
+                all_boxes = await self._detect_signatures_via_detector(
+                    all_boxes, await get_image_data(), page
+                )
+            except Exception:
+                logger.warning("signature detector stage skipped; kept LA signatures", exc_info=True)
+
+        all_boxes = self._drop_full_page_seals(all_boxes)
         all_boxes = self._suppress_text_in_signature(all_boxes)
         all_boxes = self._prefer_vl_seals(all_boxes)
         all_boxes = self._prefer_yolo_machine_codes(all_boxes)
@@ -483,7 +507,7 @@ class VisionService:
         sig_types = {"signature", "handwriting", "approval_mark"}
         result: list[BoundingBox] = []
         for box in boxes:
-            if VisionService._norm_box_type(box.type) in sig_types:
+            if _norm_box_type(box.type) in sig_types:
                 dx = box.width * margin
                 dy = box.height * margin
                 nx = max(0.0, box.x - dx)
@@ -495,74 +519,6 @@ class VisionService:
                 )
             result.append(box)
         return result
-
-    @staticmethod
-    def _norm_box_type(value: str | None) -> str:
-        return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-
-    def _calculate_iou(self, box1: BoundingBox, box2: BoundingBox) -> float:
-        x1 = max(box1.x, box2.x)
-        y1 = max(box1.y, box2.y)
-        x2 = min(box1.x + box1.width, box2.x + box2.width)
-        y2 = min(box1.y + box1.height, box2.y + box2.height)
-
-        if x2 <= x1 or y2 <= y1:
-            return 0.0
-
-        intersection = (x2 - x1) * (y2 - y1)
-        area1 = box1.width * box1.height
-        area2 = box2.width * box2.height
-        union = area1 + area2 - intersection
-
-        if union <= 0:
-            return 0.0
-
-        return intersection / union
-
-    def _calculate_smaller_overlap(self, box1: BoundingBox, box2: BoundingBox) -> float:
-        x1 = max(box1.x, box2.x)
-        y1 = max(box1.y, box2.y)
-        x2 = min(box1.x + box1.width, box2.x + box2.width)
-        y2 = min(box1.y + box1.height, box2.y + box2.height)
-
-        if x2 <= x1 or y2 <= y1:
-            return 0.0
-
-        intersection = (x2 - x1) * (y2 - y1)
-        smaller = min(box1.width * box1.height, box2.width * box2.height)
-        if smaller <= 0:
-            return 0.0
-        return intersection / smaller
-
-    @staticmethod
-    def _center_inside(inner: BoundingBox, outer: BoundingBox) -> bool:
-        """True if the center point of ``inner`` lies within ``outer``."""
-        cx = inner.x + inner.width / 2.0
-        cy = inner.y + inner.height / 2.0
-        return outer.x <= cx <= outer.x + outer.width and outer.y <= cy <= outer.y + outer.height
-
-    @staticmethod
-    def _x_overlap_fraction(a: BoundingBox, b: BoundingBox) -> float:
-        """Horizontal overlap as a fraction of the narrower box (0..1)."""
-        lo = max(a.x, b.x)
-        hi = min(a.x + a.width, b.x + b.width)
-        return max(0.0, hi - lo) / max(1e-9, min(a.width, b.width))
-
-    @staticmethod
-    def _has_vertically_disjoint_pair(boxes: list[BoundingBox]) -> bool:
-        """True if any two boxes in the column don't vertically overlap.
-
-        Two vertically disjoint LA boxes mean two distinct text rows live in
-        this column — the value's row is then ambiguous.
-        """
-        for i in range(len(boxes)):
-            a = boxes[i]
-            for j in range(i + 1, len(boxes)):
-                b = boxes[j]
-                overlap = min(a.y + a.height, b.y + b.height) - max(a.y, b.y)
-                if overlap <= 1e-9:
-                    return True
-        return False
 
     def _adopt_la_vertical_geometry(
         self,
@@ -642,14 +598,14 @@ class VisionService:
             column = [
                 la
                 for la in la_boxes
-                if self._x_overlap_fraction(box, la) > 0.0
+                if _x_overlap_fraction(box, la) > 0.0
                 and min(bottom, la.y + la.height) - max(top, la.y) > 1e-9
             ]
             if not column:
                 result.append(box)
                 continue
             # (b) two distinct rows in the column -> ambiguous
-            if self._has_vertically_disjoint_pair(column):
+            if _has_vertically_disjoint_pair(column):
                 result.append(box)
                 continue
             # (a) error-row guard: keep only LA rows containing the OCR y-center
@@ -671,30 +627,6 @@ class VisionService:
                 box.model_copy(update={"y": new_top, "height": new_bottom - new_top})
             )
         return result
-
-    @staticmethod
-    def _doc_line_height(boxes: list[BoundingBox]) -> float:
-        """Self-calibrated document line height (normalized) from the OCR boxes.
-
-        This must NOT be the median box height: char-box merge is exactly what
-        inflates some value boxes, so the median is contaminated by the tall
-        tail. But merge only ever GROWS a box's height (union over a taller
-        block) — it never shrinks one below the true single-line glyph height.
-        So the true line height is the LOWER envelope of the height
-        distribution, and a low quantile (median of the shorter half ≈ 25th
-        percentile) is a robust estimate immune to the inflated tail. Derived
-        purely from the page's own boxes — no fixed pixel constant. Returns 0.0
-        when there is nothing to calibrate from (caller then skips tightening).
-        """
-        hs = sorted(
-            b.height
-            for b in boxes
-            if b.source == "ocr_has" and str(b.text or "").strip() and b.height > 0
-        )
-        if not hs:
-            return 0.0
-        lower = hs[: max(1, len(hs) // 2)]
-        return lower[len(lower) // 2]
 
     @staticmethod
     def _full_width_rule_rows(mask: "np.ndarray") -> "np.ndarray":
@@ -770,7 +702,7 @@ class VisionService:
             candidates = [
                 la
                 for la in la_boxes
-                if self._x_overlap_fraction(box, la) > 0.0
+                if _x_overlap_fraction(box, la) > 0.0
                 and la.y <= cy <= la.y + la.height
             ]
             if not candidates:
@@ -811,7 +743,7 @@ class VisionService:
         if not bool(getattr(settings, "VISION_LA_VERTICAL_TIGHTEN", False)):
             return all_boxes
         try:
-            doc_line_h = self._doc_line_height(all_boxes)
+            doc_line_h = _doc_line_height(all_boxes)
             if doc_line_h <= 0:
                 return all_boxes
             oversize_floor = 2.0 * doc_line_h
@@ -884,6 +816,34 @@ class VisionService:
             logger.info("Suppressed %d OCR text box(es) contained in a signature region", dropped)
         return kept
 
+    @staticmethod
+    def _drop_full_page_seals(boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """A visual box spanning the whole page is degenerate — drop it.
+
+        No stamp, card, signature or code is the entire page; a box reaching all
+        four page edges is a detector or a stale cache painting the page as one
+        region (the scene-flood / ink-snap failure mode, and LA hallucinating the
+        whole document as an id_card when a small crop is upscaled). Reject any
+        visual_features box by that topology so it can never survive whatever
+        produced it. "At the edge" is LocateAnything's own coordinate quantum — it
+        emits integer thousandths, so its last cell (0 or 0.999) IS the page
+        border, not a tuned tolerance. Text boxes (words/lines) are never
+        page-sized, so this is scoped to the visual channel.
+        """
+        quantum = 1.0 / 1000.0  # LA emits coordinates as integer/1000
+        kept = []
+        for b in boxes:
+            if (
+                b.source == "visual_features"
+                and b.x <= quantum and b.y <= quantum
+                and b.x + b.width >= 1.0 - quantum
+                and b.y + b.height >= 1.0 - quantum
+            ):
+                logger.info("Dropped a full-page %s box (degenerate)", b.type)
+                continue
+            kept.append(b)
+        return kept
+
     def _prefer_vl_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
         """For official_seal, prefer OCR/VL boxes over LocateAnything boxes.
 
@@ -910,8 +870,8 @@ class VisionService:
                 overlapping_vl = [
                     (v.x, v.y, v.width, v.height)
                     for v in vl_seals
-                    if self._calculate_iou(v, b) > 0.0
-                    or self._calculate_smaller_overlap(v, b) > 0.0
+                    if _calculate_iou(v, b) > 0.0
+                    or _calculate_smaller_overlap(v, b) > 0.0
                 ]
                 if overlapping_vl and rect_covered_by_union(
                     (b.x, b.y, b.width, b.height), overlapping_vl
@@ -953,7 +913,7 @@ class VisionService:
                 b.type in code_types
                 and not str(getattr(b, "source_detail", "") or "").startswith("has_image:")
                 and any(
-                    self._center_inside(y, b) or self._center_inside(b, y)
+                    _center_inside(y, b) or _center_inside(b, y)
                     for y in yolo_codes
                 )
             ):
@@ -988,7 +948,7 @@ class VisionService:
             for s in seals:
                 folded = False
                 for i, t in enumerate(out):
-                    if self._center_inside(s, t) or self._center_inside(t, s):
+                    if _center_inside(s, t) or _center_inside(t, s):
                         x1 = min(t.x, s.x)
                         y1 = min(t.y, s.y)
                         x2 = max(t.x + t.width, s.x + s.width)
@@ -998,7 +958,7 @@ class VisionService:
                             "y": y1,
                             "width": x2 - x1,
                             "height": y2 - y1,
-                            "confidence": max(t.confidence, s.confidence),
+                            "confidence": _higher_confidence(t.confidence, s.confidence),
                         })
                         fold_count += 1
                         folded = True
@@ -1087,6 +1047,76 @@ class VisionService:
                 return False
         return True
 
+    async def _detect_signatures_via_detector(
+        self, boxes: list[BoundingBox], image_data: bytes, page: int
+    ) -> list[BoundingBox]:
+        """Replace the LA signature channel with the specialized conditional-detr
+        detector — a single-class signature model that never learned to box
+        printed text, so it does NOT fire on 乙方:/甲方: labels the way the LA
+        grounding VLM does, and it is deterministic (no sampling variance). Two
+        residual FP classes it can still show on a busy page (a printed org name,
+        a seal's cursive script) are killed by (a) the OCR-prune here — a real
+        signature is handwriting OCR cannot read, so it overlaps NO OCR text
+        (measured 0 on 海油); a false one sits on OCR'd printed text — and (b) the
+        seal absorb downstream. Fails OPEN: any detector error keeps the LA
+        signatures, because a missed signature is a leak.
+        """
+        url = str(getattr(settings, "SIGNATURE_DETECTOR_URL", "") or "").strip()
+        if not url:
+            return boxes
+        try:
+            import httpx
+
+            body = {"image_base64": base64.b64encode(image_data).decode("utf-8")}
+            timeout = float(getattr(settings, "VISUAL_FEATURES_TIMEOUT", 60) or 60)
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                resp = await client.post(f"{url.rstrip('/')}/detect", json=body)
+                resp.raise_for_status()
+            raw = resp.json().get("boxes") or []
+        except Exception:
+            logger.warning("signature detector unavailable; keeping LA signatures", exc_info=True)
+            return boxes
+        detr: list[BoundingBox] = []
+        for r in raw:
+            try:
+                x, y, w, h = float(r["x"]), float(r["y"]), float(r["width"]), float(r["height"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            detr.append(BoundingBox(
+                id=f"sigdet_{uuid.uuid4().hex[:8]}", x=x, y=y, width=w, height=h,
+                type="signature", text=SLUG_TO_NAME_ZH.get("signature", "签字"), page=page,
+                confidence=r.get("confidence"), source="visual_features",
+                source_detail="signature_detector:conditional_detr",
+                evidence_source="visual_feature_model",
+            ))
+        # A signature is a PERSON's handwriting — never a company designation. A
+        # detector box on the SAME LINE as a company name (its y-centre inside an
+        # INSTITUTION_NAME box's y-span) is the party line — "乙方：信尔胜机械…" —
+        # read as a false signature; the false box sits on the "乙方：" label just
+        # left of the org text, same line. Real signatures are on their OWN lines
+        # (the 法定代表人签字 line, far below any org name). Model-centric (the NER
+        # already typed that line as an org) and 0-miss safe: the org text on that
+        # line is redacted regardless, so a real signature sharing the line loses
+        # nothing.
+        orgs = [b for b in boxes if b.type == "INSTITUTION_NAME"]
+        if orgs and detr:
+            def _on_org_line(s: BoundingBox) -> bool:
+                cy = s.y + s.height / 2
+                return any(o.y <= cy <= o.y + o.height for o in orgs)
+            before = len(detr)
+            detr = [d for d in detr if not _on_org_line(d)]
+            if len(detr) < before:
+                logger.info(
+                    "signature detector: dropped %d false signature(s) on a company-name line",
+                    before - len(detr),
+                )
+        kept = [b for b in boxes if not (b.source == "visual_features" and b.type == "signature")]
+        if detr:
+            logger.info("signature detector: %d signature box(es) replace the LA channel", len(detr))
+        return kept + detr
+
     def _drop_page_hallucinated_cards(
         self,
         boxes: list[BoundingBox],
@@ -1141,7 +1171,7 @@ class VisionService:
                 bx1, by1 = box.x * page_w, box.y * page_h
                 bx2, by2 = (box.x + box.width) * page_w, (box.y + box.height) * page_h
                 covers_all_text = bx1 <= hull[0] and by1 <= hull[1] and bx2 >= hull[2] and by2 >= hull[3]
-                encloses_seal = any(self._center_inside(s, box) for s in seals)
+                encloses_seal = any(_center_inside(s, box) for s in seals)
                 if covers_all_text or encloses_seal:
                     logger.info("Dropped page-hallucinated id_card box (no card evidence; seal=%s)", encloses_seal)
                     continue
@@ -1168,7 +1198,7 @@ class VisionService:
                 continue
             for i in seal_indexes:
                 seal = out[i]
-                if self._center_inside(b, seal):
+                if _center_inside(b, seal):
                     x1 = min(seal.x, b.x)
                     y1 = min(seal.y, b.y)
                     x2 = max(seal.x + seal.width, b.x + b.width)
@@ -1350,7 +1380,7 @@ class VisionService:
                     continue
                 if larger.width * larger.height <= area_s:
                     continue
-                if self._calculate_smaller_overlap(smaller, larger) >= _CONTAINED_TEXT_DROP_RATIO:
+                if _calculate_smaller_overlap(smaller, larger) >= _CONTAINED_TEXT_DROP_RATIO:
                     drop.add(id(smaller))
                     break
         if drop:
@@ -1370,7 +1400,7 @@ class VisionService:
         text_hull, page_em = text_evidence_hull(regions)
         bounding_boxes = []
         for i, region in enumerate(regions):
-            normalized_region_type = self._norm_box_type(region.entity_type)
+            normalized_region_type = _norm_box_type(region.entity_type)
             is_ocr_visual_seal = normalized_region_type in {"seal", "official_seal", "stamp"}
             if not self._should_keep_ocr_has_region(region.entity_type, region.text):
                 logger.debug("Skipping OCR-HaS semantic false positive: %s %s", region.entity_type, region.text)
@@ -1503,8 +1533,8 @@ class VisionService:
                 b for b in (*existing_boxes, *extra) if normalize_visual_slug(b.type) == category
             ]
             if any(
-                self._calculate_smaller_overlap(candidate, known) >= _DEDUP_CONTAINMENT
-                or self._calculate_iou(candidate, known) > _DEDUP_IOU
+                _calculate_smaller_overlap(candidate, known) >= _DEDUP_CONTAINMENT
+                or _calculate_iou(candidate, known) > _DEDUP_IOU
                 for known in known_same_type
             ):
                 continue
@@ -1663,90 +1693,6 @@ class VisionService:
         draw_image.save(buffer, format="PNG")
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-    @staticmethod
-    def _hex_to_rgb(fill_color: str) -> tuple[int, int, int]:
-        h = (fill_color or "#000000").strip().lstrip("#")
-        if len(h) == 6:
-            try:
-                return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-            except ValueError:
-                pass
-        return (0, 0, 0)
-
-    def _apply_region_effect(
-        self,
-        img: Image.Image,
-        x1: int,
-        y1: int,
-        x2: int,
-        y2: int,
-        image_method: str,
-        strength: int,
-        fill_color: str,
-    ) -> None:
-        """Apply the configured redaction fill to rectangular image regions."""
-        W, H = img.size
-        x1 = max(0, min(W, x1))
-        y1 = max(0, min(H, y1))
-        x2 = max(0, min(W, x2))
-        y2 = max(0, min(H, y2))
-        if x2 <= x1 or y2 <= y1:
-            return
-        s = max(1, min(_REDACTION_STRENGTH_MAX, strength))
-        roi = img.crop((x1, y1, x2, y2))
-        w, h = roi.size
-        if w < 1 or h < 1:
-            return
-
-        if image_method == "fill":
-            rgb = self._hex_to_rgb(fill_color)
-            draw = ImageDraw.Draw(img)
-            draw.rectangle([x1, y1, x2, y2], fill=rgb)
-            return
-
-        if image_method == "mosaic":
-            min_edge = min(w, h)
-            # Text detections are often long but very short rectangles. The old
-            # 2px floor left small characters readable at the default strength,
-            # so keep a real privacy floor even for thin OCR boxes.
-            block = max(_MOSAIC_BLOCK_MIN, int(_MOSAIC_BLOCK_BASE + (s / _REDACTION_STRENGTH_MAX) * min_edge * _MOSAIC_BLOCK_EDGE_RATIO))
-            block = min(block, max(1, min_edge))
-            small_w = max(1, w // block)
-            small_h = max(1, h // block)
-            # Downsample by area before expanding. Nearest-neighbor downsampling
-            # can sample the white paper around thin red seal strokes and make
-            # the stamp look erased instead of explicitly mosaicked.
-            small = roi.resize((small_w, small_h), Image.Resampling.BOX)
-            mosaic = small.resize((w, h), Image.Resampling.NEAREST)
-            img.paste(mosaic, (x1, y1))
-            return
-
-        if image_method == "blur":
-            radius = max(1, int(_BLUR_RADIUS_BASE + (s / _REDACTION_STRENGTH_MAX) * _BLUR_RADIUS_MAX_SPAN))
-            blurred = roi.filter(ImageFilter.GaussianBlur(radius=radius))
-            img.paste(blurred, (x1, y1))
-            return
-
-        rgb = self._hex_to_rgb(fill_color)
-        draw = ImageDraw.Draw(img)
-        draw.rectangle([x1, y1, x2, y2], fill=rgb)
-
-    def _apply_box_effect(
-        self,
-        img: Image.Image,
-        bbox: BoundingBox,
-        page_width: int,
-        page_height: int,
-        image_method: str,
-        strength: int,
-        fill_color: str,
-    ) -> None:
-        x1 = int(bbox.x * page_width)
-        y1 = int(bbox.y * page_height)
-        x2 = int((bbox.x + bbox.width) * page_width)
-        y2 = int((bbox.y + bbox.height) * page_height)
-        self._apply_region_effect(img, x1, y1, x2, y2, image_method, strength, fill_color)
-
     async def apply_redaction(
         self,
         file_path: str,
@@ -1782,7 +1728,7 @@ class VisionService:
         for bbox in bounding_boxes:
             if not bbox.selected:
                 continue
-            self._apply_box_effect(image, bbox, width, height, image_method, strength, fill_color)
+            _apply_box_effect(image, bbox, width, height, image_method, strength, fill_color)
 
         image.save(output_path)
         return output_path
@@ -1811,7 +1757,7 @@ class VisionService:
                     pix = page.get_pixmap(matrix=mat, alpha=False)
                     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                     for bbox in page_boxes:
-                        self._apply_box_effect(img, bbox, pix.width, pix.height, image_method, strength, fill_color)
+                        _apply_box_effect(img, bbox, pix.width, pix.height, image_method, strength, fill_color)
                     buf = io.BytesIO()
                     # Scanned PDFs are redacted by rasterizing each page and applying
                     # the selected explicit masking effect to each selected region.
@@ -1851,7 +1797,7 @@ class VisionService:
         page_boxes = [b for b in bounding_boxes if b.page == page and b.selected]
 
         for bbox in page_boxes:
-            self._apply_box_effect(
+            _apply_box_effect(
                 image,
                 bbox,
                 width,

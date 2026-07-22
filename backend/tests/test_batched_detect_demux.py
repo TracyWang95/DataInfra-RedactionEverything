@@ -27,16 +27,11 @@ def svc(monkeypatch):
     service = LocateAnythingGroundingService()
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.HAS_IMAGE_URL", "", raising=False)
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.LA_SIGNATURE_URL", "", raising=False)
-    monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_SEAL_COLOR_CASCADE", False, raising=False)
-    monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_EDGE_SEAL_REFINE", False, raising=False)
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_TILE_RETRY", False, raising=False)
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_DETECT_BATCH_CATEGORIES", True, raising=False)
-    for gate in ("_drop_solid_fill_seals", "_drop_skin_hue_fingerprints"):
-        monkeypatch.setattr(LocateAnythingGroundingService, gate, lambda self, boxes, image_data: boxes)
-    monkeypatch.setattr(
-        LocateAnythingGroundingService, "_snap_fingerprints_to_ink",
-        staticmethod(lambda boxes, image_data: boxes),
-    )
+    async def _verify_noop(self, boxes, image_data, reground_queries):
+        return boxes
+    monkeypatch.setattr(LocateAnythingGroundingService, "_verify_grounded_candidates", _verify_noop)
     return service
 
 
@@ -59,7 +54,9 @@ def test_batched_request_demuxes_by_requested_category(svc, monkeypatch):
 
     monkeypatch.setattr(LocateAnythingGroundingService, "_post_detect", fake_detect)
     boxes, _ = asyncio.run(svc.detect_categories(b"img", 1, _ptypes(["signature", "fingerprint"])))
-    assert len(sent) == 1 and len(sent[0]) == 2  # ONE request carried both
+    # ONE request carried all three tags: signature (1 phrase) + fingerprint's
+    # 2-phrase union ("red or pink fingerprint" + "ink stain").
+    assert len(sent) == 1 and len(sent[0]) == 3
     assert {b.type for b in boxes} == {"signature", "fingerprint"}
 
 
@@ -84,7 +81,7 @@ def test_batch_failure_falls_back_to_fanout(svc, monkeypatch):
     monkeypatch.setattr(LocateAnythingGroundingService, "_post_detect", fake_detect)
     boxes, _ = asyncio.run(svc.detect_categories(b"img", 1, _ptypes(["signature", "fingerprint"])))
     assert {b.type for b in boxes} == {"signature", "fingerprint"}
-    assert len(calls) == 3  # 1 failed batch + 2 fan-out
+    assert len(calls) == 4  # 1 failed batch + 3 fan-out (fingerprint = 2-phrase union)
 
 
 def test_switch_off_keeps_fanout(monkeypatch, svc):
@@ -97,4 +94,5 @@ def test_switch_off_keeps_fanout(monkeypatch, svc):
 
     monkeypatch.setattr(LocateAnythingGroundingService, "_post_detect", fake_detect)
     asyncio.run(svc.detect_categories(b"img", 1, _ptypes(["signature", "fingerprint"])))
-    assert len(sent) == 2 and all(len(c) == 1 for c in sent)
+    # 3 fan-out calls: signature + fingerprint's 2-phrase union, each 1 category
+    assert len(sent) == 3 and all(len(c) == 1 for c in sent)

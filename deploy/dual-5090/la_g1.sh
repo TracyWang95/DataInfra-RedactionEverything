@@ -17,5 +17,7 @@ export LOCATE_ANYTHING_FAST_FIRST=0
 export LOCATE_ANYTHING_VLLM_URL=http://127.0.0.1:28093/v1/completions
 export LOCATE_ANYTHING_VLLM_SAMPLES=1
 export LOCATE_ANYTHING_TEMPERATURE=0.2
+export LOCATE_ANYTHING_TOP_K=20
+export LOCATE_ANYTHING_TOP_P=0.9
 exec /home/ubuntu/miniconda3/envs/dataInfra-la/bin/python scripts/locate_anything_server.py \
   --backend hf --model "$LOCATE_ANYTHING_MODEL" --dtype bfloat16 --port 28091

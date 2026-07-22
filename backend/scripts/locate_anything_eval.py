@@ -193,6 +193,10 @@ def _box_from_match(match: re.Match[str], width: int, height: int, label: str) -
         "width": round(max(0.0, right - left), 2),
         "height": round(max(0.0, bottom - top), 2),
         "normalized": [x1, y1, x2, y2],
+        # Character span this box was decoded from. The caller uses it to line the
+        # box up with the generation's per-token logprobs, which is the only real
+        # confidence this model can give (it emits no score of its own).
+        "span": [match.start(), match.end()],
     }
 
 

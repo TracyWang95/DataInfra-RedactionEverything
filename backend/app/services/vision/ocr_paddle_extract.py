@@ -431,18 +431,22 @@ def _attach_chars_to_charless_blocks(
     # PP-Structure per GPU, so client-side crop-level fan-out just queues at the
     # server — block-level parallelism is what the two sidecars actually absorb).
     # Within a block the whole-block crop runs FIRST and the three half-width
-    # sweeps only fire when it comes back empty: a single-line block either reads
-    # whole (the crop returns chars) or its det collapses entirely at block width
-    # (returns nothing) — the sweeps are the collapse path. This drops a clean
-    # page's ~13 blocks from ~4 crops each to 1, the dominant OCR cost, with the
-    # recovered char boxes unchanged (a non-empty whole-block read already covers
-    # the line; the sweeps would only re-detect it and get deduped away).
+    # sweeps only fire when it did not read the line end to end. On a clean page
+    # the crop reads whole, so this is 1 crop per block instead of 4 — the
+    # dominant OCR cost — and the sweeps would only re-detect the same text and
+    # get deduped away.
+    #
+    # "Empty" is NOT the right gate. det does not only survive or die wholesale:
+    # on the 农业合同 row it survives on the right segment and dies on the
+    # underline+handwriting left half, so the crop returns a PARTIAL line. Gating
+    # on empty skipped the sweeps exactly there and the left half kept no char
+    # boxes at all, which is what makes the row fall back to a full-width slab.
     def _recover(block: OCRTextBlock) -> None:
         crops = _charless_block_crops(block, width, height)
         if not crops:
             return
         whole = _crop_char_segments(image, ocr_service, crops[0])
-        if whole:
+        if _segments_reach_both_edges(whole, crops[0]):
             _apply_char_segments(block, [whole])
             return
         sweeps = [_crop_char_segments(image, ocr_service, crop) for crop in crops[1:]]
@@ -509,6 +513,31 @@ def _crop_char_segments(
         y2 = max(c["y2"] for c in chars)
         segments.append(((x1, y1, x2, y2), chars))
     return segments
+
+
+
+def _segments_reach_both_edges(segments: list, crop: tuple[int, int, int, int]) -> bool:
+    """Did this crop's read cover the line end to end?
+
+    Tolerance is one recovered character's own width — a physical size measured
+    off this page, not a tuned constant. A read that stops short of either edge
+    left ink unread, so the sweeps still have work to do.
+    """
+    if not segments:
+        return False
+    crop_left, _crop_top, crop_right, _crop_bottom = crop
+    read_left = min(bbox[0] for bbox, _chars in segments)
+    read_right = max(bbox[2] for bbox, _chars in segments)
+    widths = [
+        float(char["x2"]) - float(char["x1"])
+        for _bbox, chars in segments
+        for char in chars
+        if char.get("x2") is not None and char.get("x1") is not None
+    ]
+    if not widths:
+        return False
+    tolerance = max(widths)
+    return read_left - crop_left <= tolerance and crop_right - read_right <= tolerance
 
 
 def _apply_char_segments(block: OCRTextBlock, crop_segments_in_order: list) -> None:

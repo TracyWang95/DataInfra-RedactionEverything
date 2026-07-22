@@ -77,7 +77,8 @@ def consensus_boxes(
             if votes < min_votes:
                 continue
             boxes = [b for _, b in cluster]
-            rep = max(boxes, key=lambda b: b.confidence)
+            # Unscored boxes sort below scored ones instead of crashing max().
+            rep = max(boxes, key=lambda b: (b.confidence is not None, b.confidence or 0.0))
             if union_mode:
                 # union hull: cover the max extent any sample saw for this cluster
                 x0 = min(b.x for b in boxes)

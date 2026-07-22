@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import base64
 import json
+import math
 import os
 import re
 import time
@@ -58,14 +59,46 @@ VLLM_MAX_TOKENS = 512
 # (union-of-N recall at ~1x cost) instead of the backend issuing N serial passes.
 # When >1, set the backend's LOCATE_ANYTHING_CONSENSUS_SAMPLES back to 1.
 LM_SAMPLES = max(1, int(os.environ.get("LOCATE_ANYTHING_VLLM_SAMPLES", "1")))
+
+
 # Network timeout (seconds) for a single vLLM completion request.
 VLLM_REQUEST_TIMEOUT_SECONDS = 120
 # Fixed confidence stamped on every LocateAnything box (model emits no score).
-LOCATEANYTHING_CONFIDENCE = 0.82
 # IoU at/above which two same-category boxes are treated as duplicates.
 DEDUPE_IOU_THRESHOLD = 0.55
 # Smaller-box containment ratio at/above which a box is dropped as a duplicate.
 DEDUPE_CONTAINMENT_THRESHOLD = 0.78
+
+
+def _attach_box_confidence(
+    boxes: list[dict[str, Any]], tokens: list[tuple[str, float]]
+) -> list[dict[str, Any]]:
+    """Score each box from the logprobs of the tokens it was decoded from.
+
+    A box carries the character span it was parsed out of; walking the token texts
+    accumulates the same offsets, so the tokens overlapping that span are exactly
+    the ones that emitted this box's label and coordinates. exp(mean logprob) over
+    them is the model's own certainty about THIS box. Boxes whose span or logprobs
+    are missing are left alone: they go out with no confidence field at all, which
+    the UI renders as no number, rather than being dressed up as a measurement.
+    """
+    if not tokens or not boxes:
+        return boxes
+    spans: list[tuple[int, int, float]] = []
+    offset = 0
+    for text, logprob in tokens:
+        spans.append((offset, offset + len(text), logprob))
+        offset += len(text)
+    for box in boxes:
+        span = box.get("span")
+        if not isinstance(span, (list, tuple)) or len(span) != 2:
+            continue
+        start, end = int(span[0]), int(span[1])
+        covering = [lp for (s, e, lp) in spans if e > start and s < end]
+        if not covering:
+            continue
+        box["confidence"] = round(math.exp(sum(covering) / len(covering)), 4)
+    return boxes
 
 
 def _normalize_generation_mode(value: str | None) -> str:
@@ -354,8 +387,13 @@ class LocateService:
 
     def _vllm_complete_b64(
         self, prompt_embeds_b64: str, temperature: float = DEFAULT_TEMPERATURE, n: int = 1
-    ) -> list[str]:
-        """vLLM completion(s) from a base64 prompt-embeds payload — returns n texts.
+    ) -> list[tuple[str, list[tuple[str, float]]]]:
+        """vLLM completion(s) from a base64 prompt-embeds payload.
+
+        Returns one (text, [(token, logprob), ...]) pair per sample. LocateAnything
+        emits no score of its own, so the decoder's per-token logprobs are the only
+        real confidence available for a box; they are already computed during
+        decoding, so asking for them costs response size and nothing else.
 
         n>1 batches the samples in ONE forward pass: the prompt embeds are encoded
         once and n sequences decode together, so a union-of-n recall pass costs
@@ -389,8 +427,11 @@ class LocateService:
             # signatures on every run, a hard recall regression the HF path's
             # seedless sampling recovers on retry). Behavior now mirrors HF.
             "temperature": temperature,
-            "top_p": 0.9,
+            "top_p": float(os.environ.get("LOCATE_ANYTHING_TOP_P", "0.9")),
+            "top_k": int(os.environ.get("LOCATE_ANYTHING_TOP_K", "20")),
             "n": n,
+            # Per-token logprobs for the chosen tokens: the box confidence source.
+            "logprobs": 0,
             "prompt_embeds": prompt_embeds_b64,
             "skip_special_tokens": False,
             "spaces_between_special_tokens": False,
@@ -407,7 +448,18 @@ class LocateService:
             raise HTTPException(
                 status_code=503, detail=f"LocateAnything LM backend unavailable: {exc}"
             ) from exc
-        return [choice["text"] for choice in payload["choices"]]
+        out: list[tuple[str, list[tuple[str, float]]]] = []
+        for choice in payload["choices"]:
+            lp = choice.get("logprobs") or {}
+            tokens = lp.get("tokens") or []
+            values = lp.get("token_logprobs") or []
+            paired = [
+                (str(tok), float(val))
+                for tok, val in zip(tokens, values)
+                if val is not None
+            ]
+            out.append((choice["text"], paired))
+        return out
 
     async def _predict_boxes_vllm(
         self, image: Image.Image, prompt: str, max_image_side: int,
@@ -444,10 +496,11 @@ class LocateService:
                 trim_cuda_cache("vllm-chat-encode")
         answers = await asyncio.to_thread(self._vllm_complete_b64, b64, temperature, LM_SAMPLES)
         boxes: list[dict[str, Any]] = []
-        for _ans in answers:
-            boxes.extend(_parse_boxes(_ans, inference_image.width, inference_image.height))
+        for _ans, _toks in answers:
+            parsed = _parse_boxes(_ans, inference_image.width, inference_image.height)
+            boxes.extend(_attach_box_confidence(parsed, _toks))
         boxes = fold_sample_boxes(boxes)
-        return answers[0], boxes, (inference_image.width, inference_image.height)
+        return answers[0][0], boxes, (inference_image.width, inference_image.height)
 
     async def predict_boxes_per_category(
         self, image: Image.Image, categories: list[str], max_image_side: int = DEFAULT_MAX_SIDE
@@ -497,9 +550,10 @@ class LocateService:
         async def _gen(cat: str, b64: str) -> tuple[str, list[dict[str, Any]], str]:
             answers = await asyncio.to_thread(self._vllm_complete_b64, b64, DEFAULT_TEMPERATURE, LM_SAMPLES)
             boxes: list[dict[str, Any]] = []
-            for _ans in answers:
-                boxes.extend(_parse_boxes(_ans, width, height))
-            return cat, fold_sample_boxes(boxes), answers[0]
+            for _ans, _toks in answers:
+                parsed = _parse_boxes(_ans, width, height)
+                boxes.extend(_attach_box_confidence(parsed, _toks))
+            return cat, fold_sample_boxes(boxes), answers[0][0]
 
         results = await asyncio.gather(*[_gen(cat, b64) for cat, b64 in payloads])
         print(
@@ -731,7 +785,14 @@ def _box_to_normalized(box: dict[str, Any], width: int, height: int, category: s
     h = max(0.0, min(1.0 - y, float(box["height"]) / max(1, height)))
     if not _accept_normalized_box(category, x, y, w, h):
         return None
-    return {"x": x, "y": y, "width": w, "height": h, "category": category, "confidence": LOCATEANYTHING_CONFIDENCE}
+    # Per-box confidence exists only when the decoder ran on vLLM and gave us
+    # logprobs. The HF path exposes no scores, so the box goes out without one
+    # rather than carrying a constant the UI would render as a measurement.
+    out = {"x": x, "y": y, "width": w, "height": h, "category": category}
+    raw_confidence = box.get("confidence")
+    if raw_confidence is not None:
+        out["confidence"] = float(raw_confidence)
+    return out
 
 
 def _accept_normalized_box(category: str, x: float, y: float, w: float, h: float) -> bool:
@@ -886,7 +947,9 @@ async def chat_completions(req: ChatCompletionRequest) -> dict[str, Any]:
                     max(0, min(1000, round((float(box["x"]) + float(box["width"])) * 1000))),
                     max(0, min(1000, round((float(box["y"]) + float(box["height"])) * 1000))),
                 ],
-                "confidence": LOCATEANYTHING_CONFIDENCE,
+                # _box_to_normalized carries the decoder-derived score when there
+                # is one; absent (HF path) the field stays out of the payload.
+                "confidence": box.get("confidence"),
                 "rule_matched": f"{box['category']}#locateanything",
                 "text": str(box["category"]),
             }

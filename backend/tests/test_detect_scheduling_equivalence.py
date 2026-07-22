@@ -32,25 +32,17 @@ def _ptypes(ids):
 @pytest.fixture()
 def svc(monkeypatch):
     service = LocateAnythingGroundingService()
-    # silence unrelated supplements/physical gates
+    # silence unrelated supplements / the model-centric verify re-ground /
+    # consensus sampling (scheduling equivalence tests count tile calls, so the
+    # grid-retry union must not multiply them)
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.HAS_IMAGE_URL", "", raising=False)
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.LA_SIGNATURE_URL", "", raising=False)
-    monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_SEAL_COLOR_CASCADE", False, raising=False)
-    monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_EDGE_SEAL_REFINE", False, raising=False)
+    monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_GRID_RETRY_SAMPLES", 1, raising=False)
+
+    async def _verify_noop(self, boxes, image_data, reground_queries):
+        return boxes
     monkeypatch.setattr(
-        LocateAnythingGroundingService,
-        "_drop_solid_fill_seals",
-        lambda self, boxes, image_data: boxes,
-    )
-    monkeypatch.setattr(
-        LocateAnythingGroundingService,
-        "_drop_skin_hue_fingerprints",
-        lambda self, boxes, image_data: boxes,
-    )
-    monkeypatch.setattr(
-        LocateAnythingGroundingService,
-        "_snap_fingerprints_to_ink",
-        staticmethod(lambda boxes, image_data: boxes),
+        LocateAnythingGroundingService, "_verify_grounded_candidates", _verify_noop
     )
     return service
 
@@ -58,10 +50,10 @@ def svc(monkeypatch):
 def test_spec_tile_result_joins_when_type_still_missing(svc, monkeypatch):
     tile_calls = []
 
-    async def fake_detect(self, image_data, categories):
+    async def fake_detect(self, image_data, categories, max_image_side=None):
         return []  # main detect: nothing found
 
-    async def fake_tiles(self, image_data, page, slugs, tiles_for=None, source_detail="", queries=None):
+    async def fake_tiles(self, image_data, page, slugs, tiles_for=None, source_detail="", queries=None, native_resolution=False, max_concurrency=None):
         tile_calls.append(list(slugs))
         return [_bb("fingerprint", 0.3, 0.2)]
 
@@ -75,10 +67,10 @@ def test_spec_tile_result_joins_when_type_still_missing(svc, monkeypatch):
 def test_spec_tile_overlapping_supplement_dropped_new_position_kept(svc, monkeypatch):
     """立案告知书门控放宽后的新契约: tile恒跑,同类gap-filter去重——与已有框
     相交的tile候选=zoom复述(丢),不相交的=全帧漏掉的新实例(收)。"""
-    async def fake_detect(self, image_data, categories):
+    async def fake_detect(self, image_data, categories, max_image_side=None):
         return []
 
-    async def fake_tiles(self, image_data, page, slugs, tiles_for=None, source_detail="", queries=None):
+    async def fake_tiles(self, image_data, page, slugs, tiles_for=None, source_detail="", queries=None, native_resolution=False, max_concurrency=None):
         return [
             _bb("official_seal", 0.1, 0.1),  # overlaps the YOLO box -> dropped
             _bb("official_seal", 0.5, 0.5),  # new position -> kept
@@ -99,10 +91,10 @@ def test_spec_tile_overlapping_supplement_dropped_new_position_kept(svc, monkeyp
 def test_kill_switch_blocks_every_tile_path(svc, monkeypatch):
     tile_calls = []
 
-    async def fake_detect(self, image_data, categories):
+    async def fake_detect(self, image_data, categories, max_image_side=None):
         return []
 
-    async def fake_tiles(self, image_data, page, slugs, tiles_for=None, source_detail="", queries=None):
+    async def fake_tiles(self, image_data, page, slugs, tiles_for=None, source_detail="", queries=None, native_resolution=False, max_concurrency=None):
         tile_calls.append(list(slugs))
         return [_bb("fingerprint", 0.3, 0.2)]
 

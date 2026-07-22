@@ -30,7 +30,7 @@ def test_mark_up_to_overlap_is_whole_regardless_of_position():
     # thumbprints/signatures measure 9-11% of the page, comfortably under this.
     W, H = 1080, 1920
     tiles = _grid_tiles(W, H)
-    mw, mh = int(0.19 * W), int(0.19 * H)  # just under the 1/5 overlap
+    mw, mh = int(0.19 * W), int(0.19 * H)  # just under the 1/5 step guarantee
     for i in range(1, 40):
         for j in range(1, 40):
             cx, cy = i / 40, j / 40
@@ -41,9 +41,9 @@ def test_mark_up_to_overlap_is_whole_regardless_of_position():
 
 
 def test_tiles_downscale_less_than_full_frame():
-    # each tile is 3/5 of the page, so at a fixed model input it carries ~1.7x
-    # the effective resolution of the full frame — the salience that recalls a
-    # faint mark. Guard the tile is meaningfully smaller than the page.
+    # each tile is 2/5 of the page — read at native resolution it keeps a faint
+    # small mark sharp where 3/5 upscaled blurred it away. Guard the tile is
+    # meaningfully smaller than the page.
     W, H = 1080, 1920
     for x0, y0, x1, y1 in _grid_tiles(W, H):
         assert (x1 - x0) <= 0.62 * W and (y1 - y0) <= 0.62 * H

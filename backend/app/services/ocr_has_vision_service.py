@@ -277,7 +277,6 @@ class OcrHasVisionService:
                     top=block.top,
                     width=block.width,
                     height=block.height,
-                    confidence=1.0,
                     source="regex_fallback",
                 ))
         if new_regions:

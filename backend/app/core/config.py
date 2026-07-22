@@ -238,6 +238,13 @@ class Settings(BaseSettings):
     # alongside the grounding model: native-resolution small-object recall
     # (stacked seal halves, watermark QR codes) at ~100ms.
     HAS_IMAGE_URL: str = ""
+    # Specialized signature detector (conditional-detr, Apache-2.0) — a single-
+    # class model that never learned to box printed text, so it does NOT fire on
+    # 乙方:/甲方: labels the way the LocateAnything grounding VLM does, and it is
+    # deterministic (no sampling variance). When set, it REPLACES the LA signature
+    # channel: hybrid full-page-640 + tile-fallback, then OCR-prune + seal absorb.
+    # Empty = keep the LA signature grounding.
+    SIGNATURE_DETECTOR_URL: str = ""
     # Dedicated LocateAnything signature-only pass, higher recall on faint
     # handwritten signatures than the shared multi-category detect. Scoped to
     # signatures — seals/codes come from the main LA detect + YOLO. Empty = off.
@@ -245,26 +252,31 @@ class Settings(BaseSettings):
     # Fold signature boxes centered inside a seal into the seal hull —
     # LocateAnything misreads stamp content as phantom signatures, so absorb them.
     ABSORB_SIGNATURES_IN_SEALS: bool = True
-    # Zoom pass for margin (binding) seals: at page scale the grounding model
-    # boxes only the most stamp-like part of an edge sliver (star/characters,
-    # dropping the serial digits below); on a tall margin-strip crop it
-    # returns the full extent. Re-detect on the affected side's margin
-    # windows and let the seal hull merge grow the box — coverage only grows.
-    VISUAL_EDGE_SEAL_REFINE: bool = True
-    # Color->VLM seal cascade: propose red-ink regions (clustering photocopy
-    # fragments), confirm each with the VLM on a tight crop, redact the red
-    # extent. Recovers faint / edge / fragmented RED stamps the full-frame VLM
-    # misses (page_04 is invisible to it at every zoom). Supersedes the margin
-    # refine when on. Does NOT cover black-on-white photocopy seals (no red
-    # signal) — that tier needs a trained detector.
-    # Default OFF (2026-07-08): seals now come from PaddleOCR-VL-1.6 layout
-    # detection (document-aware, no red-text/banner FPs). The color cascade is a
-    # bare "any red region is a stamp candidate" heuristic that FPs on red
-    # hyperlink names (裁判文书网 洪赪颢 boxed as 公章) and over-grows LA boxes.
-    # Corpus A/B (21 imgs): cascade OFF keeps every real seal (VL-layout/LA) and
-    # only drops a red edge ANNOTATION on one page — net win. Kept as a flag for
-    # faint/photocopy red stamps VL-layout might miss; re-enable per deployment.
-    VISUAL_SEAL_COLOR_CASCADE: bool = False
+    # Fragment (骑缝) seal recovery: square native-resolution tiles along all
+    # four margins so a partial binding-seal arc — colour OR greyscale/B&W scan,
+    # where the only cue is the stamp's shape — is read by the model at a scale
+    # where it is salient. On by default; the killswitch is here.
+    VISUAL_FRAGMENT_SEAL: bool = True
+    # In-flight cap for the ~20 native-resolution fragment tiles: firing them all
+    # at once spikes the shared LA card into CUDA-capacity 503s. A resource
+    # limit, not a detection knob.
+    VISUAL_FRAGMENT_SEAL_CONCURRENCY: int = 4
+    # In-flight cap for the grid/tile retry (default for any _detect_on_tiles caller
+    # that does not set its own). A grid union — fingerprint grounds 2 phrases on
+    # each of 4 tiles = 8 calls — fired unbounded storms the shared LA card into
+    # 503s and silently drops tiles (a missed print). Same resource limit, not a
+    # detection knob.
+    VISUAL_TILE_CONCURRENCY: int = 4
+    # In-flight cap for the model-centric verify re-ground (one native-res crop
+    # per grounding box). Same shared-LA-card resource limit as the fragment
+    # cap, not a detection knob.
+    VISUAL_VERIFY_CONCURRENCY: int = 4
+    # Client-side union sampling of the grid retry. SUPERSEDED by the LA server's
+    # own n-sample union (LOCATE_ANYTHING_VLLM_SAMPLES=3): the server folds N
+    # decoder samples into ONE batched vLLM call (~1x cost) instead of this doing
+    # N separate tile passes (Nx cost). Left at 1 (off) — bump only if the server
+    # union is disabled. 1 = off.
+    VISUAL_GRID_RETRY_SAMPLES: int = 1
     # Merge the per-category visual fan-out into ONE /detect request when the
     # LA server runs in vLLM prompt-embeds mode (single MoonViT vision encode
     # shared across categories). Off by default; enable together with the
@@ -278,19 +290,10 @@ class Settings(BaseSettings):
     # boxes that are majority-colored — kills the 中国裁判文书网 banner the
     # cascade grows a seed into, source-independent. Real stamps always pass.
     VISUAL_SEAL_SOLID_FILL_REJECT: bool = True
-    # Skin-hue arbitration for fingerprint boxes: stamp-pad ink absorbs green
-    # AND blue (hue ratio (G-B)/(R-G) ≤0.12 on all corpus prints) while real
-    # skin — the photographer's thumb holding the page, zoomed to salience by
-    # the grid-tile retry — is orange (≥0.57 on both corpus thumbs). Drop
-    # positively skin-hued fingerprint boxes; a box with no ink evidence is
-    # kept (a missed redaction outranks a false box). Assumes red stamp-pad
-    # prints (the domestic norm); disable for black-ink print corpora.
-    VISUAL_FINGERPRINT_INK_GATE: bool = True
     VISUAL_FEATURES_COORD_MODE: int = 1000
     VISUAL_FEATURES_MAX_IMAGE_SIDE: int = 1408
     VISUAL_FEATURES_SIGNATURE_MAX_IMAGE_SIDE: int = 1280
     LOCATE_ANYTHING_MAX_NEW_TOKENS: int = 8192
-    LOCATE_ANYTHING_MAX_IMAGE_SIDE: int = 1408
 
     # 本地持久化（空串 = 跟随 DATA_DIR 自动派生，见 model_validator）
     FILE_STORE_PATH: str = ""
@@ -482,7 +485,6 @@ class Settings(BaseSettings):
     BACKUP_RETENTION_COUNT: int = 24
     BACKUP_DIR: str = ""  # 空 = DATA_DIR/backups
     BACKUP_INCLUDE_FILES: bool = False  # True 时 health 检查文件备份 marker 是否新鲜
-    BACKUP_FILES_MIN_FREE_GB: int = 20  # 供 backup_files.sh 读取的磁盘水位闸
 
     # 内网落地目录导入（第五段方案一）：运维把文件 scp/rsync 到
     # <IMPORT_INBOX_DIR>/<用户名>/，界面一键登记进批量任务（本地 move 零 HTTP）。
@@ -584,11 +586,6 @@ class Settings(BaseSettings):
     @field_validator("OCR_MAX_IMAGE_SIDE")
     @classmethod
     def _validate_ocr_max_image_side(cls, v: int) -> int:
-        return max(640, min(4096, v))
-
-    @field_validator("LOCATE_ANYTHING_MAX_IMAGE_SIDE")
-    @classmethod
-    def _validate_locate_anything_max_image_side(cls, v: int) -> int:
         return max(640, min(4096, v))
 
     @field_validator("PDF_TEXT_LAYER_MIN_CHARS")

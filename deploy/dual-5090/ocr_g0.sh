@@ -1,6 +1,8 @@
 #!/bin/bash
 # OCR (PP-StructureV3 + PP-OCRv6) on GPU6, port 28082. Twin of ocr_g1.sh.
 cd /data/ubuntu/lh/projects/DataInfra-RedactionEverything/backend || exit 1
+# nohup 起的非交互 shell PATH 里没有 conda bin，flashinfer JIT 调不到 ninja 会起不来。
+export PATH="/home/ubuntu/miniconda3/envs/dataInfra-ocr/bin:$PATH"
 export CUDA_VISIBLE_DEVICES=6
 export PYTHONPATH=/data/ubuntu/lh/projects/DataInfra-RedactionEverything/backend
 export OCR_VL_ENABLED=1 OCR_VL_BACKEND=vllm-server

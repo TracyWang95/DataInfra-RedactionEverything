@@ -625,10 +625,32 @@ def _match_cross_block_entity(
                 top=rt,
                 width=rw,
                 height=rh,
-                confidence=1.0,
+                # Inherit the recognised line's own score instead of asserting a
+                # flat 1.0: a region is only as certain as the text it was matched
+                # against. (The classic OCR path now supplies a real rec_score;
+                # the VL path still hands over a placeholder.)
+                confidence=getattr(block, "confidence", None),
                 source="text_match",
             ))
     return out
+
+
+# Entity propagation: the company-specific HEAD of an org name, before the first
+# generic tail marker (地名括号 / 有限公司 / 集团 …). "信尔胜机械（江苏）有限公司" ->
+# "信尔胜机械". This head survives a seal-garbled second occurrence and is specific
+# enough that any block carrying it IS that org.
+_ORG_GENERIC_MARKERS = ("（", "(", "有限", "股份", "责任", "集团", "总公司", "分公司")
+_ORG_CORE_MIN_LEN = 4
+_ORG_CORE_PROPAGATION_CONFIDENCE = 0.6
+
+
+def _org_distinctive_core(name: str) -> str:
+    cut = len(name)
+    for marker in _ORG_GENERIC_MARKERS:
+        idx = name.find(marker)
+        if 0 <= idx < cut:
+            cut = idx
+    return name[:cut].strip()
 
 
 def match_entities_to_ocr(
@@ -865,7 +887,7 @@ def match_entities_to_ocr(
                                 top=ly1,
                                 width=lx2 - lx1,
                                 height=ly2 - ly1,
-                                confidence=1.0,
+                                confidence=getattr(block, "confidence", None),
                                 source=region_source,
                             )
                             if span_proven:
@@ -887,7 +909,7 @@ def match_entities_to_ocr(
                             top=rt,
                             width=rw,
                             height=rh,
-                            confidence=1.0,
+                            confidence=getattr(block, "confidence", None),
                             source=region_source,
                         )
                         if span_proven:
@@ -916,7 +938,7 @@ def match_entities_to_ocr(
                         top=block.top,
                         width=block.width,
                         height=block.height,
-                        confidence=1.0,
+                        confidence=getattr(block, "confidence", None),
                         source=(
                             entity_source
                             if entity_source in {"table_semantic", "form_field_ocr"}
@@ -1023,6 +1045,47 @@ def match_entities_to_ocr(
         regions.extend(
             match_entities_to_ocr(ocr_blocks, digit_retry_entities, _digit_retry=True)
         )
+
+    # Org-name propagation to seal-garbled occurrences. The NER tags the clean
+    # copy ("信尔胜机械（江苏）有限公司"); a copy read THROUGH a red 公章 comes back
+    # corrupted ("信尔胜机械汽承合同特限公") — same firm, past the fuzzy ratio, and
+    # skipped once the clean copy matched. Its DISTINCTIVE CORE ("信尔胜机械")
+    # survives the garble and is specific enough that a block carrying it IS that
+    # org. Propagate the model-detected org type onto every block holding the
+    # core. Anchored on the NER's own detection — no new model, no embedding, no
+    # magic threshold (containment of a company's proper name). Dedup collapses
+    # the clean copy's duplicate; the garbled block gains its box.
+    # (full_name, core) for orgs whose name has a strippable generic tail — a
+    # proper "distinctive head + 地名/公司-type suffix" (信尔胜机械 | （江苏）有限
+    # 公司). A name with no such tail (a bare mark like "NVIDIA"/"FIADOR" where
+    # core==full) is NOT propagated: its clean occurrences are already matched
+    # exactly, and propagating a short generic string would flood the page.
+    propagate: list[tuple[str, str]] = []
+    for entity in entities:
+        etext = _strip_vl_math_markup(entity.get("text", "")).strip()
+        if not etext or _canonical_image_text_type(entity.get("type", "UNKNOWN")) != "INSTITUTION_NAME":
+            continue
+        core = _org_distinctive_core(etext)
+        if len(core) >= _ORG_CORE_MIN_LEN and core != etext:
+            propagate.append((etext, core))
+    for full_name, core in propagate:
+        for block, block_text, _is_table_virtual in prepared_blocks:
+            # Only the GARBLED/partial occurrence: a block that carries the core
+            # but not the full name (a copy the exact match already covered still
+            # holds the full name — skip it, dedup would only re-add a twin).
+            if block_text.startswith("<table") or core not in block_text or full_name in block_text:
+                continue
+            regions.append(SensitiveRegion(
+                text=core,
+                entity_type="INSTITUTION_NAME",
+                left=block.left,
+                top=block.top,
+                width=block.width,
+                height=block.height,
+                confidence=_ORG_CORE_PROPAGATION_CONFIDENCE,
+                source="org_core_propagation",
+            ))
+            logger.debug("PROPAGATE org core '%s' -> garbled block '%s...'", core, block_text[:20])
 
     regions = _prune_looser_same_text_boxes(regions, span_proven_region_ids)
 

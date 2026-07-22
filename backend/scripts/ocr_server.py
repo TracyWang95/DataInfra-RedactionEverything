@@ -50,7 +50,20 @@ def _vl_seal_enabled() -> bool:
     return os.environ.get("OCR_VL_SEAL_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
-DEFAULT_CONFIDENCE = 0.9  # FABRICATED placeholder (not a measurement): stamped when the engine emits no score; downstream must never threshold on it (入册, 同 LA 的 0.82).
+
+def _measured(raw: object) -> float | None:
+    """Pass through a score the engine reported; None when it reported none.
+
+    PP-OCR gives a per-line rec_score. PaddleOCR-VL is generative and gives
+    nothing, so its boxes go out unscored — the placeholder that used to be
+    stamped here was indistinguishable in the UI from a real reading.
+    """
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 MAX_ITER_DEPTH = 8  # max recursion depth when walking nested OCR result objects
 NORMALIZED_COORD_MAX = 1.5  # if all coords <= this, treat them as already in [0,1] space
 MIN_BOX_SIZE = 1.0  # floor (px) for a box's width/height after clamping
@@ -86,7 +99,7 @@ class OCRBox(BaseModel):
     y: float
     width: float
     height: float
-    confidence: float = DEFAULT_CONFIDENCE
+    confidence: float | None = None
     label: str = "text"
     # Per-character boxes (normalized) for this line, left-to-right. Lets the
     # backend redact the exact pixels of an entity instead of estimating a
@@ -382,7 +395,7 @@ def _iter_dicts(obj: Any, depth: int = 0) -> Iterable[dict]:
                 pass
 
 
-def _append_raw_box(raw: list[dict], text: str, box: Any, label: str, confidence: float = DEFAULT_CONFIDENCE) -> None:
+def _append_raw_box(raw: list[dict], text: str, box: Any, label: str, confidence: float | None = None) -> None:
     content = str(text or "").strip()
     if not content:
         return
@@ -450,7 +463,7 @@ def _normalize_boxes(raw_boxes: list[dict], width: int, height: int) -> list[OCR
                 y=y1 / height,
                 width=w / width,
                 height=h / height,
-                confidence=float(raw.get("confidence", DEFAULT_CONFIDENCE) or DEFAULT_CONFIDENCE),
+                confidence=_measured(raw.get("confidence")),
                 label=str(raw.get("label") or "text"),
             )
         )
@@ -504,7 +517,7 @@ def _extract_vl_parsing_boxes(outputs: Any) -> list[dict]:
                 continue
             if not content and label != "seal":
                 continue
-            _append_raw_box(raw, str(content or SEAL_TEXT), box, label or "text", DEFAULT_CONFIDENCE)
+            _append_raw_box(raw, str(content or SEAL_TEXT), box, label or "text")
     return raw
 
 
@@ -524,7 +537,7 @@ def _extract_vl_spotting_boxes(outputs: Any) -> list[dict]:
         if not spotting:
             continue
         for poly, text in zip(spotting.get("rec_polys", []) or [], spotting.get("rec_texts", []) or [], strict=False):
-            _append_raw_box(raw, str(text or "").strip(), poly, "spotting", DEFAULT_CONFIDENCE)
+            _append_raw_box(raw, str(text or "").strip(), poly, "spotting")
     return raw
 
 
@@ -552,7 +565,7 @@ def _extract_vl_seal_boxes(outputs: Any) -> list[dict]:
                 SEAL_TEXT,
                 coord,
                 "seal",
-                float(_first_value(box_info, "score", "confidence") or DEFAULT_CONFIDENCE),
+                _measured(_first_value(box_info, "score", "confidence")),
             )
     return raw
 
@@ -633,7 +646,7 @@ def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
                 if label != "seal":
                     continue
                 coord = _first_value(box_info, "coordinate", "bbox", "box", "dt_polys", "rec_box")
-                _append_raw_box(raw, SEAL_TEXT, coord, "seal", float(_first_value(box_info, "score", "confidence") or DEFAULT_CONFIDENCE))
+                _append_raw_box(raw, SEAL_TEXT, coord, "seal", _measured(_first_value(box_info, "score", "confidence")))
 
         seal_items = _first_value(item, "seal_res_list")
         if isinstance(seal_items, list):
@@ -642,7 +655,7 @@ def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
                     continue
                 outer = _first_value(seal, "coordinate", "bbox", "box", "seal_bbox", "dt_polys", "rec_box")
                 if outer:
-                    _append_raw_box(raw, SEAL_TEXT, outer, "seal", float(_first_value(seal, "score", "confidence") or DEFAULT_CONFIDENCE))
+                    _append_raw_box(raw, SEAL_TEXT, outer, "seal", _measured(_first_value(seal, "score", "confidence")))
                     continue
                 seal_polys = _first_value(seal, "rec_polys", "dt_polys", "rec_boxes", "dt_boxes", "boxes")
                 if _has_items(seal_polys):
@@ -659,10 +672,19 @@ def _collect_structure_raw(outputs: Any, width: int, height: int) -> list[dict]:
         texts = _first_value(item, "rec_texts", "texts", "ocr_texts")
         polys = _first_value(item, "rec_polys", "dt_polys", "polys")
         boxes = _first_value(item, "rec_boxes", "dt_boxes", "boxes")
+        # The classic recogniser DOES return a per-line score, as rec_scores
+        # parallel to rec_texts/rec_polys. Reading only the first two threw it
+        # away and every line came back stamped with a fabricated 0.9 where a
+        # measurement was available all along.
+        scores = _first_value(item, "rec_scores", "scores", "ocr_scores")
         if _has_items(texts) and (_has_items(polys) or _has_items(boxes)):
             coords = polys if _has_items(polys) else boxes
-            for text, box in zip(texts, coords, strict=False):
-                _append_raw_box(raw, str(text or ""), box, "structure")
+            score_list = list(scores) if _has_items(scores) else []
+            for index, (text, box) in enumerate(zip(texts, coords, strict=False)):
+                confidence = None
+                if index < len(score_list) and score_list[index] is not None:
+                    confidence = float(score_list[index])
+                _append_raw_box(raw, str(text or ""), box, "structure", confidence)
 
         cells = _first_value(item, "cell_box_list", "cell_boxes")
         cell_texts = _first_value(item, "cell_texts", "table_cells_texts")

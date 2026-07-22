@@ -1,5 +1,4 @@
 """P0 bugs from the 2026-07-12 full-repo audit (real defects, not magic rules)."""
-from decimal import Decimal
 
 from app.services.entity_type_service import is_default_generic_entity_type_id
 from app.services.structured_common import is_number_like

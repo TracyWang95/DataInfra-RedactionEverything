@@ -60,7 +60,9 @@ def _box_quality_issues(box: dict[str, Any]) -> list[str]:
     right = x + width
     bottom = y + height
 
-    if 0 < confidence < 0.55:
+    # Same line the UI draws: under 0.5 the detector averaged below an even
+    # chance on its own output. 0 means unmeasured, which is not a low score.
+    if 0 < confidence < 0.5:
         issues.append("low_confidence")
     if "fallback" in source_marker:
         issues.append("fallback_detector")

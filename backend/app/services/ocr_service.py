@@ -164,7 +164,7 @@ class OCRService:
                     y=box["y"],
                     width=box["width"],
                     height=box["height"],
-                    confidence=box.get("confidence", 0.9),
+                    confidence=box.get("confidence"),
                     label=box.get("label", "text"),
                 ))
             logger.info("OCR Client got %d boxes in %.2fs", len(items), data.get('elapsed', 0))
@@ -216,7 +216,7 @@ class OCRService:
                     y=box["y"],
                     width=box["width"],
                     height=box["height"],
-                    confidence=box.get("confidence", 0.9),
+                    confidence=box.get("confidence"),
                     label=box.get("label", "structure"),
                     chars=box.get("chars", []) or [],
                 ))

@@ -1,4 +1,6 @@
 cd /data/ubuntu/lh/projects/DataInfra-RedactionEverything/backend || exit 1
+# nohup 起的非交互 shell PATH 里没有 conda bin，flashinfer JIT 调不到 ninja 会起不来。
+export PATH="/home/ubuntu/miniconda3/envs/dataInfra/bin:$PATH"
 export PYTHONPATH=/data/ubuntu/lh/projects/DataInfra-RedactionEverything/backend
 export HAS_TEXT_RUNTIME=vllm
 export HAS_TEXT_VLLM_BASE_URL=http://127.0.0.1:29080/v1
@@ -28,8 +30,8 @@ export GPU_SATURATION_RATIO=0.95
 export LOCATE_ANYTHING_CONSENSUS_SAMPLES=1
 export LOCATE_ANYTHING_CONSENSUS_MIN_VOTES=1
 export VISUAL_DETECT_BATCH_CATEGORIES=true
-export VISION_DUAL_PIPELINE_PARALLEL=false
+export VISION_DUAL_PIPELINE_PARALLEL=true
 export HAS_IMAGE_URL="http://127.0.0.1:29140"
 export VISUAL_EDGE_SEAL_REFINE=0
-export VISION_DETECTOR_EPOCH=2
-exec /home/ubuntu/miniconda3/envs/dataInfra/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 28001 --workers 1
+export VISION_DETECTOR_EPOCH=3
+exec /home/ubuntu/miniconda3/envs/dataInfra/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 23001 --workers 1
