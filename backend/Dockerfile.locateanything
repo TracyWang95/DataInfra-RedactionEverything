@@ -2,16 +2,29 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    HF_ENDPOINT=https://hf-mirror.com \
+    LOCATE_ANYTHING_BACKEND=auto
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git libgl1 libglib2.0-0 \
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+      sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+        /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+      sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' \
+        /etc/apt/sources.list; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      git libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-locateanything.txt .
-RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 \
+# PyTorch CUDA wheel 走阿里云镜像；其余依赖走清华 PyPI
+RUN pip install torch torchvision --index-url https://mirrors.aliyun.com/pytorch-wheels/cu124 \
     && pip install -r requirements-locateanything.txt
 
 COPY scripts/locate_anything_eval.py .

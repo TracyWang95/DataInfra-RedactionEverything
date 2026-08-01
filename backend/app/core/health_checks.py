@@ -129,7 +129,13 @@ def _apply_runtime_contract(detail: dict[str, Any], *, service_kind: str) -> Non
             detail["runtime"] = "locateanything"
 
     if detail.get("runtime_mode") not in {"gpu", "cpu", "unknown"}:
-        if gpu_available is True or device.startswith("gpu") or "cuda" in device:
+        if (
+            gpu_available is True
+            or device.startswith("gpu")
+            or "cuda" in device
+            or device.startswith("npu")
+            or "ascend" in device
+        ):
             detail["runtime_mode"] = "gpu"
         elif gpu_available is False or device in {"cpu", "xpu", "unknown"}:
             detail["runtime_mode"] = "cpu" if device == "cpu" or gpu_available is False else "unknown"

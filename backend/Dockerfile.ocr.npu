@@ -1,0 +1,50 @@
+# Ascend 910B OCR: official Paddle NPU base (CANN 8.0) + paddle-custom-npu.
+# Host CANN 8.3 is NOT compatible with the public plugin (ACL 500001 on static
+# inference). Only mount the Ascend driver at runtime — use the image CANN.
+FROM ccr-2vdh3abv-pub.cnc.bj.baidubce.com/device/paddle-npu:cann800-ubuntu20-npu-910b-base-aarch64-gcc84
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    HF_ENDPOINT=https://hf-mirror.com \
+    PADDLE_PDX_MODEL_SOURCE=modelscope \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+    OCR_VL_ENABLED=0 \
+    OCR_STRUCTURE_ENABLED=1 \
+    OCR_ALLOW_CPU=0 \
+    OCR_DEVICE=npu \
+    OCR_PIPELINE_DEVICE=npu:0 \
+    FLAGS_npu_jit_compile=false \
+    FLAGS_npu_scale_aclnn=True \
+    FLAGS_npu_split_aclnn=True \
+    FLAGS_use_stride_kernel=0 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/home/appuser
+
+WORKDIR /app
+
+# Match paddle-custom-npu 3.2.0 (built for CANN 8.0 in this image).
+RUN python3 -m pip install --no-cache-dir \
+      -i https://www.paddlepaddle.org.cn/packages/stable/cpu/ \
+      paddlepaddle==3.2.0 \
+ && python3 -m pip install --no-cache-dir \
+      -i https://www.paddlepaddle.org.cn/packages/stable/npu/ \
+      --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+      --trusted-host pypi.tuna.tsinghua.edu.cn \
+      --trusted-host www.paddlepaddle.org.cn \
+      paddle-custom-npu==3.2.0
+
+COPY requirements-ocr-npu.txt .
+RUN python3 -m pip install --no-cache-dir -r requirements-ocr-npu.txt
+
+COPY scripts/ocr_server.py .
+COPY scripts/ocr_npu_entrypoint.sh /usr/local/bin/ocr_npu_entrypoint.sh
+RUN chmod +x /usr/local/bin/ocr_npu_entrypoint.sh \
+ && mkdir -p /home/appuser/.paddlex /home/appuser/.cache \
+ && ln -sf "$(command -v python3)" /usr/local/bin/python \
+ && chmod -R a+rwX /home/appuser
+
+EXPOSE 8082
+
+ENTRYPOINT ["/usr/local/bin/ocr_npu_entrypoint.sh"]
+CMD ["python3", "ocr_server.py"]

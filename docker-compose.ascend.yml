@@ -1,0 +1,25 @@
+# Ascend 910B overlay: model sidecars run on host network (NPU docker / CPU OCR).
+# Usage:
+#   bash deploy/ascend910b/start_all.sh
+#   # or
+#   docker compose -f docker-compose.yml -f docker-compose.ascend.yml up -d backend frontend
+services:
+  backend:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OCR_BASE_URL=http://host.docker.internal:8082
+      - HAS_TEXT_RUNTIME=vllm
+      - HAS_TEXT_VLLM_BASE_URL=http://host.docker.internal:8080/v1
+      - HAS_TEXT_MODEL_NAME=HaS_Text_0209_0.6B
+      - VISUAL_FEATURES_BASE_URL=http://host.docker.internal:8090
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - PADDLE_PDX_MODEL_SOURCE=modelscope
+
+  # Disable NVIDIA gpu-profile services; Ascend sidecars replace them.
+  ocr:
+    profiles: ["disabled-nvidia"]
+  ner:
+    profiles: ["disabled-nvidia"]
+  visual-features:
+    profiles: ["disabled-nvidia"]

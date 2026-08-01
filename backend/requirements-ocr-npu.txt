@@ -1,0 +1,12 @@
+# Ascend 910B OCR app deps (paddlepaddle + paddle-custom-npu installed in Dockerfile).
+# Pins follow PaddleOCR NPU docs (CANN 8.0 / ACL 500001 workarounds).
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
+paddleocr[doc-parser]==3.7.0
+fastapi==0.136.1
+uvicorn==0.35.0
+httpx==0.28.1
+numpy==1.26.4
+Pillow>=10.0.0,<12.0.0
+opencv-python-headless==3.4.18.65
+pydantic>=2.0.0

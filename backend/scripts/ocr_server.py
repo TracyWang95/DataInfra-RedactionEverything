@@ -121,7 +121,44 @@ def _structure_enabled() -> bool:
     return os.environ.get("OCR_STRUCTURE_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _pipeline_device() -> str:
+    """Device string for PaddleOCR/PaddleX pipelines (explicit; default is often CPU).
+
+    Prefer OCR_PIPELINE_DEVICE if set; else derive from the paddle device selected
+    in _require_gpu_or_exit (npu:0 / gpu:0 / cpu).
+    """
+    override = os.environ.get("OCR_PIPELINE_DEVICE", "").strip()
+    if override:
+        return override
+    dev = (_paddle_device or "").strip().lower()
+    if not dev:
+        prefer = os.environ.get("OCR_DEVICE", "auto").strip().lower()
+        if prefer in {"npu", "ascend"}:
+            return "npu:0"
+        if prefer in {"cuda", "gpu"}:
+            return "gpu:0"
+        if prefer == "cpu":
+            return "cpu"
+        return "cpu"
+    if "npu" in dev or "custom" in dev:
+        # paddle may report npu:0 / custom:npu:0 — normalize for PaddleX
+        if ":" in _paddle_device and _paddle_device.split(":")[-1].isdigit():
+            return f"npu:{_paddle_device.split(':')[-1]}"
+        return "npu:0"
+    if "gpu" in dev or "cuda" in dev:
+        if ":" in _paddle_device and _paddle_device.split(":")[-1].isdigit():
+            return f"gpu:{_paddle_device.split(':')[-1]}"
+        return "gpu:0"
+    return "cpu"
+
+
 def _require_gpu_or_exit() -> None:
+    """Select Paddle device: CUDA GPU, Ascend NPU, or CPU (when allowed).
+
+    Env:
+      OCR_DEVICE=cuda|npu|cpu|auto (default auto)
+      OCR_ALLOW_CPU=1  — permit CPU when no accelerator (Ascend interim path)
+    """
     global _paddle_device
     try:
         import paddle
@@ -129,26 +166,79 @@ def _require_gpu_or_exit() -> None:
         print(f"[OCR] FATAL: paddle is not installed: {exc}", flush=True)
         _fatal(1)
 
-    if not paddle.is_compiled_with_cuda():
-        print("[OCR] FATAL: installed Paddle build has no CUDA support.", flush=True)
-        _fatal(1)
+    prefer = os.environ.get("OCR_DEVICE", "auto").strip().lower()
+    allow_cpu = os.environ.get("OCR_ALLOW_CPU", "").strip().lower() in {"1", "true", "yes", "on"}
 
-    try:
-        gpu_count = paddle.device.cuda.device_count()
-    except Exception as exc:
-        print(f"[OCR] FATAL: failed to enumerate CUDA devices: {exc}", flush=True)
-        _fatal(1)
-
-    if gpu_count < 1:
-        print("[OCR] FATAL: no CUDA device is visible to Paddle.", flush=True)
-        _fatal(1)
-
-    try:
+    def _try_cuda() -> bool:
+        global _paddle_device
+        if not paddle.is_compiled_with_cuda():
+            return False
+        try:
+            gpu_count = paddle.device.cuda.device_count()
+        except Exception:
+            return False
+        if gpu_count < 1:
+            return False
         paddle.set_device("gpu:0")
         _paddle_device = str(paddle.get_device())
-        print(f"[OCR] Paddle GPU ready: device={_paddle_device}, visible_gpus={gpu_count}", flush=True)
+        print(f"[OCR] Paddle CUDA ready: device={_paddle_device}, visible_gpus={gpu_count}", flush=True)
+        return True
+
+    def _try_npu() -> bool:
+        global _paddle_device
+        # Custom / custom_device builds may expose NPU; probe gently.
+        for setter in (
+            lambda: paddle.set_device("npu:0"),
+            lambda: paddle.device.set_device("npu:0"),
+        ):
+            try:
+                setter()
+                _paddle_device = str(paddle.get_device())
+                if "npu" in _paddle_device.lower() or "custom" in _paddle_device.lower():
+                    print(f"[OCR] Paddle NPU ready: device={_paddle_device}", flush=True)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _use_cpu() -> None:
+        global _paddle_device
+        paddle.set_device("cpu")
+        _paddle_device = str(paddle.get_device())
+        print(f"[OCR] Paddle CPU mode: device={_paddle_device}", flush=True)
+
+    try:
+        if prefer in {"cuda", "gpu"}:
+            if not _try_cuda():
+                print("[OCR] FATAL: OCR_DEVICE=cuda but no CUDA device available.", flush=True)
+                _fatal(1)
+            return
+        if prefer in {"npu", "ascend"}:
+            if not _try_npu():
+                print("[OCR] FATAL: OCR_DEVICE=npu but Paddle NPU is unavailable.", flush=True)
+                _fatal(1)
+            return
+        if prefer == "cpu":
+            if not allow_cpu:
+                print("[OCR] FATAL: OCR_DEVICE=cpu requires OCR_ALLOW_CPU=1.", flush=True)
+                _fatal(1)
+            _use_cpu()
+            return
+
+        # auto: CUDA -> NPU -> CPU(if allowed)
+        if _try_cuda():
+            return
+        if _try_npu():
+            return
+        if allow_cpu:
+            _use_cpu()
+            return
+        print("[OCR] FATAL: no CUDA/NPU device; set OCR_ALLOW_CPU=1 for CPU Structure mode.", flush=True)
+        _fatal(1)
+    except SystemExit:
+        raise
     except Exception as exc:
-        print(f"[OCR] FATAL: failed to select Paddle GPU: {exc}", flush=True)
+        print(f"[OCR] FATAL: failed to select Paddle device: {exc}", flush=True)
         _fatal(1)
 
 
@@ -160,8 +250,9 @@ def trim_cuda_cache(label: str) -> None:
     try:
         import paddle
 
-        paddle.device.cuda.empty_cache()
-        print(f"[OCR] CUDA cache trimmed after {label}", flush=True)
+        if paddle.is_compiled_with_cuda():
+            paddle.device.cuda.empty_cache()
+            print(f"[OCR] CUDA cache trimmed after {label}", flush=True)
     except Exception:
         pass
 
@@ -188,11 +279,13 @@ def init_ocr() -> None:
         from paddleocr import PaddleOCRVL
 
         vl_backend = os.environ.get("OCR_VL_BACKEND", "").strip()
+        pipeline_device = _pipeline_device()
         if vl_backend:
             vl_server_url = os.environ.get("OCR_VLLM_URL", "http://127.0.0.1:8118/v1").strip()
             vl_model_name = os.environ.get("OCR_VL_API_MODEL_NAME", "PaddleOCR-VL-1.6-0.9B").strip()
             _vl = PaddleOCRVL(
                 pipeline_version="v1.6",
+                device=pipeline_device,
                 vl_rec_backend=vl_backend,
                 vl_rec_server_url=vl_server_url,
                 vl_rec_api_model_name=vl_model_name,
@@ -210,7 +303,7 @@ def init_ocr() -> None:
             )
             _model_name = f"PaddleOCR-VL via {vl_backend} ({vl_model_name})"
         else:
-            _vl = PaddleOCRVL(pipeline_version="v1.6")
+            _vl = PaddleOCRVL(pipeline_version="v1.6", device=pipeline_device)
             _model_name = "PaddleOCR-VL-1.6-0.9B"
         _ready = True
         print(f"[OCR] {_model_name} loaded on {_paddle_device or 'device'}", flush=True)
@@ -278,7 +371,9 @@ def get_structure_engine() -> Any | None:
     try:
         from paddleocr import PPStructureV3
 
+        pipeline_device = _pipeline_device()
         _structure = PPStructureV3(
+            device=pipeline_device,
             use_table_recognition=False,  # 表格识别会把单元格重新 OCR 一遍，按表格几何重投到错误列/重复出框（同源于 seal 的伪坐标病理）；普通行检测已完整覆盖表格内印刷体数字
             use_seal_recognition=False,  # 公章由 LocateAnything 负责；关掉避免印章曲文被去扭曲后堆到左上角伪坐标
             use_formula_recognition=False,
@@ -297,7 +392,7 @@ def get_structure_engine() -> Any | None:
             text_rec_score_thresh=0.0,
         )
         _model_name = "PaddleOCR-VL-1.6-0.9B + PP-StructureV3" if _vl is not None else "PP-StructureV3"
-        print("[OCR] PP-StructureV3 loaded", flush=True)
+        print(f"[OCR] PP-StructureV3 loaded (device={pipeline_device})", flush=True)
         return _structure
     except Exception as exc:
         print(f"[OCR] PP-StructureV3 init failed: {exc}", flush=True)
@@ -718,7 +813,9 @@ def get_word_engine() -> Any | None:
     try:
         from paddleocr import PaddleOCR
 
+        pipeline_device = _pipeline_device()
         _word_engine = PaddleOCR(
+            device=pipeline_device,
             return_word_box=True,
             use_textline_orientation=False,
             use_doc_orientation_classify=False,
@@ -726,7 +823,7 @@ def get_word_engine() -> Any | None:
             text_detection_model_name="PP-OCRv6_medium_det",
             text_recognition_model_name="PP-OCRv6_medium_rec",
         )
-        print("[OCR] word-box engine loaded", flush=True)
+        print(f"[OCR] word-box engine loaded (device={pipeline_device})", flush=True)
     except Exception as exc:
         print(f"[OCR] word-box engine init failed (will not retry): {exc}", flush=True)
         _word_engine = None
@@ -909,28 +1006,31 @@ def prepare_image(image_bytes: bytes) -> tuple[Image.Image, Image.Image, float, 
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    gpu_ok = False
     device = _paddle_device
     try:
         import paddle
 
-        gpu_ok = bool(paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0)
         if not device:
             device = str(paddle.get_device())
     except Exception:
         pass
 
-    runtime_mode = "gpu" if gpu_ok and str(device).lower().startswith("gpu") else "cpu"
+    dev = str(device or "").lower()
+    accel = dev.startswith("gpu") or "cuda" in dev or "npu" in dev
+    allow_cpu = os.environ.get("OCR_ALLOW_CPU", "").strip().lower() in {"1", "true", "yes", "on"}
+    # Treat NPU/CUDA as accelerator ("gpu" badge). Explicit CPU allow path is
+    # intentional on Ascend until Paddle-NPU is wired — not a silent fallback.
+    runtime_mode = "gpu" if accel else "cpu"
     return {
         "status": "online" if _ready else "offline",
         "model": _model_name,
         "ready": _ready,
         "runtime": "paddleocr",
         "runtime_mode": runtime_mode,
-        "gpu_available": gpu_ok,
+        "gpu_available": accel,
         "device": device or "unknown",
-        "gpu_only_mode": True,
-        "cpu_fallback_risk": runtime_mode != "gpu",
+        "gpu_only_mode": not allow_cpu,
+        "cpu_fallback_risk": (not accel) and (not allow_cpu),
         "structure_ready": _structure is not None,
     }
 
@@ -1085,6 +1185,16 @@ async def structure_extract(request: StructureRequest) -> OCRResponse:
     elapsed = time.perf_counter() - start
     print(f"[OCR] Structure {len(mapped)} boxes in {elapsed:.2f}s", flush=True)
     return OCRResponse(boxes=mapped, model="PP-StructureV3", elapsed=elapsed)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    # Also covers `uvicorn ocr_server:app` (where __main__ is not used).
+    if not _ready:
+        print("[OCR] Initializing PaddleOCR sidecar ...", flush=True)
+        await asyncio.to_thread(init_ocr)
+        await asyncio.to_thread(warmup_structure)
+        print("[OCR] Service ready", flush=True)
 
 
 if __name__ == "__main__":

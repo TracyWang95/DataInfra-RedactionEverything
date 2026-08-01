@@ -36,6 +36,7 @@ services:
       - HAS_TEXT_MODEL_NAME=${HAS_TEXT_MODEL_NAME:-HaS_Text_0209_0.6B}
       - VISUAL_FEATURES_BASE_URL=http://visual-features:8090
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:${FRONTEND_PORT:-3000}","http://127.0.0.1:${FRONTEND_PORT:-3000}"]}
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
     volumes:
       - backend-data:/app/data
       - backend-uploads:/app/uploads
@@ -75,6 +76,10 @@ services:
       dockerfile: Dockerfile.ocr
     ports:
       - "${OCR_PORT:-8082}:8082"
+    environment:
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
+      - PADDLE_PDX_MODEL_SOURCE=${PADDLE_PDX_MODEL_SOURCE:-modelscope}
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=${PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK:-True}
     deploy:
       resources:
         reservations:
@@ -154,7 +159,7 @@ services:
       - "${VISUAL_FEATURES_PORT:-8090}:8090"
     environment:
       - LOCATE_ANYTHING_MODEL=${LOCATE_ANYTHING_MODEL:-/models/locateanything/LocateAnything-3B-HF}
-      - LOCATE_ANYTHING_BACKEND=${LOCATE_ANYTHING_BACKEND:-hf}
+      - LOCATE_ANYTHING_BACKEND=${LOCATE_ANYTHING_BACKEND:-auto}
       - LOCATE_ANYTHING_DTYPE=${LOCATE_ANYTHING_DTYPE:-bfloat16}
       - LOCATE_ANYTHING_PORT=8090
       - LOCATE_ANYTHING_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_MAX_IMAGE_SIDE:-1280}
@@ -162,6 +167,7 @@ services:
       - LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE=${LOCATE_ANYTHING_SIGNATURE_TILE_MAX_IMAGE_SIDE:-1280}
       - LOCATE_ANYTHING_MAX_NEW_TOKENS=${LOCATE_ANYTHING_MAX_NEW_TOKENS:-8192}
       - LOCATE_ANYTHING_GENERATION_MODE=${LOCATE_ANYTHING_GENERATION_MODE:-hybrid}
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
     volumes:
       - ./backend/models:/models
     deploy:

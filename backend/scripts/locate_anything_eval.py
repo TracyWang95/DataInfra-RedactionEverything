@@ -300,13 +300,16 @@ class LocateAnythingWorker:
         import torch
         from transformers import AutoModel, AutoProcessor, AutoTokenizer
 
+        from accel_device import resolve_torch_device
+
         self.torch = torch
-        if not torch.cuda.is_available():
-            # Project rule: GPU-only, no silent CPU fallback (same philosophy as
-            # ocr_server's _require_gpu_or_exit). Fail loudly instead of quietly
-            # running a 3B model on CPU.
-            raise RuntimeError("LocateAnything requires CUDA, but torch.cuda.is_available() is False")
-        self.device = "cuda"
+        # Prefer Ascend NPU when available; otherwise CUDA. No silent CPU.
+        self.device = resolve_torch_device()
+        if self.device.startswith("npu"):
+            try:
+                import torch_npu  # noqa: F401
+            except Exception as exc:
+                raise RuntimeError("torch_npu is required for Ascend NPU") from exc
         self.dtype = getattr(torch, dtype_name)
         resolved = self._resolve_model(model_path, backend)
         print(f"[model] loading {resolved} on {self.device} dtype={dtype_name}", flush=True)
@@ -324,14 +327,23 @@ class LocateAnythingWorker:
         path = _win_to_wsl_path(model_path)
         if path.exists():
             return str(path)
-        if backend in {"auto", "modelscope"} and "/" in model_path and not model_path.startswith("nvidia/"):
+        if backend in {"auto", "modelscope"} and "/" in model_path:
+            # HF nvidia/* -> 魔搭 nv-community/*；其它 id 原样尝试魔搭
+            ms_id = {
+                "nvidia/LocateAnything-3B": "nv-community/LocateAnything-3B",
+            }.get(model_path, model_path)
             try:
                 from modelscope import snapshot_download
             except Exception as exc:
                 if backend == "modelscope":
                     raise RuntimeError("modelscope is required for ModelScope model ids") from exc
             else:
-                return snapshot_download(model_path)
+                try:
+                    return snapshot_download(ms_id)
+                except Exception as exc:
+                    if backend == "modelscope":
+                        raise
+                    print(f"[model] ModelScope failed ({exc}); use path/HF id as-is", flush=True)
         return model_path
 
     @staticmethod

@@ -1,0 +1,12 @@
+# Ascend interim: PP-StructureV3 on CPU paddle (no CUDA wheel).
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
+# aarch64 CPU wheel latest on PyPI/Tsinghua as of 2026-08
+paddlepaddle==3.2.2
+paddleocr[doc-parser]==3.7.0
+fastapi==0.136.1
+uvicorn==0.35.0
+httpx==0.28.1
+numpy>=1.24.0
+Pillow>=12.2.0
+pydantic>=2.0.0

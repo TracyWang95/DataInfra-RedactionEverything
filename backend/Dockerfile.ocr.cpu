@@ -5,7 +5,11 @@ ENV PIP_NO_CACHE_DIR=1 \
     PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
     HF_ENDPOINT=https://hf-mirror.com \
     PADDLE_PDX_MODEL_SOURCE=modelscope \
-    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True \
+    OCR_VL_ENABLED=0 \
+    OCR_STRUCTURE_ENABLED=1 \
+    OCR_ALLOW_CPU=1 \
+    OCR_DEVICE=cpu
 
 WORKDIR /app
 
@@ -21,14 +25,17 @@ RUN set -eux; \
       libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-ocr.lock .
-RUN pip install --no-cache-dir -r requirements-ocr.lock
+COPY requirements-ocr-cpu.txt .
+RUN pip install --no-cache-dir -r requirements-ocr-cpu.txt
 
 COPY scripts/ocr_server.py .
 
-RUN adduser --disabled-password --gecos '' appuser
+RUN adduser --disabled-password --gecos '' appuser \
+    && mkdir -p /home/appuser/.paddlex /home/appuser/.cache \
+    && chown -R appuser:appuser /home/appuser
 USER appuser
 
 EXPOSE 8082
 
-CMD ["uvicorn", "ocr_server:app", "--host", "0.0.0.0", "--port", "8082"]
+# python entry runs init_ocr()/warmup before serving
+CMD ["python", "ocr_server.py"]

@@ -1,4 +1,8 @@
-﻿# FastAPI framework
+﻿# 国内默认 PyPI：清华源（可用 PIP_INDEX_URL 覆盖）
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
+
+# FastAPI framework
 fastapi>=0.136.1
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.26

@@ -1,0 +1,33 @@
+# LocateAnything on Ascend 910B — reuse vllm-ascend image (CANN + torch_npu).
+ARG VLLM_ASCEND_IMAGE=openeuler/vllm-ascend:0.11.0rc0-torch_npu2.5.1-cann8.1.rc1-python3.10-oe2403sp4
+FROM ${VLLM_ASCEND_IMAGE}
+
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    HF_ENDPOINT=https://hf-mirror.com \
+    ACCEL_DEVICE=npu \
+    LA_DEVICE=npu \
+    LOCATE_ANYTHING_BACKEND=auto \
+    PYTHONUNBUFFERED=1 \
+    TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+
+WORKDIR /app
+
+USER root
+# Pin transformers to the version LocateAnything remote code was written for.
+# The vllm-ascend base image ships transformers 5.x which breaks Auto*.register(str, ...).
+RUN pip install --no-cache-dir \
+    'transformers==4.57.1' \
+    fastapi 'uvicorn[standard]' httpx Pillow opencv-python-headless \
+    peft accelerate safetensors modelscope \
+    lmdb 'setuptools<81' 'numpy<2.0.0'
+
+COPY scripts/accel_device.py \
+     scripts/locate_anything_eval.py \
+     scripts/locate_anything_server.py \
+     /app/
+
+EXPOSE 8090
+
+# Clear dynamic-module cache so patched model .py files are picked up.
+CMD ["bash", "-lc", "rm -rf /root/.cache/huggingface/modules/transformers_modules/locateanything && exec python locate_anything_server.py --host 0.0.0.0 --port ${LOCATE_ANYTHING_PORT:-8090}"]

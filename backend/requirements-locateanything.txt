@@ -1,4 +1,7 @@
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+--trusted-host pypi.tuna.tsinghua.edu.cn
 fastapi>=0.136.1
+modelscope>=1.20.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.10.0
 httpx>=0.28.0

@@ -115,23 +115,22 @@ def _generation_mode_sequence(mode: str, fast_first: bool) -> list[str]:
 
 def trim_cuda_cache(label: str) -> None:
     try:
-        import gc
+        from accel_device import empty_cache
 
-        import torch
-
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            try:
-                torch.cuda.ipc_collect()
-            except Exception:
-                pass
-            print(f"[LocateAnything] cuda cache trimmed after {label}", flush=True)
+        empty_cache()
+        print(f"[LocateAnything] accelerator cache trimmed after {label}", flush=True)
     except Exception:
         pass
 
 
 def _is_cuda_capacity_error(exc: BaseException) -> bool:
+    try:
+        from accel_device import is_accel_oom
+
+        if is_accel_oom(exc):
+            return True
+    except Exception:
+        pass
     text = str(exc).lower()
     return (
         "out of memory" in text
@@ -181,7 +180,7 @@ class LocateService:
     def __init__(self) -> None:
         self.worker: LocateAnythingWorker | None = None
         self.model_path = ""
-        self.backend = "hf"
+        self.backend = "auto"
         self.dtype = "bfloat16"
         self.ready = False
         # Actual device the loaded weights ended up on ("cuda" / "cpu" / "" while
@@ -220,13 +219,21 @@ class LocateService:
         import torch
         from transformers import AutoModel, AutoProcessor
 
+        from accel_device import resolve_torch_device
+
+        device = resolve_torch_device()
+        if device.startswith("npu"):
+            try:
+                import torch_npu  # noqa: F401
+            except Exception as exc:
+                raise RuntimeError("torch_npu is required for Ascend NPU") from exc
         self.processor = AutoProcessor.from_pretrained(self.model_path, trust_remote_code=True)
         model = AutoModel.from_pretrained(
             self.model_path, dtype=torch.bfloat16, trust_remote_code=True, low_cpu_mem_usage=True
         ).eval()
-        model.vision_model.to("cuda")
-        model.mlp1.to("cuda")
-        self.embed = model.language_model.model.embed_tokens.to("cuda")
+        model.vision_model.to(device)
+        model.mlp1.to(device)
+        self.embed = model.language_model.model.embed_tokens.to(device)
         self.image_token_index = int(model.image_token_index)
         # Release the 36 idle decoder layers + lm_head from CPU RAM (~5GB). The
         # embed_tokens module is already referenced by self.embed (on GPU), so it
@@ -267,7 +274,7 @@ class LocateService:
         except Exception as exc:
             print(f"[LocateAnything] MoonViT fast-SDPA patch skipped: {exc}", flush=True)
         print(f"[LocateAnything] vLLM mode: vision tower on GPU, LM served by {VLLM_LM_URL}", flush=True)
-        self.device = "cuda"  # the .to("cuda") calls above would have raised otherwise
+        self.device = device  # matches the .to(device) calls above
         self.ready = True
 
     def _encode_vit(self, image: Image.Image):
@@ -284,7 +291,7 @@ class LocateService:
         text = self.processor.py_apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         images, videos = self.processor.process_vision_info(messages)
         inputs = self.processor(text=[text], images=images, videos=videos, return_tensors="pt")
-        pixel_values = inputs["pixel_values"].to("cuda", torch.bfloat16)
+        pixel_values = inputs["pixel_values"].to(self.device, torch.bfloat16)
         ig = inputs.get("image_grid_hws", None)
         # Mirror of replace_media_placeholder's token count for a single image:
         # int(h * w) // (merge_kernel_size[0] * merge_kernel_size[1]).
@@ -295,7 +302,7 @@ class LocateService:
         if isinstance(ig, np.ndarray):
             ig = torch.from_numpy(ig)
         if ig is not None:
-            ig = ig.to("cuda", torch.int32)
+            ig = ig.to(self.device, torch.int32)
         with torch.no_grad():
             vit = self.model.extract_feature(pixel_values, ig)
             if isinstance(vit, list):
@@ -371,7 +378,7 @@ class LocateService:
 
         import torch
 
-        input_ids = self._prompt_input_ids(image, prompt, num_image_tokens).to("cuda")
+        input_ids = self._prompt_input_ids(image, prompt, num_image_tokens).to(self.device)
         with torch.no_grad():
             emb = self.embed(input_ids).to(torch.bfloat16)
             B, N, C = emb.shape
@@ -870,18 +877,20 @@ async def startup() -> None:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    # Honest report: real CUDA availability and the device the weights actually
-    # loaded on, instead of hardcoded green lights.
+    # Honest report: NPU/CUDA availability and the device weights loaded on.
+    device = str(service.device or "")
+    accel = device.startswith("cuda") or device.startswith("npu")
     try:
         import torch
 
-        gpu_available = bool(torch.cuda.is_available())
+        npu_ok = bool(getattr(torch, "npu", None) and torch.npu.is_available())
+        cuda_ok = bool(torch.cuda.is_available())
+        gpu_available = accel or npu_ok or cuda_ok
     except Exception:
-        gpu_available = False
+        gpu_available = accel
     if service.ready:
-        runtime_mode = "gpu" if str(service.device).startswith("cuda") else "cpu"
+        runtime_mode = "gpu" if accel else "cpu"
     else:
-        # Still loading: report the device the GPU-only load is targeting.
         runtime_mode = "gpu" if gpu_available else "cpu"
     return {
         "status": "ok" if service.ready else "loading",
@@ -890,7 +899,7 @@ async def health() -> dict[str, Any]:
         "runtime": "transformers-locateanything",
         "runtime_mode": runtime_mode,
         "gpu_available": gpu_available,
-        "device": service.device or "unknown",
+        "device": device or "unknown",
         "gpu_only_mode": True,
         "cpu_fallback_risk": runtime_mode != "gpu",
         "max_image_side": DEFAULT_MAX_SIDE,
@@ -1037,7 +1046,7 @@ async def detect(req: DetectRequest) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default=os.environ.get("LOCATE_ANYTHING_MODEL", "/mnt/d/has_models/LocateAnything-3B-HF"))
-    parser.add_argument("--backend", choices=["auto", "modelscope", "hf"], default=os.environ.get("LOCATE_ANYTHING_BACKEND", "hf"))
+    parser.add_argument("--backend", choices=["auto", "modelscope", "hf"], default=os.environ.get("LOCATE_ANYTHING_BACKEND", "auto"))
     parser.add_argument("--dtype", choices=["bfloat16", "float16", "float32"], default=os.environ.get("LOCATE_ANYTHING_DTYPE", "bfloat16"))
     parser.add_argument("--host", default=os.environ.get("LOCATE_ANYTHING_HOST", "0.0.0.0"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("LOCATE_ANYTHING_PORT", "8090")))

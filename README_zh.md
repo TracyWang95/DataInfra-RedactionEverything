@@ -121,12 +121,34 @@ npm run stop
 
 若 WSL localhost 端口转发不可用，启动脚本会自动改用 WSL IP 访问 vLLM/OCR 服务，避免前端把它们误报为离线。模型服务应保持在 GPU/CUDA 上；如果 `/health/services` 对任一关键模型报告 CPU 回退风险，请先修复运行时再处理文件。
 
+### 国内镜像（推荐先配置）
+
+统一配置见 [`scripts/cn_mirrors.env`](./scripts/cn_mirrors.env)：
+
+| 类型 | 源 |
+|---|---|
+| pip | 清华 `https://pypi.tuna.tsinghua.edu.cn/simple` |
+| npm | npmmirror（`frontend/.npmrc`） |
+| Docker Hub | 阿里云加速器 `https://i1r362m9.mirror.aliyuncs.com` |
+| 模型 | 魔搭优先；无则 Hugging Face 镜像 `https://hf-mirror.com` |
+| PaddleX / OCR | `PADDLE_PDX_MODEL_SOURCE=modelscope` |
+
+```bash
+# 一次性：把阿里云加速器写入 Docker daemon（需 root）
+sudo bash scripts/configure_docker_mirror.sh
+
+# 下载 GPU 模型权重（LocateAnything 走魔搭；HaS 走 HF 镜像）
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple modelscope 'huggingface_hub>=0.25'
+python backend/scripts/download_models.py
+```
+
 ### WSL 模型服务环境准备（一次性）
 
 `npm run dev` 在 WSL 内运行模型服务，需要 `.env` 中的三个必填项（见 [`.env.example`](./.env.example)）：`VENV_DIR`、`VLLM_VENV_DIR`、`HAS_TEXT_HF_MODEL_PATH`。先在 WSL 内创建两个虚拟环境（vLLM 的 Torch/CUDA 栈与 Paddle/PaddleX 冲突，必须分开装）：
 
 ```bash
 # 在 WSL 内执行（Python 3.11），假设仓库位于 /mnt/d/DataInfra-RedactionEverything
+# 可选：source scripts/cn_mirrors.env
 # 1) 应用/OCR venv（VENV_DIR）：运行 PP-StructureV3 / PaddleOCR 包装服务
 python3 -m venv ~/.cache/datainfra-redaction/.venv
 ~/.cache/datainfra-redaction/.venv/bin/pip install \
@@ -135,7 +157,8 @@ python3 -m venv ~/.cache/datainfra-redaction/.venv
 # 2) vLLM venv（VLLM_VENV_DIR）：服务 HaS Text（以及可选的 PaddleOCR-VL /
 #    LocateAnything LM backbone），并运行 LocateAnything 服务
 python3 -m venv ~/.cache/datainfra-redaction/.venv-vllm
-~/.cache/datainfra-redaction/.venv-vllm/bin/pip install vllm
+~/.cache/datainfra-redaction/.venv-vllm/bin/pip install \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple vllm
 
 # 3) LocateAnything 附加依赖（transformers、peft、accelerate 等）装到独立目录，
 #    避免其版本锁与 vLLM 自身依赖冲突
@@ -202,8 +225,10 @@ GPU 服务从 `./backend/models` 加载权重（容器内挂载为 `/models`）�
 
 | 服务 | 宿主机预期路径 | 来源 |
 |---|---|---|
-| `ner` | `backend/models/has/HaS_Text_0209_0.6B/` | [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B) 的 HF bf16 权重 |
-| `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | LocateAnything-3B HF 权重（从官方上游获取） |
+| `ner` | `backend/models/has/HaS_Text_0209_0.6B/` | [xuanwulab/HaS_Text_0209_0.6B](https://huggingface.co/xuanwulab/HaS_Text_0209_0.6B)（经 hf-mirror） |
+| `visual-features` | `backend/models/locateanything/LocateAnything-3B-HF/` | 魔搭 `nv-community/LocateAnything-3B`，失败则 HF 镜像 |
+
+推荐：`python backend/scripts/download_models.py`
 
 > **运行时一致性：** Docker 的 `ner` 服务与本地开发完全同栈——**vLLM + HF bf16 权重**、相同的生成参数——本地验证过的 NER 行为可原样迁移到 Docker。
 
