@@ -162,9 +162,15 @@ def test_running_text_occurrence_not_suppressed_by_standalone_cell() -> None:
     assert {r.top for r in regions} == {100, 300}
 
 
-def test_table_cell_occurrence_not_suppressed_by_direct_block() -> None:
-    # The same amount in a real table cell AND in a direct block elsewhere:
-    # the old direct_amount_signatures bookkeeping skipped the virtual cell.
+def test_table_block_is_structure_only_not_a_geometry_source() -> None:
+    # A PaddleOCR-VL <table> block carries STRUCTURE, not per-cell pixel geometry —
+    # its cell boxes could only be uniform-grid ESTIMATES that misplace values onto
+    # the wrong row (and VL even wraps non-table pages into a pseudo <table>, boxing
+    # whole paragraphs as giant cells). So the <table> block is dropped from position
+    # matching: entity geometry comes only from real line-OCR blocks. A value in a
+    # real line block is boxed there; the <table> block never emits a mis-estimated
+    # region of its own. (Its structure still reaches the NER via _expand_table_blocks;
+    # in practice line-OCR reads every printed table cell, so recall is preserved.)
     from app.services.ocr_has_vision_service import OCRTextBlock
 
     table = OCRTextBlock(
@@ -176,8 +182,8 @@ def test_table_cell_occurrence_not_suppressed_by_direct_block() -> None:
     regions = match_entities_to_ocr(
         [table, direct], [{"type": "AMOUNT", "text": "1,431,400.00"}]
     )
-    tops = sorted(r.top for r in regions)
-    assert tops[0] == 100 and any(t >= 500 for t in tops)
+    # Only the real line block is boxed; the <table> block produces no region.
+    assert [r.top for r in regions] == [100]
 
 
 def test_short_value_attaches_by_equality_or_isolated_token_only() -> None:

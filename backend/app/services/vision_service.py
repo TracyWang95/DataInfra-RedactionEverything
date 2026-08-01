@@ -249,12 +249,24 @@ class VisionService:
                 SimpleNamespace(id="SEAL", name=SLUG_TO_NAME_ZH.get("official_seal", "公章"))
             )
 
+        # fingerprint: the YOLO 捺印 detector REPLACES the LA channel, so LA is
+        # skipped for it (LA would ground it ~2-3s only to be discarded — wasted
+        # latency; the detector runs unconditionally below, recall unchanged).
+        # signature: YOLO ∪ LA — the signature detector SUPPLEMENTS LA rather than
+        # replacing it (a handwritten name one model misses the other often
+        # catches: the red 陈晨 receipt signature, the doctor's 诊断 scrawl), so
+        # signature STAYS in the LA request and both boxes union + dedup below.
+        _detector_slugs: set[str] = set()
+        if str(getattr(settings, "FINGERPRINT_DETECTOR_URL", "") or "").strip():
+            _detector_slugs.add("fingerprint")
+
         effective_visual_feature_types: list | None = None
         if visual_feature_types:
             effective_visual_feature_types = [
                 item
                 for item in visual_feature_items
                 if normalize_visual_slug(getattr(item, "id", item)) not in OCR_FALLBACK_ONLY_VISUAL_SLUGS
+                and normalize_visual_slug(getattr(item, "id", item)) not in _detector_slugs
             ]
             if not effective_visual_feature_types:
                 effective_visual_feature_types = None
@@ -444,8 +456,21 @@ class VisionService:
             except Exception:
                 logger.warning("signature detector stage skipped; kept LA signatures", exc_info=True)
 
+        # Specialized inked-fingerprint detector (YOLO11, locally trained on
+        # synthetic 捺印-on-document data) REPLACES the LA/YOLO fingerprint channel
+        # when configured. It recalls the pale/red prints the grounding VLM missed
+        # and — trained with bare-hand backgrounds as hard negatives, on grayscale
+        # — does NOT fire on the page-holding finger / seals / red text that the old
+        # channel FP'd on. Fails open (keeps the LA fingerprints on any error).
+        if bool(visual_feature_types) and self._visual_slug_requested(visual_feature_items, "fingerprint"):
+            try:
+                all_boxes = await self._detect_fingerprints_via_detector(
+                    all_boxes, await get_image_data(), page
+                )
+            except Exception:
+                logger.warning("fingerprint detector stage skipped; kept LA fingerprints", exc_info=True)
+
         all_boxes = self._drop_full_page_seals(all_boxes)
-        all_boxes = self._suppress_text_in_signature(all_boxes)
         all_boxes = self._prefer_vl_seals(all_boxes)
         all_boxes = self._prefer_yolo_machine_codes(all_boxes)
         all_boxes = self._merge_seal_shards(all_boxes)
@@ -472,6 +497,18 @@ class VisionService:
         # exception-swallowing). Placed after dedup / before signature padding.
         all_boxes = await self._tighten_la_vertical_geometry(all_boxes, get_image_data, page)
         all_boxes = self._expand_signature_boxes(all_boxes)
+        # The text pipeline (OCR+HaS) and the vision pipeline (signature detector)
+        # are INDEPENDENT: each marks its own finding even where they cross. The old
+        # cross-channel fold collapsed a signature into an overlapping OCR box ("OCR
+        # wins"), which coupled the STABLE vision signature to a FLAKY OCR reading —
+        # a handwritten name over a red seal (张伟/李强, 图片_20260511183513) is read
+        # by OCR as PERSON only intermittently (0/1/2 across runs), so the folded
+        # signature flickered "时灵时不灵" while the detector itself was rock-steady
+        # (LA 2/2 every run). A signature is a visual feature; it stays boxed as one
+        # regardless of what the text channel did on the same ink (redaction over-
+        # covers, never leaks). Symmetric with dropping the reverse suppression
+        # (_suppress_text_in_signature): neither pipeline erases the other's box.
+        all_boxes = self._suppress_ocr_text_inside_visual_regions(all_boxes)
         all_boxes = self._present_seals_as_visual(all_boxes)
 
         result_image_base64 = None
@@ -507,7 +544,14 @@ class VisionService:
         sig_types = {"signature", "handwriting", "approval_mark"}
         result: list[BoundingBox] = []
         for box in boxes:
-            if _norm_box_type(box.type) in sig_types:
+            # The dedicated signature detector (YOLO11) is trained end-to-end to
+            # box the WHOLE handwritten mark, so its box is already complete —
+            # padding it only bloats it over adjacent document text (a 日期 printed
+            # just above the signature got swallowed, and the box read "很大").
+            # Only LocateAnything's grounding boxes capture just the densest stroke
+            # and need this coverage pad.
+            is_detector_box = "signature_detector" in str(getattr(box, "source_detail", "") or "")
+            if _norm_box_type(box.type) in sig_types and not is_detector_box:
                 dx = box.width * margin
                 dy = box.height * margin
                 nx = max(0.0, box.x - dx)
@@ -770,52 +814,6 @@ class VisionService:
             logger.warning("LA vertical tighten skipped", exc_info=True)
             return all_boxes
 
-    def _suppress_text_in_signature(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """Drop OCR text boxes fully contained in a LocateAnything signature box.
-
-        OCR reading the signature scribble as text is a false positive. But the
-        old test — text center in the sig OR sig center in the text — dropped a
-        WIDE PII text box the moment a small signature core landed inside it, a
-        missed redaction. Coverage precondition instead: drop the ocr_has text
-        box ONLY when it is geometrically contained in the signature box
-        (smaller_overlap(text, sig) == 1.0). The comparison uses a locally
-        pad-expanded copy of the sig — pad = _SIGNATURE_REDACTION_PAD, the SAME
-        scale _expand_signature_boxes grows the signature mask to downstream — so
-        any text we drop here is provably inside the FINAL signature mask;
-        coverage is monotone. A wide PII box that merely overlaps a small
-        signature core sticks out of the padded sig, so both boxes survive.
-        """
-        sig_types = {"signature", "handwriting", "approval_mark"}
-        sigs = [b for b in boxes if b.source == "visual_features" and b.type in sig_types]
-        if not sigs:
-            return boxes
-        pad = _SIGNATURE_REDACTION_PAD
-        padded_sig_rects = [
-            (
-                max(0.0, s.x - s.width * pad),
-                max(0.0, s.y - s.height * pad),
-                min(1.0, s.x + s.width + s.width * pad),
-                min(1.0, s.y + s.height + s.height * pad),
-            )
-            for s in sigs
-        ]
-        kept: list[BoundingBox] = []
-        dropped = 0
-        for b in boxes:
-            if b.source == "ocr_has" and any(
-                px1 <= b.x
-                and py1 <= b.y
-                and b.x + b.width <= px2
-                and b.y + b.height <= py2
-                for px1, py1, px2, py2 in padded_sig_rects
-            ):
-                dropped += 1
-                continue
-            kept.append(b)
-        if dropped:
-            logger.info("Suppressed %d OCR text box(es) contained in a signature region", dropped)
-        return kept
-
     @staticmethod
     def _drop_full_page_seals(boxes: list[BoundingBox]) -> list[BoundingBox]:
         """A visual box spanning the whole page is degenerate — drop it.
@@ -845,42 +843,39 @@ class VisionService:
         return kept
 
     def _prefer_vl_seals(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """For official_seal, prefer OCR/VL boxes over LocateAnything boxes.
+        """PaddleOCR-VL is the authority on 公章 — trust its seal boxes as primary.
 
-        VL (ocr_has) segments stacked stamps into one box per seal; LocateAnything
-        often over-merges them into a single tall strip. The old test dropped the
-        LA strip whenever ONE VL seal's center fell inside it — but an LA strip
-        that spans TWO stacked stamps and only one of which VL found would then be
-        dropped, uncovering the stamp VL missed (a missed redaction). Coverage
-        precondition instead: drop the LA seal ONLY when the true union of the VL
-        seals intersecting it fully covers it (exact axis-aligned coverage, no
-        threshold). Otherwise keep the LA box — it may be the only cover over a
-        VL-missed overlapping stamp. LA seals with no VL counterpart are kept; if
-        VL produced no seals, every LA seal is kept unchanged.
+        VL's layout seal detection is deterministic and reliable, so every VL seal
+        (source_detail=paddleocr_vl:seal — a visual feature, NOT the OCR+HaS text
+        channel) is kept as the canonical box for its stamp. LA/YOLO seals only
+        SUPPLEMENT it: one whose center falls inside a VL seal is the SAME stamp VL
+        already boxed — a duplicate — and is dropped in favour of VL's box. Keeping
+        it let the looser, stochastic LA box win the later shard merge, so the seal
+        flickered run-to-run (时灵时不灵). An LA/YOLO seal whose center lies outside
+        every VL seal is a distinct stamp VL did not find and is kept (recall
+        preserved). If VL produced no seals, every LA/YOLO seal is kept unchanged.
+        Center-inside is the parameter-free identity test already used across this
+        merge layer — no threshold, no magic number.
         """
-        from app.services.vision.region_merger import rect_covered_by_union
-
-        vl_seals = [b for b in boxes if b.type == "official_seal" and b.source == "ocr_has"]
+        vl_seals = [
+            b for b in boxes
+            if b.type == "official_seal" and "paddleocr_vl" in str(b.source_detail or "")
+        ]
         if not vl_seals:
             return boxes
         kept: list[BoundingBox] = []
         dropped = 0
         for b in boxes:
-            if b.type == "official_seal" and b.source == "visual_features":
-                overlapping_vl = [
-                    (v.x, v.y, v.width, v.height)
-                    for v in vl_seals
-                    if _calculate_iou(v, b) > 0.0
-                    or _calculate_smaller_overlap(v, b) > 0.0
-                ]
-                if overlapping_vl and rect_covered_by_union(
-                    (b.x, b.y, b.width, b.height), overlapping_vl
-                ):
-                    dropped += 1
-                    continue
+            if (
+                b.type == "official_seal"
+                and "paddleocr_vl" not in str(b.source_detail or "")
+                and any(_center_inside(b, v) for v in vl_seals)
+            ):
+                dropped += 1
+                continue
             kept.append(b)
         if dropped:
-            logger.info("Dropped %d LA seal box(es) fully covered by the VL seal union", dropped)
+            logger.info("Dropped %d LA/YOLO seal(s) duplicating a PaddleOCR-VL seal", dropped)
         return kept
 
     def _prefer_yolo_machine_codes(self, boxes: list[BoundingBox]) -> list[BoundingBox]:
@@ -1025,11 +1020,9 @@ class VisionService:
             text = str(getattr(b, "text", "") or "")
             interior_text.append(text)
             numbers_inside.extend(m.group() for m in self._ID_CARD_NUMBER_RE.finditer(text))
-        if not numbers_inside:
-            return False
         joined_interior = " ".join(interior_text)
         if any(word in joined_interior for word in self._ID_CARD_FACE_WORDS):
-            return False
+            return False  # a genuine card face — dropping it would uncover name/photo
         retained_ocr = [
             o
             for o in boxes
@@ -1042,24 +1035,84 @@ class VisionService:
                 or card.y + card.height <= o.y
             )
         ]
+        # OCR already TYPED this region as an ID number: a retained ID_CARD box
+        # masks the digits even when a HANDWRITTEN number does not parse as a clean
+        # 18-digit string (保姆合同: the 身份证号 OCR'd as '4102/1989010…' with a
+        # slash). No card face here (guarded above), so the visual card only
+        # re-masks what OCR already covers — redundant, drop it.
+        if any(str(o.type) == "ID_CARD" for o in retained_ocr):
+            return True
+        # Otherwise require clean-number coverage: every 18-digit number inside the
+        # region must be carried by a retained box, or dropping would leak it.
+        if not numbers_inside:
+            return False
         for number in numbers_inside:
             if not any(number in str(o.text or "") for o in retained_ocr):
                 return False
         return True
 
+    async def _detect_fingerprints_via_detector(
+        self, boxes: list[BoundingBox], image_data: bytes, page: int
+    ) -> list[BoundingBox]:
+        """Replace the LA/YOLO fingerprint channel with the specialized YOLO11
+        inked-print detector (locally trained on synthetic 捺印-on-document data,
+        grayscale inference). It recalls the pale/red prints the grounding VLM
+        missed and does NOT fire on the page-holding finger / seals / red text
+        (bare-hand backgrounds were hard negatives in training). The service
+        returns normalized boxes; we retag them as fingerprint and drop the old
+        visual fingerprint boxes. Fails OPEN: any error keeps the existing boxes,
+        because a missed print is a leak.
+        """
+        url = str(getattr(settings, "FINGERPRINT_DETECTOR_URL", "") or "").strip()
+        if not url:
+            return boxes
+        try:
+            import httpx
+
+            body = {"image_base64": base64.b64encode(image_data).decode("utf-8")}
+            timeout = float(getattr(settings, "VISUAL_FEATURES_TIMEOUT", 60) or 60)
+            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+                resp = await client.post(f"{url.rstrip('/')}/detect", json=body)
+                resp.raise_for_status()
+            raw = resp.json().get("boxes") or []
+        except Exception:
+            logger.warning("fingerprint detector unavailable; keeping LA fingerprints", exc_info=True)
+            return boxes
+        dets: list[BoundingBox] = []
+        for r in raw:
+            try:
+                x, y, w, h = float(r["x"]), float(r["y"]), float(r["width"]), float(r["height"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            dets.append(BoundingBox(
+                id=f"inkdet_{uuid.uuid4().hex[:8]}", x=x, y=y, width=w, height=h,
+                type="fingerprint", text=SLUG_TO_NAME_ZH.get("fingerprint", "指纹"), page=page,
+                confidence=r.get("confidence"), source="visual_features",
+                source_detail="fingerprint_detector:yolo11",
+                evidence_source="visual_feature_model",
+            ))
+        kept = [b for b in boxes if not (b.source == "visual_features" and b.type == "fingerprint")]
+        if dets:
+            logger.info("fingerprint detector: %d print box(es) replace the LA channel", len(dets))
+        return kept + dets
+
     async def _detect_signatures_via_detector(
         self, boxes: list[BoundingBox], image_data: bytes, page: int
     ) -> list[BoundingBox]:
-        """Replace the LA signature channel with the specialized conditional-detr
-        detector — a single-class signature model that never learned to box
-        printed text, so it does NOT fire on 乙方:/甲方: labels the way the LA
-        grounding VLM does, and it is deterministic (no sampling variance). Two
-        residual FP classes it can still show on a busy page (a printed org name,
-        a seal's cursive script) are killed by (a) the OCR-prune here — a real
-        signature is handwriting OCR cannot read, so it overlaps NO OCR text
-        (measured 0 on 海油); a false one sits on OCR'd printed text — and (b) the
-        seal absorb downstream. Fails OPEN: any detector error keeps the LA
-        signatures, because a missed signature is a leak.
+        """SUPPLEMENT the LA signature channel with the specialized YOLO11 signature
+        detector (locally trained on ChiSig 中文 synthetic + Mels22 西文 real
+        doc-domain signatures — the conditional-DETR is retired: it false-fired on
+        receipt creases and under-boxed). Single-class, doc-domain, deterministic;
+        it does NOT fire on printed 乙方:/甲方: labels, seals, or folds.
+
+        YOLO ∪ LA (union), NOT replace: a handwritten name one model misses the
+        other often catches, so both boxes are kept and the same-type IoU dedup
+        downstream merges the overlaps. The false-positive class both can show on a
+        busy page (a signature box landing on a company-name line) is killed by the
+        org-line filter below, applied to BOTH sources. Fails OPEN: any detector
+        error keeps the LA signatures untouched, because a missed signature is a leak.
         """
         url = str(getattr(settings, "SIGNATURE_DETECTOR_URL", "") or "").strip()
         if not url:
@@ -1088,34 +1141,110 @@ class VisionService:
                 id=f"sigdet_{uuid.uuid4().hex[:8]}", x=x, y=y, width=w, height=h,
                 type="signature", text=SLUG_TO_NAME_ZH.get("signature", "签字"), page=page,
                 confidence=r.get("confidence"), source="visual_features",
-                source_detail="signature_detector:conditional_detr",
+                source_detail="signature_detector:yolo11",
                 evidence_source="visual_feature_model",
             ))
-        # A signature is a PERSON's handwriting — never a company designation. A
-        # detector box on the SAME LINE as a company name (its y-centre inside an
+        # The YOLO signature detector is the trusted PRIMARY; LA only SUPPLEMENTS.
+        # LA now grounds signature too — it is no longer skipped when the detector
+        # is configured — but an LA box whose center lies inside any detector box
+        # is the SAME handwritten mark the detector already boxed (a duplicate),
+        # dropped in favour of the detector's deterministic whole-mark box (the LA
+        # box only frames the densest strokes, so the old IoU dedup let the thin LA
+        # box survive next to the fat YOLO box and the signature flickered). An LA
+        # box centered outside every detector box is a mark the detector missed and
+        # is kept (recall preserved). No detector box -> every LA signature kept.
+        # Center-inside, no threshold, no magic number — same as _prefer_vl_seals.
+        la_sigs = [b for b in boxes if b.source == "visual_features" and b.type == "signature"]
+        others = [b for b in boxes if not (b.source == "visual_features" and b.type == "signature")]
+        if detr:
+            kept_la = [s for s in la_sigs if not any(_center_inside(s, d) for d in detr)]
+            if len(kept_la) < len(la_sigs):
+                logger.info(
+                    "signature: dropped %d LA box(es) duplicating a detector signature",
+                    len(la_sigs) - len(kept_la),
+                )
+            la_sigs = kept_la
+        sigs = la_sigs + detr
+        # Both cleanup filters below run on the noisy LA supplement only — the trained
+        # YOLO detector is the trusted PRIMARY (doc-domain, with printed labels/seals/
+        # folds as hard negatives), so a box it fires IS handwriting and a text-channel
+        # heuristic must not override it (a dropped real signature is a leak; the 乙方
+        # 法定代表人签字 scrawl, which OCR misreads as label-tail chars carrying no PII,
+        # was being killed here). _is_detector_sig gates the exemption.
+        def _is_detector_sig(s: BoundingBox) -> bool:
+            return "signature_detector" in str(getattr(s, "source_detail", "") or "")
+
+        # A signature is a PERSON's handwriting — never a company designation. An LA
+        # box on the SAME LINE as a company name (its y-centre inside an
         # INSTITUTION_NAME box's y-span) is the party line — "乙方：信尔胜机械…" —
         # read as a false signature; the false box sits on the "乙方：" label just
         # left of the org text, same line. Real signatures are on their OWN lines
-        # (the 法定代表人签字 line, far below any org name). Model-centric (the NER
-        # already typed that line as an org) and 0-miss safe: the org text on that
-        # line is redacted regardless, so a real signature sharing the line loses
-        # nothing.
+        # (the 法定代表人签字 line, far below any org name).
+        # Model-centric (the NER already typed that line as an org) and 0-miss safe:
+        # the org text on that line is redacted regardless, so a real signature
+        # sharing the line loses nothing.
         orgs = [b for b in boxes if b.type == "INSTITUTION_NAME"]
-        if orgs and detr:
+        if orgs and sigs:
             def _on_org_line(s: BoundingBox) -> bool:
                 cy = s.y + s.height / 2
                 return any(o.y <= cy <= o.y + o.height for o in orgs)
-            before = len(detr)
-            detr = [d for d in detr if not _on_org_line(d)]
-            if len(detr) < before:
+            before = len(sigs)
+            sigs = [s for s in sigs if _is_detector_sig(s) or not _on_org_line(s)]
+            if len(sigs) < before:
                 logger.info(
-                    "signature detector: dropped %d false signature(s) on a company-name line",
-                    before - len(detr),
+                    "signature: dropped %d false signature(s) on a company-name line",
+                    before - len(sigs),
                 )
-        kept = [b for b in boxes if not (b.source == "visual_features" and b.type == "signature")]
-        if detr:
-            logger.info("signature detector: %d signature box(es) replace the LA channel", len(detr))
-        return kept + detr
+        # Generalize the org-line rule (LA boxes only, per _is_detector_sig): an LA box
+        # whose CENTER sits inside an OCR text block that the NER produced NO PII on is a
+        # false fire on printed boilerplate — a title ("立案告知书"), a sentence ("本告知书
+        # 已收到") — that LA occasionally grounds at low confidence. Drop it. Model-centric:
+        # the arbiter is the text channel's own output (OCR read that block as text, NER
+        # found no entity there). 0-miss: a block with no PII has nothing to redact, so
+        # removing an LA box over it can never uncover PII. NOTE this can't gate on a
+        # signature whose OWN scrawl OCR misread as no-PII label-tail chars — that is why
+        # the YOLO detector, trained to fire only on real handwriting, is exempted.
+        ocr_blocks = list(getattr(self, "_page_ocr_blocks", None) or [])
+        if ocr_blocks and sigs:
+            with Image.open(io.BytesIO(image_data)) as _im:
+                _w, _h = ImageOps.exif_transpose(_im).size
+            pii = [
+                b for b in boxes
+                if str(b.source) == "ocr_has"
+                and b.type not in ("official_seal", "signature", "fingerprint")
+            ]
+
+            def _overlaps_pii(nx1: float, ny1: float, nx2: float, ny2: float) -> bool:
+                return any(
+                    not (p.x + p.width <= nx1 or p.x >= nx2 or p.y + p.height <= ny1 or p.y >= ny2)
+                    for p in pii
+                )
+
+            printed: list[tuple[float, float, float, float]] = []
+            for blk in ocr_blocks:
+                text = str(getattr(blk, "text", "") or "").strip()
+                if not text or text.startswith("<"):
+                    continue
+                bx1, by1, bx2, by2 = blk.bbox
+                rect = (bx1 / _w, by1 / _h, bx2 / _w, by2 / _h)
+                if not _overlaps_pii(*rect):
+                    printed.append(rect)
+            if printed:
+                def _on_printed(s: BoundingBox) -> bool:
+                    cx, cy = s.x + s.width / 2, s.y + s.height / 2
+                    return any(a <= cx <= c and b <= cy <= d for a, b, c, d in printed)
+                before = len(sigs)
+                sigs = [s for s in sigs if _is_detector_sig(s) or not _on_printed(s)]
+                if len(sigs) < before:
+                    logger.info(
+                        "signature: dropped %d false signature(s) on printed no-PII text",
+                        before - len(sigs),
+                    )
+        if detr or la_sigs:
+            logger.info(
+                "signature: YOLO %d box(es) ∪ LA %d box(es)", len(detr), len(la_sigs)
+            )
+        return others + sigs
 
     def _drop_page_hallucinated_cards(
         self,
@@ -1217,15 +1346,88 @@ class VisionService:
         return [b for j, b in enumerate(out) if j not in absorbed]
 
     @staticmethod
+    def _suppress_ocr_text_inside_visual_regions(boxes: list[BoundingBox]) -> list[BoundingBox]:
+        """Drop an OCR text entity whose box sits FULLY inside a signature or a seal.
+
+        Both kinds of stamp swallow OCR'd ink that is not the document's data:
+        - A handwritten SIGNATURE's strokes get OCR'd and typed as a spurious entity (a
+          scrawl read as 机构名称 "Tregy"). Always dropped — it is signature ink and the
+          mask already covers those pixels (0-leak).
+        - A SEAL carries its own engraved ARC text (弧文 "…服务有限公司" → garbage "R公司"),
+          which OCR reads as an institution name floating on a faint margin stamp.
+
+        But a seal is also routinely stamped OVER a party's real printed name (乙方 章下
+        "上海云芯计算机有限公司"), which the user DOES want listed. The two are told apart
+        model-centrically by document-wide occurrence, not by content: a value that also
+        appears in a text box NOT swallowed by any seal is real data the stamp happens to
+        cover — that same name prints elsewhere (e.g. at the top), so keep the under-seal
+        copy. A value that exists ONLY inside seals is the seal's own engraving — drop it.
+        Either way it is 0-leak: the seal box masks those pixels too (double cover). Full
+        containment (all four corners), not centre, so a name merely clipping a stamp edge
+        (海南工程服务有限公司, wider than the stamp) is never touched. No rule, regex, wordlist.
+        """
+        signatures = [b for b in boxes if b.type == "signature"]
+        seals = [b for b in boxes if b.type == "official_seal"]
+        if not signatures and not seals:
+            return boxes
+
+        def _fully_inside(b: BoundingBox, s: BoundingBox) -> bool:
+            return (
+                s.x <= b.x
+                and s.y <= b.y
+                and b.x + b.width <= s.x + s.width
+                and b.y + b.height <= s.y + s.height
+            )
+
+        def _norm(b: BoundingBox) -> str:
+            return str(getattr(b, "text", "") or "").strip()
+
+        # Values that also print OUTSIDE every seal — real document data a stamp covers.
+        outside_seal_values = {
+            _norm(b)
+            for b in boxes
+            if str(b.source) == "ocr_has"
+            and b.type not in ("signature", "official_seal")
+            and _norm(b)
+            and not any(_fully_inside(b, s) for s in seals)
+        }
+
+        kept: list[BoundingBox] = []
+        dropped_sig = dropped_seal = 0
+        for b in boxes:
+            if str(b.source) != "ocr_has" or b.type in ("signature", "official_seal"):
+                kept.append(b)
+                continue
+            if any(_fully_inside(b, s) for s in signatures):
+                dropped_sig += 1
+                continue
+            if seals and _norm(b) not in outside_seal_values and any(
+                _fully_inside(b, s) for s in seals
+            ):
+                dropped_seal += 1
+                continue
+            kept.append(b)
+        if dropped_sig or dropped_seal:
+            logger.info(
+                "Suppressed %d OCR text box(es) inside a signature, %d inside a seal "
+                "(the masks cover them)",
+                dropped_sig,
+                dropped_seal,
+            )
+        return kept
+
+    @staticmethod
     def _present_seals_as_visual(boxes: list[BoundingBox]) -> list[BoundingBox]:
-        """A seal is a visual feature whatever engine found it. PaddleOCR-VL finds
-        seals through the OCR channel (source=ocr_has); relabel every official_seal
-        to the visual-features source so the UI shows a uniform 'visual feature'
-        and never reveals which engine detected the stamp.
+        """A seal is a visual feature whatever engine found it. Seals already carry
+        source=visual_features (PaddleOCR-VL as source_detail=paddleocr_vl:seal, LA
+        as locate_anything, YOLO as has_image); this final pass normalizes their
+        source_detail to a uniform 'visual_feature_model' so the UI shows one
+        'visual feature' and never reveals which engine detected the stamp. Runs
+        AFTER _prefer_vl_seals, which needs the engine-specific source_detail.
         """
         out: list[BoundingBox] = []
         for b in boxes:
-            if b.type == "official_seal" and b.source != "visual_features":
+            if b.type == "official_seal" and b.source_detail != "visual_feature_model":
                 out.append(b.model_copy(update={
                     "source": "visual_features",
                     "source_detail": "visual_feature_model",
@@ -1448,9 +1650,13 @@ class VisionService:
                         text=SLUG_TO_NAME_ZH.get("official_seal", "official_seal"),
                         page=page,
                         confidence=float(getattr(region, "confidence", 0.9) or 0.9),
-                        source="ocr_has",
-                        source_detail=str(getattr(region, "source", "") or "ocr_structure:seal"),
-                        evidence_source="ocr_has",
+                        # 公章是视觉特征, 从诞生就走视觉来源 — 绝不挂 OCR+HaS 文本链路
+                        # (那会让文本过滤器把它当"章内文字"误杀, 也概念混乱). PaddleOCR-VL
+                        # 的 Seal 检测是公章主力, _prefer_vl_seals 按 source_detail 认出它、
+                        # 让它压过 LA/YOLO 补充框。OCR 调用虽与文本共用一次推理, 但产物归视觉。
+                        source="visual_features",
+                        source_detail="paddleocr_vl:seal",
+                        evidence_source="visual_feature_model",
                     )
                 )
                 continue

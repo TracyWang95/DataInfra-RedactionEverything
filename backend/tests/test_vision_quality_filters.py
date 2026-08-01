@@ -396,10 +396,13 @@ def _seal_fragment_fixture() -> tuple[list[OCRItem], list[OCRItem]]:
     return structure_items, vl_items
 
 
-def test_structure_primary_merges_vl_supplement_blocks(monkeypatch) -> None:
-    # Structure stays the primary block set; the VL block that carries the
-    # seal-crushed full company name is merged in as a supplement through the
-    # existing whole-block IoU contract.
+def test_structure_primary_discards_vl_text_seal_only(monkeypatch) -> None:
+    # VL is SEAL-ONLY: even with the supplement flag on, PaddleOCR-VL's text
+    # blocks are DISCARDED — PP-StructureV3 owns all text. Merging VL text
+    # polluted the pipeline the moment VL was enabled (身份证/日期 giant boxes,
+    # a real signature folded away) for a seal-crushed-text recovery that an A/B
+    # on real docs proved never materialized. VL still runs (for its seal
+    # regions); its reading of the full company name under the seal is dropped.
     monkeypatch.setattr(settings, "OCR_VL_ENABLED", True)
     monkeypatch.setattr(settings, "OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL", True)
     monkeypatch.setattr(settings, "OCR_STRUCTURE_PRIMARY_MIN_BOXES", 1)
@@ -412,10 +415,10 @@ def test_structure_primary_merges_vl_supplement_blocks(monkeypatch) -> None:
         selected_entity_types=["PERSON"],
     )
 
-    assert service.vl_calls == 1
+    assert service.vl_calls == 1  # VL still runs (for seals)
     texts = [block.text for block in blocks]
-    assert texts[:2] == ["甲方（盖章）：苏州市", "公司"]  # structure blocks first
-    assert "甲方（盖章）：苏州市纳达信息服务有限公司" in texts
+    assert texts == ["甲方（盖章）：苏州市", "公司"]  # structure only
+    assert "甲方（盖章）：苏州市纳达信息服务有限公司" not in texts  # VL text discarded
     assert visual_regions == []
 
 
@@ -644,13 +647,13 @@ def test_value_crop_recovers_missing_span_edge_from_neighbour() -> None:
     assert (regions[0].left, regions[0].width) == (150, 250)  # colon edge .. block end
 
 
-def test_visual_region_fallback_keeps_structure_blocks_primary(monkeypatch) -> None:
-    # Selection includes a visual-only type but structure returned no visual
-    # regions, so VL must still run for them. The text-block set stays
-    # structure-primary even with the supplement flag off: handing VL the
-    # primary slot let its generative whole-line blocks (no char boxes)
-    # displace the per-line structure blocks, masking label and value as one
-    # full line (户名/开户行/帐号 regression).
+def test_visual_region_fallback_discards_vl_text_seal_only(monkeypatch) -> None:
+    # A visual-only type is selected but structure returned no visual regions, so
+    # VL runs for them. SEAL-ONLY: VL's generative whole-line text blocks (no char
+    # boxes) are discarded — they neither displace nor supplement the structure
+    # text set (that displacement masked label+value as one line: 户名/开户行/帐号
+    # regression, and adding them made the 日期-cell giant box that folded away the
+    # signature). Only VL's visual regions flow through.
     monkeypatch.setattr(settings, "OCR_VL_ENABLED", True)
     monkeypatch.setattr(settings, "OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL", False)
     monkeypatch.setattr(settings, "OCR_STRUCTURE_PRIMARY_MIN_BOXES", 1)
@@ -665,8 +668,8 @@ def test_visual_region_fallback_keeps_structure_blocks_primary(monkeypatch) -> N
 
     assert service.vl_calls == 1
     texts = [block.text for block in blocks]
-    assert texts[:2] == ["甲方（盖章）：苏州市", "公司"]  # structure blocks first
-    assert "甲方（盖章）：苏州市纳达信息服务有限公司" in texts
+    assert texts == ["甲方（盖章）：苏州市", "公司"]  # structure only, VL text discarded
+    assert "甲方（盖章）：苏州市纳达信息服务有限公司" not in texts
 
 
 def test_uppercase_amount_entity_crops_to_its_glyphs() -> None:

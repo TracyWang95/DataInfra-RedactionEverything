@@ -41,8 +41,10 @@ class VisualFeatureCategory:
     # Chinese display name — one definition, no slug→query side table. Set it only
     # where a MEASURED precision/recall result needs a phrase different from the
     # label. This grounding model was trained on English class names, so a Chinese
-    # query mis-fires on four classes — three PII-critical stamp/mark classes plus
-    # id_card, each of which rides a single tuned English query_override:
+    # query mis-fires on five classes — three PII-critical stamp/mark classes plus
+    # id_card and face, each of which rides a single tuned English query_override.
+    # The wording must be MEASURED, not just translated: bare "face" still fired on
+    # a skin-toned finger, only "human face" refused it. Classes:
     #   • official_seal — 公章 fired 71 corpus seal boxes (FPs on docs with NO
     #     seal) vs 19 for "seal"; the verify can't prune a hallucination it
     #     re-confirms.
@@ -66,8 +68,13 @@ class VisualFeatureCategory:
     #     (2026-07-21 A/B on the 门诊病历: 身份证 → 1 box on the label, "ID card" →
     #     0). A real card's PII is still covered by OCR text + face even if the
     #     English query under-recalls the bare card outline.
-    # So these four keep their tuned English query; every other class rides its
-    # Chinese display name, where no mis-fire was measured.
+    #   • face — 人脸/face/脸/面部 all grounded a bare finger (the hand holding the
+    #     page) as a face, 3/3 samples; "human face" refused it, 0/3 (2026-07-22
+    #     A/B on the 门诊病历 finger). The dedicated YOLO face detector backstops
+    #     real-face recall, so the stricter LA query only removes the skin FP.
+    # These five are A/B-measured; every other built-in now also grounds a chosen
+    # English query (see the category tuple below) — un-measured but LA-appropriate,
+    # to be tuned when a document with that object surfaces.
     query_override: str = ""
 
     @property
@@ -75,29 +82,34 @@ class VisualFeatureCategory:
         return self.query_override or self.name_zh
 
 
+# Every built-in category grounds an ENGLISH query (LA is English-trained). The
+# five marked (M) are A/B-measured on real docs; the rest are chosen English
+# (natural, disambiguated where a bare word could mis-fire, e.g. "metal key" not
+# "key") pending measurement when such a document appears. name_zh stays Chinese
+# for the UI; only the grounding query is English.
 VISUAL_FEATURE_CATEGORIES: tuple[VisualFeatureCategory, ...] = (
-    VisualFeatureCategory(0, "face", "人脸", "人体面部区域"),
-    VisualFeatureCategory(1, "fingerprint", "指纹", "指纹、捺印区域", "red inked thumbprint mark"),
-    VisualFeatureCategory(2, "palmprint", "掌纹", "掌纹区域"),
-    VisualFeatureCategory(3, "id_card", "身份证", "居民身份证等证件", "ID card"),
-    VisualFeatureCategory(4, "hk_macau_permit", "港澳通行证", "往来港澳通行证等"),
-    VisualFeatureCategory(5, "passport", "护照", "护照"),
-    VisualFeatureCategory(6, "employee_badge", "工作证", "员工证、工牌"),
-    VisualFeatureCategory(7, "license_plate", "车牌", "机动车号牌"),
-    VisualFeatureCategory(8, "bank_card", "银行卡", "银行卡、信用卡"),
-    VisualFeatureCategory(9, "physical_key", "钥匙", "实体钥匙"),
-    VisualFeatureCategory(10, "receipt", "小票/收据", "购物小票、收据"),
-    VisualFeatureCategory(11, "shipping_label", "快递面单", "快递/物流面单"),
-    VisualFeatureCategory(12, "official_seal", "公章", "公章、印章", "seal"),
-    VisualFeatureCategory(13, "whiteboard", "白板", "白板内容"),
-    VisualFeatureCategory(14, "sticky_note", "便利贴", "便签、便利贴"),
-    VisualFeatureCategory(15, "mobile_screen", "手机屏幕", "手机屏幕显示区域"),
-    VisualFeatureCategory(16, "monitor_screen", "电脑屏幕", "显示器屏幕区域"),
-    VisualFeatureCategory(17, "medical_wristband", "医用腕带", "医院腕带"),
-    VisualFeatureCategory(18, "qr_code", "二维码", "二维码"),
-    VisualFeatureCategory(19, "barcode", "条形码", "条形码"),
-    VisualFeatureCategory(20, "paper", "纸质文档", "纸张文档区域"),
-    VisualFeatureCategory(21, "signature", "签字", "手写签名、签字笔迹", "handwritten signature"),
+    VisualFeatureCategory(0, "face", "人脸", "人体面部区域", "human face"),                       # M
+    VisualFeatureCategory(1, "fingerprint", "指纹", "指纹、捺印区域", "red inked thumbprint mark"),  # M
+    VisualFeatureCategory(2, "palmprint", "掌纹", "掌纹区域", "inked palm print"),
+    VisualFeatureCategory(3, "id_card", "身份证", "居民身份证等证件", "ID card"),                    # M
+    VisualFeatureCategory(4, "hk_macau_permit", "港澳通行证", "往来港澳通行证等", "travel permit card"),
+    VisualFeatureCategory(5, "passport", "护照", "护照", "passport"),
+    VisualFeatureCategory(6, "employee_badge", "工作证", "员工证、工牌", "employee ID badge"),
+    VisualFeatureCategory(7, "license_plate", "车牌", "机动车号牌", "vehicle license plate"),
+    VisualFeatureCategory(8, "bank_card", "银行卡", "银行卡、信用卡", "bank card"),
+    VisualFeatureCategory(9, "physical_key", "钥匙", "实体钥匙", "metal key"),
+    VisualFeatureCategory(10, "receipt", "小票/收据", "购物小票、收据", "printed receipt"),
+    VisualFeatureCategory(11, "shipping_label", "快递面单", "快递/物流面单", "shipping label"),
+    VisualFeatureCategory(12, "official_seal", "公章", "公章、印章", "seal"),                        # M
+    VisualFeatureCategory(13, "whiteboard", "白板", "白板内容", "whiteboard"),
+    VisualFeatureCategory(14, "sticky_note", "便利贴", "便签、便利贴", "sticky note"),
+    VisualFeatureCategory(15, "mobile_screen", "手机屏幕", "手机屏幕显示区域", "phone screen"),
+    VisualFeatureCategory(16, "monitor_screen", "电脑屏幕", "显示器屏幕区域", "computer monitor"),
+    VisualFeatureCategory(17, "medical_wristband", "医用腕带", "医院腕带", "hospital wristband"),
+    VisualFeatureCategory(18, "qr_code", "二维码", "二维码", "QR code"),
+    VisualFeatureCategory(19, "barcode", "条形码", "条形码", "barcode"),
+    VisualFeatureCategory(20, "paper", "纸质文档", "纸张文档区域", "sheet of paper"),
+    VisualFeatureCategory(21, "signature", "签字", "手写签名、签字笔迹", "handwritten signature"),   # M
 )
 
 # The out-of-box grounding query per fixed category, DERIVED from the single

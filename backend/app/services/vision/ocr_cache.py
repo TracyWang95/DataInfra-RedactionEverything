@@ -144,7 +144,7 @@ def _clone_sensitive_region(region: SensitiveRegion) -> SensitiveRegion:
         top=int(region.top),
         width=int(region.width),
         height=int(region.height),
-        confidence=float(region.confidence),
+        confidence=float(region.confidence) if region.confidence is not None else 1.0,
         source=region.source,
         color=tuple(region.color),
     )

@@ -121,8 +121,6 @@ def _vision_signature(
         ),
         "visual_queries": _visual_query_fingerprint(visual_feature_types),
         "visual_flags": [
-            bool(getattr(settings, "VISUAL_TILE_RETRY", True)),
-            bool(getattr(settings, "VISUAL_FRAGMENT_SEAL", True)),
             int(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_SAMPLES", 1) or 1),
         ],
         # Detector-side knobs the backend cannot observe because they live in the

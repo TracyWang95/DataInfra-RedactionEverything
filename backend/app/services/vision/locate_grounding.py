@@ -34,25 +34,10 @@ from app.services.vision.locate_requests import (
     _checklist_prompt,
     _detect_requests,
 )
-from app.services.vision.la_consensus import consensus_boxes
-from app.services.vision.locate_tiles import (
-    _TILE_RETRY_BOTTOM_SLUGS,
-    _TILE_RETRY_GRID_SLUGS,
-    _TILE_RETRY_MARGIN_SLUGS,
-    _axis_positions,  # noqa: F401  # re-exported for API stability
-    _bottom_tiles,
-    _fragment_seal_tiles,
-    _grid_tiles,
-    _ink_centered_tiles,
-    _margin_tiles,
-)
 from app.services.vision.machine_code_detector import (
     BARCODE_SLUG,
     QR_CODE_SLUG,
     detect_machine_code_regions,
-)
-from app.services.vision.seal_color_cascade import (
-    raw_colored_component_bboxes,
 )
 
 logger = logging.getLogger(__name__)
@@ -169,8 +154,8 @@ class LocateAnythingGroundingService:
             logger.info("LocateAnything visual category stage skipped: no visual categories")
             return [], timings.as_dict()
         # The user's grounding query per fixed slug, so every supplement pass
-        # (tile retry, edge refine, signature) sends the same wording the main
-        # detect sent — the 清单 owns the wording end to end.
+        # (the LA signature-only pass, the verify re-ground) sends the same
+        # wording the main detect sent — the 清单 owns the wording end to end.
         slug_set = set(model_slugs)
         query_by_slug = {rtype: tag for tag, rtype, _text in requests if rtype in slug_set}
         # The checked wording per requested type (preset OR user-custom), carried
@@ -191,85 +176,24 @@ class LocateAnythingGroundingService:
             if has_image_url and model_slugs
             else None
         )
-        # Fragment (骑缝) seal recovery: square, native-resolution tiles along
-        # all four margins. Recovers partial binding-seal arcs the full frame
-        # loses to downscaling — including on a greyscale/B&W scan, where there
-        # is no red ink to fall back on and the ONLY signal is the stamp's shape,
-        # which the model reads once the crop is native-res and square (measured
-        # on the xinchuang binding-seal pages, colour AND greyscale). Always on
-        # when a seal is requested — a binding seal is missed at full frame
-        # whether or not other seals were found, so it cannot be gated on a
-        # zero-recall miss like the ordinary tile retry. The native-res crop is
-        # grounded with the SAME checked wording as everything else — 公章 by
-        # default (Chinese localises the stamp on a small crop where the old
-        # English "seal" returned 0; that English→中文 swap is gone now that the
-        # default query is Chinese).
-        fragment_queries = dict(query_by_slug)
-        fragment_on = (
-            bool(getattr(settings, "VISUAL_FRAGMENT_SEAL", True))
-            and model_slugs
-            and "official_seal" in model_slugs
-        )
-        # Coloured-ink evidence, computed once: it PLACES tiles (a tile centred
-        # on the ink reads the stamp far more reliably than a blind grid tile it
-        # sits off-centre in) and, in the merge below, GATES them (a fragment box
-        # with no colour is edge text). A B&W scan yields none — the blind grid
-        # then stands on its own.
-        fragment_components: list[tuple[float, float, float, float]] = []
-        if fragment_on:
-            try:
-                fragment_components = raw_colored_component_bboxes(image_data)
-            except Exception:
-                fragment_components = []
-        fragment_task = (
-            asyncio.create_task(self._detect_on_tiles(
-                image_data,
-                page,
-                ["official_seal"],
-                tiles_for=lambda _slug, w, h: _fragment_seal_tiles(w, h)
-                + _ink_centered_tiles(w, h, fragment_components),
-                source_detail="locate_anything:fragment_seal",
-                queries=fragment_queries,
-                native_resolution=True,
-                max_concurrency=int(getattr(settings, "VISUAL_FRAGMENT_SEAL_CONCURRENCY", 4)),
-            ))
-            if fragment_on
-            else None
-        )
         # Exception safety on every exit path: if code between here and the
         # consuming await raises, the prefired task would hold a never-retrieved
         # exception. The callback retrieves it immediately on completion, so no
         # orphan noise and no dangling error regardless of how we exit.
-        for prefired in (has_task, fragment_task):
+        for prefired in (has_task,):
             if prefired is not None:
                 prefired.add_done_callback(
                     lambda t: t.exception() if not t.cancelled() else None
                 )
 
-        # P1 speculative tile fire: a tile-retriable slug whose OWN main
-        # detect came back empty starts its tile pass immediately (the
-        # earliest possible signal) instead of waiting for the strictly
-        # serial retry stage — 11-17 tiles over 2 GPU slots used to run as a
-        # tail. The DECISION to keep tile boxes is unchanged: the retry
-        # section below still recomputes retry_slugs against the FINAL merged
-        # boxes and awaits (or discards) these tasks — output is identical,
-        # only the wall-clock overlaps. Gated on the same VISUAL_TILE_RETRY
-        # flag as the consumer (kill switch works in both places).
-        tile_retry_enabled = bool(getattr(settings, "VISUAL_TILE_RETRY", True))
-        _retriable = _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
-        spec_tile_tasks: dict[str, asyncio.Task] = {}
-
-        async def _detect_one(tag: str, rtype: str) -> list[dict[str, Any]]:
-            res = await self._post_detect(image_data, [tag])
-            if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
-                spec_task = asyncio.create_task(
-                    self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
-                )
-                spec_task.add_done_callback(
-                    lambda t: t.exception() if not t.cancelled() else None
-                )
-                spec_tile_tasks[rtype] = spec_task
-            return res
+        # LA outputs DIRECTLY — one grounding call per category, no tile passes.
+        # 公章 goes to PaddleOCR-VL (primary) + YOLO; qr_code/barcode go to the
+        # YOLO machine-code detector; fingerprint/signature to their YOLO/DETR
+        # detectors. The old zero-recall tile retry probed margin/bottom crops
+        # for seals and codes those detectors now cover — measured 0 recall gain
+        # across the whole seal corpus at 3-5x the latency, so it is gone.
+        async def _detect_one(tag: str) -> list[dict[str, Any]]:
+            return await self._post_detect(image_data, [tag])
 
         model_start = time.perf_counter()
         if bool(getattr(settings, "VISUAL_DETECT_BATCH_CATEGORIES", False)) and len(requests) > 1:
@@ -290,7 +214,7 @@ class LocateAnythingGroundingService:
                 batch_raw = None
             if batch_raw is None:
                 results = await asyncio.gather(
-                    *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
+                    *[_detect_one(tag) for tag, _rtype, _text in requests],
                     return_exceptions=True,
                 )
             else:
@@ -305,19 +229,9 @@ class LocateAnythingGroundingService:
                         continue
                     per_request[index].append(raw)
                 results = per_request
-                # speculative tiles for empty retriable slugs (same as _detect_one)
-                for _tag, rtype, _t in requests:
-                    if tile_retry_enabled and rtype in _retriable and rtype not in spec_tile_tasks:
-                        spec_task = asyncio.create_task(
-                            self._detect_on_tiles(image_data, page, [rtype], queries=query_by_slug)
-                        )
-                        spec_task.add_done_callback(
-                            lambda t: t.exception() if not t.cancelled() else None
-                        )
-                        spec_tile_tasks[rtype] = spec_task
         else:
             results = await asyncio.gather(
-                *[_detect_one(tag, rtype) for tag, rtype, _text in requests],
+                *[_detect_one(tag) for tag, _rtype, _text in requests],
                 return_exceptions=True,
             )
         timings.model = _elapsed_ms(model_start)
@@ -392,127 +306,6 @@ class LocateAnythingGroundingService:
                 _elapsed_ms(la_start),
             )
 
-
-        # Tile pass runs for EVERY requested retriable slug, not only 0-box
-        # ones: the old miss-rescue gate lost partial-recall pages — 立案告知书
-        # 实证: full-frame found 1 of 3 signatures, so the gate skipped tiles
-        # even though the grid tiles find all 3. A page carries no prior on
-        # its instance count; the only non-magic dedup is geometric — a tile
-        # box overlapping a same-type full-frame box is the zoom re-stating
-        # the page-scale call (dropped by _filter_tile_candidates), a
-        # non-overlapping one is a NEW instance the full frame missed.
-        retry_slugs = [
-            slug
-            for slug in (model_slugs or [])
-            if slug in _TILE_RETRY_MARGIN_SLUGS | _TILE_RETRY_BOTTOM_SLUGS | _TILE_RETRY_GRID_SLUGS
-        ]
-        if retry_slugs and not tile_retry_enabled:
-            # Kill switch: the flag gates BOTH the speculative fire above and
-            # this consumer — with it off, zero tile passes run anywhere.
-            retry_slugs = []
-        if retry_slugs:
-            retry_start = time.perf_counter()
-            tile_boxes = []
-            live_slugs = []
-            for slug in retry_slugs:
-                spec = spec_tile_tasks.get(slug)
-                if spec is not None:
-                    try:
-                        tile_boxes.extend(await spec)
-                    except Exception as exc:
-                        logger.warning("speculative tile retry %s failed: %s", slug, exc)
-                else:
-                    live_slugs.append(slug)
-            if live_slugs:
-                # a slug whose main detect had raw boxes that all got dropped
-                # later (clamp/physical gates) never fired a spec — run it now
-                tile_boxes.extend(
-                    await self._detect_on_tiles(image_data, page, live_slugs, queries=query_by_slug)
-                )
-            # Grid-retry marks (signature/fingerprint) recover STOCHASTICALLY — one
-            # sample of the tiles finds 陈勇, the next 周X, rarely both in the same
-            # pass. A missed real signature is a LEAK, so when the first pass proves
-            # the page HAS such a mark, union a few more samples: any mark ANY sample
-            # sees survives (consensus_boxes min_votes=1 = union). Gated on the first
-            # hit so the common signature-free page pays nothing extra. More over-mask
-            # false marks on the same tiles is the price of stable recall.
-            grid_retry = [s for s in retry_slugs if s in _TILE_RETRY_GRID_SLUGS]
-            samples = max(1, int(getattr(settings, "VISUAL_GRID_RETRY_SAMPLES", 1)))
-            grid_hits = [b for b in tile_boxes if b.type in grid_retry]
-            if grid_retry and samples > 1 and grid_hits:
-                extra = await asyncio.gather(
-                    *[
-                        self._detect_on_tiles(image_data, page, grid_retry, queries=query_by_slug)
-                        for _ in range(samples - 1)
-                    ],
-                    return_exceptions=True,
-                )
-                runs = [grid_hits] + [r for r in extra if not isinstance(r, BaseException)]
-                non_grid = [b for b in tile_boxes if b.type not in grid_retry]
-                tile_boxes = non_grid + consensus_boxes(
-                    runs,
-                    min_votes=1,
-                    iou_thresh=float(getattr(settings, "LOCATE_ANYTHING_CONSENSUS_IOU", 0.5)),
-                )
-            tile_boxes = self._filter_tile_candidates(tile_boxes, boxes)
-            tile_boxes = self._verify_machine_code_tile_boxes(tile_boxes, image_data)
-            boxes.extend(tile_boxes)
-            logger.info(
-                "LocateAnything tile retry for %s kept %d box(es) in %dms",
-                retry_slugs,
-                len(tile_boxes),
-                _elapsed_ms(retry_start),
-            )
-
-        leftover_specs = [
-            t for slug, t in spec_tile_tasks.items() if slug not in retry_slugs
-        ]
-        if leftover_specs:
-            # A supplement (YOLO/refine/cascade) filled these types after the
-            # spec fired: await the tasks to completion and DISCARD the boxes
-            # — exactly today's semantics (tile boxes never join when the type
-            # already has one). Never cancel: the HTTP is in flight and the
-            # done-callback already consumes any exception.
-            await asyncio.gather(*leftover_specs, return_exceptions=True)
-
-        if fragment_task is not None:
-            try:
-                fragment_boxes = await fragment_task
-            except Exception as exc:
-                logger.warning("fragment seal recovery failed: %s", exc)
-                fragment_boxes = []
-            # A margin QR/barcode the model read as a seal is already covered by
-            # its own detection — drop a fragment seal box overlapping a machine
-            # code (same cross-detector arbitration as the edge refine). The rest
-            # are recovered binding-seal arcs; downstream dedup (_deduplicate_boxes,
-            # _prefer_vl_seals) folds each into an overlapping full-frame/YOLO seal
-            # or keeps it as a seal the full frame missed entirely.
-            code_boxes = [b for b in boxes if b.type in ("qr_code", "barcode")]
-
-            def _hits_code(fb: BoundingBox) -> bool:
-                return any(
-                    fb.x < c.x + c.width and c.x < fb.x + fb.width
-                    and fb.y < c.y + c.height and c.y < fb.y + fb.height
-                    for c in code_boxes
-                )
-
-            # Same gap-fill arbitration as the ordinary tile retry: a fragment
-            # box intersecting an already-found box of the SAME type is the zoom
-            # re-describing a seal the full frame already has (drop); one at a
-            # new position is a binding seal the full frame missed (keep).
-            # Precision is no longer a per-source pixel gate here. The fragment
-            # pass stays a broad RECALL net (a native-res crop reads a binding
-            # arc a full frame loses); every fragment box — like every other
-            # grounding box — is proven or dropped by the single model-centric
-            # re-ground below. Chroma gate, cluster-grow and skin/fill gates are
-            # gone: they each covered one look-alike and none the rest.
-            kept = self._filter_tile_candidates(
-                [fb for fb in fragment_boxes if not _hits_code(fb)], boxes
-            )
-            boxes.extend(kept)
-            if kept:
-                logger.info("fragment seal recovery added %d box(es)", len(kept))
-
         # Model-centric verification: re-ground each grounding box's own checked
         # wording on its tight crop; keep iff the model still finds it, drop the
         # context artifacts (finger→seal, underline→fingerprint, watermark→edge
@@ -521,32 +314,6 @@ class LocateAnythingGroundingService:
         timings.total = _elapsed_ms(total_start)
         logger.info("LocateAnything fixed visual stage parsed %d boxes", len(boxes))
         return boxes, timings.as_dict()
-
-    @staticmethod
-    def _filter_tile_candidates(
-        tile_boxes: list[BoundingBox],
-        existing: list[BoundingBox],
-    ) -> list[BoundingBox]:
-        """Gap-filling only, scoped to the SAME type: a tile hit touching a
-        full-frame box of the same type is the zoom second-guessing the
-        page-scale call - discard it. A tile hit overlapping a box of a
-        DIFFERENT type is a different entity sharing pixels (a thumbprint
-        pressed onto a handwritten name, 0710 农业合同实证) and must be kept;
-        type equality is a string identity, so custom types participate with
-        no enumeration.
-        """
-        return [
-            t
-            for t in tile_boxes
-            if not any(
-                b.type == t.type
-                and t.x < b.x + b.width
-                and b.x < t.x + t.width
-                and t.y < b.y + b.height
-                and b.y < t.y + t.height
-                for b in existing
-            )
-        ]
 
     async def _verify_grounded_candidates(
         self,
@@ -558,22 +325,20 @@ class LocateAnythingGroundingService:
 
         Every look-alike the old pixel gates chased — a page-holding finger read
         as a seal, a red underline read as a fingerprint, a camera/APP watermark
-        read as an edge seal — is ONE failure: a tile/grid/fragment pass forced
-        the grounding model to localise its target inside a context-rich margin
-        crop, and the model, obliged to point somewhere, boxed the most salient
-        thing. The separator is physical and it is the model's own: re-ground the
-        box's OWN claimed type on JUST its tight crop, context stripped. A real
-        seal/print/signature still reads as itself (the fragment pass FOUND it on
-        a crop this size, so the re-ground is idempotent); a finger/underline/
-        watermark had no stamp there at all and returns nothing once its borrowed
-        tile context is gone. This is EXISTENCE, not a confidence score — real
-        signatures re-ground at 0.16; a threshold would erase them, their
-        existence would not. It generalises to every type with zero per-type
-        pixel rules, and it replaces the whole gate pile (skin-hue, fill, chroma,
-        ink-snap, cluster-grow) that each covered one look-alike and none the
-        rest. Only grounding-sourced boxes pass through here; the YOLO detector is
-        a separate trained model, precise on its own. Any decode/HTTP failure fails
-        OPEN (keep the box) — a missed redaction outranks a false one.
+        read as an edge seal — is ONE failure: the grounding model localised its
+        target inside a context-rich crop and, obliged to point somewhere, boxed
+        the most salient thing. The separator is physical and it is the model's
+        own: re-ground the box's OWN claimed type on JUST its tight crop, context
+        stripped. A real seal/print/signature still reads as itself (the re-ground
+        is idempotent); a finger/underline/watermark had no stamp there at all and
+        returns nothing once its borrowed context is gone. This is EXISTENCE, not
+        a confidence score — real signatures re-ground at 0.16; a threshold would
+        erase them, their existence would not. It generalises to every type with
+        zero per-type pixel rules, and it replaces the whole gate pile (skin-hue,
+        fill, chroma, ink-snap, cluster-grow) that each covered one look-alike and
+        none the rest. Only grounding-sourced boxes pass through here; the YOLO
+        detector is a separate trained model, precise on its own. Any decode/HTTP
+        failure fails OPEN (keep the box) — a missed redaction outranks a false one.
 
         Signatures are NOT verified: re-grounding a real handwritten name on its
         own tight crop is unreliable — measured on 保姆, the 甲方/乙方 names return
@@ -585,7 +350,7 @@ class LocateAnythingGroundingService:
         Fingerprints ARE verified (precision-first policy, 容许找不到但不要高FP):
         the pixel skin gate is gone, so re-grounding each print's own tight crop
         is the model-centric filter that prunes context-artifact false prints
-        (a red underline / seal edge the grid boxed as 指纹). A real ink print
+        (a red underline / seal edge the model boxed as 指纹). A real ink print
         re-grounds on its crop; the residual page-holding-finger FP is the one
         the model cannot separate by texture and is left to a dedicated detector.
         """
@@ -655,60 +420,6 @@ class LocateAnythingGroundingService:
             )
             return [b for b in boxes if b.id not in drop_ids]
         return boxes
-
-    def _verify_machine_code_tile_boxes(
-        self,
-        tile_boxes: list[BoundingBox],
-        image_data: bytes,
-    ) -> list[BoundingBox]:
-        """Machine-code existence identity for tile-retry candidates.
-
-        A QR code / barcode IS machine-decodable by definition. A tile crop
-        loses page context and makes the grounding model hallucinate codes out
-        of watermark logos and film texture (0712 医院CT报告单: a bottom tile
-        returned the NetEase watermark logo as qr_code, and another returned
-        itself as one giant code). So a tile-retry candidate of a machine-code
-        type is kept only where the deterministic decoder proves a code exists:
-        it must intersect a decoded region (payload decoded = existence
-        proven, box exact). An undecodable "code" carries no extractable
-        payload, so dropping it cannot leak information — the failure
-        direction is safe by the definition of the object itself. Non-code
-        types pass through untouched; the full-frame detect and the YOLO
-        supplement are not gated (this identity check covers only the
-        context-starved tile path). Decoder breakage fails OPEN (keep the
-        candidates): over-mask, never silently un-cover.
-        """
-        code_types = {QR_CODE_SLUG, BARCODE_SLUG}
-        if not any(t.type in code_types for t in tile_boxes):
-            return tile_boxes
-        try:
-            with Image.open(io.BytesIO(image_data)) as img:
-                decoded = detect_machine_code_regions(img)
-        except Exception:
-            logger.warning(
-                "machine-code identity check unavailable; keeping tile candidates",
-                exc_info=True,
-            )
-            return tile_boxes
-        kept: list[BoundingBox] = []
-        dropped = 0
-        for t in tile_boxes:
-            if t.type in code_types and not any(
-                t.x < r.x + r.width
-                and r.x < t.x + t.width
-                and t.y < r.y + r.height
-                and r.y < t.y + t.height
-                for r in decoded
-            ):
-                dropped += 1
-                continue
-            kept.append(t)
-        if dropped:
-            logger.info(
-                "Machine-code identity dropped %d tile-retry candidate(s) with no decodable code",
-                dropped,
-            )
-        return kept
 
     async def _detect_has_image(
         self,
@@ -874,143 +585,6 @@ class LocateAnythingGroundingService:
                         confidence=_measured_confidence(raw.get("confidence")),
                         source="visual_features",
                         source_detail="locate_anything:handwriting_grounding",
-                        evidence_source="visual_feature_model",
-                    )
-                )
-        return boxes
-
-
-    async def _detect_on_tiles(
-        self,
-        image_data: bytes,
-        page: int,
-        slugs: list[str],
-        tiles_for=None,
-        source_detail: str = "locate_anything:tile_retry",
-        queries: dict[str, str] | None = None,
-        native_resolution: bool = False,
-        max_concurrency: int | None = None,
-    ) -> list[BoundingBox]:
-        """Re-run categories on native-resolution tiles.
-
-        Default tiling: margin strips for binding seals, a bottom row for
-        watermark QR codes; callers may pass ``tiles_for(slug, w, h)`` for a
-        custom tile set (edge-seal refine). Hits are mapped back to
-        page-normalized coordinates; duplicates from overlapping tiles
-        collapse in the merge layer (seal hull merge / IoU dedup).
-        """
-        try:
-            image = ImageOps.exif_transpose(Image.open(io.BytesIO(image_data))).convert("RGB")
-        except Exception:
-            logger.warning("tile retry: could not decode page image", exc_info=True)
-            return []
-        width, height = image.size
-        if width < 2 or height < 2:
-            return []
-        tasks = []
-        metas = []
-        for slug in slugs:
-            if tiles_for is not None:
-                tiles = tiles_for(slug, width, height)
-            else:
-                if slug in _TILE_RETRY_MARGIN_SLUGS:
-                    tiles = _margin_tiles(width, height)
-                elif slug in _TILE_RETRY_GRID_SLUGS:
-                    tiles = _grid_tiles(width, height)
-                else:
-                    tiles = _bottom_tiles(width, height)
-            for x0, y0, x1, y1 in tiles:
-                encoded = io.BytesIO()
-                image.crop((x0, y0, x1, y1)).save(encoded, format="JPEG", quality=_JPEG_QUALITY)
-                # Same wording as the full-frame pass — the 清单 owns it.
-                side = max(x1 - x0, y1 - y0) if native_resolution else None
-                tasks.append(self._post_detect(encoded.getvalue(), [(queries or {}).get(slug, slug)], side))
-                metas.append((slug, x0, y0, x1 - x0, y1 - y0))
-        # The fragment pass fires ~20 tiles; firing them all at once spikes the
-        # shared LA card's vision-encode buffers into CUDA-capacity 503s (every
-        # tile then fails and the pass returns nothing). Bound the in-flight
-        # count so the two cards drain the queue steadily — a resource limit, not
-        # a detection knob.
-        if max_concurrency is None:
-            # Default bound so a tile burst never floods the shared LA card. A grid
-            # union (fingerprint = 2 phrases × 4 tiles) or a fragment sweep (~20
-            # tiles) fired all at once spikes the decoder queue into 503s; letting
-            # the two GPUs drain a bounded queue keeps every tile call served.
-            max_concurrency = int(getattr(settings, "VISUAL_TILE_CONCURRENCY", 4))
-        if max_concurrency and max_concurrency > 0:
-            sem = asyncio.Semaphore(max_concurrency)
-
-            async def _bounded(coro):
-                async with sem:
-                    return await coro
-
-            tasks = [_bounded(t) for t in tasks]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        boxes: list[BoundingBox] = []
-        for (slug, x0, y0, tile_w, tile_h), result in zip(metas, results, strict=False):
-            if isinstance(result, BaseException):
-                logger.warning("tile retry %s failed on one tile: %s", slug, result)
-                continue
-            for raw in result:
-                # Tag-by-request, no echo filtering: this tile carried exactly
-                # ONE query (the checklist wording for `slug`), so every box in
-                # the response belongs to that slug by construction. The old
-                # echo check compared the server-normalized QUERY WORDING with
-                # the slug — a tautology while query==slug, but the moment the
-                # checklist wording diverged ("handwritten name signature" for
-                # signature, "red inked thumbprint mark" for fingerprint) it
-                # silently swallowed EVERY tile box of those types (contract 19
-                # 实证: both grid tiles hit a signature each, pipeline kept 0;
-                # the historical "fingerprint,qr_code kept 0/6" waste was this
-                # bug, not model misses).
-                try:
-                    normalized = _clamp_box(
-                        float(raw.get("x") or 0),
-                        float(raw.get("y") or 0),
-                        float(raw.get("width") or 0),
-                        float(raw.get("height") or 0),
-                    )
-                except (TypeError, ValueError):
-                    normalized = None
-                if normalized is None:
-                    continue
-                tile_x, tile_y, tile_box_w, tile_box_h = normalized
-                # A box touching all four tile edges is LocateAnything failing to
-                # localise inside the crop: it saw "seal-like stuff" and returned
-                # the whole tile (a text-only margin crop comes back exactly this
-                # way). A real stamp is interior. One tile pixel is the tolerance
-                # — a physical unit, not a tuned score. Only the native-resolution
-                # fragment pass produces (and must reject) these.
-                if native_resolution:
-                    ex, ey = 1.0 / max(1, tile_w), 1.0 / max(1, tile_h)
-                    if (
-                        tile_x <= ex and tile_y <= ey
-                        and tile_x + tile_box_w >= 1.0 - ex
-                        and tile_y + tile_box_h >= 1.0 - ey
-                    ):
-                        continue
-                mapped = _clamp_box(
-                    (x0 + tile_x * tile_w) / width,
-                    (y0 + tile_y * tile_h) / height,
-                    tile_box_w * tile_w / width,
-                    tile_box_h * tile_h / height,
-                )
-                if mapped is None:
-                    continue
-                x, y, box_w, box_h = mapped
-                boxes.append(
-                    BoundingBox(
-                        id=f"locate_tile_{uuid.uuid4().hex[:8]}",
-                        x=x,
-                        y=y,
-                        width=box_w,
-                        height=box_h,
-                        type=slug,
-                        text=SLUG_TO_NAME_ZH.get(slug, slug),
-                        page=page,
-                        confidence=_measured_confidence(raw.get("confidence")),
-                        source="visual_features",
-                        source_detail=source_detail,
                         evidence_source="visual_feature_model",
                     )
                 )

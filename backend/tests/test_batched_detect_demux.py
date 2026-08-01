@@ -27,7 +27,6 @@ def svc(monkeypatch):
     service = LocateAnythingGroundingService()
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.HAS_IMAGE_URL", "", raising=False)
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.LA_SIGNATURE_URL", "", raising=False)
-    monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_TILE_RETRY", False, raising=False)
     monkeypatch.setattr("app.services.vision.locate_grounding.settings.VISUAL_DETECT_BATCH_CATEGORIES", True, raising=False)
     async def _verify_noop(self, boxes, image_data, reground_queries):
         return boxes

@@ -22,6 +22,7 @@ from app.services.ocr_has_vision_service import OCRTextBlock, SensitiveRegion
 from app.services.vision.has_text_payload import (
     _canonical_image_text_type,
     _compact_text,
+    _strip_vl_math_markup,
 )
 from app.services.vision.locate_tiles import _axis_positions
 from app.services.vision.ocr_block_merge import (
@@ -62,6 +63,151 @@ _OCR_SEAL_TEXT = "[公章]"
 
 def _is_seal_ocr_item(label: object, text: object) -> bool:
     return str(label or "") == _OCR_SEAL_LABEL or str(text or "").strip() == _OCR_SEAL_TEXT
+
+
+def _recover_under_seal_vl_text(vl_blocks, structure_blocks, seal_regions):
+    """Recover the VL text a stamp sits on — exactly where PP-Structure breaks.
+
+    A 乙方 red seal stamped across 海南工程服务有限公司 makes PP-StructureV3 shatter that
+    line into stray fragments its NER can't type (or garble it), while PaddleOCR-VL's
+    parsing reads the whole line. We normally DISCARD all VL text (merging it wholesale
+    re-broke geometry — the 身份证 two-column giant box, the 日期 block that swallowed a
+    signature). Recover a VL block ONLY when it overlaps a detected seal region: that
+    confines the gain to stamp-obscured text and can never touch the non-seal regions
+    where merging VL text did the damage (those blocks intersect no seal). We ADD the
+    block (never overwrite a PP block's char boxes, so no giant-box regression); a
+    charless VL block masks whole, which under a stamp is exactly right. Plain rectangle
+    intersection — no threshold, no magic number.
+
+    One exclusion: a stamp sitting only at a line's RIGHT edge does not shatter it — PP
+    still reads the whole printed line as ONE char-boxed block (甲方：中海油…有限公司).
+    Adding a charless VL duplicate on top then re-boxes the 甲方：field label whole,
+    because a charless block masks its entire width. So skip recovery where a single
+    char-boxed structure block solely covers the VL line (the same mutual-single overlap
+    _vl_correct_charless_blocks uses): PP's real glyph geometry already crops that line
+    to its value. A line a stamp TRULY shatters leaves multiple fragments or a charless
+    block — never one covering char-boxed block — so genuine recovery is untouched.
+    """
+    if not vl_blocks or not seal_regions:
+        return []
+
+    def _intersects(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    seal_rects = [(r.left, r.top, r.left + r.width, r.top + r.height) for r in seal_regions]
+    charboxed = [b for b in structure_blocks if getattr(b, "chars", None)]
+    out = []
+    for blk in vl_blocks:
+        if not any(_intersects(blk.bbox, s) for s in seal_rects):
+            continue
+        covering = [p for p in charboxed if _intersects(blk.bbox, p.bbox)]
+        if len(covering) == 1 and sum(
+            1 for v in vl_blocks if _intersects(covering[0].bbox, v.bbox)
+        ) == 1:
+            continue
+        out.append(blk)
+    return out
+
+
+def _recover_pp_missed_vl_text(vl_blocks, structure_blocks):
+    """Recover a line PP-Structure missed ENTIRELY, that a VL paragraph carries.
+
+    On the PP-primary path VL text is discarded, but PP-OCRv6 sometimes drops a faint
+    line outright — the 法定代理人 line '…龙继临，男，1987年8月6日出生…' with its name and
+    birthdate — while PaddleOCR-VL parses the whole paragraph. VL hands over only a
+    charless paragraph rectangle (no per-line boxes), so the missed line's text and
+    place are found by SUBTRACTION from the two engines' own output:
+
+      • the PP lines OF THIS paragraph are the structure blocks whose y-CENTRE lies in
+        the VL band and whose text is a substring of the VL text (the centre test
+        rejects a same-text line from another paragraph and a short coincidence '号。');
+      • the VL text they cover is the paragraph MINUS the missed line, so each remaining
+        run is a line PP dropped, placed in the strip above/between/below.
+
+    Two guards: strip VL's LaTeX form-fill markup ('$\\underline{\\text{河南新乡市}}$') so
+    the run matches the markup-free entity; drop a run whose band is far shorter than the
+    paragraph's line height (a handwritten FILL between two same-line labels, not a line).
+    The emitted block is flagged recovered=True — additive, never overwrites a PP char box,
+    and excluded downstream from the amount digit-propagation (an area '100' is not money).
+    """
+    if not vl_blocks or not structure_blocks:
+        return []
+
+    def _x_overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2]
+
+    missed: list[tuple[str, int, int, int, int, float]] = []
+    for vl in vl_blocks:
+        vt = str(getattr(vl, "text", "") or "")
+        if not vt or getattr(vl, "chars", None):
+            continue
+        vx1, vy1, vx2, vy2 = vl.bbox
+        covered = []
+        for s in structure_blocks:
+            st = str(getattr(s, "text", "") or "").strip()
+            scy = (s.bbox[1] + s.bbox[3]) / 2
+            if st and vy1 <= scy <= vy2 and _x_overlap(vl.bbox, s.bbox) and st in vt:
+                pos = vt.find(st)
+                covered.append((pos, pos + len(st), s))
+        if not covered:
+            continue
+        covered.sort()
+        heights = sorted(c[2].bbox[3] - c[2].bbox[1] for c in covered)
+        row = heights[len(heights) // 2]
+        cursor = 0
+        for i, (cs, ce, blk) in enumerate(covered):
+            if cs > cursor:
+                top = covered[i - 1][2].bbox[3] if i > 0 else vy1
+                missed.append((vt[cursor:cs], vx1, top, vx2, blk.bbox[1], row))
+            cursor = max(cursor, ce)
+        if cursor < len(vt):
+            missed.append((vt[cursor:], vx1, covered[-1][2].bbox[3], vx2, vy2, row))
+
+    out = []
+    for run, x1, top, x2, bot, row in missed:
+        run = _strip_vl_math_markup(run).strip()
+        if run and (bot - top) >= row * 0.5:
+            out.append(OCRTextBlock(
+                text=run, polygon=[[x1, top], [x2, top], [x2, bot], [x1, bot]], recovered=True
+            ))
+    return out
+
+
+def _vl_correct_charless_blocks(structure_blocks, vl_blocks):
+    """Let PaddleOCR-VL correct the text of a hard line PP-OCRv6 garbled.
+
+    PP-OCRv6_medium sometimes misreads a clean printed line and returns it CHARLESS
+    (no per-char boxes — it could not confidently segment it): the 签字上方 date
+    2016年12月20号 came back as "201010". VL's parsing reads such lines correctly. Where
+    a charless PP block has exactly ONE PaddleOCR-VL counterpart covering the same
+    region (mutual sole overlap) and VL read DIFFERENT text, adopt VL's read. Two hard
+    guards keep this from reviving old damage: (1) charless-only — a block WITH char
+    boxes is a confident line whose text↔charbox geometry must stay coherent, and
+    rewriting it is exactly what exploded the 身份证 two-column block into a giant box;
+    (2) 1:1 — VL blocks that merge several PP lines are skipped, so no cross-line
+    smear. Text only; PP keeps its geometry. Parameter-free — rectangle overlap +
+    mutual-single, no threshold, no magic number.
+    """
+    if not vl_blocks:
+        return structure_blocks
+
+    def _intersects(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    from dataclasses import replace
+    out = []
+    for pp in structure_blocks:
+        if not getattr(pp, "chars", None):
+            overlapping_vl = [v for v in vl_blocks if _intersects(pp.bbox, v.bbox)]
+            if len(overlapping_vl) == 1:
+                v = overlapping_vl[0]
+                if sum(1 for p2 in structure_blocks if _intersects(v.bbox, p2.bbox)) == 1:
+                    vt = str(getattr(v, "text", "") or "").strip()
+                    if vt and vt != str(getattr(pp, "text", "") or "").strip():
+                        out.append(replace(pp, text=vt))
+                        continue
+        out.append(pp)
+    return out
 
 
 def run_paddle_ocr(
@@ -189,44 +335,79 @@ def run_paddle_ocr(
             return primary_structure_blocks, primary_structure_visual_regions
         if len(primary_structure_blocks) >= min_blocks:
             if needs_text_precision and bool(settings.OCR_STRUCTURE_PRIMARY_SUPPLEMENT_VL) and not vl_disabled:
-                # PP-StructureV3 stays the primary block set. PaddleOCR-VL only
-                # supplements: VL full-page blocks merge in through the existing
-                # whole-block IoU contract (_merge_ocr_blocks), so structure
-                # blocks win on overlap and VL adds what structure missed
-                # (e.g. text crushed under a red seal).
-                vl_blocks, vl_visual_regions = _supplement_vl_blocks()
-                merged_blocks = _merge_ocr_blocks(
-                    primary_structure_blocks, vl_blocks, prefer_extra_text=True
+                # VL is SEAL-ONLY: PP-StructureV3 owns ALL text; PaddleOCR-VL runs
+                # only for its visual regions (seals) and its coarse text blocks are
+                # DISCARDED. Merging VL text (overwrite OR add) is what broke the
+                # pipeline the moment VL was enabled — the 身份证 two-column giant
+                # box, a bordered 日期 cell boxed whole so the real signature folded
+                # into it and vanished, spurious extra entities. A/B (VL on vs off,
+                # real docs) proved VL's text supplement recovered nothing it claimed
+                # (under-seal 公司名 stayed missed either way) while systematically
+                # polluting geometry + NER. char-box attach still recovers
+                # PP-Structure's OWN charless lines.
+                _vl_blocks, vl_visual_regions = _supplement_vl_blocks()
+                primary_structure_blocks = _vl_correct_charless_blocks(
+                    primary_structure_blocks, _vl_blocks
                 )
-                merged_blocks = _attach_chars_to_charless_blocks(merged_blocks, image, ocr_service)
+                merged_blocks = _attach_chars_to_charless_blocks(
+                    list(primary_structure_blocks), image, ocr_service
+                )
+                # Recovered under-seal VL blocks are charless — re-OCR them for per-char
+                # boxes too, so an entity on them (甲方：中海油…) crops to the value's
+                # glyphs instead of the whole block (which would box the 甲方： label).
+                merged_blocks += _attach_chars_to_charless_blocks(
+                    _recover_under_seal_vl_text(_vl_blocks, merged_blocks, vl_visual_regions),
+                    image,
+                    ocr_service,
+                )
+                # Also recover a line PP-Structure missed ENTIRELY that a VL paragraph
+                # carries (the faint 法定代理人 line's name+birthdate). Flagged recovered=True
+                # so the amount digit-propagation skips it (a re-derived area line isn't money).
+                merged_blocks += _attach_chars_to_charless_blocks(
+                    _recover_pp_missed_vl_text(_vl_blocks, primary_structure_blocks),
+                    image,
+                    ocr_service,
+                )
                 logger.info(
-                    "PP-StructureV3 primary OCR kept %d blocks; PaddleOCR-VL supplement merged %d VL blocks (%d -> %d)",
+                    "PP-StructureV3 primary OCR: %d blocks (VL text discarded — seal-only)",
                     len(primary_structure_blocks),
-                    len(vl_blocks),
-                    len(primary_structure_blocks),
-                    len(merged_blocks),
                 )
                 return merged_blocks, [*primary_structure_visual_regions, *vl_visual_regions]
             if needs_ocr_visual_regions and not primary_structure_visual_regions and not vl_disabled:
-                # PP-StructureV3 produced no visual regions, so PaddleOCR-VL
-                # still runs to provide them — but the text-block set stays
-                # structure-primary, same merge direction as the supplement
-                # branch above. VL's generative whole-line blocks carry no
-                # char boxes; letting them displace per-line structure blocks
-                # masks label and value together as one full line.
-                vl_blocks, vl_visual_regions = _supplement_vl_blocks()
-                merged_blocks = _merge_ocr_blocks(
-                    primary_structure_blocks, vl_blocks, prefer_extra_text=True
+                # VL SEAL-ONLY (see rationale above): PP-StructureV3 produced no
+                # visual regions, so PaddleOCR-VL runs ONLY to supply the seal
+                # regions it missed. Its coarse text blocks are DISCARDED — merging
+                # them polluted the text pipeline for a supplement A/B proved
+                # worthless. char-box attach still recovers PP-Structure's own
+                # charless lines.
+                _vl_blocks, vl_visual_regions = _supplement_vl_blocks()
+                primary_structure_blocks = _vl_correct_charless_blocks(
+                    primary_structure_blocks, _vl_blocks
                 )
-                merged_blocks = _attach_chars_to_charless_blocks(merged_blocks, image, ocr_service)
+                merged_blocks = _attach_chars_to_charless_blocks(
+                    list(primary_structure_blocks), image, ocr_service
+                )
+                # Recovered under-seal VL blocks are charless — re-OCR them for per-char
+                # boxes too, so an entity on them (甲方：中海油…) crops to the value's
+                # glyphs instead of the whole block (which would box the 甲方： label).
+                merged_blocks += _attach_chars_to_charless_blocks(
+                    _recover_under_seal_vl_text(_vl_blocks, merged_blocks, vl_visual_regions),
+                    image,
+                    ocr_service,
+                )
+                # Also recover a line PP-Structure missed ENTIRELY that a VL paragraph
+                # carries (the faint 法定代理人 line's name+birthdate). Flagged recovered=True
+                # so the amount digit-propagation skips it (a re-derived area line isn't money).
+                merged_blocks += _attach_chars_to_charless_blocks(
+                    _recover_pp_missed_vl_text(_vl_blocks, primary_structure_blocks),
+                    image,
+                    ocr_service,
+                )
                 logger.info(
-                    "PP-StructureV3 primary OCR found %d blocks but no visual regions; "
-                    "PaddleOCR-VL supplied %d visual regions, merged %d VL blocks (%d -> %d)",
+                    "PP-StructureV3 primary OCR found %d blocks, no visual regions; "
+                    "PaddleOCR-VL supplied %d visual regions (VL text discarded — seal-only)",
                     len(primary_structure_blocks),
                     len(vl_visual_regions),
-                    len(vl_blocks),
-                    len(primary_structure_blocks),
-                    len(merged_blocks),
                 )
                 return merged_blocks, [*primary_structure_visual_regions, *vl_visual_regions]
             else:
@@ -292,6 +473,15 @@ def run_paddle_ocr(
                 before,
                 len(blocks),
             )
+    # A charless PaddleOCR-VL paragraph block reaches the matcher with no glyph
+    # geometry, so an entity matched on it falls back to the WHOLE-block box — which
+    # pulls a leading field label ("甲方：中海油…") into the redaction box even though
+    # the value span starts after the colon. Recover per-char boxes by re-OCR (the
+    # same text-preserving pass the PP-primary return paths already run at 269/291),
+    # so the matcher crops to the value's own glyphs and the label is left outside.
+    # Model-centric: geometry from real re-OCR, no estimation. (Was wired on the
+    # PP-primary paths but not this VL-primary one — the missing line, not new logic.)
+    blocks = _attach_chars_to_charless_blocks(blocks, image, ocr_service)
     if blocks or visual_regions:
         logger.info("OCR got %d text blocks, %d visual regions", len(blocks), len(visual_regions))
     else:
@@ -696,7 +886,7 @@ def _run_ocr_service(
                     top=top,
                     width=right - left,
                     height=bottom - top,
-                    confidence=item.confidence,
+                    confidence=item.confidence if item.confidence is not None else _DEFAULT_OCR_ITEM_CONFIDENCE,
                     source="paddleocr_vl",
                     color=_SEAL_REGION_COLOR,
                 )
@@ -719,7 +909,7 @@ def _run_ocr_service(
             blocks.append(OCRTextBlock(
                 text=item.text,
                 polygon=polygon,
-                confidence=float(item.confidence),
+                confidence=float(getattr(item, "confidence", _DEFAULT_OCR_ITEM_CONFIDENCE) or _DEFAULT_OCR_ITEM_CONFIDENCE),
             ))
 
         if cacheable:

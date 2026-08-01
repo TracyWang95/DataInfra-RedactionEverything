@@ -27,6 +27,12 @@ def _ocr_box(x, y, w, h, text):
         source_detail="pdf_text_layer", evidence_source="ocr_has")
 
 
+def _ocr_typed(x, y, w, h, type_, text):
+    return BoundingBox(id=f"t_{x}_{y}", x=x, y=y, width=w, height=h, type=type_,
+        text=text, page=1, confidence=0.95, source="ocr_has",
+        source_detail="text_match", evidence_source="ocr_has")
+
+
 def _drop(boxes, blocks):
     return VisionService()._drop_page_hallucinated_cards(boxes, blocks, PAGE)
 
@@ -100,6 +106,26 @@ def test_textline_idcard_number_not_covered_kept():
     # alone must NOT drop it — dropping an uncovered number is a leak. Keep it.
     card = _box("id_card", 0.357, 0.178, 0.286, 0.033)
     blocks = [_blk("身份证号码：11010119900307461X", 250, 160, w=200, h=30)]
+    assert _drop([card], blocks) == [card]
+
+
+def test_handwritten_idcard_dropped_when_ocr_typed_it_idcard():
+    # 保姆合同: LA grounds the handwritten 身份证号 region as id_card. The digits
+    # OCR as '4102/1989010…' (a slash — NOT a clean 18-digit), so the number-parse
+    # gate cannot confirm coverage; but the text channel already TYPED the region
+    # ID_CARD and masks it. No card face -> the visual card is redundant, drop it.
+    card = _box("id_card", 0.68, 0.19, 0.22, 0.04)
+    blocks = [_blk("4102/1989010 31424", 480, 150, w=160, h=28)]  # handwritten, unparseable
+    ocr = _ocr_typed(0.68, 0.19, 0.20, 0.04, "ID_CARD", "4102/1989010")
+    out = _drop([card, ocr], blocks)
+    assert [b.source for b in out] == ["ocr_has"]  # visual card dropped, OCR ID_CARD kept
+
+
+def test_handwritten_idcard_kept_when_no_ocr_idcard_covers_it():
+    # Same unparseable handwritten number but NOTHING covers it (no ocr_has ID_CARD)
+    # -> dropping would leak. Keep the visual card.
+    card = _box("id_card", 0.68, 0.19, 0.22, 0.04)
+    blocks = [_blk("4102/1989010 31424", 480, 150, w=160, h=28)]
     assert _drop([card], blocks) == [card]
 
 

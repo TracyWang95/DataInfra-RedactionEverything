@@ -190,6 +190,31 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("OCR service offline (expected at %s)", ocr_service.base_url)
 
+    # 2·预热 PaddleOCR-VL 冷启动：vLLM 首个前向要现场捕获 CUDA graph / 懒初始化，
+    # 冷路径下第一份真实文档因此明显偏慢。开机时用一张文档尺寸的丢弃图跑一次推理，
+    # 把这份代价挪到热路径之外。后台跑（绝不阻塞启动）、吞掉一切异常（预热失败不能
+    # 挡服务起来）。仅在 VL 通道启用时预热。
+    if settings.OCR_VL_ENABLED:
+        async def _warm_ocr_vl() -> None:
+            try:
+                import io as _io
+
+                from PIL import Image as _Image, ImageDraw as _ImageDraw
+
+                canvas = _Image.new("RGB", (800, 1100), "white")
+                draw = _ImageDraw.Draw(canvas)
+                for row in range(6):
+                    y = 120 + row * 90
+                    draw.rectangle([90, y, 710, y + 34], fill="black")
+                buf = _io.BytesIO()
+                canvas.save(buf, format="PNG")
+                await asyncio.to_thread(ocr_service.extract_text_boxes, buf.getvalue())
+                logger.info("PaddleOCR-VL warmup done (cold-start primed)")
+            except Exception:
+                logger.info("PaddleOCR-VL warmup skipped", exc_info=True)
+
+        asyncio.create_task(_warm_ocr_vl())
+
     # 2a. Offline license state — one loud line so every boot log shows it
     _license = get_license_state()
     logger.warning(

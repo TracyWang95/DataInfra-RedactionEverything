@@ -41,6 +41,18 @@ def _merge_ocr_blocks(
     block while the existing geometry and char boxes (value-crop evidence) are
     kept, and the box widens to the union so the mask never claims pixels it
     does not cover.
+
+    A char-boxed block's text and its char boxes are one consistent unit (same
+    engine, aligned glyph-for-glyph). Overwriting only the text with the other
+    engine's reading is safe ONLY when the glyph COUNT matches (a same-length
+    misread like 戬浜/我浜 — the char boxes still map 1:1); a divergent reading
+    breaks that alignment and _entity_span_char_boxes then masks the whole block.
+    Real 实证: enabling the VL seal channel (PaddleOCR-VL is the seal detector
+    here, NOT a text authority) let VL's reading of the two-column 身份证号码 row
+    overwrite PP-StructureV3's char-boxed block, and the ID masked as one
+    page-wide slab. So an overlapping VL block adopts its text onto a char-boxed
+    block only on an equal-count match, and otherwise the char-boxed block keeps
+    its own engine-consistent text and geometry untouched.
     """
     if extra:
         merged = [
@@ -61,6 +73,22 @@ def _merge_ocr_blocks(
         area_a = max(1, (ax2 - ax1) * (ay2 - ay1))
         area_b = max(1, (bx2 - bx1) * (by2 - by1))
         return inter / (area_a + area_b - inter)
+
+    def smaller_overlap(a: OCRTextBlock, b: OCRTextBlock) -> float:
+        # Fraction of the SMALLER block covered by the intersection. Unlike IoU,
+        # this stays ~1.0 when one block sits over the other but differs in height
+        # (VL's whole-row block vs PP-Structure's tighter line box), so "same
+        # region, different geometry" is caught where IoU dips below threshold.
+        ax1, ay1, ax2, ay2 = a.bbox
+        bx1, by1, bx2, by2 = b.bbox
+        x1, y1 = max(ax1, bx1), max(ay1, by1)
+        x2, y2 = min(ax2, bx2), min(ay2, by2)
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        inter = (x2 - x1) * (y2 - y1)
+        area_a = max(1, (ax2 - ax1) * (ay2 - ay1))
+        area_b = max(1, (bx2 - bx1) * (by2 - by1))
+        return inter / min(area_a, area_b)
 
     def looks_like_short_field(block: OCRTextBlock) -> bool:
         text = str(block.text or "").strip()
@@ -130,6 +158,26 @@ def _merge_ocr_blocks(
         duplicate = False
         for index, existing in enumerate(merged):
             overlap = iou(block, existing)
+            if prefer_extra_text and existing.chars and smaller_overlap(block, existing) > 0.5:
+                # The extra engine (PaddleOCR-VL) reads glyphs accurately but its
+                # location is COARSE (region-level, no per-line boxes); a char-boxed
+                # existing block (PP-StructureV3) owns its region with precise
+                # per-glyph geometry, and its text+char boxes are one
+                # engine-consistent unit. Adopt VL's reading ONLY on an equal-glyph
+                # count match — a same-length misread like 戬浜/我浜, where the char
+                # boxes still align 1:1 to the new text (this is the accurate-reading
+                # supplement VL is there for). Any other overlap keeps PP-Structure's
+                # text+chars untouched and drops the VL block: a divergent reading
+                # (the two-column 身份证号码 row, VL's digits ≠ the char-box glyphs)
+                # would divorce text from char boxes and _entity_span_char_boxes then
+                # masks the whole block — the giant ID slab the moment a seal was
+                # requested. VL text still supplements a line PP-Structure never
+                # char-boxed (crushed under a seal): that block overlaps no char-boxed
+                # block, so it is kept below.
+                if content_relation(compact, _compact_text(existing.text)) == "same":
+                    merged[index] = adopted_block(existing, block)
+                duplicate = True
+                break
             if overlap > _MERGE_DUPLICATE_IOU:
                 relation = content_relation(compact, _compact_text(existing.text))
                 if prefer_extra_text and relation in ("same", "superset"):

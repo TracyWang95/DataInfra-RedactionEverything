@@ -133,6 +133,11 @@ def aggregate_ner_samples(
     return union, passes_run
 
 
+# Digits and Chinese numerals/magnitudes — the count part of a money amount. Used to
+# stop amount-value narrowing from mistaking a dropped leading numeral for context.
+_AMOUNT_NUMERAL_CHARS = frozenset("0123456789零〇一二三四五六七八九十百千万亿兆两壹贰叁肆伍陆柒捌玖拾佰仟萬億")
+
+
 async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: Any) -> None:
     """Model-driven AMOUNT value narrowing（人民币每亩每年100元 → 100元）.
 
@@ -174,6 +179,18 @@ async def _narrow_amount_entities(entities: list[dict[str, str]], has_client: An
             continue
         values = [str(v).strip() for v in (result or {}).get(label, []) if str(v).strip()]
         values = list(dict.fromkeys(v for v in values if v != original and v in original))
+        # A SINGLE narrow that is a SUFFIX of the original but whose dropped LEADING
+        # prefix carries a numeral did NOT strip business context — it dropped part of
+        # the number itself (拾万元 -> 万元 loses the 拾, 100,000 -> an ambiguous 万). Keep
+        # the whole span rather than uncover the dropped digit. A context strip (人民币每
+        # 亩每年100元 -> 100元, prefix has no numeral) narrows; a multi-value SPLIT (壹佰万元
+        # / 100元) is left intact — there the prefix numeral belongs to the OTHER value.
+        if (
+            len(values) == 1
+            and original.endswith(values[0])
+            and any(c in _AMOUNT_NUMERAL_CHARS for c in original[: -len(values[0])])
+        ):
+            continue
         if not values:
             continue
         logger.debug("amount narrowed by model: %r -> %r", original, values)
@@ -623,14 +640,43 @@ async def run_has_text_analysis(
                                 round((time.perf_counter() - model_start) * 1000),
                             )
                             residual_ner_result = result if isinstance(result, dict) else {}
+                # Model-centric verification of the residual re-ask (fixes 甲方→开户行):
+                # the residual NER ran on REDUCED text where a label's real value was
+                # already consumed, so the open-vocab model can force-fit a wrong span —
+                # it read 甲方 as 开户行 because the account sentence around it was left
+                # behind and the real 农行… was gone. Confirm each NEW value by re-asking
+                # the model about THAT VALUE ON ITS OWN under its label: a real value the
+                # long-payload dilution hid (an id number, a 金额) is self-evident and
+                # re-confirms alone; a context-only force-fit (甲方, stripped of the
+                # account sentence, is plainly not a bank) returns nothing. Context-bound
+                # values (a real 开户行/机构名) are the main pass's job via their field
+                # label, not the residual's. The model is the judge — no rule, no regex,
+                # no threshold.
+                residual_new: dict[str, list[str]] = {}
                 for entity_type, entity_list in (residual_ner_result or {}).items():
-                    if not entity_list:
-                        continue
-                    merged_ner_result.setdefault(entity_type, [])
-                    for text in entity_list:
+                    existing = set(merged_ner_result.get(entity_type, []))
+                    for text in entity_list or []:
                         clean_text = _compact_text(text)
-                        if clean_text and clean_text not in merged_ner_result[entity_type]:
-                            merged_ner_result[entity_type].append(clean_text)
+                        if clean_text and clean_text not in existing:
+                            bucket = residual_new.setdefault(entity_type, [])
+                            if clean_text not in bucket:
+                                bucket.append(clean_text)
+                if residual_new:
+                    from app.core.gpu_inference_gate import shared_gpu_inference_slot
+
+                    async with shared_gpu_inference_slot("OCR HaS Text residual verify NER"):
+                        for entity_type, fresh in residual_new.items():
+                            merged_ner_result.setdefault(entity_type, [])
+                            for clean_text in fresh:
+                                verify = await asyncio.to_thread(
+                                    has_client.ner, clean_text, [entity_type]
+                                )
+                                confirmed = {
+                                    _compact_text(v)
+                                    for v in ((verify or {}).get(entity_type, []) or [])
+                                }
+                                if clean_text in confirmed:
+                                    merged_ner_result[entity_type].append(clean_text)
 
         for entity_type, entity_list in merged_ner_result.items():
             if not entity_list:

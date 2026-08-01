@@ -140,6 +140,44 @@ def _document_line_height(blocks: list[OCRTextBlock]) -> float | None:
     return em * _calibrated_line_height_ratio(blocks, em)
 
 
+_FIELD_LABEL_SEPARATORS = ("：", ":")  # full/half-width colon: label→value separator punctuation
+
+
+def _leading_label_trimmed_start(block, search_text: str, span_start: int, span_end: int) -> int:
+    """If a matched span begins with a form field LABEL ("甲方：中海油…"), return the
+    text index of the first VALUE glyph so the redaction box hugs the value, not the
+    label. A field label is detected purely by geometry: a colon whose right edge is
+    followed by a >= one-glyph-em horizontal gutter before the next glyph — the same
+    self-calibrated gap rule the column splitter uses. The colon is a separator
+    punctuation, NOT a value wordlist. Whether the NER returned the value with or
+    without its label prefix is an unstable, payload-drifting property of a 0.6B open-
+    vocab model; anchoring the value's left edge to the document's own label/value gap
+    decouples the box from that drift. Leak-safe: the start is only pushed RIGHT, past
+    a gutter-terminated leading label, never past any value glyph. No char boxes / no
+    colon / no gutter after the colon -> returns span_start unchanged (byte-identical).
+    """
+    chars = getattr(block, "chars", None) or []
+    if not chars:
+        return span_start
+    em = _median_single_cjk_width(chars)
+    if em is None:
+        return span_start
+    alignment = _glyph_alignment(block, search_text, span_start, span_end)
+    if alignment is None:
+        return span_start
+    box_by_glyph, span_glyph_start, span_glyph_end = alignment
+    text_index_of_glyph = [i for i, ch in enumerate(search_text) if not ch.isspace()]
+    for g in range(span_glyph_start, span_glyph_end - 1):
+        if search_text[text_index_of_glyph[g]] not in _FIELD_LABEL_SEPARATORS:
+            continue
+        colon_box, next_box = box_by_glyph[g], box_by_glyph[g + 1]
+        if colon_box is None or next_box is None:
+            continue
+        if float(next_box["x1"]) - float(colon_box["x2"]) >= em:
+            return text_index_of_glyph[g + 1]
+    return span_start
+
+
 def _glyph_alignment(
     block: OCRTextBlock,
     search_text: str,
@@ -428,6 +466,18 @@ def _line_rects_from_span_boxes(
             # height, grown but never trimmed, so coverage is never cut on a guess.
             row_h = float(block_bottom - block_top)
         if row_h > 0:
+            # A block polygon shorter than a single glyph is physically impossible for a
+            # text line (CJK glyphs are ~square, so a line is at least one em tall) — it
+            # is a collapsed read, the date 2016年12月20号 came back as a ~4px sliver, not
+            # a trustworthy vertical cap: clamping the grown rect back to it re-flattens
+            # the box we just grew. Only then widen the cap to one row about the block's
+            # y-center. A plausibly-tall polygon (>= its own em) caps exactly as before,
+            # so a block barely shorter than the inflated row estimate is untouched.
+            if block_em is not None and (block_bottom - block_top) < block_em:
+                _bcy = (block_top + block_bottom) / 2
+                cap_top, cap_bottom = int(_bcy - row_h / 2), int(_bcy + row_h / 2)
+            else:
+                cap_top, cap_bottom = block_top, block_bottom
             grown: list[tuple[int, int, int, int]] = []
             for x1r, y1r, x2r, y2r in rects:
                 # F5 — collapse is judged by HEIGHT evidence, not y-variance: a
@@ -437,12 +487,12 @@ def _line_rects_from_span_boxes(
                 # the line and is left as-is. Grow-only about the chars' own
                 # y-center, never shrinking below the band, clamped to the block.
                 if y2r - y1r >= row_h:
-                    grown.append((x1r, max(block_top, y1r), x2r, min(block_bottom, y2r)))
+                    grown.append((x1r, max(cap_top, y1r), x2r, min(cap_bottom, y2r)))
                     continue
                 cy = (y1r + y2r) / 2
                 y1g = min(y1r, int(cy - row_h / 2))
                 y2g = max(y2r, int(cy + row_h / 2))
-                grown.append((x1r, max(block_top, y1g), x2r, min(block_bottom, y2g)))
+                grown.append((x1r, max(cap_top, y1g), x2r, min(cap_bottom, y2g)))
             rects = [r for r in grown if r[2] > r[0] and r[3] > r[1]]
     # A wrapped value fills each spanned line to the wrap margin: it broke onto
     # the next line BECAUSE line 1 reached the block's right edge, so line 1 runs

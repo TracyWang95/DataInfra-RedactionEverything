@@ -83,6 +83,12 @@ class OCRTextBlock:
     # Per-character boxes in PIXEL coords, L→R: [{"c","x1","y1","x2","y2"}, ...].
     # Lets matching redact an entity's exact pixels instead of estimating.
     chars: list = field(default_factory=list)
+    # True when this line was RE-DERIVED (PaddleOCR-VL recovered a line PP-Structure
+    # missed). A low-confidence block: matching may mask an entity found on it, but the
+    # aggressive amount digit-propagation (which over-masks any block sharing an amount's
+    # digits) must NOT fire on it, or a recovered '暂估面积100' area line gets whole-masked
+    # as the money amount '100元'. HaS never tagged it an amount, so neither should the crutch.
+    recovered: bool = False
 
     # 构造后缓存的 bbox 值
     _bbox_cache: tuple[int, int, int, int] = field(default=(0, 0, 0, 0), init=False, repr=False)

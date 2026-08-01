@@ -106,3 +106,34 @@ def test_multi_field_two_column_block_is_reasked_end_to_end():
     residual_text = client.calls[-1]
     assert "22020219850612345" in residual_text
     assert "11010119900307461X" not in residual_text  # residual != main payload
+
+
+class _ForceFitHaS:
+    """Main pass (full text) finds the real 开户行 and does NOT type 甲方; the residual
+    re-ask on the reduced account line (real bank gone) force-fits 甲方 as 开户行; the
+    per-value verification of 甲方 ALONE returns nothing — 甲方 is not a bank."""
+
+    def __init__(self):
+        self.calls = []
+
+    def ner(self, text, labels=None, **_kwargs):
+        self.calls.append(text)
+        compact = "".join(text.split())
+        if compact == "甲方":                       # per-value verify: force-fit rejected
+            return {"开户行": []}
+        if "农行上海某支行" in compact:               # main pass (full context): real bank
+            return {"开户行": ["农行上海某支行"]}
+        if "甲方" in compact:                        # residual (account context): force-fit
+            return {"开户行": ["甲方"]}
+        return {}
+
+
+def test_residual_force_fit_value_rejected_by_verification():
+    # 甲方→开户行 regression: main finds the real 开户行; the residual force-fits 甲方 on
+    # the reduced account line; per-value verification drops it while the real bank stays.
+    blocks = [_block("开户行：农行上海某支行", 100), _block("乙方将货款打到甲方账户", 140)]
+    client = _ForceFitHaS()
+    entities = asyncio.run(run_has_text_analysis(blocks, client, vision_types=None))
+    vals = {e["text"] for e in entities}
+    assert "农行上海某支行" in vals   # real bank kept (main pass)
+    assert "甲方" not in vals          # force-fit dropped by per-value verification

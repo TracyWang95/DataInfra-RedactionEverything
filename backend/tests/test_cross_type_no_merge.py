@@ -48,23 +48,6 @@ def test_different_pages_never_merge():
     assert len(kept) == 2
 
 
-def test_tile_gap_filter_is_type_scoped():
-    """A fingerprint tile candidate overlapping an existing SIGNATURE box is a
-    different entity, not the zoom second-guessing the page-scale call — it
-    must be kept. Same-type overlap is still discarded (that IS the retry
-    re-finding what the full frame already found)."""
-    from app.services.vision.locate_grounding import LocateAnythingGroundingService
-
-    svc = LocateAnythingGroundingService()
-    existing = [_box("signature", 0.30, 0.20, 0.10, 0.05)]
-    fp_tile = _box("fingerprint", 0.30, 0.20, 0.09, 0.05)
-    fp_tile = fp_tile.model_copy(update={"source_detail": "locate_anything:tile_retry"})
-    sig_tile = _box("signature", 0.30, 0.20, 0.09, 0.05)
-    sig_tile = sig_tile.model_copy(update={"source_detail": "locate_anything:tile_retry"})
-    kept = svc._filter_tile_candidates([fp_tile, sig_tile], existing)
-    assert kept == [fp_tile]
-
-
 def test_fingerprint_inside_seal_absorbed_into_hull():
     """章内'指纹'=章自己的红墨误读(0713 contract19 电子章出4个tile指纹):
     中心在章内的 fingerprint 并入章 hull——章全遮像素不变,冗余错误标注消失。

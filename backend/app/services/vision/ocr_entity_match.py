@@ -27,6 +27,7 @@ from app.services.vision.ocr_cjk_geometry import (
     _entity_span_char_boxes,  # noqa: F401
     _fold_glyph,  # noqa: F401
     _glyph_alignment,
+    _leading_label_trimmed_start,
     _median_single_cjk_width,  # noqa: F401
     _region_cjk_em,
     _span_rects_with_row_bands,
@@ -35,7 +36,6 @@ from app.services.vision.ocr_table_semantics import (
     _amount_digit_signature,
     _amount_value_signature,
     _block_search_text,
-    extract_table_cells,
 )
 from app.services.vision.ocr_tuning import (
     _FUZZY_MATCH_BLOCK_LEN_FLOOR,
@@ -45,7 +45,6 @@ from app.services.vision.ocr_tuning import (
     _FUZZY_MATCH_RATIO,
     _NER_DEFAULT_MIN_LEN,
     _NER_MIN_LEN_BY_TYPE,
-    _TABLE_FALLBACK_CONFIDENCE,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,9 +164,27 @@ def _dedupe_ocr_regions(regions: list[SensitiveRegion]) -> list[SensitiveRegion]
         )
     ]
 
-    return deduplicate_by_iou(
-        tightest, lambda r: (r.left, r.top, r.width, r.height), mode="containment"
-    )
+    # Containment dedup runs PER entity_type: a region is dropped only when
+    # SAME-type kept regions already cover its pixels. Cross-type coverage is NOT a
+    # duplicate — a real DATE fully inside a (PaddleOCR-VL pseudo-table) PERSON box
+    # is a different entity, and the old type-agnostic pass silently swallowed it (a
+    # missed redaction). Grouping by type keeps the coverage-preserving within-type
+    # merge while never letting a larger box of one type eat a smaller box of another.
+    from itertools import groupby
+
+    deduped: list = []
+    for _etype, group in groupby(
+        sorted(tightest, key=lambda r: str(r.entity_type)),
+        key=lambda r: str(r.entity_type),
+    ):
+        deduped.extend(
+            deduplicate_by_iou(
+                list(group),
+                lambda r: (r.left, r.top, r.width, r.height),
+                mode="containment",
+            )
+        )
+    return deduped
 
 
 def _regions_overlap(a: SensitiveRegion, b: SensitiveRegion) -> bool:
@@ -261,6 +278,75 @@ def _is_isolated_token_occurrence(text: str, start: int, end: int) -> bool:
     return before_is_boundary and after_is_boundary
 
 
+def _whitespace_insensitive_value_spans(entity_text: str, block_text: str) -> list[tuple[int, int]]:
+    """[start, end) spans in block_text whose NON-whitespace glyphs spell entity_text.
+
+    A grouped number renders the value the NER returns compacted: the block reads
+    "帐号：0383 2700 0400 3104 0", the NER tags "03832700040031040". The grouping
+    spaces are display formatting, not content, so an exact substring test misses
+    the match; matching glyph-by-glyph while skipping whitespace recovers it and
+    returns the FULL span (spaces included) so the downstream char-box crop covers
+    every rendered glyph. Non-overlapping, left to right.
+    """
+    target = "".join(entity_text.split())
+    if not target:
+        return []
+    spans: list[tuple[int, int]] = []
+    n = len(block_text)
+    i = 0
+    while i < n:
+        if block_text[i].isspace() or block_text[i] != target[0]:
+            i += 1
+            continue
+        j, k, last = i, 0, i
+        while j < n and k < len(target):
+            if block_text[j].isspace():
+                j += 1
+                continue
+            if block_text[j] != target[k]:
+                break
+            k += 1
+            j += 1
+            last = j
+        if k == len(target):
+            spans.append((i, last))
+            i = last
+        else:
+            i += 1
+    return spans
+
+
+def _value_occurrence_spans(
+    entity_text: str, block_text: str, strict_value: bool
+) -> list[tuple[int, int]]:
+    """Occurrence spans [start, end) of the value inside block_text.
+
+    Exact substring occurrences first. When none exist and the value is not a
+    strict short token, fall back to a whitespace-insensitive span so a grouped
+    number matches its compacted NER value (the grouping spaces are formatting).
+    A strict short value must still be an isolated token — never a bare substring,
+    and never the whitespace fallback (a 1-2 char token would match stray glyphs).
+    """
+    spans: list[tuple[int, int]] = []
+    if entity_text in block_text:
+        search_from = 0
+        while True:
+            start = block_text.find(entity_text, search_from)
+            if start < 0:
+                break
+            end = start + len(entity_text)
+            if not strict_value or _is_isolated_token_occurrence(block_text, start, end):
+                spans.append((start, end))
+            search_from = start + max(1, len(entity_text))
+        return spans
+    if strict_value:
+        return []
+    compact_entity = _compact_text(entity_text)
+    if not compact_entity or compact_entity not in _compact_text(block_text):
+        return []
+    return _whitespace_insensitive_value_spans(entity_text, block_text)
+
+
 def _is_strict_match_entity(entity_type: str, entity_text: str) -> bool:
     """Whether a value is below the NER min length for its type.
 
@@ -274,21 +360,75 @@ def _is_strict_match_entity(entity_type: str, entity_text: str) -> bool:
     return len(entity_text.strip()) < min_len
 
 
+# Measurement / counter units that are NOT money — an area, a count, a date part.
+# A number directly followed by one of these is that quantity, not a currency amount:
+# 100亩 (area) is not 100元 (money), 2016年 (a year) is not the amount 2016. Deliberately
+# excludes the money units/magnitudes (元圆角分厘块万千百十亿…) so a real amount still
+# matches; excludes ambiguous 分/厘 (also money) so those never falsely reject.
+_NON_MONEY_UNITS = frozenset("亩顷㎡平方米里人位名户岁天次件套台辆吨%％度年月日时号")
+
+# Arabic-digit OR Chinese-numeral content is what makes a value an amount at all.
+_CJK_NUMERALS = frozenset("零〇一二三四五六七八九十百千万亿两壹贰叁肆伍陆柒捌玖拾佰仟萬億兆")
+
+
 def _is_same_amount_value_block(entity_text: str, block_text: str) -> bool:
     """Same amount value in a different display form (￥1431400.00元 vs 1431400，00).
 
-    Pure digit-sequence identity over the block's ENTIRE digit content: the
-    block renders exactly the number the entity carries, with divergent
-    grouping/currency/unit decoration. No format charset, no digit-count
-    window — digits that coincide with a detected amount ARE that number on
-    the page, so matching can only add cover (over-mask), never uncover.
-    Blocks mixing other digits (running text with several numbers) never
-    match: their digit sequence differs.
+    Digit-sequence identity over the block's digit content — two renderings of one
+    number share it whatever the grouping/currency decoration, and a bare running-text
+    mention of the amount ('合同总金额…1431400相关') is still covered (over-mask). But the
+    digit signature alone ignored the trailing CONTEXT: it read 100 in '暂估面积100亩' as
+    the amount '100元' and whole-masked the sentence, though 亩 is an AREA unit, not money.
+    So reject when the block's number is directly followed by a non-money unit — the one
+    signal that tells 100元 (money) from 100亩 (area) apart, exactly as the reviewer noted.
+    Over-mask, never uncover: a real amount inside prose still matches via this path (no
+    contradicting unit) and via the exact per-occurrence path.
     """
     entity_signature = _amount_value_signature(entity_text)
     if not entity_signature:
         return False
-    return _amount_value_signature(block_text) == entity_signature
+    compact = _compact_text(block_text)
+    if _amount_value_signature(compact) != entity_signature:
+        return False
+    last_digit = max((i for i, ch in enumerate(compact) if ch.isdigit()), default=-1)
+    if 0 <= last_digit < len(compact) - 1 and compact[last_digit + 1] in _NON_MONEY_UNITS:
+        return False
+    return True
+
+
+def _extend_amount_left_over_numerals(block, left: int, width: int, top: int, height: int) -> tuple[int, int]:
+    """Grow an AMOUNT box LEFT over an adjacent Chinese-numeral char box.
+
+    The char engine reads the handwritten 壹 of '壹拾万元' as a stray glyph the block
+    TEXT calls something non-numeric (票), so HaS's amount begins at 拾 and the crop
+    stops one numeral short — 壹 is left unmasked. The char BOXES still carry the numeral
+    glyph, so extend the left edge over any char box that IS a numeral, sits just left of
+    the current edge (within one em, same text row) — never over a non-numeral, never
+    rightward. Pure char-box geometry, no estimation; only ever adds cover.
+    """
+    chars = getattr(block, "chars", None) or []
+    right = left + width
+    y1b, y2b = top, top + height
+    cur = left
+    extended = True
+    while extended:
+        extended = False
+        candidates: list[int] = []
+        for c in chars:
+            try:
+                cx1, cx2, cy1, cy2 = int(c["x1"]), int(c["x2"]), int(c["y1"]), int(c["y2"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if str(c.get("c", "")) not in _CJK_NUMERALS:
+                continue
+            if not (y1b <= (cy1 + cy2) / 2 <= y2b):
+                continue
+            if cx2 <= cur and cx1 < cur and (cur - cx2) <= max(1, cx2 - cx1):
+                candidates.append(cx1)
+        if candidates and min(candidates) < cur:
+            cur = min(candidates)
+            extended = True
+    return cur, right - cur
 
 
 class _SynthCharsBlock:
@@ -635,6 +775,42 @@ def _match_cross_block_entity(
     return out
 
 
+def _match_cross_block_split(
+    entity_text: str,
+    entity_type: str,
+    prepared_blocks: list[tuple[OCRTextBlock, str, bool]],
+    line_height: float | None = None,
+) -> list[SensitiveRegion]:
+    """Anchor a clean (no-newline) value that wrapped across two adjacent blocks.
+
+    HaS sometimes hands back a wrapped value with the line break REMOVED —
+    '2076年4月8日' from '…起至2076年' + '4月8日止', or '2016年1月7日' from '…2016年1月7'
+    + '日公开…' — so it sits in no single block and the newline anchor never fires.
+    Try each interior split: a head that is some block's SUFFIX plus a tail that is
+    the very NEXT block's PREFIX. The head must be >= 2 chars (a lone shared glyph
+    can't fabricate a match) and the whole value >= 4, but the tail may be a single
+    glyph — a date routinely wraps its trailing 日/号 alone. Positional and
+    adjacent-only; once the split is found, reuse the newline anchor for the regions.
+    """
+    compact = entity_text.strip()
+    if "\n" in compact or len(compact) < 4:
+        return []
+    direct = [
+        block_text
+        for _block, block_text, is_table_virtual in prepared_blocks
+        if not is_table_virtual and not block_text.startswith("<table")
+    ]
+    for i in range(len(direct) - 1):
+        head_block, tail_block = direct[i], direct[i + 1]
+        for k in range(2, len(compact)):
+            head, tail = compact[:k], compact[k:]
+            if head_block.endswith(head) and tail_block.startswith(tail):
+                return _match_cross_block_entity(
+                    head + "\n" + tail, entity_type, prepared_blocks, line_height
+                )
+    return []
+
+
 # Entity propagation: the company-specific HEAD of an org name, before the first
 # generic tail marker (地名括号 / 有限公司 / 集团 …). "信尔胜机械（江苏）有限公司" ->
 # "信尔胜机械". This head survives a seal-garbled second occurrence and is specific
@@ -670,20 +846,24 @@ def match_entities_to_ocr(
     # same-text twin against one of these — an argmax/partial box is not a proof.
     span_proven_region_ids: set[int] = set()
 
-    # Expand HTML tables into virtual cell blocks
-    expanded_blocks: list[OCRTextBlock] = []
+    # A PaddleOCR-VL <table> block carries the table's STRUCTURE (which cell holds
+    # what text) but NO per-cell pixel geometry — extract_table_cells could only
+    # ESTIMATE cell boxes by a uniform row/col grid (block.height/num_rows), which
+    # misplaces every value onto the wrong row the moment rows differ in height (a
+    # 10-line spec row beside a 1-line total row — every real contract). Worse, VL
+    # sometimes wraps a NON-table page into a pseudo <table>, boxing whole paragraphs
+    # as giant cells whose boxes then swallow the real entities nested in them. The
+    # line-OCR (PP-StructureV3) already detects every printed cell's text at its TRUE
+    # box, so entity geometry comes from those real blocks and the <table> block is
+    # dropped from position matching. Its structure still reaches the NER through the
+    # separate _expand_table_blocks pass, so table recall is unaffected. Model-centric:
+    # geometry from detection, never from a grid estimate — no threshold, no magic.
+    expanded_blocks: list[OCRTextBlock] = [
+        block
+        for block in ocr_blocks
+        if not (block.text.startswith("<table") and "</table>" in block.text)
+    ]
     table_virtual_block_ids: set[int] = set()
-    for block in ocr_blocks:
-        if block.text.startswith("<table") and "</table>" in block.text:
-            cell_blocks = extract_table_cells(block.text, block)
-            if cell_blocks:
-                expanded_blocks.extend(cell_blocks)
-                table_virtual_block_ids.update(id(cell) for cell in cell_blocks)
-                logger.debug("Expanded table into %d cells", len(cell_blocks))
-            else:
-                expanded_blocks.append(block)
-        else:
-            expanded_blocks.append(block)
 
     # Merged double-column split (gated, default OFF). PaddleOCR-VL can merge two
     # side-by-side columns into one block; a per-column value then aligns across
@@ -735,6 +915,16 @@ def match_entities_to_ocr(
             logger.debug("HaS skipped low-signal vision entity: '%s' (%s)", entity_text, normalized_type)
             continue
 
+        # An AMOUNT is by definition a number: HaS sometimes tags a whole fill-in clause
+        # ('乙方用于投资入股的土地位于河南新乡市，暂估面积') as 金额 with no digit or numeral
+        # in it at all, which text_match then masks as a giant false amount. A value that
+        # carries no Arabic digit and no Chinese numeral is not an amount — drop it.
+        if normalized_type == "AMOUNT" and not any(
+            c.isdigit() or c in _CJK_NUMERALS for c in entity_text
+        ):
+            logger.debug("HaS skipped numberless AMOUNT value: '%s'", entity_text)
+            continue
+
         matched = False
         strict_value = _is_strict_match_entity(normalized_type, entity_text)
 
@@ -760,32 +950,43 @@ def match_entities_to_ocr(
             if block_text.startswith("<table"):
                 continue
 
-            # Exact containment match against the authoritative text. Blocks
-            # whose char boxes disprove their text label never reach here with
-            # the lying label (_block_search_text), so a value is only ever
-            # attached to a box that actually contains it.
-            if entity_text in block_text:
+            # Containment match against the authoritative text. Blocks whose char
+            # boxes disprove their text label never reach here with the lying label
+            # (_block_search_text), so a value is only ever attached to a box that
+            # actually contains it. Occurrences are exact substrings, or — when the
+            # value is not a strict short token — a whitespace-insensitive span: a
+            # grouped number ("帐号：0383 2700 0400 3104 0") renders the very value
+            # the NER returned compacted ("03832700040031040"); the grouping spaces
+            # are display formatting, not content, and must not block the match.
+            occurrences = _value_occurrence_spans(entity_text, block_text, strict_value)
+            if occurrences:
                 contextual_type = _entity_type_from_block_context(normalized_type, entity_text, block_text)
                 if contextual_type is None:
                     continue
-                search_from = 0
-                while True:
-                    occurrence_start = block_text.find(entity_text, search_from)
-                    if occurrence_start < 0:
-                        break
-                    if strict_value and not _is_isolated_token_occurrence(
-                        block_text,
-                        occurrence_start,
-                        occurrence_start + len(entity_text),
-                    ):
-                        search_from = occurrence_start + max(1, len(entity_text))
-                        continue
-                    # The matched span IS the visual span. The old 大写/小写
-                    # pair word-lookup is gone: the main HaS query's dual
-                    # labels (金额+大写金额) tag both renderings of a paired
-                    # amount independently (5 layout variants x2 runs, 100%),
-                    # so each side carries its own box with no lookback rule.
-                    visual_text, visual_occurrence_start = entity_text, occurrence_start
+                for occurrence_start, occurrence_end in occurrences:
+                    # 100 in an AREA (…面积100亩) or a year (2016年) shares its digits with
+                    # a money amount, so HaS sometimes tags the clause as 金额; the unit
+                    # right after the number tells them apart (the reviewer's 100元 vs
+                    # 100亩 point). Skip an AMOUNT occurrence whose number is directly
+                    # followed by a non-money unit — it is that quantity, not money.
+                    if normalized_type == "AMOUNT":
+                        tail = block_text[occurrence_end:].lstrip()
+                        if tail and tail[0] in _NON_MONEY_UNITS:
+                            continue
+                    # If the NER returned the value WITH its leading form-field label
+                    # (甲方：中海油…, 开户行：农行…), hug the value not the label: push the
+                    # start past a gutter-terminated colon label (pure geometry, no
+                    # wordlist). No-op when the span is already label-free.
+                    occurrence_start = _leading_label_trimmed_start(
+                        block, block_text, occurrence_start, occurrence_end
+                    )
+                    # The matched span IS the visual span (the exact substring, or
+                    # the whitespace-spanning run of a grouped number). The old
+                    # 大写/小写 pair word-lookup is gone: the main HaS query's dual
+                    # labels (金额+大写金额) tag both renderings of a paired amount
+                    # independently, so each side carries its own box, no lookback.
+                    visual_text = block_text[occurrence_start:occurrence_end]
+                    visual_occurrence_start = occurrence_start
                     # Value-level crop: narrow x to the union of the char boxes
                     # proven by glyph alignment to render this occurrence;
                     # otherwise mask the whole block (safe). y/height stay the
@@ -902,6 +1103,27 @@ def match_entities_to_ocr(
                             entity_text, block_text[:20], len(line_rects),
                         )
                     else:
+                        # A whole-block fallback inherits the block polygon's height; on a
+                        # tilted scan that polygon can collapse to a sliver (the date
+                        # 2016年12月20号 came back 4px tall) and then mask only a fraction of
+                        # the glyphs — a partial-coverage LEAK. A text row is never shorter
+                        # than the page's line grid, so a fallback height below it cannot be
+                        # covering the line: grow to the document row height about the box's
+                        # y-center. Only the unproven fallback (span_proven is False); a
+                        # proven char-box rect already carries its own grown row height.
+                        if (
+                            not span_proven
+                            and document_line_height
+                            and rh < document_line_height
+                        ):
+                            _cy = rt + rh / 2
+                            rt = int(_cy - document_line_height / 2)
+                            rh = int(document_line_height)
+                        # An amount's numeral run must not be cut: grow the box left over
+                        # an adjacent numeral char box the block text misread (壹 of 壹拾万元
+                        # read as 票, so HaS began at 拾). Only a char-box-proven crop.
+                        if normalized_type == "AMOUNT" and crop_span is not None:
+                            rl, rw = _extend_amount_left_over_numerals(block, rl, rw, rt, rh)
                         single_region = SensitiveRegion(
                             text=visual_text,
                             entity_type=contextual_type,
@@ -923,13 +1145,18 @@ def match_entities_to_ocr(
                             "MATCH '%s' in '%s...' @ (%d, %d, %d, %d)",
                             entity_text, block_text[:20], rl, rt, rw, rh,
                         )
-                    search_from = occurrence_start + max(1, len(entity_text))
                 matched = True
                 continue
 
             # Same amount value in a different display form — full/half-width
-            # currency and separator variants (￥1431400.00元 vs 1431400，00).
-            if normalized_type == "AMOUNT" and _is_same_amount_value_block(entity_text, block_text):
+            # currency and separator variants (￥1431400.00元 vs 1431400，00). Never on a
+            # RE-DERIVED line (recovered=True): HaS did not tag it an amount, so a digit
+            # coincidence must not whole-mask a '暂估面积100' area line as the money 100元.
+            if (
+                normalized_type == "AMOUNT"
+                and not getattr(block, "recovered", False)
+                and _is_same_amount_value_block(entity_text, block_text)
+            ):
                 entity_regions.append((
                     SensitiveRegion(
                         text=block_text.strip() or entity_text,
@@ -1009,6 +1236,17 @@ def match_entities_to_ocr(
                     matched = True
                     break
 
+        # Line-wrap recall for any type: HaS can hand back a wrapped value with the
+        # newline removed ('2076年4月8日' from '…2076年' + '4月8日止'), so it is in no
+        # single block and the '\n' anchor above never fired. Anchor it by split point.
+        if not matched:
+            cross_split = _match_cross_block_split(
+                entity_text, normalized_type, prepared_blocks, document_line_height
+            )
+            if cross_split:
+                regions.extend(cross_split)
+                matched = True
+
         # Fallback: search in original (unexpanded) blocks
         if not matched and normalized_type == "AMOUNT" and not _digit_retry:
             # Line-wrap recall: the value's tail glyph wrapped to the next OCR
@@ -1022,28 +1260,21 @@ def match_entities_to_ocr(
             if len(digit_payload) > 2 and digit_payload != entity_text:
                 digit_retry_entities.append({"type": "AMOUNT", "text": digit_payload})
 
-        if not matched and not strict_value:
-            for block in ocr_blocks:
-                if block.text.startswith("<table") and entity_text in block.text:
-                    regions.append(SensitiveRegion(
-                        text=entity_text,
-                        entity_type=normalized_type,
-                        left=block.left,
-                        top=block.top,
-                        width=block.width,
-                        height=block.height,
-                        confidence=_TABLE_FALLBACK_CONFIDENCE,
-                        source="table_fallback",
-                    ))
-                    logger.debug(
-                        "MATCH '%s' in table @ (%d, %d, %d, %d) [fallback]",
-                        entity_text, block.left, block.top, block.width, block.height,
-                    )
-                    break
+        # (Removed the <table>-block fallback: it boxed the ENTIRE PaddleOCR-VL table
+        # region for any value the real blocks did not match — always a whole-table
+        # giant box, and it fired on VL-only misreads that PP-Structure read correctly
+        # elsewhere (彭鬓 vs the line-OCR's 彭聪, already boxed). Consistent with dropping
+        # the <table> block from position matching: geometry is line-OCR only.)
 
     if digit_retry_entities:
+        # Bare-digit amount recall runs on the CONFIDENT blocks only — a re-derived line
+        # (recovered=True) must not have its area/count digit re-matched as money.
         regions.extend(
-            match_entities_to_ocr(ocr_blocks, digit_retry_entities, _digit_retry=True)
+            match_entities_to_ocr(
+                [b for b in ocr_blocks if not getattr(b, "recovered", False)],
+                digit_retry_entities,
+                _digit_retry=True,
+            )
         )
 
     # Org-name propagation to seal-garbled occurrences. The NER tags the clean
@@ -1075,17 +1306,33 @@ def match_entities_to_ocr(
             # holds the full name — skip it, dedup would only re-add a twin).
             if block_text.startswith("<table") or core not in block_text or full_name in block_text:
                 continue
-            regions.append(SensitiveRegion(
-                text=core,
-                entity_type="INSTITUTION_NAME",
-                left=block.left,
-                top=block.top,
-                width=block.width,
-                height=block.height,
-                confidence=_ORG_CORE_PROPAGATION_CONFIDENCE,
-                source="org_core_propagation",
-            ))
-            logger.debug("PROPAGATE org core '%s' -> garbled block '%s...'", core, block_text[:20])
+            # Crop to the core's own glyphs when the block has char boxes. A block read
+            # WITH char boxes (乙方：信尔胜机械（江苏）有限公 — missing 司, so it fails the
+            # full_name test above and reaches here) would otherwise mask its WHOLE
+            # width and pull the 乙方：field label into the box. Only a truly charless
+            # stamp-garbled block (no glyph geometry) falls back to whole-block, where
+            # masking all of it is exactly right. Same char-box geometry as main match.
+            core_start = block_text.find(core)
+            rects = _entity_char_box_line_rects(
+                block, block_text, core_start, core_start + len(core)
+            )
+            spans = (
+                [(rx1, ry1, rx2 - rx1, ry2 - ry1) for (rx1, ry1, rx2, ry2) in rects]
+                if rects
+                else [(block.left, block.top, block.width, block.height)]
+            )
+            for left, top, width, height in spans:
+                regions.append(SensitiveRegion(
+                    text=core,
+                    entity_type="INSTITUTION_NAME",
+                    left=left,
+                    top=top,
+                    width=width,
+                    height=height,
+                    confidence=_ORG_CORE_PROPAGATION_CONFIDENCE,
+                    source="org_core_propagation",
+                ))
+            logger.debug("PROPAGATE org core '%s' -> block '%s...'", core, block_text[:20])
 
     regions = _prune_looser_same_text_boxes(regions, span_proven_region_ids)
 

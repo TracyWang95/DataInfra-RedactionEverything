@@ -230,10 +230,6 @@ class Settings(BaseSettings):
     LOCATE_ANYTHING_CONSENSUS_SAMPLES: int = 1
     LOCATE_ANYTHING_CONSENSUS_MIN_VOTES: int = 0
     LOCATE_ANYTHING_CONSENSUS_IOU: float = 0.5
-    # LocateAnything's recall collapses when categories share one prompt, so the
-    # detect stage always fans out one category per call; keep the zero-recall
-    # tile retry on to recover small / edge objects the full-frame pass drops.
-    VISUAL_TILE_RETRY: bool = True
     # HaS-Image YOLO supplement service (empty = disabled). Runs every page
     # alongside the grounding model: native-resolution small-object recall
     # (stacked seal halves, watermark QR codes) at ~100ms.
@@ -245,6 +241,11 @@ class Settings(BaseSettings):
     # channel: hybrid full-page-640 + tile-fallback, then OCR-prune + seal absorb.
     # Empty = keep the LA signature grounding.
     SIGNATURE_DETECTOR_URL: str = ""
+    # Base URL of the specialized YOLO11 inked-fingerprint (捺印) detector service.
+    # When set, it REPLACES the LA/YOLO fingerprint channel (recalls pale/red prints
+    # the VLM missed, no bare-finger/seal FP — trained grayscale on synthetic
+    # 捺印-on-document data). Empty = keep the LA fingerprint grounding.
+    FINGERPRINT_DETECTOR_URL: str = ""
     # Dedicated LocateAnything signature-only pass, higher recall on faint
     # handwritten signatures than the shared multi-category detect. Scoped to
     # signatures — seals/codes come from the main LA detect + YOLO. Empty = off.
@@ -252,31 +253,10 @@ class Settings(BaseSettings):
     # Fold signature boxes centered inside a seal into the seal hull —
     # LocateAnything misreads stamp content as phantom signatures, so absorb them.
     ABSORB_SIGNATURES_IN_SEALS: bool = True
-    # Fragment (骑缝) seal recovery: square native-resolution tiles along all
-    # four margins so a partial binding-seal arc — colour OR greyscale/B&W scan,
-    # where the only cue is the stamp's shape — is read by the model at a scale
-    # where it is salient. On by default; the killswitch is here.
-    VISUAL_FRAGMENT_SEAL: bool = True
-    # In-flight cap for the ~20 native-resolution fragment tiles: firing them all
-    # at once spikes the shared LA card into CUDA-capacity 503s. A resource
-    # limit, not a detection knob.
-    VISUAL_FRAGMENT_SEAL_CONCURRENCY: int = 4
-    # In-flight cap for the grid/tile retry (default for any _detect_on_tiles caller
-    # that does not set its own). A grid union — fingerprint grounds 2 phrases on
-    # each of 4 tiles = 8 calls — fired unbounded storms the shared LA card into
-    # 503s and silently drops tiles (a missed print). Same resource limit, not a
-    # detection knob.
-    VISUAL_TILE_CONCURRENCY: int = 4
     # In-flight cap for the model-centric verify re-ground (one native-res crop
     # per grounding box). Same shared-LA-card resource limit as the fragment
     # cap, not a detection knob.
     VISUAL_VERIFY_CONCURRENCY: int = 4
-    # Client-side union sampling of the grid retry. SUPERSEDED by the LA server's
-    # own n-sample union (LOCATE_ANYTHING_VLLM_SAMPLES=3): the server folds N
-    # decoder samples into ONE batched vLLM call (~1x cost) instead of this doing
-    # N separate tile passes (Nx cost). Left at 1 (off) — bump only if the server
-    # union is disabled. 1 = off.
-    VISUAL_GRID_RETRY_SAMPLES: int = 1
     # Merge the per-category visual fan-out into ONE /detect request when the
     # LA server runs in vLLM prompt-embeds mode (single MoonViT vision encode
     # shared across categories). Off by default; enable together with the
