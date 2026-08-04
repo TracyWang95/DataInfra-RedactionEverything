@@ -43,8 +43,9 @@ docker run -d --name "$NAME" --restart unless-stopped \
   -e LOCATE_ANYTHING_DTYPE=bfloat16 \
   -e LOCATE_ANYTHING_PORT="$PORT" \
   -e PYTHONUNBUFFERED=1 \
-  -e PYTHONPATH=/app \
+  -e PYTHONPATH=/opt/decord_stub:/app \
   -v "$MODEL_PATH:/models/locateanything:ro" \
+  -v "$REPO_ROOT/backend/scripts/decord_stub:/opt/decord_stub:ro" \
   "$IMAGE"
 
 echo "LA started: container=$NAME npu=$NPU_ID port=$PORT"

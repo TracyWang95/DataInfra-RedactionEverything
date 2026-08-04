@@ -1,0 +1,42 @@
+# HaS-Image (Ultralytics YOLO11) on Ascend NPU via torch_npu (vllm-ascend base).
+ARG VLLM_ASCEND_IMAGE=openeuler/vllm-ascend:0.11.0rc0-torch_npu2.5.1-cann8.1.rc1-python3.10-oe2403sp4
+FROM ${VLLM_ASCEND_IMAGE}
+
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn \
+    HF_ENDPOINT=https://hf-mirror.com \
+    PYTHONUNBUFFERED=1 \
+    HAS_IMAGE_DEVICE=npu:0 \
+    HAS_IMAGE_PORT=8081 \
+    QT_QPA_PLATFORM=offscreen \
+    MPLBACKEND=Agg
+
+WORKDIR /app
+
+USER root
+# libGL for opencv/ultralytics; package names vary across openEuler images
+RUN (yum install -y mesa-libGL mesa-libGLU libglib2.0 2>/dev/null \
+  || dnf install -y mesa-libGL mesa-libGLU glib2 2>/dev/null \
+  || true)
+
+RUN pip install --no-cache-dir \
+      -i https://pypi.tuna.tsinghua.edu.cn/simple \
+      --trusted-host pypi.tuna.tsinghua.edu.cn \
+      'ultralytics>=8.4.111' \
+      'fastapi==0.136.1' \
+      'uvicorn==0.35.0' \
+      'Pillow>=10.0.0' \
+      'pydantic>=2.0.0' \
+      'numpy<2.0.0'
+
+COPY scripts/has_image_server.py /app/has_image_server.py
+RUN mkdir -p /app/app/core \
+ && printf '' >/app/app/__init__.py \
+ && printf '' >/app/app/core/__init__.py
+COPY app/core/has_image_categories.py /app/app/core/has_image_categories.py
+
+ENV PYTHONPATH=/app
+EXPOSE 8081
+
+# Non-login shell: image ENTRYPOINT already sources CANN; `bash -l` can hang on ATB ABI torch probe.
+CMD ["python", "has_image_server.py"]

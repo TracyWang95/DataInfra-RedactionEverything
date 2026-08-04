@@ -27,6 +27,11 @@ COPY scripts/accel_device.py \
      scripts/locate_anything_server.py \
      /app/
 
+# aarch64 has no decord wheel; stub satisfies transformers remote-code import checks
+# (LocateAnything video path only — this service serves still images).
+COPY scripts/decord_stub/decord /opt/decord_stub/decord
+ENV PYTHONPATH=/opt/decord_stub:/app
+
 EXPOSE 8090
 
 # Clear dynamic-module cache so patched model .py files are picked up.

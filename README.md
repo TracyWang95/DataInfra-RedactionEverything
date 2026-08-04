@@ -92,8 +92,8 @@ The distinction is scope, not rhetoric:
 |---|---|
 | Node.js | 24 LTS |
 | Python | 3.11 |
-| GPU | NVIDIA GPU; 16 GB VRAM is recommended for the full vision pipeline |
-| CUDA | Match the local Paddle / vLLM build you use |
+| GPU | NVIDIA GPU; 16 GB VRAM is recommended for the full vision pipeline (or Huawei Ascend 910B — see below) |
+| CUDA / Ascend | NVIDIA: match the local Paddle / vLLM build you use; Ascend: host NPU driver + CANN in sidecar images |
 
 Model weights, real samples, uploaded files, runtime databases, logs, and exported results are not committed to this repository. Configure local paths in your own environment.
 
@@ -207,7 +207,20 @@ The GPU services load weights from `./backend/models`, mounted into the containe
 
 > **Runtime parity:** the Docker `ner` service runs the same stack as local development — **vLLM serving the HF bf16 weights** with identical generation settings — so NER behavior validated locally carries over to Docker unchanged.
 
-Before production deployment, configure `.env`, model mounts, GPU runtime, authentication, reverse proxy, and access-control policies.
+#### Huawei Ascend 910B
+
+NVIDIA `--profile gpu` does **not** apply on 910B. Use host-network NPU sidecars + the compose overlay:
+
+```bash
+bash deploy/ascend910b/start_all.sh
+# verify
+curl -s http://127.0.0.1:8000/health/services | python3 -m json.tool
+```
+
+Full guide (NPU map, official PaddleOCR-VL genai, Docker data-root, known pitfalls):  
+**[deploy/ascend910b/README.md](./deploy/ascend910b/README.md)**
+
+Before production deployment, configure `.env`, model mounts, GPU/NPU runtime, authentication, reverse proxy, and access-control policies.
 
 ---
 

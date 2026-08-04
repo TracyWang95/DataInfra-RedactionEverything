@@ -47,6 +47,21 @@ _gpu_available = False
 
 def _resolve_device() -> str:
     global _gpu_available
+    configured = os.environ.get("HAS_IMAGE_DEVICE", "").strip()
+    if configured:
+        if configured.lower() == "cpu":
+            print("[HaS-Image] FATAL: HAS_IMAGE_DEVICE=cpu is blocked (GPU/NPU-only).", flush=True)
+            sys.exit(1)
+        # Ascend: HAS_IMAGE_DEVICE=npu:0 (torch_npu). NVIDIA: "0" / "cuda:0".
+        try:
+            import torch  # noqa: F401
+
+            _gpu_available = True
+        except Exception as exc:
+            print(f"[HaS-Image] FATAL: unable to import torch: {exc}", flush=True)
+            sys.exit(1)
+        return configured
+
     try:
         import torch
 
@@ -56,17 +71,10 @@ def _resolve_device() -> str:
         print(f"[HaS-Image] FATAL: unable to inspect CUDA availability: {exc}", flush=True)
         sys.exit(1)
 
-    configured = os.environ.get("HAS_IMAGE_DEVICE", "").strip()
-    if configured:
-        if configured.lower() == "cpu":
-            print("[HaS-Image] FATAL: HAS_IMAGE_DEVICE=cpu is blocked (GPU-only).", flush=True)
-            sys.exit(1)
-        return configured
-
     if _gpu_available:
         return "0"
 
-    print("[HaS-Image] FATAL: no CUDA GPU detected (GPU-only, no CPU fallback).", flush=True)
+    print("[HaS-Image] FATAL: no CUDA/NPU device detected (set HAS_IMAGE_DEVICE=npu:0 on Ascend).", flush=True)
     sys.exit(1)
 
 

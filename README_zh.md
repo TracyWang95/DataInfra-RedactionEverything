@@ -92,8 +92,8 @@ RedactionEverything 被设计为一个完整的脱敏工作台，而不是纯文
 |---|---|
 | Node.js | 24 LTS |
 | Python | 3.11 |
-| GPU | NVIDIA GPU；完整视觉链路推荐 16 GB 显存 |
-| CUDA | 与本地 Paddle / vLLM 构建匹配 |
+| GPU | NVIDIA GPU（完整视觉链路推荐 16 GB 显存），或华为昇腾 910B（见下方 Ascend 部署） |
+| CUDA / Ascend | NVIDIA：与本地 Paddle / vLLM 构建匹配；Ascend：宿主机 NPU 驱动 + 侧车镜像自带 CANN |
 
 模型权重、真实样本、上传文件、运行时数据库、日志与导出结果不纳入本仓库。请在自己的环境中配置本地路径。
 
@@ -232,7 +232,20 @@ GPU 服务从 `./backend/models` 加载权重（容器内挂载为 `/models`）�
 
 > **运行时一致性：** Docker 的 `ner` 服务与本地开发完全同栈——**vLLM + HF bf16 权重**、相同的生成参数——本地验证过的 NER 行为可原样迁移到 Docker。
 
-生产部署前，请配置 `.env`、模型挂载、GPU 运行时、认证、反向代理与访问控制策略。
+#### 华为昇腾 910B（Ascend）
+
+NVIDIA `--profile gpu` **不适用于** 910B。请使用 host-network NPU 侧车 + compose overlay：
+
+```bash
+bash deploy/ascend910b/start_all.sh
+# 验收
+curl -s http://127.0.0.1:8000/health/services | python3 -m json.tool
+```
+
+完整说明（NPU 划分、官方 PaddleOCR-VL genai、磁盘 data-root、已知坑）：  
+**[deploy/ascend910b/README.md](./deploy/ascend910b/README.md)**
+
+生产部署前，请配置 `.env`、模型挂载、GPU/NPU 运行时、认证、反向代理与访问控制策略。
 
 ---
 

@@ -310,6 +310,18 @@ def init_ocr() -> None:
         warmup()
         return
     except Exception as exc:
+        # Ascend: keep Structure online if VL client init fails (official path is
+        # genai_server for VLM; local direct VL load is unsupported).
+        if _structure_enabled():
+            _vl = None
+            _ready = True
+            _model_name = "PP-StructureV3 (PaddleOCR-VL client init failed)"
+            print(f"[OCR] WARN: PaddleOCR-VL init failed: {exc}", flush=True)
+            print(
+                "[OCR] Continuing Structure-only. Ensure official genai-vllm-server is up on OCR_VLLM_URL.",
+                flush=True,
+            )
+            return
         print(f"[OCR] FATAL: PaddleOCR-VL init failed: {exc}", flush=True)
         _fatal(1)
 

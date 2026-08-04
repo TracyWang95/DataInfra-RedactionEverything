@@ -1,4 +1,5 @@
-# Ascend 910B overlay: model sidecars run on host network (NPU docker / CPU OCR).
+# Ascend 910B overlay: model sidecars run on host network (NPU docker).
+# Full guide: deploy/ascend910b/README.md
 # Usage:
 #   bash deploy/ascend910b/start_all.sh
 #   # or
@@ -13,6 +14,9 @@ services:
       - HAS_TEXT_VLLM_BASE_URL=http://host.docker.internal:8080/v1
       - HAS_TEXT_MODEL_NAME=HaS_Text_0209_0.6B
       - VISUAL_FEATURES_BASE_URL=http://host.docker.internal:8090
+      - HAS_IMAGE_URL=${HAS_IMAGE_URL:-http://host.docker.internal:8081}
+      - OCR_VL_ENABLED=${OCR_VL_ENABLED:-true}
+      - OCR_STRUCTURE_ENABLED=${OCR_STRUCTURE_ENABLED:-true}
       - HF_ENDPOINT=${HF_ENDPOINT:-https://hf-mirror.com}
       - PADDLE_PDX_MODEL_SOURCE=modelscope
 
