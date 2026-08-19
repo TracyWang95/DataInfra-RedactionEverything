@@ -464,4 +464,4 @@ npm run build
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=TracyWang95/DataInfra-RedactionEverything&type=Date)](https://star-history.com/#TracyWang95/DataInfra-RedactionEverything&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=TracyWang95/DataInfra-RedactionEverything&type=Date)](https://star-history.dera.page/#TracyWang95/DataInfra-RedactionEverything&Date)
