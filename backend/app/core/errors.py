@@ -16,22 +16,35 @@ class AppError(Exception):
         self.detail = detail or {}
 
 
-def _error_response(status_code: int, error_code: str, message: str, detail: dict = None) -> JSONResponse:
+def error_response(
+    status_code: int,
+    error_code: str,
+    message: str,
+    detail: dict | None = None,
+    *,
+    extra: dict | None = None,
+) -> JSONResponse:
+    """Build the public error envelope used by routes and middleware.
+
+    ``extra`` exists only for backwards-compatible top-level aliases (for
+    example the legacy ``license`` field).  Every response still exposes the
+    canonical error fields.
+    """
     # 使用 request_id middleware 中已设置的请求 ID，而非每次生成新 uuid
     rid = request_id_var.get("")
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "error_code": error_code,
-            "message": message,
-            "detail": detail or {},
-            "request_id": rid,
-        },
-    )
+    content = {
+        "error_code": error_code,
+        "message": message,
+        "detail": detail or {},
+        "request_id": rid,
+    }
+    if extra:
+        content.update(extra)
+    return JSONResponse(status_code=status_code, content=content)
 
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
-    return _error_response(exc.status_code, exc.error_code, exc.message, exc.detail)
+    return error_response(exc.status_code, exc.error_code, exc.message, exc.detail)
 
 
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -41,7 +54,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         message = exc.detail if exc.status_code < 500 else "服务器内部错误"
     else:
         message = "请求错误"
-    return _error_response(
+    return error_response(
         exc.status_code,
         f"HTTP_{exc.status_code}",
         message,
@@ -50,7 +63,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    return _error_response(
+    return error_response(
         422,
         "VALIDATION_ERROR",
         "请求参数校验失败",

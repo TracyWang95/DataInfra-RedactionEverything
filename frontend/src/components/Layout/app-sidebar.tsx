@@ -6,6 +6,7 @@ import {
   FileSpreadsheet,
   PackageCheck,
   RefreshCw,
+  ScanLine,
   Server,
   TableProperties,
 } from 'lucide-react';
@@ -13,7 +14,11 @@ import { useT } from '@/i18n';
 import { BRAND, brandName, brandTagline } from '@/config/brand';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/features/auth/auth-context';
-import { useServiceHealth, type ServiceInfo, type ServicesHealth } from '@/hooks/use-service-health';
+import {
+  useServiceHealth,
+  type ServiceInfo,
+  type ServicesHealth,
+} from '@/hooks/use-service-health';
 import {
   HomeIcon,
   PlayIcon,
@@ -95,6 +100,12 @@ export function AppSidebar() {
         },
       ],
     },
+    {
+      path: '/dicom',
+      label: t('nav.dicom'),
+      sublabel: t('nav.dicom.sub'),
+      icon: ScanLine,
+    },
     { path: '/jobs', label: t('nav.jobs'), sublabel: t('nav.jobs.sub'), icon: JobsCenterIcon },
     {
       path: '/history',
@@ -142,9 +153,7 @@ export function AppSidebar() {
           <span className="block truncate text-sm font-semibold leading-tight tracking-tight text-sidebar-foreground">
             {brandName(t)}
           </span>
-          <p className="mt-0.5 truncate text-xs text-sidebar-foreground/55">
-            {brandTagline(t)}
-          </p>
+          <p className="mt-0.5 truncate text-xs text-sidebar-foreground/55">{brandTagline(t)}</p>
         </div>
       </SidebarHeader>
 
@@ -218,7 +227,9 @@ function SidebarNavItem({ item, pathname }: { item: NavItem; pathname: string })
           {item.sublabel ? (
             <span className="flex min-w-0 flex-col gap-0.5 py-0.5 leading-snug">
               <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
-              <span className="truncate text-[11px] font-normal leading-tight opacity-45">{item.sublabel}</span>
+              <span className="truncate text-[11px] font-normal leading-tight opacity-45">
+                {item.sublabel}
+              </span>
             </span>
           ) : (
             <span className="truncate text-xs font-medium leading-tight">{item.label}</span>
@@ -243,7 +254,8 @@ function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string
       to={item.path}
       className={cn(
         'grid min-h-9 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-xl border border-transparent px-2.5 py-1.5 text-sidebar-foreground/70 transition-all duration-150 hover:bg-sidebar-accent hover:text-sidebar-foreground',
-        active && 'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-[var(--shadow-control)]',
+        active &&
+          'border-sidebar-border bg-sidebar-accent text-sidebar-foreground shadow-[var(--shadow-control)]',
       )}
       aria-label={item.sublabel ? `${item.label} - ${item.sublabel}` : item.label}
       data-testid={`nav-${item.path.replace(/\//g, '-').replace(/^-/, '')}`}
@@ -251,9 +263,7 @@ function SidebarSubNavItem({ item, pathname }: { item: NavItem; pathname: string
       <item.icon className="size-3.5 opacity-65" />
       <span className="min-w-0">
         <span className="block truncate text-xs font-medium">{item.label}</span>
-        {item.sublabel ? (
-          <span className="sr-only">{item.sublabel}</span>
-        ) : null}
+        {item.sublabel ? <span className="sr-only">{item.sublabel}</span> : null}
       </span>
     </NavLink>
   );
@@ -397,7 +407,10 @@ function SidebarServiceStatus({
       ) : (
         <div className="mt-1 grid min-h-5 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 overflow-hidden rounded-lg border border-sidebar-border/80 px-1.5 py-0.5">
           <span className="shrink-0 text-[11px] font-semibold">{accelLabel}</span>
-          <span className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70" title={gpuText}>
+          <span
+            className="min-w-0 truncate text-right text-[11px] text-sidebar-foreground/70"
+            title={gpuText}
+          >
             {gpuText}
           </span>
         </div>

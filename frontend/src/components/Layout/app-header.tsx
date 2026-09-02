@@ -46,11 +46,7 @@ export function AppHeader() {
           <div className="truncate text-lg font-semibold leading-tight tracking-tight text-foreground">
             {title}
           </div>
-          {sub && (
-            <p className="mt-1 truncate text-xs leading-snug text-muted-foreground">
-              {sub}
-            </p>
-          )}
+          {sub && <p className="mt-1 truncate text-xs leading-snug text-muted-foreground">{sub}</p>}
         </div>
       </div>
 
@@ -142,6 +138,7 @@ function getPageHeader(
     return { title: t('nav.structured.datasets'), sub: t('nav.structured.datasets.sub') };
   if (pathname === '/structured/delivery')
     return { title: t('nav.structured.delivery'), sub: t('nav.structured.delivery.sub') };
+  if (pathname === '/dicom') return { title: t('page.dicom.title'), sub: t('page.dicom.sub') };
   if (pathname.startsWith('/settings/redaction'))
     return { title: t('page.redactionList.title'), sub: t('page.redactionList.sub') };
   if (pathname === '/settings') return { title: t('page.config.title'), sub: t('page.config.sub') };

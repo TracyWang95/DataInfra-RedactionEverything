@@ -22,6 +22,7 @@ from starlette.types import Message
 from app.api import audit as audit_api
 from app.api import auth as auth_api
 from app.api import (
+    dicom,
     entity_types,
     files,
     jobs,
@@ -474,6 +475,7 @@ app.include_router(ner_backend.router, prefix=settings.API_PREFIX, tags=["文本
 app.include_router(presets.router, prefix=settings.API_PREFIX, tags=["识别配置预设"], dependencies=[Depends(require_auth)])
 app.include_router(jobs.router, prefix=settings.API_PREFIX, tags=["批量任务"], dependencies=[Depends(require_auth)])
 app.include_router(structured.router, prefix=settings.API_PREFIX, tags=["structured"], dependencies=[Depends(require_auth)])
+app.include_router(dicom.router, prefix=settings.API_PREFIX, tags=["DICOM"], dependencies=[Depends(require_auth)])
 app.include_router(safety_api.router, prefix=settings.API_PREFIX, tags=["数据安全"], dependencies=[Depends(require_auth)])
 
 logger.info("presets API: GET/POST %s/presets (若前端仍 404，请重启本进程以加载最新路由", settings.API_PREFIX)
@@ -711,4 +713,3 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.DEBUG,
     )
-

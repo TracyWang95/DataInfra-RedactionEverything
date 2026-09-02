@@ -5,9 +5,10 @@ import secrets
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from app.core.config import settings
+from app.core.errors import error_response
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +58,17 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             header_token = request.headers.get(_HEADER_NAME)
 
             if not cookie_token or not header_token:
-                return JSONResponse(status_code=403, content={"detail": "Missing CSRF token."})
+                return error_response(
+                    403,
+                    "CSRF_TOKEN_MISSING",
+                    "Missing CSRF token.",
+                )
             if not secrets.compare_digest(cookie_token, header_token):
-                return JSONResponse(status_code=403, content={"detail": "CSRF token does not match."})
+                return error_response(
+                    403,
+                    "CSRF_TOKEN_MISMATCH",
+                    "CSRF token does not match.",
+                )
 
         response: Response = await call_next(request)
 

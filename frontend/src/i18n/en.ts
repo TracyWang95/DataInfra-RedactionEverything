@@ -127,7 +127,6 @@ const enBase: Record<string, string> = {
   'redactionState.awaiting_review': 'Awaiting Review',
   'redactionState.unredacted': 'Unredacted',
 
-
   'report.coverage': 'Coverage',
   'report.typeDistribution': 'Type Distribution',
   'report.confidenceDistribution': 'Confidence',
@@ -190,7 +189,6 @@ const enBase: Record<string, string> = {
   'preset.saveVision.prompt': 'Save this image recognition list: enter a name',
   'preset.saveVision.success': 'Image recognition list saved.',
   'preset.save.failed': 'Save failed',
-
 
   'start.kicker': 'Start here',
   'start.title': 'Start with one file, then scale',
@@ -462,7 +460,6 @@ const enBase: Record<string, string> = {
   'jobDetail.progressAwaiting': '{n} awaiting review',
   'jobDetail.progressFailed': '{n} failed',
 
-
   'batchHub.title': 'Start or Resume a Batch Job',
   'batchHub.desc':
     'Batches are mixed-file runs by default. Validate one file first, then configure, upload, recognize, and review the full queue.',
@@ -697,10 +694,13 @@ const enBase: Record<string, string> = {
   'batchWizard.step4.qualityIssueSeamSealTitle':
     'Seal is near a page seam; verify the whole seal area is covered.',
   'batchWizard.step4.qualityIssueWarningTitle': 'Recognition returned a warning for this region.',
+  'batchWizard.step4.needsReview': 'Needs review',
+  'batchWizard.step4.confidenceDecoded': 'Decoded',
   'batchWizard.step4.confidence': 'Confidence',
   'batchWizard.step4.source': 'Source',
   'batchWizard.step4.sourceVisualFeatureModel': 'Visual element model',
-  'batchWizard.step4.sourceVisualFeatureModelTitle': 'Detected by the GLM-4.6V visual element pipeline.',
+  'batchWizard.step4.sourceVisualFeatureModelTitle':
+    'Detected by the GLM-4.6V visual element pipeline.',
   'batchWizard.step4.sourceOcrHas': 'OCR+HaS',
   'batchWizard.step4.sourceOcrHasTitle': 'Detected from OCR text and HaS entity matching.',
   'batchWizard.step4.sourceTable': 'Table',
@@ -742,7 +742,8 @@ const enBase: Record<string, string> = {
   'batchWizard.step5.selectReady': 'Only ready files',
   'batchWizard.step5.downloadOriginal': 'Download Original ZIP',
   'batchWizard.step5.downloadRedacted': 'Download Redacted ZIP',
-  'batchWizard.step5.exportEstimate': 'Estimated {size} · {files} files · about {volumes} volume(s)',
+  'batchWizard.step5.exportEstimate':
+    'Estimated {size} · {files} files · about {volumes} volume(s)',
   'batchWizard.step5.asyncExportStart': 'Export redacted files (volumes)',
   'batchWizard.step5.asyncExportQueued': 'Export task queued…',
   'batchWizard.step5.asyncExportRunning': 'Packing {current}/{total}…',
@@ -1047,6 +1048,10 @@ const enOverrides: Record<string, string> = {
   'playground.redactDisabledNoSelection':
     'All results are currently deselected. Select at least one item, or confirm that nothing needs redaction.',
   'playground.sourceOcr': 'OCR',
+  'playground.needsReview': 'Needs review',
+  'playground.confidenceHint':
+    'How sure the model was about this box, from the per-token probabilities it emitted while drawing it. Below 50% it was guessing — worth a human look.',
+  'playground.confidenceDecoded': 'Decoded',
   'playground.sourceImage': 'Visual element',
   'playground.sourceManual': 'Manual',
   'playground.imageRegion': 'Image region',
@@ -1362,6 +1367,134 @@ const enOverrides: Record<string, string> = {
 };
 
 Object.assign(enOverrides, {
+  'nav.dicom': 'Medical Imaging DICOM',
+  'nav.dicom.sub': 'Studies, review, and de-identification',
+  'page.dicom.title': 'DICOM Medical Imaging',
+  'page.dicom.sub': 'De-identify studies, series, and instances safely',
+  'common.refresh': 'Refresh',
+  'common.clear': 'Clear',
+  'dicom.title': 'DICOM Medical Imaging De-identification',
+  'dicom.pixelRedaction.enabled': 'GPU pixel-text redaction · fail closed',
+  'dicom.description':
+    'Process metadata, private tags, burned-in pixels, and references at study level; export only reviewed derivative copies.',
+  'dicom.error.title': 'DICOM service is unavailable',
+  'dicom.upload.choose': 'Choose DICOM',
+  'dicom.upload.rejected': 'Some files were not recognized as DICOM, DICOMDIR, or ZIP.',
+  'dicom.upload.archiveExclusive': 'Upload a ZIP archive by itself, not mixed with other files.',
+  'dicom.upload.success': 'Imported {studies} studies and {instances} instances.',
+  'dicom.metric.studies': 'Studies',
+  'dicom.metric.instances': 'Instances',
+  'dicom.metric.highRisk': 'Unresolved high risk',
+  'dicom.metric.completed': 'Validated outputs',
+  'dicom.tab.workbench': 'Viewer and review',
+  'dicom.tab.metadata': 'Tag differences',
+  'dicom.tab.workflow': 'Import and process',
+  'dicom.queue.title': 'Study queue',
+  'dicom.queue.description': 'Check studies for batch work and click one to inspect it.',
+  'dicom.queue.select': 'Select study',
+  'dicom.empty.title': 'No DICOM studies yet',
+  'dicom.empty.description': 'Import a file, folder, DICOMDIR, or ZIP from the processing tab.',
+  'dicom.value.unknownDate': 'Date pending review',
+  'dicom.value.pseudonymPending': 'Patient pseudonym pending',
+  'dicom.viewer.title': 'DICOM viewer',
+  'dicom.viewer.description': 'Select a study to browse its series and instances.',
+  'dicom.viewer.series': 'Series',
+  'dicom.viewer.instance': 'Instance',
+  'dicom.viewer.frame': 'Frame',
+  'dicom.viewer.windowCenter': 'Window center',
+  'dicom.viewer.windowWidth': 'Window width',
+  'dicom.viewer.apply': 'Apply',
+  'dicom.viewer.previewAlt': 'DICOM instance preview',
+  'dicom.viewer.noPreview': 'Preview unavailable',
+  'dicom.viewer.noPreviewDesc':
+    'The transfer syntax needs a decoder or the pixel data requires manual review.',
+  'dicom.viewer.selectStudy': 'Select a study',
+  'dicom.viewer.selectStudyDesc':
+    'Choose a study on the left to inspect series, instances, and pixel risks.',
+  'dicom.risk.title': 'Risk review',
+  'dicom.risk.description': 'Export is blocked while high-risk findings remain unresolved.',
+  'dicom.risk.empty': 'No risk findings',
+  'dicom.risk.emptyDesc': 'Run preflight to scan metadata, pixels, and object references.',
+  'dicom.risk.accept': 'Accept risk',
+  'dicom.risk.acceptTitle': 'Accept an unresolved risk',
+  'dicom.risk.acceptDescription':
+    'This records an audit decision only. High-risk export remains blocked until the finding is resolved.',
+  'dicom.risk.acceptNote': 'Acceptance rationale',
+  'dicom.risk.acceptNotePlaceholder': 'Describe the assessment, business basis, and follow-up plan',
+  'dicom.risk.acceptNoteHint': 'At least 10 characters; this text is retained in the audit trail.',
+  'dicom.risk.acceptConfirm': 'Record and keep blocked',
+  'dicom.risk.resolve': 'Mark resolved',
+  'dicom.review.saved': 'Review decision saved. The current preflight remains valid.',
+  'dicom.anonymize.reviewRequired':
+    'Blocking risks remain. Complete instance-level review before de-identification.',
+  'dicom.metadata.title': 'DICOM tag processing differences',
+  'dicom.metadata.description': 'Inspect original values, output values, and policy actions.',
+  'dicom.metadata.empty': 'No tag differences',
+  'dicom.metadata.emptyDesc': 'Select a study and run preflight to inspect the tag-level plan.',
+  'dicom.metadata.tag': 'Tag',
+  'dicom.metadata.keyword': 'Keyword',
+  'dicom.metadata.original': 'Original',
+  'dicom.metadata.output': 'Output',
+  'dicom.metadata.action': 'Action',
+  'dicom.metadata.source': 'Source',
+  'dicom.import.title': 'Import DICOM',
+  'dicom.import.description':
+    'Supports single files, multi-file sets, folders, DICOMDIR, and ZIP while keeping source data read-only.',
+  'dicom.import.profile': 'Processing policy',
+  'dicom.import.profileLabel': 'De-identification profile',
+  'dicom.import.files': 'DICOM files',
+  'dicom.import.filesDesc':
+    'ZIP must be uploaded alone; the backend validates extensionless files by DICOM content.',
+  'dicom.import.chooseFiles': 'Choose files or ZIP',
+  'dicom.import.folder': 'Choose folder',
+  'dicom.import.noFiles': 'Waiting for data',
+  'dicom.import.noFilesDesc':
+    'Select a complete study and it will be grouped by Study / Series / Instance.',
+  'dicom.import.ingest': 'Parse and import',
+  'dicom.import.ingesting': 'Parsing',
+  'dicom.profile.strict': 'External research (strict)',
+  'dicom.profile.strictDesc':
+    'Irreversible de-identification of institutions, devices, dates, UIDs, private tags, and pixel risks.',
+  'dicom.profile.longitudinal': 'Longitudinal research',
+  'dicom.profile.longitudinalDesc':
+    'Stable patient pseudonyms and consistent date offsets preserve follow-up intervals.',
+  'dicom.profile.internal': 'Internal pseudonymization',
+  'dicom.profile.internalDesc':
+    'Preserves internal longitudinal links; mappings must be isolated in a controlled vault.',
+  'dicom.profile.basic': 'Basic de-identification',
+  'dicom.profile.basicDesc':
+    'Applies baseline identity tag handling for controlled compatibility workflows.',
+  'dicom.profile.longitudinalResearch': 'Longitudinal research (enhanced)',
+  'dicom.profile.longitudinalResearchDesc':
+    'Combines strict cleanup with consistent date shifting and longitudinal linkage.',
+  'dicom.profile.aiTraining': 'AI training data',
+  'dicom.profile.aiTrainingDesc':
+    'Applies strict identity, descriptor, private tag, and pixel-risk handling for model training.',
+  'dicom.preflight.complete': 'Preflight complete; risks and planned actions were refreshed.',
+  'dicom.preflight.batchComplete':
+    'Batch preflight complete: {success} succeeded, {failed} failed.',
+  'dicom.anonymize.started': 'De-identification job submitted.',
+  'dicom.anonymize.batchStarted': 'Batch jobs submitted: {success} succeeded, {failed} failed.',
+  'dicom.processing.title': 'Preflight, process, and deliver',
+  'dicom.processing.description': 'Single and batch jobs use the same policy and export gates.',
+  'dicom.processing.preflight': 'Risk preflight',
+  'dicom.processing.preflightDone': 'Preflight version locked',
+  'dicom.processing.preflightPending': 'Waiting to scan tags, pixels, and references',
+  'dicom.processing.deidentify': 'Run de-identification',
+  'dicom.processing.deidentifyPending': 'Waiting for preflight and human review',
+  'dicom.processing.validate': 'Output validation',
+  'dicom.processing.validatePending': 'Waiting for independent read-back validation',
+  'dicom.processing.sourceGuard': 'Creates derivative copies and never overwrites source images',
+  'dicom.processing.selected': '{count} studies selected',
+  'dicom.processing.unresolved': 'Unresolved',
+  'dicom.processing.running': 'Processing…',
+  'dicom.processing.batchPreflight': 'Batch preflight',
+  'dicom.processing.batchDeidentify': 'Batch process',
+  'dicom.processing.export': 'Download DICOM ZIP',
+  'dicom.processing.batchExport': 'Download batch ZIP',
+  'dicom.processing.reportReady': 'Output validation report is ready',
+  'dicom.processing.reportSummary':
+    '{source} source instances and {output} output instances; ready for delivery.',
   'nav.start': 'Start',
   'nav.start.sub': 'Choose a path',
   'nav.playground': 'Single File',
@@ -1403,7 +1536,8 @@ Object.assign(enOverrides, {
   'settings.visualFeatureNegativePrompt': 'Negative prompt',
   'settings.visualFeaturePromptAdd': 'Add row',
   'settings.visualFeaturePromptRemove': 'Remove prompt row',
-  'settings.visualFeaturePositivePromptPlaceholder': 'For example: detect handwritten signature ink',
+  'settings.visualFeaturePositivePromptPlaceholder':
+    'For example: detect handwritten signature ink',
   'settings.visualFeatureNegativePromptPlaceholder':
     'For example: printed names, empty signing cells, and table lines should not match',
   'settings.visualFeatureSamplesLabel': 'Sample images',
@@ -1656,7 +1790,8 @@ Object.assign(enOverrides, {
   'auth.register.title': 'Create user account',
   'auth.register.description': 'Register a normal user account for an isolated workspace.',
   'auth.register.submit': 'Create account',
-  'auth.register.hint': 'New accounts are normal users. Admin functions stay available only to super admins.',
+  'auth.register.hint':
+    'New accounts are normal users. Admin functions stay available only to super admins.',
   'auth.login.switchToRegister': 'Create a normal user account',
   'auth.register.switchToLogin': 'Back to sign in',
 });
@@ -1741,7 +1876,8 @@ Object.assign(enOverrides, {
   'structured.overview.metric.connections': 'Database connections',
   'structured.overview.metric.connectionsHelper': 'Read-only connections and discovery',
   'structured.overview.path.title': 'Governance path',
-  'structured.overview.path.description': 'Pick either data source entry; the rest follows the field-policy loop.',
+  'structured.overview.path.description':
+    'Pick either data source entry; the rest follows the field-policy loop.',
   'structured.overview.path.step1.title': 'Register data sources',
   'structured.overview.path.step1.descDone': 'File tables or database objects registered',
   'structured.overview.path.step1.descTodo': 'Choose file tables or a database',
@@ -1777,7 +1913,8 @@ Object.assign(enOverrides, {
   'structured.overview.mix.fileLabel': 'File tables',
   'structured.overview.mix.dbLabel': 'Database objects',
   'structured.overview.mix.readonly': 'Read-only connections',
-  'structured.overview.mix.connectionSummary': '{count} connections available for table/view discovery',
+  'structured.overview.mix.connectionSummary':
+    '{count} connections available for table/view discovery',
 
   'structured.files.eyebrow': 'File Tables',
   'structured.files.title': 'File table import',
@@ -1794,7 +1931,8 @@ Object.assign(enOverrides, {
   'notify.outputsReady': 'All redacted outputs are ready - you can proceed to export',
   'batchWizard.inbox.button': 'Import from server folder',
   'batchWizard.inbox.title': 'Import from server folder',
-  'batchWizard.inbox.description': 'Intranet bulk ingest: copy files to {path} on the platform server (scp/rsync/share), refresh, then select and import. Import is a local server move - no upload bandwidth used.',
+  'batchWizard.inbox.description':
+    'Intranet bulk ingest: copy files to {path} on the platform server (scp/rsync/share), refresh, then select and import. Import is a local server move - no upload bandwidth used.',
   'batchWizard.inbox.selectAll': 'Select all',
   'batchWizard.inbox.empty': 'Folder is empty. Copy files to the path above, then refresh.',
   'batchWizard.inbox.importSelected': 'Import selected ({n})',
@@ -1805,7 +1943,8 @@ Object.assign(enOverrides, {
   'batchWizard.inbox.importFailed': 'Import failed - try again',
   'batchWizard.inbox.tabLocal': 'Server folder',
   'batchWizard.sftp.tab': 'Remote server (SFTP)',
-  'batchWizard.sftp.description': 'The platform pulls files directly from another intranet server over SFTP - no office PC in the path. Configure a source, then browse and pull.',
+  'batchWizard.sftp.description':
+    'The platform pulls files directly from another intranet server over SFTP - no office PC in the path. Configure a source, then browse and pull.',
   'batchWizard.sftp.noSources': 'No sources yet',
   'batchWizard.sftp.addSource': 'Add source',
   'batchWizard.sftp.saveSource': 'Save source',
@@ -1824,9 +1963,11 @@ Object.assign(enOverrides, {
   'batchWizard.sftp.pulling': 'Pulling…',
   'batchWizard.sftp.pullFailed': 'Pull failed - try again',
   'batchWizard.step4.settlingProgress': 'Generating outputs {done}/{total}',
-  'batchWizard.step4.settlingHint': 'After bulk confirmation the redacted outputs are generated one by one; export unlocks when all are done (you can leave - we will notify you)',
+  'batchWizard.step4.settlingHint':
+    'After bulk confirmation the redacted outputs are generated one by one; export unlocks when all are done (you can leave - we will notify you)',
   'history.trash.title': 'Recycle bin',
-  'history.trash.description': 'Deleted files stay in the recycle bin for {days} day(s); restore or purge them, or they are cleared automatically.',
+  'history.trash.description':
+    'Deleted files stay in the recycle bin for {days} day(s); restore or purge them, or they are cleared automatically.',
   'history.trash.empty': 'Recycle bin is empty',
   'history.trash.restore': 'Restore',
   'history.trash.purge': 'Delete forever',
@@ -1860,7 +2001,8 @@ Object.assign(enOverrides, {
   'structured.files.deleteConfirmMessage':
     'This removes the dataset "{name}" and its field policy. Sibling sheet datasets from the same file and the source file itself are unaffected. This cannot be undone.',
   'structured.files.import.title': 'Import files',
-  'structured.files.import.description': 'Uploads are registered as datasets automatically and proceed to field policies.',
+  'structured.files.import.description':
+    'Uploads are registered as datasets automatically and proceed to field policies.',
   'structured.files.import.choose': 'Choose structured files',
   'structured.files.registry.title': 'File datasets',
   'structured.files.registry.description':
@@ -1894,7 +2036,8 @@ Object.assign(enOverrides, {
     'Connection switched. Registered objects are shown on the right; click Discover tables/views to refresh the schema.',
   'structured.database.notice.testOk': 'Connection succeeded. Found {count} tables/views',
   'structured.database.notice.saved': 'Database connection saved',
-  'structured.database.notice.removed': 'Database connection removed. Related registered tables and policies were cleaned up.',
+  'structured.database.notice.removed':
+    'Database connection removed. Related registered tables and policies were cleaned up.',
   'structured.database.notice.discovered': 'Found {count} tables/views',
   'structured.database.notice.registered': 'Registered {count} datasets',
   'structured.database.removeConnection': 'Remove connection',
@@ -1923,7 +2066,8 @@ Object.assign(enOverrides, {
   'structured.database.objectCount': '{count} objects',
   'structured.database.credentialHint':
     'Discovery uses the encrypted credentials of this saved connection; the form above only creates new connections.',
-  'structured.database.selectConnectionFirst': 'Save or select a connection before discovering tables/views.',
+  'structured.database.selectConnectionFirst':
+    'Save or select a connection before discovering tables/views.',
   'structured.database.discover': 'Discover tables/views',
   'structured.database.registeredObjects': 'Registered objects',
   'structured.database.discoveryResult': 'Discovery results',
@@ -1946,10 +2090,12 @@ Object.assign(enOverrides, {
   'structured.database.filterAll': 'All {count}',
   'structured.database.schemaTooltip': '{tables} tables, {views} views',
   'structured.database.filterSummary': '{count} objects in current filter.',
-  'structured.database.filterSummarySelected': '{count} objects in current filter, {selected} selected.',
+  'structured.database.filterSummarySelected':
+    '{count} objects in current filter, {selected} selected.',
   'structured.database.emptyRegistered':
     'No registered objects on this connection yet. Click "Discover tables/views" and pick the tables to govern.',
-  'structured.database.emptyLive': 'Click "Discover tables/views" to fetch objects from this connection',
+  'structured.database.emptyLive':
+    'Click "Discover tables/views" to fetch objects from this connection',
   'structured.database.emptyNoConnection': 'Save or select a database connection first',
   'structured.database.emptyFiltered': 'No tables or views match the current filter',
   'structured.database.th.status': 'Status',
@@ -1968,12 +2114,16 @@ Object.assign(enOverrides, {
   'structured.datasets.refresh': 'Refresh datasets',
   'structured.datasets.source.database': 'database registration',
   'structured.datasets.source.file': 'file import',
-  'structured.datasets.notice.handoffSingle': 'Added 1 dataset via {source}. Please review its field policies.',
+  'structured.datasets.notice.handoffSingle':
+    'Added 1 dataset via {source}. Please review its field policies.',
   'structured.datasets.notice.handoffMulti':
     'Added {count} datasets via {source}. Review the first one now; the rest are available in the list on the left.',
-  'structured.datasets.error.confirmFirst': 'Confirm the field policies before generating a preview.',
-  'structured.datasets.error.saveFirst': 'Save the field policies before generating a redaction preview.',
-  'structured.datasets.error.reviewAllPages': 'Confirm all field pages first: {reviewed}/{total} pages confirmed.',
+  'structured.datasets.error.confirmFirst':
+    'Confirm the field policies before generating a preview.',
+  'structured.datasets.error.saveFirst':
+    'Save the field policies before generating a redaction preview.',
+  'structured.datasets.error.reviewAllPages':
+    'Confirm all field pages first: {reviewed}/{total} pages confirmed.',
   'structured.datasets.confirmSwitch.title': 'Switch dataset',
   'structured.datasets.confirmSwitch.message':
     'The current field policies have unsaved changes; switching datasets will discard them. Continue?',
@@ -2011,22 +2161,29 @@ Object.assign(enOverrides, {
   'structured.canvas.action.selectDataset': 'Select a dataset first',
   'structured.canvas.action.selectDatasetDetail': 'Pick a registered dataset from the left.',
   'structured.canvas.action.generateProfile': 'Generate field policies',
-  'structured.canvas.action.generateProfileDetail': 'Generate field policies from column names and samples.',
+  'structured.canvas.action.generateProfileDetail':
+    'Generate field policies from column names and samples.',
   'structured.canvas.action.continueReview': 'Continue reviewing unconfirmed pages',
   'structured.canvas.action.confirmPage': 'Confirm page {page}/{total}',
-  'structured.canvas.action.continueReviewDetail': '{reviewed}/{total} pages confirmed; continue to the next page.',
-  'structured.canvas.action.confirmPageDetail': 'Check the fields, samples, and actions on this page, then confirm.',
+  'structured.canvas.action.continueReviewDetail':
+    '{reviewed}/{total} pages confirmed; continue to the next page.',
+  'structured.canvas.action.confirmPageDetail':
+    'Check the fields, samples, and actions on this page, then confirm.',
   'structured.canvas.action.confirmPolicy': 'Confirm field policies',
-  'structured.canvas.action.confirmPolicyDetail': 'Confirm fields, samples, and actions before continuing.',
+  'structured.canvas.action.confirmPolicyDetail':
+    'Confirm fields, samples, and actions before continuing.',
   'structured.canvas.action.saveAndPreview': 'Save and generate preview',
-  'structured.canvas.action.saveAndPreviewDetail': 'Persist the current policies and verify the output with samples right away.',
+  'structured.canvas.action.saveAndPreviewDetail':
+    'Persist the current policies and verify the output with samples right away.',
   'structured.canvas.action.returnDelivery': 'Back to delivery',
-  'structured.canvas.action.returnDeliveryDetail': 'This dataset is deliverable; return to the delivery page to continue.',
+  'structured.canvas.action.returnDeliveryDetail':
+    'This dataset is deliverable; return to the delivery page to continue.',
   'structured.canvas.action.generatePreview': 'Generate redaction preview',
   'structured.canvas.action.generatePreviewDetail': 'Verify the output against samples.',
   'structured.canvas.action.nextDatasetDetail': '{count} {scope} datasets still unconfirmed',
   'structured.canvas.action.enterDelivery': 'Go to delivery',
-  'structured.canvas.action.enterDeliveryDetail': 'Policies complete; run a single or batch delivery.',
+  'structured.canvas.action.enterDeliveryDetail':
+    'Policies complete; run a single or batch delivery.',
   'structured.canvas.currentDataset': 'Current dataset',
   'structured.canvas.noSelection': 'Not selected',
   'structured.canvas.selectFromLeft': 'Select an object to govern from the left',
@@ -2053,7 +2210,8 @@ Object.assign(enOverrides, {
   'structured.policy.footer.range':
     'Fields {start}-{end} of {total} · Page {page}/{pageCount} · {reviewed}/{pages} pages confirmed',
   'structured.policy.footer.riskSort': 'Sorted by risk first',
-  'structured.policy.footer.pageStats': 'Enabled on this page {enabled}/{visible} · High risk {highRisk}',
+  'structured.policy.footer.pageStats':
+    'Enabled on this page {enabled}/{visible} · High risk {highRisk}',
   'structured.policy.footer.matchedRatio': 'Matches {matched}/{total}',
   'structured.policy.pageConfirmed': 'Page confirmed',
   'structured.policy.pagePending': 'Page pending confirmation',
@@ -2065,8 +2223,10 @@ Object.assign(enOverrides, {
   'structured.policySummary.semanticHits': 'Semantic-hit fields',
   'structured.policySummary.semanticRedacted': 'Semantic redaction',
   'structured.policySummary.manualAdjusted': 'Manual adjustments',
-  'structured.policySummary.distributionAria': '{redacted} fields redacted, {retained} fields kept or untouched',
-  'structured.policySummary.formula': 'Current policy: {total} fields = {redacted} redacted + {retained} kept/untouched',
+  'structured.policySummary.distributionAria':
+    '{redacted} fields redacted, {retained} fields kept or untouched',
+  'structured.policySummary.formula':
+    'Current policy: {total} fields = {redacted} redacted + {retained} kept/untouched',
   'structured.policySummary.redactedRatio': 'Redacted {redacted}/{total} ({pct})',
   'structured.policySummary.retainedRatio': 'Kept {retained}/{total} ({pct})',
   'structured.policySummary.highRiskCoverage': 'High risk handled {coverage}',
@@ -2094,9 +2254,12 @@ Object.assign(enOverrides, {
 
   'structured.preview.title': 'Redaction preview',
   'structured.preview.descLoading': 'Generating a sample preview with the saved policies.',
-  'structured.preview.descWithContext': 'Showing {displayed}/{total} redacted fields first, plus {context} context fields.',
-  'structured.preview.descRedactedOnly': 'Showing the first 5 sample rows of {displayed}/{total} redacted fields.',
-  'structured.preview.descIdle': 'Save the policies to preview the first 5 rows of redacted fields.',
+  'structured.preview.descWithContext':
+    'Showing {displayed}/{total} redacted fields first, plus {context} context fields.',
+  'structured.preview.descRedactedOnly':
+    'Showing the first 5 sample rows of {displayed}/{total} redacted fields.',
+  'structured.preview.descIdle':
+    'Save the policies to preview the first 5 rows of redacted fields.',
   'structured.preview.emptyLoading': 'Generating redaction preview',
   'structured.preview.emptyIdle': 'Save policies to preview redacted fields',
   'structured.preview.original': 'Original data',
@@ -2133,10 +2296,13 @@ Object.assign(enOverrides, {
   'structured.delivery.error.jobIncomplete': 'Job did not finish: {status}',
   'structured.delivery.error.notReviewed':
     'This dataset has no saved field policies yet; review it on the dataset policy page first.',
-  'structured.delivery.error.noneReviewed': 'No reviewed datasets yet; save field policies on the dataset policy page first.',
+  'structured.delivery.error.noneReviewed':
+    'No reviewed datasets yet; save field policies on the dataset policy page first.',
   'structured.delivery.error.waitComplete': 'Download is available after the job completes',
-  'structured.delivery.notice.packageReady': 'Delivery package generated with redacted data and quality-report.json: {jobId}',
-  'structured.delivery.notice.stillProcessing': 'Job still processing; refresh later or check the job center: {jobId}',
+  'structured.delivery.notice.packageReady':
+    'Delivery package generated with redacted data and quality-report.json: {jobId}',
+  'structured.delivery.notice.stillProcessing':
+    'Job still processing; refresh later or check the job center: {jobId}',
   'structured.delivery.notice.selectionChanged': 'Selection changed; rerun the delivery.',
   'structured.delivery.notice.formatChanged': 'Export format changed; rerun the delivery.',
   'structured.delivery.notice.downloadStarted': 'Delivery package download started: {jobId}',
@@ -2145,7 +2311,8 @@ Object.assign(enOverrides, {
   'structured.delivery.handoff.connectionFallback': 'Current database connection',
   'structured.delivery.handoff.source': 'Current file source · {count} datasets',
   'structured.delivery.settings.title': 'Delivery settings',
-  'structured.delivery.settings.description': 'Structured jobs produce redacted exports directly, without OCR/VisualFeature.',
+  'structured.delivery.settings.description':
+    'Structured jobs produce redacted exports directly, without OCR/VisualFeature.',
   'structured.delivery.settings.format': 'File format inside package',
   'structured.delivery.settings.formatHint':
     'Downloads are always ZIP delivery packages containing files in the chosen format plus quality-report.json.',
@@ -2166,7 +2333,8 @@ Object.assign(enOverrides, {
   'structured.delivery.list.description':
     'Only reviewed datasets can be selected; confirm pending tables on the policy page first.',
   'structured.delivery.list.searchPlaceholder': 'Search datasets, tables, schemas, or connections',
-  'structured.delivery.list.summary': '{total} datasets, {deliverable} deliverable, {selected} selected',
+  'structured.delivery.list.summary':
+    '{total} datasets, {deliverable} deliverable, {selected} selected',
   'structured.delivery.list.summaryFiltered': ', {filtered} filtered, {deliverable} deliverable',
   'structured.delivery.list.summaryPage': ', {count} on this page',
   'structured.delivery.list.selectFiltered': 'Select all filtered',

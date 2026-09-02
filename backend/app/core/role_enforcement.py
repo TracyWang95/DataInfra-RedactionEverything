@@ -18,9 +18,8 @@ import logging
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
-
 from app.core.config import settings
+from app.core.errors import error_response
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +57,8 @@ def _role_from_request(request: Request) -> str | None:
         return None
 
 
-def _denied(detail: str) -> JSONResponse:
-    return JSONResponse(status_code=403, content={"detail": detail})
+def _denied(detail: str, error_code: str = "ROLE_FORBIDDEN"):
+    return error_response(403, error_code, detail)
 
 
 class RoleEnforcementMiddleware(BaseHTTPMiddleware):
@@ -78,5 +77,8 @@ class RoleEnforcementMiddleware(BaseHTTPMiddleware):
         if role == "viewer":
             return _denied("只读账号无权执行此操作。请联系管理员调整角色。")
         if role == "operator" and any(marker in path for marker in _REVIEW_DECISION_MARKERS):
-            return _denied("操作员账号无权确认审核。请交由审核员处理。")
+            return _denied(
+                "操作员账号无权确认审核。请交由审核员处理。",
+                "REVIEW_FORBIDDEN",
+            )
         return await call_next(request)

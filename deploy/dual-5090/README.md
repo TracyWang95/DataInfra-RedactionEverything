@@ -1,28 +1,33 @@
-# Dual-GPU (2× RTX 5090) deployment scripts
+# Dual-GPU (GPU 6 / GPU 7) deployment
 
-Per-service launch scripts for running the full RedactionEverything stack on a
-two-GPU box, with round-robin load balancing across both cards.
+Launch scripts for the RedactionEverything inference stack pinned to physical
+GPU 6 and GPU 7, with round-robin load balancers in front of paired workers.
 
-## Topology (GPU0 / GPU1)
+## Topology
 
-| Service | Port (g0 / g1) | Notes |
-|---|---|---|
-| LA vision (MoonViT + mlp1) | 8090 / 8091 | posts prompt-embeds to the LM serve |
-| LA LM (vLLM-split, Qwen2) | 8092 / 8093 | shared visual encoding; `--enable-prompt-embeds` |
-| HaS NER (vLLM) | 8080 / 8081 | gpu-util 0.15 |
-| PaddleOCR-VL (vLLM) | 8118 / 8119 | seal / under-stamp text |
-| OCR (PP-StructureV3) | 8082 / 8083 | primary text layout |
+| Service | GPU 6 / GPU 7 worker ports | Load balancer | Purpose |
+|---|---:|---:|---|
+| HaS Text (vLLM) | 28080 / 28081 | 29080 | semantic PHI detection |
+| OCR (PP-StructureV3) | 28082, 28084 / 28083, 28085 | 29082 | text and character boxes |
+| LocateAnything vision | 28090 / 28091 | 29090 | visual-region detection |
+| LocateAnything LM | 28092 / 28093 | internal | visual-language decoding |
+| PaddleOCR-VL | 28118 / 28119 | internal | supplemental OCR |
+| visual detector | 28140 / 28141 | 29140 | visual feature detection |
 
-Round-robin load balancers (`lb_proxy.py`): OCR `9082`, HaS `9080`, LA `9090`.
-Backend (FastAPI) `8000`, frontend (vite preview) `3000`.
+The API listens on `23001` and the development frontend on `3000`.
+`backend_g0.sh` sets `VISIBLE_GPU_INDICES=6,7`, so health telemetry and the UI
+show only the two cards owned by this deployment.
 
 ## Usage
 
 ```bash
-bash start_all.sh    # self-healing: launches only the ports that are DOWN
+bash sync_to_live.sh
 ```
 
-Set `JWT_SECRET_KEY` in `backend_g0.sh` before use (a placeholder is shipped).
+The launcher is self-healing: it starts missing workers, waits for their health
+ports, starts the load balancers, and then starts the API. Secrets are loaded
+from `~/.redaction_secrets`; the launcher fails closed when that file is absent.
 
-Scripts assume models under `~/redaction-deploy/backend/models`, vLLM/LA venvs at
-`~/rvenv/{vllm,la}`, and OCR/backend in the `dataInfra` conda env.
+Scripts use the repository at
+`/data/ubuntu/lh/projects/DataInfra-RedactionEverything`, model assets below its
+`backend/models` directory, and the `dataInfra`/`dataInfra-ocr` conda runtimes.

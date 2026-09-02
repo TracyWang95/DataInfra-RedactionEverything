@@ -13,9 +13,8 @@ import logging
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse
-
 from app.core.config import settings
+from app.core.errors import error_response
 from app.core.license import STATE_BLOCKED, STATE_GRACE_READONLY, STATE_INVALID, get_license_state
 
 logger = logging.getLogger(__name__)
@@ -46,16 +45,17 @@ class LicenseEnforcementMiddleware(BaseHTTPMiddleware):
         state = get_license_state()
         message = _STATE_MESSAGES.get(state.state)
         if message is not None:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "detail": message,
-                    "license": {
-                        "state": state.state,
-                        "reason": state.reason,
-                        "expires_at": state.expires_at or None,
-                        "days_left": state.days_left,
-                    },
-                },
+            license_detail = {
+                "state": state.state,
+                "reason": state.reason,
+                "expires_at": state.expires_at or None,
+                "days_left": state.days_left,
+            }
+            return error_response(
+                403,
+                "LICENSE_WRITE_FORBIDDEN",
+                message,
+                {"license": license_detail},
+                extra={"license": license_detail},
             )
         return await call_next(request)

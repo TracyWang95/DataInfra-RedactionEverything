@@ -7,10 +7,7 @@ import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useT } from './i18n';
 import { SUSPENSE_SPINNER_DELAY_MS, ROUTE_PREFETCH_DELAY_MS } from './constants/timing';
-import {
-  isRegisterAuthSearch,
-  resolveAuthNext,
-} from './features/auth/auth-routing';
+import { isRegisterAuthSearch, resolveAuthNext } from './features/auth/auth-routing';
 import { useAuth } from './features/auth/auth-context';
 
 const AuthPage = React.lazy(() =>
@@ -47,6 +44,9 @@ const StructuredDatasets = React.lazy(() =>
 );
 const StructuredDelivery = React.lazy(() =>
   import('./features/structured/pages/delivery').then((m) => ({ default: m.StructuredDelivery })),
+);
+const DicomWorkspace = React.lazy(() =>
+  import('./features/dicom').then((m) => ({ default: m.DicomWorkspace })),
 );
 const Settings = React.lazy(() =>
   import('./features/settings').then((m) => ({ default: m.Settings })),
@@ -123,6 +123,7 @@ const prefetchRoutes = () => {
     () => import('./features/home'),
     () => import('./features/batch'),
     () => import('./features/structured'),
+    () => import('./features/dicom'),
     () => import('./features/history'),
     () => import('./features/jobs'),
   ];
@@ -134,10 +135,7 @@ if (typeof window !== 'undefined') {
   if ('requestIdleCallback' in window) {
     (
       window as Window & {
-        requestIdleCallback: (
-          callback: () => void,
-          options?: { timeout?: number },
-        ) => number;
+        requestIdleCallback: (callback: () => void, options?: { timeout?: number }) => number;
       }
     ).requestIdleCallback(prefetchRoutes, { timeout: 1200 });
   } else {
@@ -314,6 +312,14 @@ export const router = createBrowserRouter([
         element: (
           <LazyPage>
             <StructuredDelivery />
+          </LazyPage>
+        ),
+      },
+      {
+        path: 'dicom',
+        element: (
+          <LazyPage>
+            <DicomWorkspace />
           </LazyPage>
         ),
       },
